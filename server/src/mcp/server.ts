@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { collect, collectAndSave, readDashboard } from "../core/collect.js";
 import { collectAppStore } from "../core/appstore.js";
+import { collectCalendar, createEvent } from "../core/calendar.js";
 import { readState, writeState } from "../core/state.js";
 import { readTsv } from "../core/tsv.js";
 import { REGISTRY } from "../core/paths.js";
@@ -106,6 +107,31 @@ server.registerTool(
     state.updatedAt = new Date().toISOString().slice(0, 10);
     return json(writeState(state));
   },
+);
+
+server.registerTool(
+  "list_calendar_events",
+  {
+    title: "今後の予定",
+    description: "Google カレンダーの今後 N 日分の予定を返す（既定7日）。未設定なら null。",
+    inputSchema: { days: z.number().optional().describe("取得する日数（既定7）") },
+  },
+  async ({ days }) => json(await collectCalendar(days ?? 7)),
+);
+
+server.registerTool(
+  "create_calendar_event",
+  {
+    title: "予定を作成",
+    description: "Google カレンダーに予定を作成する。start/end は ISO8601（例 2026-06-10T14:00:00+09:00）。",
+    inputSchema: {
+      title: z.string().describe("予定タイトル"),
+      start: z.string().describe("開始 ISO8601"),
+      end: z.string().describe("終了 ISO8601"),
+      location: z.string().optional().describe("場所（任意）"),
+    },
+  },
+  async ({ title, start, end, location }) => json(await createEvent({ title, start, end, location })),
 );
 
 const transport = new StdioServerTransport();

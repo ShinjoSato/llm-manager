@@ -7,6 +7,7 @@ import { AppStoreCard } from "./components/AppStoreCard.js";
 import { PullRequests } from "./components/PullRequests.js";
 import { LocalChanges } from "./components/LocalChanges.js";
 import { FocusNotes } from "./components/FocusNotes.js";
+import { CalendarCard } from "./components/CalendarCard.js";
 
 function Shell({ children }: { children: React.ReactNode }) {
   return <div className="mx-auto max-w-6xl px-5 py-7 md:px-8">{children}</div>;
@@ -78,6 +79,7 @@ export function App() {
         </div>
         <div className="flex flex-col gap-5">
           <FocusNotes state={state} onSave={saveState} />
+          <CalendarCard calendar={dash.calendar} />
           <PullRequests projects={dash.projects} />
           <LocalChanges projects={dash.projects} />
         </div>

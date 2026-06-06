@@ -22,7 +22,7 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 | データ中核 + API（HTTP/MCP） | 稼働（TypeScript） | `server/` |
 | 統合ダッシュボード（React） | 稼働 | `web/` |
 | App Store 連携 | 稼働（要 API キー設定） | `server/src/core/appstore.ts` |
-| Google カレンダー連携 | 未着手 | - |
+| Google カレンダー連携 | 稼働（要 OAuth 設定）／会話は claude.ai MCP | `server/src/core/calendar.ts` |
 | スプレッドシート勉強管理 | 未着手 | - |
 
 ## 他プロジェクト管理
@@ -82,6 +82,7 @@ scripts/                 補助シェル（dev.sh で API+Web 同時起動 / boa
 - `.mcp.json` で MCP サーバーを登録済み（`ai-manager`）。Claude Code はツールとして直接呼べる:
   - `get_dashboard` / `refresh_dashboard` / `get_app_status` / `list_projects`
   - `get_state` / `set_focus_notes` / `add_pin`（手動レイヤーの読み書き）
+  - `list_calendar_events` / `create_calendar_event`（Google カレンダー）
 - 「今日の重点」は MCP の `set_focus_notes`、`data/manager-state.json` 直接編集、Web 上の編集のいずれでも更新できる（全て同じ JSON に反映）。
 
 ### HTTP API
@@ -125,9 +126,22 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - 個人キー → Key ID + .p8 のみ（**Issuer ID は存在しない**）。JWT は `iss` の代わりに `sub:"user"`。
 - コードは issuerId の有無で自動分岐するので、個人キーなら issuerId を空にする。
 
-## Google カレンダー連携 / スプレッドシート勉強管理
+## Google カレンダー連携
 
-- 未着手。着手時に MCP（Google Calendar / Google Drive）連携の方針をここに追記する。
+2つの入口がある。
+
+1. **会話の中**（設定不要）: claude.ai の Google Calendar MCP。ユーザーが `/mcp` → 「claude.ai Google Calendar」で認証すれば、会話内で予定の取得・作成が可能。claude.ai 認証依存なのでヘッドレスのサーバーからは使えない。
+2. **ダッシュボード常設**（自前連携）: `server/src/core/calendar.ts`。OAuth refresh token でアクセストークンを取得し Calendar API を叩く。`collect()` が今後7日分の予定を取り `dashboard.json` の `calendar` に載せる → Web の `CalendarCard`。MCP の `list_calendar_events` / `create_calendar_event` も提供。
+
+### セットアップ（②常設の有効化・要 OAuth）
+1. Google Cloud Console で **Calendar API 有効化** → **OAuth クライアント(デスクトップ)** 作成。
+2. scope `https://www.googleapis.com/auth/calendar` で同意し **refresh token** を取得（OAuth Playground 等）。
+3. `secrets/google-credentials.json`（`*.example.json` をコピー）に clientId/clientSecret/refreshToken/calendarId を記入。または環境変数 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` / `GOOGLE_CALENDAR_ID`。
+4. `cd server && npm run collect` で予定が `calendar` に入る。未設定なら `calendar: null`（カードは非表示）で安全に no-op。
+
+## スプレッドシート勉強管理
+
+- 未着手。着手時に方針をここに追記する。
 
 ## メモ
 - このディレクトリ自体はまだ git 管理されていない。`.gitignore` は用意済み（`secrets/*`・`node_modules/`・`web/dist/`・生成 JSON を除外）。

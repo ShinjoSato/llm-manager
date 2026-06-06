@@ -107,9 +107,27 @@ export interface Project {
   appstore: AppRecord | null;
 }
 
+// ── Google カレンダー ─────────────────────────────────
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start: string;   // ISO（終日は YYYY-MM-DD）
+  end: string;
+  allDay: boolean;
+  location: string;
+  url: string | null;
+}
+
+export interface CalendarData {
+  events: CalendarEvent[];
+  rangeDays: number;
+  error?: string;
+}
+
 export interface Dashboard {
   generatedAt: string;
   projects: Project[];
+  calendar?: CalendarData | null;
 }
 
 // ── 手動レイヤー（Claude が編集）────────────────────────

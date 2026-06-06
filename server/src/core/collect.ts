@@ -5,6 +5,7 @@ import { readTsv } from "./tsv.js";
 import { gitInfo, repoSlug } from "./git.js";
 import { boardData, openPrs } from "./boards.js";
 import { collectAppStore } from "./appstore.js";
+import { collectCalendar } from "./calendar.js";
 import type { Dashboard, Project } from "../../../shared/types.js";
 
 interface BoardCfg { owner: string; number: string; repo: string; url: string; }
@@ -16,6 +17,7 @@ export async function collect(): Promise<Dashboard> {
     if (r.length >= 5) boards[r[0]] = { owner: r[1], number: r[2], repo: r[3], url: r[4] };
   }
   const appstore = await collectAppStore();
+  const calendar = await collectCalendar();
 
   const projects: Project[] = [];
   for (const row of readTsv(REGISTRY)) {
@@ -47,7 +49,7 @@ export async function collect(): Promise<Dashboard> {
     projects.push(project);
   }
 
-  return { generatedAt: new Date().toISOString(), projects };
+  return { generatedAt: new Date().toISOString(), projects, calendar };
 }
 
 /** 収集して data/dashboard.json に保存。 */
