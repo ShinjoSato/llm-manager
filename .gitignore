@@ -1,0 +1,16 @@
+# 秘密情報（.p8 鍵・認証 JSON など）はここに集約。README とテンプレ以外は追跡しない。
+secrets/*
+!secrets/README.md
+!secrets/*.example.json
+
+# 生成物（collect / appstore が書き出す）
+data/dashboard.json
+data/appstore.json
+
+# Node / ビルド成果物
+node_modules/
+web/dist/
+*.tsbuildinfo
+
+# OS / エディタ
+.DS_Store

@@ -1,0 +1,16 @@
+# 管理対象プロジェクトと GitHub Project（ボード）の紐づけ
+# 1行 = 1ボード。タブ区切り（TSV）。
+# 列: name <TAB> owner <TAB> number <TAB> repo <TAB> url
+#   name   : registry.tsv と対応する管理対象名
+#   owner  : GitHub Project のオーナー（ユーザー/Org）
+#   number : Project 番号
+#   repo   : 対応リポジトリ（owner/repo）
+#   url    : ボードのURL
+#
+# 「#」始まりの行・空行は無視。
+# infra は専用ボードが未作成。横断ボード(overview)で見る。
+# overview は特定リポジトリに紐づかない包括ボード（複数リポジトリ横断）。repo列は "-"。
+#
+sandora	ShinjoSato	3	ShinjoSato/random_talk	https://github.com/users/ShinjoSato/projects/3
+mirio	ShinjoSato	4	ShinjoSato/ailovei	https://github.com/users/ShinjoSato/projects/4
+overview	ShinjoSato	5	-	https://github.com/users/ShinjoSato/projects/5

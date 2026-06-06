@@ -1,0 +1,12 @@
+# App Store Connect 連携: 管理対象と bundleId の紐づけ
+# 1行 = 1アプリ。タブ区切り（TSV）。
+# 列: name <TAB> bundleId
+#   name     : registry.tsv と対応する管理対象名
+#   bundleId : App Store の本番 bundle identifier（staging ではなく本番）
+#
+# 「#」始まりの行・空行は無視。
+# 認証情報（API キー）はこのファイルではなく data/appstore-credentials.json
+# もしくは環境変数（ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH）に置く。
+#
+mirio	indiv.ailovei
+sandora	indiv.random-talk

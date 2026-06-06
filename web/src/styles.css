@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+/* ── ダークコマンドセンター: デザイントークン ── */
+@theme {
+  --color-ink: #060911;
+  --color-panel: rgba(255, 255, 255, 0.04);
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-accent: #34d399; /* emerald-400 */
+  --color-accent2: #22d3ee; /* cyan-400 */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink);
+  color: #e2e8f0;
+  font-family: -apple-system, "Hiragino Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 背景のアンビエントグロー */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(60rem 40rem at 12% -8%, rgba(52, 211, 153, 0.10), transparent 60%),
+    radial-gradient(50rem 36rem at 95% 0%, rgba(34, 211, 238, 0.08), transparent 55%),
+    radial-gradient(70rem 50rem at 60% 110%, rgba(99, 102, 241, 0.08), transparent 60%);
+}
+
+/* ── 再利用コンポーネントクラス ── */
+@layer components {
+  .glass,
+  .card {
+    @apply rounded-2xl border border-white/10 bg-white/[0.035] backdrop-blur-xl;
+    box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.04) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.8);
+  }
+  .card {
+    @apply p-5;
+  }
+  .card-title {
+    @apply mb-4 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-slate-400;
+  }
+  .chip {
+    @apply rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-medium text-slate-300;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap;
+  }
+  .badge-neutral { @apply border-white/12 bg-white/5 text-slate-300; }
+  .badge-ok { @apply border-emerald-400/30 bg-emerald-400/10 text-emerald-300; }
+  .badge-danger { @apply border-rose-400/40 bg-rose-500/15 text-rose-300; }
+  .badge-warn { @apply border-amber-400/30 bg-amber-400/10 text-amber-300; }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2 text-[13px] font-medium text-slate-200 transition hover:bg-white/10 active:scale-[0.98] disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply border-emerald-400/30 text-emerald-200;
+    background: linear-gradient(180deg, rgba(52, 211, 153, 0.22), rgba(34, 211, 238, 0.12));
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.15), 0 10px 30px -12px rgba(52, 211, 153, 0.5);
+  }
+  .link { @apply text-cyan-300 transition hover:text-cyan-200 hover:underline; }
+}
+
+/* スクロールバー */
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
+textarea { field-sizing: content; }

@@ -1,0 +1,18 @@
+# ai-manager 管理対象プロジェクト登録簿
+# 1行 = 1プロジェクト。タブ区切り（TSV）。
+# 列: name <TAB> path <TAB> status <TAB> note
+#   name   : 表示名
+#   path   : 絶対パス（例 /Users/shinjo/project/ailovei）
+#   status : active | paused | archived
+#   note   : 一言メモ（今のフォーカス・課題など）
+#
+# 「#」始まりの行と空行は無視されます。
+# 管理対象を追加するときは、私（Claude）に「○○を管理対象に追加して」と伝えてください。
+#
+# --- 例（コメントアウト中。実際に登録するときは # を外す）---
+# ailovei	/Users/shinjo/project/ailovei	active	develop ブランチで開発中
+
+mirio	/Users/shinjo/project/mirio	active	中心プロダクト。develop ブランチで開発中
+sandora	/Users/shinjo/project/sandora	active	develop ブランチで開発中
+infra	/Users/shinjo/project/infra	active	インフラ構成。mirio-prod の deploy など
+blog	/Users/shinjo/project/blog	active	main ブランチ。Mirio 関連ページなど

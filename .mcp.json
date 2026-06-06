@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ai-manager": {
+      "command": "/Users/shinjo/project/ai-manager/server/node_modules/.bin/tsx",
+      "args": ["/Users/shinjo/project/ai-manager/server/src/mcp/server.ts"]
+    }
+  }
+}

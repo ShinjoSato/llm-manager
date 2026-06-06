@@ -1,0 +1,30 @@
+{
+  "_comment": "Claude（マネージャー）が編集する手動レイヤー。ダッシュボードの『要注目』『今日の重点』に反映される。",
+  "updatedAt": "2026-06-06",
+  "focusNotes": [
+    "mirio: App Store審査リジェクト #560 (Guideline 2.1) は再提出済み → 現在『審査待ち(WAITING_FOR_REVIEW)』。審査結果を待つ局面（appstore.py で確認可）",
+    "sandora: リファクタリング Phase 2 (#377) に着手するか判断する局面"
+  ],
+  "pinned": [
+    {
+      "project": "mirio",
+      "number": 560,
+      "reason": "審査リジェクト対応"
+    },
+    {
+      "project": "mirio",
+      "number": 361,
+      "reason": "本番リリース前P0ブロッカー集約 epic"
+    }
+  ],
+  "autoHighlightKeywords": [
+    "却下",
+    "審査",
+    "Guideline",
+    "epic",
+    "P0",
+    "ブロッカー",
+    "blocker",
+    "リリース"
+  ]
+}
