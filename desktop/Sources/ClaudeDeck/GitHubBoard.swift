@@ -155,22 +155,58 @@ enum GitHubBoard {
         }
     }
 
+    /// コマンド実行のタイムアウト（秒）。詰まっても永久ハングさせない。
+    private static let shellTimeout: TimeInterval = 20
+
+    /// ログインシェル経由でコマンドを実行し標準出力を返す（ヘッドレス＝非対話）。
+    ///
+    /// 重要:
+    ///  - **非対話 `-lc`** を使う（PATH 継承の login は維持しつつ、対話 rc の副作用を避ける）。
+    ///    `-i`（対話）だと、親から継承した tty 上で .zshrc（p10k instant prompt 等）が
+    ///    tty 応答待ちになり無限ハングしうる。
+    ///  - **stdin を /dev/null に切り離す**。子シェルが tty を掴んで入力待ちにならないように。
+    ///  - **stdout/stderr を並行読み**して大出力時のパイプ・デッドロックを防ぐ。
+    ///  - **タイムアウト**で詰まりを検知し、プロセスを終了してエラーで返す。
     private static func runLoginShell(_ command: String) -> Result<Data, GitHubBoardError> {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lic", command]
+        process.arguments = ["-lc", command]
         let out = Pipe()
         let err = Pipe()
         process.standardOutput = out
         process.standardError = err
+        process.standardInput = FileHandle.nullDevice   // tty を継承させない
+
+        // stdout/stderr を別スレッドで並行に読み切る（パイプ・デッドロック回避）。
+        var outData = Data()
+        var errData = Data()
+        let group = DispatchGroup()
+        func drain(_ handle: FileHandle, into sink: @escaping (Data) -> Void) {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let d = handle.readDataToEndOfFile()
+                sink(d)
+                group.leave()
+            }
+        }
+
         do {
             try process.run()
         } catch {
             return .failure(.ghFailed("起動に失敗: \(error.localizedDescription)"))
         }
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        drain(out.fileHandleForReading) { outData = $0 }
+        drain(err.fileHandleForReading) { errData = $0 }
+
+        // タイムアウト付きで終了を待つ。期限内に終わらなければ強制終了。
+        let deadline = DispatchTime.now() + shellTimeout
+        if group.wait(timeout: deadline) == .timedOut {
+            process.terminate()
+            _ = group.wait(timeout: .now() + 2)   // パイプの読み切りを待つ（最大2秒）
+            return .failure(.ghFailed("タイムアウト（\(Int(shellTimeout))秒）。gh の認証/スコープ、ネットワークを確認してください。"))
+        }
         process.waitUntilExit()
+
         if process.terminationStatus != 0 {
             let msg = (String(data: errData, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return .failure(.ghFailed(msg.isEmpty ? "gh の実行に失敗（認証/スコープを確認）" : msg))
