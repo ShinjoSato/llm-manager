@@ -87,14 +87,18 @@ private final class TileView: NSView {
         guard n > 0 else { return }
         let cols = Int(ceil(Double(n).squareRoot()))
         let rows = Int(ceil(Double(n) / Double(cols)))
-        let cellW = (bounds.width - gap * CGFloat(cols + 1)) / CGFloat(cols)
+        // 高さは従来どおり rows で等分。幅は行ごとに計算する（下記）。
         let cellH = (bounds.height - gap * CGFloat(rows + 1)) / CGFloat(rows)
         for (i, pane) in panes.enumerated() {
             let r = i / cols
             let c = i % cols
-            let x = gap + CGFloat(c) * (cellW + gap)
+            // 最終行は実ペイン数が cols 未満になり得る。その行の実ペイン数で
+            // 行全体の幅を等分し、余白セルを残さず横いっぱいに埋める。
+            let itemsInRow = min(cols, n - r * cols)
+            let rowCellW = (bounds.width - gap * CGFloat(itemsInRow + 1)) / CGFloat(itemsInRow)
+            let x = gap + CGFloat(c) * (rowCellW + gap)
             let y = gap + CGFloat(r) * (cellH + gap)
-            pane.frame = NSRect(x: x, y: y, width: max(cellW, 1), height: max(cellH, 1))
+            pane.frame = NSRect(x: x, y: y, width: max(rowCellW, 1), height: max(cellH, 1))
         }
     }
 }
