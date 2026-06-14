@@ -17,3 +17,4 @@ sandora	/Users/shinjo/project/sandora	active	develop ブランチで開発中
 infra	/Users/shinjo/project/infra	active	インフラ構成。mirio-prod の deploy など
 blog	/Users/shinjo/project/blog	active	main ブランチ。Mirio 関連ページなど
 app-store-simulator	/Users/shinjo/project/app-store-simulator	active	提出前診断ツール（Swift/macOS）。設計フェーズ
+claude-deck	/Users/shinjo/project/ai-manager/desktop	active	Claude Code 司令塔（Swift/macOS）。ai-manager 内 desktop/。PoC（SwiftTerm）

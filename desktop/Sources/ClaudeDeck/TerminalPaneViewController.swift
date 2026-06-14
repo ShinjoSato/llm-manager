@@ -28,11 +28,51 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     private var claudeButton: NSButton?
     private var githubButton: NSButton?
 
+    // Xcode プロジェクト（プロジェクト直下に見つかったときだけ「Xcodeで開く」ボタンを出す）
+    private let xcodeProjectURL: URL?
+
     init(project: ManagedProject) {
         self.project = project
         self.boardMapping = GitHubBoard.mapping(forProject: project)
+        self.xcodeProjectURL = Self.findXcodeProject(in: project.path)
         super.init(nibName: nil, bundle: nil)
         self.title = project.name
+    }
+
+    /// プロジェクト配下（浅い範囲）から Xcode プロジェクトを探す。
+    /// iOS リポジトリは `ios/` 等のサブディレクトリに `.xcodeproj` を置くことが多いので直下だけでは足りない。
+    /// 最も浅い階層のものを選び、同階層なら `.xcworkspace`（CocoaPods/SPM）を `.xcodeproj` より優先する。
+    /// 見つからなければ nil（SPM のみ等。ボタンを出さない）。
+    private static func findXcodeProject(in directory: String) -> URL? {
+        let fm = FileManager.default
+        // 探索しても無駄／誤検出のもと（バンドル内含む）になるディレクトリは除外する。
+        let skip: Set<String> = [".git", "Pods", "node_modules", ".build", "DerivedData", "build", ".swiftpm"]
+        let maxDepth = 3
+        var candidates: [(url: URL, depth: Int, isWorkspace: Bool)] = []
+        var queue: [(URL, Int)] = [(URL(fileURLWithPath: directory, isDirectory: true), 0)]
+        var i = 0
+        while i < queue.count {
+            let (dir, depth) = queue[i]; i += 1
+            guard let entries = try? fm.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.isDirectoryKey]) else { continue }
+            for e in entries {
+                switch e.pathExtension {
+                case "xcworkspace": candidates.append((e, depth, true)); continue
+                case "xcodeproj":   candidates.append((e, depth, false)); continue
+                default: break
+                }
+                // `.xcodeproj`/`.xcworkspace` バンドルの中（埋め込み project.xcworkspace 等）には潜らない。
+                let name = e.lastPathComponent
+                if skip.contains(name) || name.hasPrefix(".") { continue }
+                if depth < maxDepth,
+                   (try? e.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                    queue.append((e, depth + 1))
+                }
+            }
+        }
+        return candidates.sorted {
+            $0.depth != $1.depth ? $0.depth < $1.depth : ($0.isWorkspace && !$1.isWorkspace)
+        }.first?.url
     }
 
     @available(*, unavailable)
@@ -75,6 +115,15 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
             headerViews.append(claude)
             headerViews.append(github)
             updateToggleSelection(showingBoard: false)
+        }
+        if xcodeProjectURL != nil {
+            let xcodeButton = NSButton(
+                image: NSImage(systemSymbolName: "hammer", accessibilityDescription: "Xcodeで開く") ?? NSImage(),
+                target: self, action: #selector(openInXcodeTapped))
+            xcodeButton.isBordered = false
+            xcodeButton.bezelStyle = .regularSquare
+            xcodeButton.toolTip = "Xcodeで開く（\(xcodeProjectURL?.lastPathComponent ?? "")）"
+            headerViews.append(xcodeButton)
         }
         headerViews.append(closeButton)
 
@@ -251,6 +300,13 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         alert.addButton(withTitle: "OK")
         alert.runModal()
         onSessionEnded?(.limitReached)
+    }
+
+    /// プロジェクトの `.xcworkspace` / `.xcodeproj` を Xcode の GUI で開く。
+    /// 実行（Cmd+R）はユーザーが Xcode 側で行う。
+    @objc private func openInXcodeTapped() {
+        guard let url = xcodeProjectURL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func closeTapped() {
