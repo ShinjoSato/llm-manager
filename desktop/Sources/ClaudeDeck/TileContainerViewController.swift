@@ -182,16 +182,19 @@ private final class TileView: NSView {
     // MARK: - レイアウト計算（layout とドロップ index 算出で共有）
 
     /// 現在の向きで、各ペイン（index 0..<n）のセル矩形を一括算出する。
-    /// 行優先（横長）: cols=⌈√n⌉ の行に詰め、最終行を実ペイン数で横いっぱいに等分（#11 の自動フィル）。
-    /// 列優先（縦長）: cols=⌈√n⌉ の列に詰め、早い列ほど少なく（＝背の高い単独ペイン）し余りを後ろの列へ。
+    /// 主軸の本数は ⌈√n⌉ ではなく **round(√n)** を使う。これにより 2 枚でも
+    /// 横長=上下 / 縦長=左右 と形が変わり、3 枚の「上2/下1」「左1/右2」も維持される。
+    /// 行優先（横長）: cols=round(√n) の行に詰め、最終行を実ペイン数で横いっぱいに等分（#11 の自動フィル）。
+    /// 列優先（縦長）: rows=round(√n) を主軸に列へ詰め、早い列ほど少なく（＝背の高い単独ペイン）し余りを後ろの列へ。
     ///   各列を実ペイン数で縦いっぱいに等分。3枚なら「左1/右2」になる。
     private func cellRects(_ n: Int) -> [NSRect] {
         guard n > 0 else { return [] }
         let W = bounds.width, H = bounds.height
         var rects = [NSRect](repeating: .zero, count: n)
-        let cols = Int(ceil(Double(n).squareRoot()))
+        let primary = max(1, Int(Double(n).squareRoot().rounded()))   // 近似正方グリッドの主軸本数
         switch orientation {
         case .rowMajor:
+            let cols = primary
             let rows = Int(ceil(Double(n) / Double(cols)))
             let cellH = (H - gap * CGFloat(rows + 1)) / CGFloat(rows)
             for i in 0..<n {
@@ -204,6 +207,8 @@ private final class TileView: NSView {
                 rects[i] = NSRect(x: x, y: y, width: max(cellW, 1), height: max(cellH, 1))
             }
         case .columnMajor:
+            let rows = primary
+            let cols = Int(ceil(Double(n) / Double(rows)))
             let base = n / cols
             let rem = n % cols          // 後ろ rem 列が +1 個（＝早い列ほど少なく背が高い）
             let cellW = (W - gap * CGFloat(cols + 1)) / CGFloat(cols)
