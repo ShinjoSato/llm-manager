@@ -17,6 +17,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     private var terminal: ClaudeTerminalView!
     private let titleLabel = NSTextField(labelWithString: "")
     private let statusBadge = NSTextField(labelWithString: "")
+    private let statusPill = NSView()        // ステータスバッジを包むピル状コンテナ
     private var lastStatus: ClaudeStatus?
     private var ended = false
     private var started = false
@@ -81,29 +82,45 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 360))
         root.wantsLayer = true
+        // ダーク基調のコマンドセンター風。外枠は角丸＋控えめなボーダー。
+        root.layer?.cornerRadius = 8
+        root.layer?.masksToBounds = true
         root.layer?.borderWidth = 1
-        root.layer?.borderColor = NSColor.separatorColor.cgColor
+        root.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
 
         // 見出しバー
         titleLabel.stringValue = project.name
-        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.textColor = .labelColor
         titleLabel.toolTip = project.path
 
-        // 作業ステータスのバッジ
-        statusBadge.font = .systemFont(ofSize: 11, weight: .medium)
+        // 作業ステータスのバッジ（ピル化）。NSTextField 単体ではパディングが付けにくいため
+        // 小さな角丸コンテナ(statusPill)に入れて、背景色を状態色に連動させる。
+        statusBadge.font = .systemFont(ofSize: 11, weight: .semibold)
         statusBadge.setContentHuggingPriority(.required, for: .horizontal)
         statusBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        statusBadge.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.wantsLayer = true
+        statusPill.layer?.cornerRadius = 9
+        statusPill.layer?.masksToBounds = true
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.setContentHuggingPriority(.required, for: .horizontal)
+        statusPill.setContentCompressionResistancePriority(.required, for: .horizontal)
+        statusPill.addSubview(statusBadge)
+        NSLayoutConstraint.activate([
+            statusBadge.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 8),
+            statusBadge.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -8),
+            statusBadge.topAnchor.constraint(equalTo: statusPill.topAnchor, constant: 2),
+            statusBadge.bottomAnchor.constraint(equalTo: statusPill.bottomAnchor, constant: -2),
+            statusPill.heightAnchor.constraint(equalToConstant: 18)
+        ])
         updateStatusBadge(.idle)
 
-        let closeButton = NSButton(
-            image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "閉じる") ?? NSImage(),
-            target: self, action: #selector(closeTapped))
-        closeButton.isBordered = false
-        closeButton.bezelStyle = .regularSquare
-        closeButton.toolTip = "このペインを閉じる"
+        let closeButton = makeHeaderButton(
+            symbol: "xmark", tooltip: "このペインを閉じる", action: #selector(closeTapped))
 
-        var headerViews: [NSView] = [titleLabel, statusBadge, NSView()]
+        var headerViews: [NSView] = [titleLabel, statusPill, NSView()]
         if boardMapping != nil {
             // テキストセグメントの代わりに円形アイコンの2トグルで切替（横幅をコンパクトに）
             let claude = makeCircleToggle(
@@ -131,9 +148,32 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = 6
-        header.edgeInsets = NSEdgeInsets(top: 2, left: 8, bottom: 2, right: 6)
+        header.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
         header.wantsLayer = true
-        header.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        // ダーク基調のマテリアル背景＋下端のサブトルな区切り線。
+        let headerBG = NSVisualEffectView()
+        headerBG.material = .headerView
+        headerBG.blendingMode = .withinWindow
+        headerBG.state = .active
+        headerBG.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(headerBG, positioned: .below, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            headerBG.topAnchor.constraint(equalTo: header.topAnchor),
+            headerBG.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            headerBG.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            headerBG.bottomAnchor.constraint(equalTo: header.bottomAnchor)
+        ])
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(divider)
+        NSLayoutConstraint.activate([
+            divider.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            divider.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 1)
+        ])
 
         // 端末
         let term = ClaudeTerminalView(frame: .zero)
@@ -164,7 +204,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            header.heightAnchor.constraint(equalToConstant: 26),
+            header.heightAnchor.constraint(equalToConstant: 30),
             header.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             contentContainer.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
@@ -196,15 +236,40 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?
             .withSymbolConfiguration(config)
-        let button = NSButton(image: image ?? NSImage(), target: self, action: action)
+        let button = HoverButton(image: image ?? NSImage(), target: self, action: action)
         button.imagePosition = .imageOnly
         button.isBordered = false
         button.bezelStyle = .regularSquare
         button.toolTip = tooltip
         button.wantsLayer = true
         button.translatesAutoresizingMaskIntoConstraints = false
-        let diameter: CGFloat = 22
+        let diameter: CGFloat = 24
         button.layer?.cornerRadius = diameter / 2
+        button.layer?.masksToBounds = true
+        // 選択中はホバーで色を変えない（塗りつぶし優先）。updateToggleSelection が切替を握る。
+        button.hoverEnabled = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: diameter),
+            button.heightAnchor.constraint(equalToConstant: diameter)
+        ])
+        return button
+    }
+
+    /// Xcode・閉じる等の単機能アイコンボタンを生成する（ホバーで薄いハイライト）。
+    private func makeHeaderButton(symbol: String, tooltip: String, action: Selector) -> NSButton {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?
+            .withSymbolConfiguration(config)
+        let button = HoverButton(image: image ?? NSImage(), target: self, action: action)
+        button.imagePosition = .imageOnly
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.toolTip = tooltip
+        button.wantsLayer = true
+        button.contentTintColor = .secondaryLabelColor
+        button.translatesAutoresizingMaskIntoConstraints = false
+        let diameter: CGFloat = 24
+        button.layer?.cornerRadius = 6
         button.layer?.masksToBounds = true
         NSLayoutConstraint.activate([
             button.widthAnchor.constraint(equalToConstant: diameter),
@@ -214,6 +279,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     }
 
     /// 選択中のトグルだけを塗りつぶし表示にする。
+    /// 非選択側はホバーで薄いハイライトが出るよう hoverEnabled を切り替える。
     private func updateToggleSelection(showingBoard: Bool) {
         let on = NSColor.controlAccentColor.cgColor
         let off = NSColor.clear.cgColor
@@ -221,6 +287,8 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         githubButton?.layer?.backgroundColor = showingBoard ? on : off
         claudeButton?.contentTintColor = showingBoard ? .secondaryLabelColor : .white
         githubButton?.contentTintColor = showingBoard ? .white : .secondaryLabelColor
+        (claudeButton as? HoverButton)?.hoverEnabled = showingBoard
+        (githubButton as? HoverButton)?.hoverEnabled = !showingBoard
     }
 
     @objc private func showClaudeTapped() { showTerminal() }
@@ -274,18 +342,23 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
             }
         }
         lastStatus = status
-        statusBadge.stringValue = text
-        statusBadge.textColor = color
-        statusBadge.toolTip = text
+        applyBadge(text: text, color: color)
     }
 
     /// 終了系の固定バッジを表示し、以降のステータス更新を止める。
     private func setTerminalBadge(_ text: String, color: NSColor) {
         ended = true
         terminal.stopStatusMonitoring()
+        applyBadge(text: text, color: color)
+    }
+
+    /// バッジの文字色とピル背景色（状態色を薄く敷く）をまとめて更新する。
+    private func applyBadge(text: String, color: NSColor) {
         statusBadge.stringValue = text
         statusBadge.textColor = color
         statusBadge.toolTip = text
+        statusPill.toolTip = text
+        statusPill.layer?.backgroundColor = color.withAlphaComponent(0.16).cgColor
     }
 
     // MARK: - 終了処理
@@ -323,5 +396,41 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         guard !ended else { return }   // 上限到達などで既に終了表示済みなら上書きしない
         setTerminalBadge("● 終了", color: .secondaryLabelColor)
         onSessionEnded?(.exited(exitCode))
+    }
+}
+
+/// ホバーで薄いハイライト背景を出すアイコンボタン。
+/// `hoverEnabled` が false の間はハイライトしない（選択中トグルなど塗りつぶし優先のとき用）。
+final class HoverButton: NSButton {
+    var hoverEnabled: Bool = true {
+        didSet { if !hoverEnabled { setHover(false) } }
+    }
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        if hoverEnabled { setHover(true) }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        if hoverEnabled { setHover(false) }
+    }
+
+    private func setHover(_ on: Bool) {
+        layer?.backgroundColor = on
+            ? NSColor.labelColor.withAlphaComponent(0.12).cgColor
+            : NSColor.clear.cgColor
     }
 }
