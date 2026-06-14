@@ -24,6 +24,7 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 | App Store 連携 | 稼働（要 API キー設定） | `server/src/core/appstore.ts` |
 | Google カレンダー連携 | 稼働（要 OAuth 設定）／会話は claude.ai MCP | `server/src/core/calendar.ts` |
 | スプレッドシート勉強管理 | 未着手 | - |
+| claude-deck（Claude Code 司令塔アプリ） | PoC（Swift/macOS・ビルド可） | `desktop/` |
 
 ## 他プロジェクト管理
 
@@ -138,6 +139,19 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 2. scope `https://www.googleapis.com/auth/calendar` で同意し **refresh token** を取得（OAuth Playground 等）。
 3. `secrets/google-credentials.json`（`*.example.json` をコピー）に clientId/clientSecret/refreshToken/calendarId を記入。または環境変数 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` / `GOOGLE_CALENDAR_ID`。
 4. `cd server && npm run collect` で予定が `calendar` に入る。未設定なら `calendar: null`（カードは非表示）で安全に no-op。
+
+## claude-deck（Claude Code 司令塔アプリ）
+
+`desktop/` にある Swift/macOS ネイティブアプリ。プロジェクトごとに `claude`（Claude Code）を端末として同時起動する。SwiftTerm（VT100 エミュレータ + PTY ホスト）使用。詳細は `desktop/README.md`。
+
+- **配置**: ai-manager 内 `desktop/`（SPM 実行ファイル `claude-deck`）。`registry.tsv` に管理対象として登録済み。
+- **プロジェクト一覧（左欄）**: 各行は名称 + フルパス表示。ユーザーが自由に追加（「+」でフォルダ選択）・削除（「−」/Delete/右クリック）でき、`~/Library/Application Support/claude-deck/projects.json` に永続化。起動はダブルクリック/Enter。初回のみ `registry.tsv` から取り込む（取り込みボタンでマージ可）。
+- **メイン領域**: 開いたセッションをタブではなく**タイル状グリッドで同時表示**。各ペインに見出し + ✕（個別クローズ）。同一プロジェクトはフォーカスのみで重複起動しない。
+- **ペイン内 Claude Code / GitHub 切替**: `github-projects.tsv` にマッピングがあるプロジェクトは、ペイン見出しのセグメントで GitHub Project 画面に切替可能（無いものは切替を出さない）。GitHub 画面は Issue をステータス別（Todo/In Progress/Debug/Review/Done）にグループ表示し、行クリックで GitHub を開く。取得は `gh project item-list --format json`（gh 認証 + project スコープ前提）。`gh` 出力形状は実機検証済み。
+- **ペイン内「Xcodeで開く」ボタン**: プロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリ含む）に `.xcworkspace`/`.xcodeproj` があるペインだけ、見出しに🔨ボタンを出す（`TerminalPaneViewController.findXcodeProject`）。押すと `NSWorkspace.open` で Xcode の GUI が開く（実行＝Cmd+R はユーザー操作）。iOS/Mac アプリの動作確認用。`.xcworkspace` 優先・最も浅い階層を選択。SPM のみ（claude-deck 自身等）は非表示。ワンクリックでのシミュレータ自動実行（`xcodebuild`/`simctl`）は将来。
+- **設計の絶対方針（料金事故ゼロ）**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路を作らないため、Max 枠の上限に達しても課金は発生しない（待つだけ）。**headless（`claude -p` / Agent SDK）の起動口は設けない方針**。
+- **上限到達で強制終了**: PTY 出力を監視し「上限到達」文言を検知したらセッションを `terminate()`。検知文言は要・実機検証（`ClaudeTerminalView.swift` の `limitPhrases`）。正確な残量 API は無いため事後トリガー方式。
+- **ビルド/実行**: `cd desktop && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み。`.app` 署名・配布は未対応（PoC）。
 
 ## スプレッドシート勉強管理
 
