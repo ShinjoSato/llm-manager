@@ -142,6 +142,12 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
             xcodeButton.toolTip = "Xcodeで開く（\(xcodeProjectURL?.lastPathComponent ?? "")）"
             headerViews.append(xcodeButton)
         }
+        // スクリーンショット📷（ペイン全体を PNG 保存）。閉じる✕の手前に置く。
+        let cameraSymbol = NSImage(systemSymbolName: "camera", accessibilityDescription: "スクリーンショットを保存") != nil
+            ? "camera" : "camera.fill"
+        let cameraButton = makeHeaderButton(
+            symbol: cameraSymbol, tooltip: "スクリーンショットを保存", action: #selector(screenshotTapped))
+        headerViews.append(cameraButton)
         headerViews.append(closeButton)
 
         let header = NSStackView(views: headerViews)
@@ -380,6 +386,53 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     @objc private func openInXcodeTapped() {
         guard let url = xcodeProjectURL else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    /// ペイン全体（端末／ボードどちらが前面でもそのまま）を PNG として `~/Desktop` に保存し、
+    /// Finder で保存先を表示する。失敗時はアラートで通知する。
+    @objc private func screenshotTapped() {
+        let target = self.view
+        let bounds = target.bounds
+        guard bounds.width > 0, bounds.height > 0,
+              let rep = target.bitmapImageRepForCachingDisplay(in: bounds) else {
+            showScreenshotError("ペインの描画領域を取得できませんでした。")
+            return
+        }
+        rep.size = bounds.size
+        target.cacheDisplay(in: bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            showScreenshotError("PNG への変換に失敗しました。")
+            return
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+        // ファイル名に使えない文字（空白・スラッシュ・コロン等）を `-` に置換。
+        let invalid = CharacterSet(charactersIn: " /\\:*?\"<>|")
+        let safeName = project.name
+            .components(separatedBy: invalid)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+        let fileName = "claude-deck-\(safeName.isEmpty ? "project" : safeName)-\(timestamp).png"
+        let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+        let url = desktop.appendingPathComponent(fileName)
+
+        do {
+            try png.write(to: url)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            showScreenshotError("保存に失敗しました: \(error.localizedDescription)")
+        }
+    }
+
+    private func showScreenshotError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "スクリーンショットを保存できませんでした"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc private func closeTapped() {
