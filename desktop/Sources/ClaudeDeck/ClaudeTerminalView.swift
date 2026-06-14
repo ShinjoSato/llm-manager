@@ -31,21 +31,25 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     private var statusTimer: Timer?
     private var lastDataTime = Date()
     private var currentStatus: ClaudeStatus = .idle
-    /// 直近の画面末尾に応答待ちプロンプトが見えているか（データ受信側で更新し、タイマー側は参照のみ）。
-    private var waitingPromptVisible = false
 
-    /// 「最後の出力からこの秒数以内」なら出力が流れている＝作業中とみなす。
-    /// 生成中はスピナーが常時再描画され出力が途切れないため、活動量で安定検知できる。
-    private static let busyThreshold: TimeInterval = 0.6
+    /// 「最後の出力からこの秒数以内」なら出力が流れている＝作業中とみなす（活動量ベース）。
+    private static let busyThreshold: TimeInterval = 1.0
+
+    /// 実行中インジケータ。これが現在画面に出ている間は、出力が一時的に止まっても作業中とみなす。
+    /// 長い bash 実行やネット待ちで出力が途切れても「完了」へ誤遷移しないための補助シグナル。
+    /// ⚠️ Claude Code の TUI 文言に合わせて要・実機検証。
+    private static let busyMarkers: [String] = [
+        "esc to interrupt"
+    ]
 
     /// 応答待ち（入力待ち）を示す文言の候補（大文字小文字無視・部分一致）。
+    /// 通常の回答本文との誤検知を避けるため、権限プロンプト固有の言い回しに絞る。
     /// ⚠️ 実際の Claude Code の権限確認/質問プロンプト文言に合わせて要・実機検証。
     private static let waitingPhrases: [String] = [
-        "do you want",
-        "❯ 1.",
-        "1. yes",
-        "press enter to continue",
-        "(y/n)"
+        "do you want to proceed",
+        "yes, and don't ask again",
+        "no, and tell claude",
+        "❯ 1. yes"
     ]
 
     /// 上限到達を示す文言の候補（大文字小文字無視・部分一致）。
@@ -97,20 +101,39 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         statusTimer = nil
     }
 
-    /// 活動量とプロンプト文言から現在のステータスを判定し、変化時のみ通知する。
+    /// 現在のステータスを判定し、変化時のみ通知する。
+    /// 判定は端末の「現在画面の下数行」を直接読む（履歴が累積する scanBuffer は使わない）ため、
+    /// プロンプト応答後に古い文言が残って誤判定する問題が起きない。
+    /// dataReceived も Timer も SwiftTerm 既定キュー（main）上で動くので端末バッファ参照は安全。
     private func evaluateStatus() {
-        // scanBuffer（String）はデータ受信スレッドが書き換えるため、ここでは触らない。
-        // 参照するのはプリミティブ値（lastDataTime / waitingPromptVisible）のみ。
+        let tail = visibleTailText(lines: 8)
         let quiet = Date().timeIntervalSince(lastDataTime)
         let newStatus: ClaudeStatus
-        if quiet < Self.busyThreshold {
+        if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
             newStatus = .working
+        } else if Self.waitingPhrases.contains(where: { tail.contains($0) }) {
+            newStatus = .waitingInput
         } else {
-            newStatus = waitingPromptVisible ? .waitingInput : .idle
+            newStatus = .idle
         }
         guard newStatus != currentStatus else { return }
         currentStatus = newStatus
         onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
+    }
+
+    /// 現在表示中の画面の下から `lines` 行を、小文字化して連結した文字列で返す。
+    private func visibleTailText(lines: Int) -> String {
+        let term = getTerminal()
+        let rows = term.rows
+        guard rows > 0 else { return "" }
+        var text = ""
+        for r in max(0, rows - lines)..<rows {
+            if let line = term.getLine(row: r) {
+                text += line.translateToString(trimRight: true)
+                text += "\n"
+            }
+        }
+        return text.lowercased()
     }
 
     /// 親プロセスの環境を引き継ぎつつ、課金経路となる API キーを除去した環境を作る。
@@ -143,9 +166,6 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             DispatchQueue.main.async { [weak self] in self?.onLimitReached?() }
             break
         }
-        // 応答待ちプロンプトの有無を、直近の画面（末尾）から判定して記録する。
-        let tail = String(cleaned.suffix(1500))
-        waitingPromptVisible = Self.waitingPhrases.contains(where: { tail.contains($0) })
         // バッファは末尾だけ保持（文言は分割受信されうるので少し広めに）
         if scanBuffer.count > 8192 {
             scanBuffer = String(scanBuffer.suffix(8192))
