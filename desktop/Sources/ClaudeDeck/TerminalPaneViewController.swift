@@ -1,0 +1,223 @@
+import AppKit
+import SwiftTerm
+
+/// 1ペイン = 1プロジェクト。Claude Code（端末）と GitHub Project（ボード）を切り替えて表示する。
+/// GitHub ボードのマッピングが無いプロジェクトでは切替を出さず、Claude Code のみ表示する。
+final class TerminalPaneViewController: NSViewController, LocalProcessTerminalViewDelegate {
+
+    enum EndReason {
+        case limitReached
+        case exited(Int32?)
+    }
+
+    let project: ManagedProject
+    var onSessionEnded: ((EndReason) -> Void)?
+    var onClose: (() -> Void)?
+
+    private var terminal: ClaudeTerminalView!
+    private let titleLabel = NSTextField(labelWithString: "")
+    private var started = false
+
+    // GitHub ボード（マッピングがあるときだけ生成）
+    private let boardMapping: BoardMapping?
+    private var boardView: GitHubBoardView?
+    private let contentContainer = NSView()
+    private var claudeButton: NSButton?
+    private var githubButton: NSButton?
+
+    init(project: ManagedProject) {
+        self.project = project
+        self.boardMapping = GitHubBoard.mapping(forProject: project)
+        super.init(nibName: nil, bundle: nil)
+        self.title = project.name
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func loadView() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 360))
+        root.wantsLayer = true
+        root.layer?.borderWidth = 1
+        root.layer?.borderColor = NSColor.separatorColor.cgColor
+
+        // 見出しバー
+        titleLabel.stringValue = project.name
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.toolTip = project.path
+
+        let closeButton = NSButton(
+            image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "閉じる") ?? NSImage(),
+            target: self, action: #selector(closeTapped))
+        closeButton.isBordered = false
+        closeButton.bezelStyle = .regularSquare
+        closeButton.toolTip = "このペインを閉じる"
+
+        var headerViews: [NSView] = [titleLabel, NSView()]
+        if boardMapping != nil {
+            // テキストセグメントの代わりに円形アイコンの2トグルで切替（横幅をコンパクトに）
+            let claude = makeCircleToggle(
+                symbol: "terminal", tooltip: "Claude Code", action: #selector(showClaudeTapped))
+            let github = makeCircleToggle(
+                symbol: "checklist", tooltip: "GitHub Project", action: #selector(showGitHubTapped))
+            claudeButton = claude
+            githubButton = github
+            headerViews.append(claude)
+            headerViews.append(github)
+            updateToggleSelection(showingBoard: false)
+        }
+        headerViews.append(closeButton)
+
+        let header = NSStackView(views: headerViews)
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 6
+        header.edgeInsets = NSEdgeInsets(top: 2, left: 8, bottom: 2, right: 6)
+        header.wantsLayer = true
+        header.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        // 端末
+        let term = ClaudeTerminalView(frame: .zero)
+        term.processDelegate = self
+        term.onLimitReached = { [weak self] in self?.handleLimitReached() }
+        term.translatesAutoresizingMaskIntoConstraints = false
+        self.terminal = term
+
+        // コンテンツ領域（端末 / ボードを重ねて切替）
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.addSubview(term)
+        NSLayoutConstraint.activate([
+            term.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            term.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            term.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            term.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
+        ])
+
+        let stack = NSStackView(views: [header, contentContainer])
+        stack.orientation = .vertical
+        stack.spacing = 0
+        stack.distribution = .fill
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: root.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            header.heightAnchor.constraint(equalToConstant: 26),
+            header.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: stack.trailingAnchor)
+        ])
+        self.view = root
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        startIfNeeded()
+    }
+
+    /// claude を一度だけ起動する。
+    func startIfNeeded() {
+        guard !started else { return }
+        started = true
+        terminal.launchClaude(in: project.path)
+    }
+
+    func focusTerminal() {
+        view.window?.makeFirstResponder(terminal)
+    }
+
+    // MARK: - 表示切替
+
+    /// 円形アイコンのトグルボタンを生成する。
+    private func makeCircleToggle(symbol: String, tooltip: String, action: Selector) -> NSButton {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?
+            .withSymbolConfiguration(config)
+        let button = NSButton(image: image ?? NSImage(), target: self, action: action)
+        button.imagePosition = .imageOnly
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.toolTip = tooltip
+        button.wantsLayer = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        let diameter: CGFloat = 22
+        button.layer?.cornerRadius = diameter / 2
+        button.layer?.masksToBounds = true
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: diameter),
+            button.heightAnchor.constraint(equalToConstant: diameter)
+        ])
+        return button
+    }
+
+    /// 選択中のトグルだけを塗りつぶし表示にする。
+    private func updateToggleSelection(showingBoard: Bool) {
+        let on = NSColor.controlAccentColor.cgColor
+        let off = NSColor.clear.cgColor
+        claudeButton?.layer?.backgroundColor = showingBoard ? off : on
+        githubButton?.layer?.backgroundColor = showingBoard ? on : off
+        claudeButton?.contentTintColor = showingBoard ? .secondaryLabelColor : .white
+        githubButton?.contentTintColor = showingBoard ? .white : .secondaryLabelColor
+    }
+
+    @objc private func showClaudeTapped() { showTerminal() }
+    @objc private func showGitHubTapped() { showBoard() }
+
+    private func showTerminal() {
+        boardView?.isHidden = true
+        terminal.isHidden = false
+        updateToggleSelection(showingBoard: false)
+        focusTerminal()
+    }
+
+    private func showBoard() {
+        guard let mapping = boardMapping else { return }
+        if boardView == nil {
+            let bv = GitHubBoardView(mapping: mapping)   // 初回に gh で取得
+            bv.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(bv)
+            NSLayoutConstraint.activate([
+                bv.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+                bv.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+                bv.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+                bv.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
+            ])
+            boardView = bv
+        }
+        terminal.isHidden = true
+        boardView?.isHidden = false
+        updateToggleSelection(showingBoard: true)
+    }
+
+    // MARK: - 終了処理
+
+    private func handleLimitReached() {
+        terminal.terminate()
+        titleLabel.stringValue = "⛔ \(project.name)（上限到達）"
+        let alert = NSAlert()
+        alert.messageText = "Max 枠の上限に達しました"
+        alert.informativeText = "「\(project.name)」のセッションを強制終了しました。枠がリセットされるまでお待ちください。（API 課金は発生しません）"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        onSessionEnded?(.limitReached)
+    }
+
+    @objc private func closeTapped() {
+        terminal.terminate()
+        onClose?()
+    }
+
+    // MARK: - LocalProcessTerminalViewDelegate
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func processTerminated(source: TerminalView, exitCode: Int32?) {
+        titleLabel.stringValue = "● \(project.name)（終了）"
+        onSessionEnded?(.exited(exitCode))
+    }
+}
