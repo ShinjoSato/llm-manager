@@ -63,19 +63,19 @@ final class TileContainerViewController: NSViewController {
 /// パネル群を均等なグリッドに手動レイアウトするビュー。
 ///
 /// 並び替え（Issue #10）:
-/// - 各ペインの上端に薄い「ドラッグハンドル」オーバーレイ（grip）を TileView 自身が重ねて配置し、
-///   そのグリップ上の mouseDown/Dragged/Up でドラッグを受ける。
-///   （ペイン root にサブビューがあるとイベントが TileView 本体に届かないため、
-///    確実に開始点を取れるオーバーレイ方式を採用。ヘッダーのボタンはボタンが消費するので住み分く。）
+/// - 各ペイン**左上の小さな掴み（grip）**を TileView 自身が重ねて配置し、その上の
+///   mouseDown/Dragged/Up でドラッグを受ける。grip はヘッダー左端の小領域だけを占有するので、
+///   見出し右側のボタン（スクショ/閉じる/トグル等）を塞がない。
 /// - 並び替えは insert 方式: ドラッグ元を抜き、ドロップ座標から算出した index に挿入して再レイアウト。
 /// - 子プロセスには一切触れず、`panes` 配列の順序を入れ替えるだけ。
 private final class TileView: NSView {
     private(set) var panes: [NSView] = []
     private let gap: CGFloat = 6
-    private let handleHeight: CGFloat = 30   // ヘッダーのタイトル/余白帯に相当する高さ
+    private let handleWidth: CGFloat = 26    // 掴みの幅（ヘッダー左端の小領域）
+    private let handleHeight: CGFloat = 28   // ヘッダー帯に収まる高さ
 
     // 各ペインに対応するドラッグハンドル（grip）。panes と同じ index で対応させる。
-    private var grips: [NSView] = []
+    private var grips: [GripView] = []
 
     // ドラッグ中の状態
     private var draggingIndex: Int? = nil
@@ -90,7 +90,7 @@ private final class TileView: NSView {
         addSubview(view)
         panes.append(view)
 
-        // 対応するドラッグハンドルを生成（透明。grip 自身がマウスイベントを受ける）。
+        // 対応するドラッグハンドルを生成。grip 自身がマウスイベントを受ける。
         let grip = GripView()
         grip.onMouseDown = { [weak self, weak grip] event in self?.beginDrag(from: grip, event: event) }
         grip.onMouseDragged = { [weak self] event in self?.updateDrag(event: event) }
@@ -98,10 +98,13 @@ private final class TileView: NSView {
         addSubview(grip)
         grips.append(grip)
 
+        bringGripsToFront()
         needsLayout = true
     }
 
     func removePane(_ view: NSView) {
+        // 並び替え中のペインが消えた場合に備えて状態を確実にリセット。
+        resetDragState()
         if let idx = panes.firstIndex(where: { $0 === view }) {
             grips[idx].removeFromSuperview()
             grips.remove(at: idx)
@@ -109,6 +112,11 @@ private final class TileView: NSView {
         view.removeFromSuperview()
         panes.removeAll { $0 === view }
         needsLayout = true
+    }
+
+    /// すべての grip を最前面へ。reorder 後も grip が常にペインより前面でイベントを受けられるようにする。
+    private func bringGripsToFront() {
+        for grip in grips { addSubview(grip, positioned: .above, relativeTo: nil) }
     }
 
     // MARK: - グリッド計算（layout とドロップ index 算出で共有）
@@ -141,19 +149,21 @@ private final class TileView: NSView {
         for (i, pane) in panes.enumerated() {
             let rect = cellRect(i, n: n, g)
             pane.frame = rect
-            // ハンドルはセル上端の帯。ペインより前面に出して確実にイベントを受ける。
+            // 掴みはセル左上の小領域。ヘッダー右側のボタンは覆わない。
+            // ドラッグ中も grip を隠さない（隠すと mouseUp が届かず後始末できなくなるため）。
             if i < grips.count {
-                let grip = grips[i]
-                grip.frame = NSRect(x: rect.minX, y: rect.minY,
-                                    width: rect.width, height: min(handleHeight, rect.height))
-                grip.isHidden = (draggingIndex == i)   // ドラッグ中の元グリップは隠す
+                grips[i].frame = NSRect(x: rect.minX, y: rect.minY,
+                                        width: min(handleWidth, rect.width),
+                                        height: min(handleHeight, rect.height))
             }
         }
     }
 
     // MARK: - ドラッグ処理（insert 方式）
 
-    private func beginDrag(from grip: NSView?, event: NSEvent) {
+    private func beginDrag(from grip: GripView?, event: NSEvent) {
+        // 直前のドラッグが何らかの理由で終わっていなければ確実に後始末してから開始（ゴースト残留防止）。
+        resetDragState()
         guard let grip = grip, let idx = grips.firstIndex(where: { $0 === grip }) else { return }
         draggingIndex = idx
         let pane = panes[idx]
@@ -163,15 +173,13 @@ private final class TileView: NSView {
         // ドラッグ中ゴースト（半透明）を最前面に作成し、元ペインは薄く見せる。
         let ghost = NSView(frame: pane.frame)
         ghost.wantsLayer = true
-        ghost.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
+        ghost.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor
         ghost.layer?.borderColor = NSColor.controlAccentColor.cgColor
         ghost.layer?.borderWidth = 2
-        ghost.layer?.cornerRadius = 4
+        ghost.layer?.cornerRadius = 6
         addSubview(ghost, positioned: .above, relativeTo: nil)
         dragGhost = ghost
-        pane.alphaValue = 0.4
-        // 元グリップを隠してゴーストが前面で動けるようにする。
-        needsLayout = true
+        pane.alphaValue = 0.5
     }
 
     private func updateDrag(event: NSEvent) {
@@ -181,15 +189,12 @@ private final class TileView: NSView {
     }
 
     private func endDrag(event: NSEvent) {
-        guard let from = draggingIndex else { return }
+        guard let from = draggingIndex else { resetDragState(); return }
         let pt = convert(event.locationInWindow, from: nil)
         let to = dropIndex(at: pt)
 
-        // 後片付け
-        dragGhost?.removeFromSuperview()
-        dragGhost = nil
-        panes[from].alphaValue = 1.0
-        draggingIndex = nil
+        // ゴースト除去・減光復帰・draggingIndex クリアは必ずこの一経路で行う。
+        resetDragState()
 
         // insert 方式: from を抜いて to に挿入（panes と grips を同期して並べ替え）。
         if to != from {
@@ -198,8 +203,18 @@ private final class TileView: NSView {
             let clamped = min(max(to, 0), panes.count)
             panes.insert(pane, at: clamped)
             grips.insert(grip, at: clamped)
+            bringGripsToFront()
         }
         needsLayout = true
+    }
+
+    /// ドラッグ状態を完全に解消する（ゴースト除去・全ペインの減光復帰・index クリア）。
+    /// これを通さない終了経路を作らないことで「青い選択が残って消えない」不具合を防ぐ。
+    private func resetDragState() {
+        dragGhost?.removeFromSuperview()
+        dragGhost = nil
+        for pane in panes { pane.alphaValue = 1.0 }
+        draggingIndex = nil
     }
 
     /// ドロップ座標がどのスロット（挿入先 index）に当たるかをグリッドから算出。
@@ -220,11 +235,38 @@ private final class TileView: NSView {
     }
 }
 
-/// 透明なドラッグハンドル。マウスイベントをクロージャで TileView に橋渡しする。
+/// ヘッダー左端に置く小さなドラッグハンドル。2×3 のドットで「掴み」を示し、
+/// マウスイベントをクロージャで TileView に橋渡しする。
 private final class GripView: NSView {
     var onMouseDown: ((NSEvent) -> Void)?
     var onMouseDragged: ((NSEvent) -> Void)?
     var onMouseUp: ((NSEvent) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        toolTip = "ドラッグしてペインを並べ替え"
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    // ウィンドウが非アクティブでも最初のクリックでドラッグを開始できるようにする。
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.tertiaryLabelColor.setFill()
+        let r: CGFloat = 1.5
+        let (cols, rows) = (2, 3)
+        let (spacingX, spacingY): (CGFloat, CGFloat) = (5, 5)
+        let startX = bounds.midX - CGFloat(cols - 1) * spacingX / 2
+        let startY = bounds.midY - CGFloat(rows - 1) * spacingY / 2
+        for cx in 0..<cols {
+            for cy in 0..<rows {
+                let x = startX + CGFloat(cx) * spacingX - r
+                let y = startY + CGFloat(cy) * spacingY - r
+                NSBezierPath(ovalIn: NSRect(x: x, y: y, width: r * 2, height: r * 2)).fill()
+            }
+        }
+    }
 
     override func mouseDown(with event: NSEvent) { onMouseDown?(event) }
     override func mouseDragged(with event: NSEvent) { onMouseDragged?(event) }
