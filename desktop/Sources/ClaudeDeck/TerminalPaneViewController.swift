@@ -16,6 +16,9 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
 
     private var terminal: ClaudeTerminalView!
     private let titleLabel = NSTextField(labelWithString: "")
+    private let statusBadge = NSTextField(labelWithString: "")
+    private var lastStatus: ClaudeStatus?
+    private var ended = false
     private var started = false
 
     // GitHub ボード（マッピングがあるときだけ生成）
@@ -47,6 +50,12 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         titleLabel.lineBreakMode = .byTruncatingMiddle
         titleLabel.toolTip = project.path
 
+        // 作業ステータスのバッジ
+        statusBadge.font = .systemFont(ofSize: 11, weight: .medium)
+        statusBadge.setContentHuggingPriority(.required, for: .horizontal)
+        statusBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        updateStatusBadge(.idle)
+
         let closeButton = NSButton(
             image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "閉じる") ?? NSImage(),
             target: self, action: #selector(closeTapped))
@@ -54,7 +63,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         closeButton.bezelStyle = .regularSquare
         closeButton.toolTip = "このペインを閉じる"
 
-        var headerViews: [NSView] = [titleLabel, NSView()]
+        var headerViews: [NSView] = [titleLabel, statusBadge, NSView()]
         if boardMapping != nil {
             // テキストセグメントの代わりに円形アイコンの2トグルで切替（横幅をコンパクトに）
             let claude = makeCircleToggle(
@@ -81,6 +90,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         let term = ClaudeTerminalView(frame: .zero)
         term.processDelegate = self
         term.onLimitReached = { [weak self] in self?.handleLimitReached() }
+        term.onStatusChanged = { [weak self] in self?.updateStatusBadge($0) }
         term.translatesAutoresizingMaskIntoConstraints = false
         self.terminal = term
 
@@ -193,11 +203,47 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         updateToggleSelection(showingBoard: true)
     }
 
+    // MARK: - ステータスバッジ
+
+    /// ステータスに応じてバッジの文言・色を更新する。
+    /// 終了・上限到達後（ended）は端末由来の状態通知を無視する。
+    private func updateStatusBadge(_ status: ClaudeStatus) {
+        guard !ended else { return }
+        let text: String
+        let color: NSColor
+        switch status {
+        case .working:
+            text = "● 作業中"; color = .systemGreen
+        case .waitingInput:
+            text = "● 入力待ち"; color = .systemOrange
+        case .idle:
+            // 直前が作業中なら「完了」、それ以外は「待機中」。
+            if lastStatus == .working {
+                text = "● 完了"; color = .systemBlue
+            } else {
+                text = "● 待機中"; color = .secondaryLabelColor
+            }
+        }
+        lastStatus = status
+        statusBadge.stringValue = text
+        statusBadge.textColor = color
+        statusBadge.toolTip = text
+    }
+
+    /// 終了系の固定バッジを表示し、以降のステータス更新を止める。
+    private func setTerminalBadge(_ text: String, color: NSColor) {
+        ended = true
+        terminal.stopStatusMonitoring()
+        statusBadge.stringValue = text
+        statusBadge.textColor = color
+        statusBadge.toolTip = text
+    }
+
     // MARK: - 終了処理
 
     private func handleLimitReached() {
+        setTerminalBadge("⛔ 上限到達", color: .systemRed)   // ended=true（後続の processTerminated を抑止）
         terminal.terminate()
-        titleLabel.stringValue = "⛔ \(project.name)（上限到達）"
         let alert = NSAlert()
         alert.messageText = "Max 枠の上限に達しました"
         alert.informativeText = "「\(project.name)」のセッションを強制終了しました。枠がリセットされるまでお待ちください。（API 課金は発生しません）"
@@ -208,6 +254,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     }
 
     @objc private func closeTapped() {
+        terminal.stopStatusMonitoring()
         terminal.terminate()
         onClose?()
     }
@@ -217,7 +264,8 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func processTerminated(source: TerminalView, exitCode: Int32?) {
-        titleLabel.stringValue = "● \(project.name)（終了）"
+        guard !ended else { return }   // 上限到達などで既に終了表示済みなら上書きしない
+        setTerminalBadge("● 終了", color: .secondaryLabelColor)
         onSessionEnded?(.exited(exitCode))
     }
 }
