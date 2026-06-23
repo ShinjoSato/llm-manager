@@ -5,6 +5,8 @@
 //   GET  /api/state             手動レイヤー
 //   POST /api/state             手動レイヤーを保存
 //   GET  /api/appstore/:name?   App Store 状況（個別/全件）
+//   GET  /api/ranking           App Store ランキング（自アプリ順位つき）
+//   GET  /api/trends            Google Trends 急上昇
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
@@ -14,6 +16,8 @@ import { join, relative } from "node:path";
 import { collect, collectAndSave, readDashboard } from "../core/collect.js";
 import { readState, writeState } from "../core/state.js";
 import { collectAppStore } from "../core/appstore.js";
+import { collectRanking } from "../core/ranking.js";
+import { collectTrends } from "../core/trends.js";
 import { ROOT } from "../core/paths.js";
 import type { ManagerState } from "../../../shared/types.js";
 
@@ -40,6 +44,10 @@ app.get("/api/appstore/:name?", async (c) => {
   const name = c.req.param("name");
   return c.json(await collectAppStore(name));
 });
+
+app.get("/api/ranking", async (c) => c.json(await collectRanking()));
+
+app.get("/api/trends", async (c) => c.json(await collectTrends()));
 
 // 本番: web のビルド成果物を配信（存在すれば）。root は cwd 相対で解決される。
 const WEB_DIST = join(ROOT, "web", "dist");
