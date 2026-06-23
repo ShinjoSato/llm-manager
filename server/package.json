@@ -8,6 +8,7 @@
     "http": "tsx src/http/server.ts",
     "mcp": "tsx src/mcp/server.ts",
     "collect": "tsx src/cli.ts",
+    "asc": "tsx src/appstore-cli.ts",
     "google-auth": "tsx src/google-auth.ts",
     "typecheck": "tsc --noEmit"
   },
