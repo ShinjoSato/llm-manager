@@ -24,9 +24,11 @@ desktop/
     SidebarViewController.swift     プロジェクト一覧（名称 + パス表示・追加/削除）
     ProjectStore.swift              一覧の永続化（Application Support の JSON）
     TileContainerViewController.swift 開いたセッションをタイル状に同時表示・グリッド配置
-    TerminalPaneViewController.swift 1ペイン = Claude Code / GitHub を切替（見出し + ✕）
+    TerminalPaneViewController.swift 1ペイン = Claude Code / GitHub / App Store を切替（見出し + ✕）
     GitHubBoard.swift               github-projects.tsv 読込 + gh によるボード取得
     GitHubBoardView.swift           Issue をステータス別にグループ表示（クリックで GitHub を開く）
+    AppStoreClient.swift            appstore.tsv 読込 + server HTTP API（/api/appstore）の取得
+    AppStoreView.swift              審査/提出/ビルド/評価サマリ表示（Web の AppStoreCard 相当）
     ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 上限文言監視
     ProjectRegistry.swift       projects/registry.tsv のパーサ
 ```
@@ -58,6 +60,16 @@ GitHub Project のマッピングがあるプロジェクトは、ペイン見�
 - マッピング元: `projects/github-projects.tsv`（name / owner / number / repo / url）。**マッピングが無いプロジェクトでは切替を出さず Claude Code のみ**。
 - 取得は `gh project item-list <number> --owner <owner> --format json` をログインシェル経由で実行（**`gh` の認証 + `project` スコープが前提**）。
 - 解決順（github-projects.tsv）: 環境変数 `CLAUDE_DECK_GH_PROJECTS` → 上方探索 → 既定 `/Users/shinjo/project/ai-manager/projects/github-projects.tsv`。
+
+### ペイン内: App Store 切替
+
+`projects/appstore.tsv` に登録があるプロジェクト（mirio / sandora 等）は、ペイン見出しに **App Store** トグル（🅰️ `app.badge`）が追加で出る。
+
+- **App Store**: そのアプリの審査ステータス・最新 TestFlight ビルド・レビュー件数などを **Web の AppStoreCard 相当のサマリ**で表示。REJECT/FAILED 系は赤、配信中/完了/利用可は緑のバッジ（Web と色基準を合わせている）。右上の 🔄 で再取得。
+- ロジックは **server に一本化**。claude-deck は ASC API を直接叩かず、既存 HTTP API `GET /api/appstore/:name` を fetch するだけ（二重実装しない）。
+- 前提: **server（`:8765`）が起動していること**（`./scripts/dev.sh` 等）。**server 未起動・API エラー・認証未設定時は、その旨をペイン内に文言表示してフォールバック**（アプリは落とさない）。
+- 対象判定元: `projects/appstore.tsv`（name / bundleId）。**登録が無いプロジェクトでは App Store トグルを出さない**。
+- 解決順（appstore.tsv）: 環境変数 `CLAUDE_DECK_APPSTORE_TSV` → 上方探索 → 既定 `/Users/shinjo/project/ai-manager/projects/appstore.tsv`。API ベース URL は `CLAUDE_DECK_API_BASE`（既定 `http://localhost:8765`）で差し替え可能。
 
 **永続化先**: `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。
 **初回のみ** `registry.tsv` から取り込んで空にしない（以降は完全にユーザー管理）。
