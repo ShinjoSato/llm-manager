@@ -29,12 +29,22 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     private var claudeButton: NSButton?
     private var githubButton: NSButton?
 
+    // App Store 表示（appstore.tsv に登録があるときだけ生成）
+    private let hasAppStore: Bool
+    private var appStoreView: AppStoreView?
+    private var appStoreButton: NSButton?
+
+    /// 現在前面に出しているコンテンツ。
+    private enum Pane { case terminal, github, appstore }
+    private var currentPane: Pane = .terminal
+
     // Xcode プロジェクト（プロジェクト直下に見つかったときだけ「Xcodeで開く」ボタンを出す）
     private let xcodeProjectURL: URL?
 
     init(project: ManagedProject) {
         self.project = project
         self.boardMapping = GitHubBoard.mapping(forProject: project)
+        self.hasAppStore = AppStoreClient.isRegistered(projectNamed: project.name)
         self.xcodeProjectURL = Self.findXcodeProject(in: project.path)
         super.init(nibName: nil, bundle: nil)
         self.title = project.name
@@ -121,17 +131,26 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
             symbol: "xmark", tooltip: "このペインを閉じる", action: #selector(closeTapped))
 
         var headerViews: [NSView] = [titleLabel, statusPill, NSView()]
-        if boardMapping != nil {
-            // テキストセグメントの代わりに円形アイコンの2トグルで切替（横幅をコンパクトに）
+        // GitHub ボードまたは App Store のどちらかがあるとき、切替用の円形トグルを出す。
+        // テキストセグメントの代わりに円形アイコンのトグルで切替（横幅をコンパクトに）。
+        if boardMapping != nil || hasAppStore {
             let claude = makeCircleToggle(
                 symbol: "terminal", tooltip: "Claude Code", action: #selector(showClaudeTapped))
-            let github = makeCircleToggle(
-                symbol: "checklist", tooltip: "GitHub Project", action: #selector(showGitHubTapped))
             claudeButton = claude
-            githubButton = github
             headerViews.append(claude)
-            headerViews.append(github)
-            updateToggleSelection(showingBoard: false)
+            if boardMapping != nil {
+                let github = makeCircleToggle(
+                    symbol: "checklist", tooltip: "GitHub Project", action: #selector(showGitHubTapped))
+                githubButton = github
+                headerViews.append(github)
+            }
+            if hasAppStore {
+                let appstore = makeCircleToggle(
+                    symbol: "app.badge", tooltip: "App Store", action: #selector(showAppStoreTapped))
+                appStoreButton = appstore
+                headerViews.append(appstore)
+            }
+            updateToggleSelection()
         }
         if xcodeProjectURL != nil {
             let xcodeButton = NSButton(
@@ -286,24 +305,29 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
 
     /// 選択中のトグルだけを塗りつぶし表示にする。
     /// 非選択側はホバーで薄いハイライトが出るよう hoverEnabled を切り替える。
-    private func updateToggleSelection(showingBoard: Bool) {
+    private func updateToggleSelection() {
         let on = NSColor.controlAccentColor.cgColor
         let off = NSColor.clear.cgColor
-        claudeButton?.layer?.backgroundColor = showingBoard ? off : on
-        githubButton?.layer?.backgroundColor = showingBoard ? on : off
-        claudeButton?.contentTintColor = showingBoard ? .secondaryLabelColor : .white
-        githubButton?.contentTintColor = showingBoard ? .white : .secondaryLabelColor
-        (claudeButton as? HoverButton)?.hoverEnabled = showingBoard
-        (githubButton as? HoverButton)?.hoverEnabled = !showingBoard
+        func apply(_ button: NSButton?, selected: Bool) {
+            button?.layer?.backgroundColor = selected ? on : off
+            button?.contentTintColor = selected ? .white : .secondaryLabelColor
+            (button as? HoverButton)?.hoverEnabled = !selected
+        }
+        apply(claudeButton, selected: currentPane == .terminal)
+        apply(githubButton, selected: currentPane == .github)
+        apply(appStoreButton, selected: currentPane == .appstore)
     }
 
     @objc private func showClaudeTapped() { showTerminal() }
     @objc private func showGitHubTapped() { showBoard() }
+    @objc private func showAppStoreTapped() { showAppStore() }
 
     private func showTerminal() {
         boardView?.isHidden = true
+        appStoreView?.isHidden = true
         terminal.isHidden = false
-        updateToggleSelection(showingBoard: false)
+        currentPane = .terminal
+        updateToggleSelection()
         focusTerminal()
     }
 
@@ -322,8 +346,31 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
             boardView = bv
         }
         terminal.isHidden = true
+        appStoreView?.isHidden = true
         boardView?.isHidden = false
-        updateToggleSelection(showingBoard: true)
+        currentPane = .github
+        updateToggleSelection()
+    }
+
+    private func showAppStore() {
+        guard hasAppStore else { return }
+        if appStoreView == nil {
+            let av = AppStoreView(projectName: project.name)   // 初回に server HTTP API で取得
+            av.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(av)
+            NSLayoutConstraint.activate([
+                av.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+                av.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+                av.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+                av.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
+            ])
+            appStoreView = av
+        }
+        terminal.isHidden = true
+        boardView?.isHidden = true
+        appStoreView?.isHidden = false
+        currentPane = .appstore
+        updateToggleSelection()
     }
 
     // MARK: - ステータスバッジ
