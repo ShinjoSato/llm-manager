@@ -5,6 +5,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { collect, collectAndSave, readDashboard } from "../core/collect.js";
 import { collectAppStore } from "../core/appstore.js";
+import { collectRanking } from "../core/ranking.js";
+import { collectTrends } from "../core/trends.js";
 import { collectCalendar, createEvent } from "../core/calendar.js";
 import { readState, writeState } from "../core/state.js";
 import { readTsv } from "../core/tsv.js";
@@ -62,6 +64,30 @@ server.registerTool(
     inputSchema: { project: z.string().optional().describe("管理対象名（例: mirio）。省略で全件") },
   },
   async ({ project }) => json(await collectAppStore(project)),
+);
+
+server.registerTool(
+  "get_ranking",
+  {
+    title: "App Store ランキング",
+    description:
+      "Apple Marketing Tools RSS（無料）から App Store ランキング（既定 jp の top-free/top-grossing）を返す。" +
+      "自アプリ（appstore.tsv）の各チャートでの順位（または圏外=null）も付与する。",
+    inputSchema: {},
+  },
+  async () => json(await collectRanking()),
+);
+
+server.registerTool(
+  "get_trends",
+  {
+    title: "Google Trends 急上昇",
+    description:
+      "Google Trends 公式 RSS（無料）からその日の急上昇検索ワード（おおよそのボリューム・関連ニュース付き）を返す。" +
+      "geo は地域コード（既定 JP）。",
+    inputSchema: { geo: z.string().optional().describe("地域コード（既定 JP）") },
+  },
+  async ({ geo }) => json(await collectTrends(geo ?? "JP")),
 );
 
 server.registerTool(
