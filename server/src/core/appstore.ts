@@ -94,7 +94,8 @@ export function makeJwt(creds: Credentials): string {
   return signingInput + "." + b64url(sig);
 }
 
-async function apiGet(
+/** ASC API への GET。書き込み CLI からも再利用するため export（シグネチャ不変）。 */
+export async function apiGet(
   token: string, path: string, accept = "application/json",
 ): Promise<any> {
   const url = path.startsWith("http") ? path : API + path;
