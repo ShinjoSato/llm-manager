@@ -47,7 +47,7 @@ async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
 /** 1チャート分を取得。 */
 async function fetchChart(spec: ChartSpec): Promise<RankingChart> {
   const url = `${RSS_BASE}/${spec.country}/apps/${spec.kind}/${spec.count}/apps.json`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`RSS ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const feed = ((await res.json()) as any).feed ?? {};
   const apps: RankingApp[] = (feed.results ?? []).map((r: any, i: number) => ({
@@ -78,7 +78,10 @@ async function resolveAppIds(bundleIds: string[]): Promise<Record<string, string
     try {
       const res = await fetch(
         `${ASC_API}/v1/apps?filter[bundleId]=${encodeURIComponent(bid)}&fields[apps]=bundleId`,
-        { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
+        {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(8000),
+        },
       );
       if (!res.ok) continue;
       const data = ((await res.json()) as any).data ?? [];

@@ -71,7 +71,7 @@ server.registerTool(
   {
     title: "App Store ランキング",
     description:
-      "Apple Marketing Tools RSS（無料）から App Store ランキング（既定 jp の top-free/top-grossing）を返す。" +
+      "Apple Marketing Tools RSS（無料）から App Store ランキング（既定 jp の top-free/top-paid）を返す。" +
       "自アプリ（appstore.tsv）の各チャートでの順位（または圏外=null）も付与する。",
     inputSchema: {},
   },

@@ -63,7 +63,9 @@ function parseItems(xml: string): TrendItem[] {
 /** Google Trends 急上昇を取得。失敗しても error 付きで安全に返す。 */
 export async function collectTrends(geo = "JP"): Promise<TrendsData> {
   try {
-    const res = await fetch(`${RSS_URL}?geo=${encodeURIComponent(geo)}`);
+    const res = await fetch(`${RSS_URL}?geo=${encodeURIComponent(geo)}`, {
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) throw new Error(`RSS ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const xml = await res.text();
     const items = parseItems(xml);
