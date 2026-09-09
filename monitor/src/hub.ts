@@ -1,0 +1,346 @@
+// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を購読者へ流す。
+import { EventEmitter } from "node:events";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
+import { scanSessions } from "./inventory.js";
+import { resolveTranscript, subagentDir } from "./paths.js";
+import { primeMeta, TranscriptReader } from "./transcript.js";
+import type {
+  FeedItem,
+  FeedKind,
+  HookPayload,
+  RawSession,
+  SessionSnapshot,
+  SessionStatus,
+  StatusSource,
+  TokenUsage,
+} from "./types.js";
+
+/** 最後の活動からこの時間内なら「稼働中」とみなす（フックが無い時の推定）。 */
+const WORKING_WINDOW_MS = 15_000;
+/** サブエージェントのログがこの時間内に更新されていれば稼働中とみなす。 */
+const AGENT_WINDOW_MS = 60_000;
+const INVENTORY_INTERVAL_MS = 3_000;
+const TRANSCRIPT_INTERVAL_MS = 250;
+const FEED_LIMIT = 300;
+
+interface SessionState {
+  raw: RawSession;
+  reader: TranscriptReader | null;
+  transcriptPath: string | null;
+  branch: string | null;
+  title: string | null;
+  lastPrompt: string | null;
+  lastActivityAt: number | null;
+  currentTool: string | null;
+  recentTools: string[];
+  tokens: TokenUsage | null;
+  hookStatus: SessionStatus | null;
+  hookDetail: string | null;
+  hookAt: number;
+  activeAgents: number;
+}
+
+export class SessionHub extends EventEmitter {
+  private sessions = new Map<string, SessionState>();
+  private feed: FeedItem[] = [];
+  private feedSeq = 0;
+  private timers: NodeJS.Timeout[] = [];
+
+  start(): void {
+    this.scanInventory();
+    this.pollTranscripts();
+    this.timers.push(setInterval(() => this.scanInventory(), INVENTORY_INTERVAL_MS));
+    this.timers.push(setInterval(() => this.pollTranscripts(), TRANSCRIPT_INTERVAL_MS));
+  }
+
+  stop(): void {
+    for (const t of this.timers) clearInterval(t);
+    this.timers = [];
+  }
+
+  // ── 在庫層 ────────────────────────────────────────
+  private scanInventory(): void {
+    const seen = new Set<string>();
+    let changed = false;
+
+    for (const raw of scanSessions()) {
+      seen.add(raw.sessionId);
+      const existing = this.sessions.get(raw.sessionId);
+      if (!existing) {
+        this.sessions.set(raw.sessionId, this.createState(raw));
+        changed = true;
+        this.push(raw.sessionId, "session", `セッション検出: ${basename(raw.cwd)}`);
+        continue;
+      }
+      if (existing.raw.alive !== raw.alive) {
+        changed = true;
+        if (!raw.alive) this.push(raw.sessionId, "session", "セッション終了");
+      }
+      existing.raw = raw;
+    }
+
+    // レジストリから消えたセッションは終了済み。
+    for (const [id, state] of this.sessions) {
+      if (seen.has(id)) continue;
+      if (state.raw.alive) {
+        state.raw = { ...state.raw, alive: false };
+        this.push(id, "session", "セッション終了");
+      }
+      changed = true;
+      this.sessions.delete(id);
+    }
+
+    if (changed) this.emitUpdate();
+  }
+
+  private createState(raw: RawSession): SessionState {
+    const transcriptPath = resolveTranscript(raw.sessionId, raw.cwd);
+    const meta = transcriptPath ? primeMeta(transcriptPath) : {};
+    return {
+      raw,
+      transcriptPath,
+      reader: transcriptPath ? new TranscriptReader(transcriptPath) : null,
+      branch: null,
+      title: meta.title ?? null,
+      lastPrompt: meta.lastPrompt ?? null,
+      lastActivityAt: null,
+      currentTool: null,
+      recentTools: [],
+      tokens: null,
+      hookStatus: null,
+      hookDetail: null,
+      hookAt: 0,
+      activeAgents: 0,
+    };
+  }
+
+  // ── 実況層 ────────────────────────────────────────
+  private pollTranscripts(): void {
+    let changed = false;
+
+    for (const [id, state] of this.sessions) {
+      if (!state.reader) {
+        // 起動直後はログがまだ無いことがあるので都度あきらめずに探す。
+        const path = resolveTranscript(state.raw.sessionId, state.raw.cwd);
+        if (!path) continue;
+        state.transcriptPath = path;
+        state.reader = new TranscriptReader(path);
+        const meta = primeMeta(path);
+        state.title = state.title ?? meta.title ?? null;
+        state.lastPrompt = state.lastPrompt ?? meta.lastPrompt ?? null;
+      }
+
+      const events = state.reader.read();
+      if (events.length) changed = true;
+
+      for (const ev of events) {
+        if (ev.branch) state.branch = ev.branch;
+        if (ev.title && ev.title !== state.title) {
+          state.title = ev.title;
+          this.push(id, "message", `作業内容: ${ev.title}`);
+        }
+        if (ev.lastPrompt && ev.lastPrompt !== state.lastPrompt) {
+          state.lastPrompt = ev.lastPrompt;
+          this.push(id, "prompt", truncate(ev.lastPrompt, 160));
+        }
+        if (ev.at) state.lastActivityAt = Math.max(state.lastActivityAt ?? 0, ev.at);
+        if (ev.usage) state.tokens = ev.usage;
+
+        if (ev.tools?.length) {
+          state.currentTool = ev.tools[ev.tools.length - 1] ?? null;
+          state.recentTools = [...state.recentTools, ...ev.tools].slice(-12);
+          for (const tool of ev.tools) this.push(id, "tool", tool, tool);
+          // ツールを呼んだ = 動いている。フックの古い「待ち」判定を捨てる。
+          state.hookStatus = null;
+          state.hookDetail = null;
+        } else if (ev.type === "assistant" && ev.text) {
+          state.currentTool = null;
+          this.push(id, "message", truncate(ev.text, 160));
+        }
+      }
+
+      const agents = this.countActiveAgents(state);
+      if (agents !== state.activeAgents) {
+        state.activeAgents = agents;
+        changed = true;
+      }
+    }
+
+    // 経過時間だけで working -> idle に落ちる分も配信したいので、変化が無くても定期的に流す。
+    if (changed) this.emitUpdate();
+    else this.emitTick();
+  }
+
+  /** 直近で更新されたサブエージェントのログ数を数える。 */
+  private countActiveAgents(state: SessionState): number {
+    if (!state.transcriptPath) return 0;
+    const dir = subagentDir(state.transcriptPath);
+    if (!existsSync(dir)) return 0;
+    const now = Date.now();
+    let n = 0;
+    try {
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith(".jsonl")) continue;
+        if (now - statSync(join(dir, f)).mtimeMs < AGENT_WINDOW_MS) n++;
+      }
+    } catch {
+      return 0;
+    }
+    return n;
+  }
+
+  // ── フック層 ──────────────────────────────────────
+  /** Claude Code のフックから届いた状態遷移を反映する。ログには残らない情報はここでしか取れない。 */
+  applyHook(payload: HookPayload): boolean {
+    const id = payload.session_id;
+    if (!id) return false;
+    const state = this.sessions.get(id);
+    if (!state) return false;
+
+    const event = payload.hook_event_name ?? "";
+    const now = Date.now();
+    let status: SessionStatus | null = null;
+    let detail: string | null = null;
+    let feed: { kind: FeedKind; text: string } | null = null;
+
+    switch (event) {
+      case "UserPromptSubmit":
+        status = "working";
+        feed = { kind: "status", text: "指示を受け取りました" };
+        break;
+      case "Stop":
+        status = "idle";
+        feed = { kind: "status", text: "応答完了" };
+        break;
+      case "Notification": {
+        const type = payload.notification_type ?? "";
+        if (type === "permission_prompt") {
+          status = "permission";
+          detail = payload.tool_name ?? payload.notification_message ?? null;
+          feed = { kind: "status", text: `権限の確認待ち${detail ? `: ${detail}` : ""}` };
+        } else if (type === "idle_prompt" || type === "agent_needs_input") {
+          status = "waiting";
+          detail = payload.notification_message ?? null;
+          feed = { kind: "status", text: "入力待ちで停止中" };
+        }
+        break;
+      }
+      case "StopFailure":
+        status = "error";
+        detail = payload.error_type ?? payload.error_message ?? null;
+        feed = { kind: "status", text: `停止: ${detail ?? "APIエラー"}` };
+        break;
+      case "SubagentStart":
+        feed = { kind: "agent", text: `サブエージェント開始: ${payload.agent_type ?? "?"}` };
+        break;
+      case "SubagentStop":
+        feed = { kind: "agent", text: `サブエージェント完了: ${payload.agent_type ?? "?"}` };
+        break;
+      case "PreToolUse":
+        status = "working";
+        state.currentTool = payload.tool_name ?? state.currentTool;
+        break;
+    }
+
+    if (status) {
+      state.hookStatus = status;
+      state.hookDetail = detail;
+      state.hookAt = now;
+      if (status === "working") state.lastActivityAt = now;
+    }
+    if (feed) this.push(id, feed.kind, feed.text);
+    this.emitUpdate();
+    return true;
+  }
+
+  // ── 配信 ──────────────────────────────────────────
+  private push(sessionId: string, kind: FeedKind, text: string, tool: string | null = null): void {
+    const state = this.sessions.get(sessionId);
+    const item: FeedItem = {
+      id: ++this.feedSeq,
+      sessionId,
+      project: state ? basename(state.raw.cwd) : "?",
+      at: Date.now(),
+      kind,
+      text,
+      tool,
+    };
+    this.feed.push(item);
+    if (this.feed.length > FEED_LIMIT) this.feed = this.feed.slice(-FEED_LIMIT);
+    this.emit("feed", item);
+  }
+
+  private emitUpdate(): void {
+    this.emit("sessions", this.snapshot());
+  }
+
+  private emitTick(): void {
+    this.emit("tick", this.snapshot());
+  }
+
+  private statusOf(state: SessionState): { status: SessionStatus; source: StatusSource } {
+    if (!state.raw.alive) return { status: "stopped", source: "transcript" };
+
+    const active =
+      state.lastActivityAt !== null && Date.now() - state.lastActivityAt < WORKING_WINDOW_MS;
+    // ログ側の活動がフックより新しければ、実際には動いている。
+    if (active && state.lastActivityAt! > state.hookAt) {
+      return { status: "working", source: "transcript" };
+    }
+    if (state.hookStatus) return { status: state.hookStatus, source: "hook" };
+    return { status: active ? "working" : "idle", source: "transcript" };
+  }
+
+  snapshot(): SessionSnapshot[] {
+    const out: SessionSnapshot[] = [];
+    for (const state of this.sessions.values()) {
+      const { status, source } = this.statusOf(state);
+      out.push({
+        sessionId: state.raw.sessionId,
+        pid: state.raw.pid,
+        alive: state.raw.alive,
+        name: state.raw.name ?? basename(state.raw.cwd),
+        project: basename(state.raw.cwd),
+        cwd: state.raw.cwd,
+        branch: state.branch,
+        title: state.title,
+        lastPrompt: state.lastPrompt,
+        status,
+        statusSource: source,
+        statusDetail: state.hookDetail,
+        entrypoint: state.raw.entrypoint ?? null,
+        version: state.raw.version ?? null,
+        startedAt: state.raw.startedAt,
+        lastActivityAt: state.lastActivityAt,
+        currentTool: status === "working" ? state.currentTool : null,
+        recentTools: state.recentTools,
+        tokens: state.tokens,
+        activeAgents: state.activeAgents,
+      });
+    }
+    return out.sort((a, b) => rank(a) - rank(b) || a.project.localeCompare(b.project));
+  }
+
+  recentFeed(limit = 80): FeedItem[] {
+    return this.feed.slice(-limit);
+  }
+}
+
+/** 目を引かせたい状態ほど上に出す。 */
+function rank(s: SessionSnapshot): number {
+  const order: Record<SessionStatus, number> = {
+    permission: 0,
+    waiting: 1,
+    error: 2,
+    working: 3,
+    idle: 4,
+    stopped: 5,
+  };
+  return order[s.status];
+}
+
+function truncate(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? flat.slice(0, max) + "…" : flat;
+}

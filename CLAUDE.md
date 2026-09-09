@@ -25,6 +25,7 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 | Google カレンダー連携 | 稼働（要 OAuth 設定）／会話は claude.ai MCP | `server/src/core/calendar.ts` |
 | スプレッドシート勉強管理 | 未着手 | - |
 | claude-deck（Claude Code 司令塔アプリ） | PoC（Swift/macOS・ビルド可） | `desktop/` |
+| Claude Code セッション監視（リアルタイム） | 稼働（TypeScript・独立プロセス） | `monitor/` |
 
 ## 他プロジェクト管理
 
@@ -77,6 +78,7 @@ scripts/                 補助シェル（dev.sh で API+Web 同時起動 / boa
 - **本番配信（サーバー1つで完結）**: `cd web && npm run build` → `cd ../server && npm run http` → http://localhost:8765
   - `web/dist` があれば HTTP サーバーが React も同一ポートで配信する。
 - **データだけ再生成**: `cd server && npm run collect`
+- **セッション監視（monitor・独立プロセス）**: `cd monitor && npm install && npm start` → http://localhost:8766
 - 依存は各ディレクトリで `npm install`（server / web）。Node 24 系。
 
 ### Claude Code 連携（MCP）— ここが要
@@ -152,6 +154,16 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - **設計の絶対方針（料金事故ゼロ）**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路を作らないため、Max 枠の上限に達しても課金は発生しない（待つだけ）。**headless（`claude -p` / Agent SDK）の起動口は設けない方針**。
 - **上限到達で強制終了**: PTY 出力を監視し「上限到達」文言を検知したらセッションを `terminate()`。検知文言は要・実機検証（`ClaudeTerminalView.swift` の `limitPhrases`）。正確な残量 API は無いため事後トリガー方式。
 - **ビルド/実行**: `cd desktop && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み。`.app` 署名・配布は未対応（PoC）。
+
+## Claude Code セッション監視（monitor）
+
+複数リポジトリで同時に走っている Claude Code の状況を 1 画面でリアルタイムに見る（`monitor/`・:8766）。server(:8765) / web とは独立プロセスで、読み取り専用。詳細は `monitor/README.md`。
+
+- **在庫層**（3秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)` で稼働セッション一覧を復元。
+- **実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl` の末尾差分から実行中ツール・ブランチ・作業内容・トークン量を取る。`ai-title` は先頭寄りにしか出ないため初回だけ広く遡る（`primeMeta`）。
+- **フック層**（任意）: `POST /hook`。**「なぜ止まっているか」（権限待ち・入力待ち・APIエラー）はログに一切残らない**ので、これはフックでしか取れない。設定は `monitor/README.md` のスニペットを `~/.claude/settings.json` に入れる（**`async: true` 必須**。付けないと全プロジェクトの応答をブロックする）。
+- UI は `monitor/public/index.html`（ビルド不要・SSE を EventSource で購読）。
+- 制約: macOS ローカルのセッションのみ（クラウドセッションは映らない）。ログの粒度はターン／ツール単位で、生成中テキストは流れない。
 
 ## スプレッドシート勉強管理
 
