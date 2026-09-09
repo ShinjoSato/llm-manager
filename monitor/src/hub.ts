@@ -21,8 +21,8 @@ import type {
  * 中断やクラッシュで tool_use が最後のまま残ったセッションを永久に稼働中にしないための保険。
  */
 const STALE_BUSY_MS = 10 * 60_000;
-/** サブエージェントのログがこの時間内に更新されていれば稼働中とみなす。 */
-const AGENT_WINDOW_MS = 60_000;
+/** サブエージェントのログがこの時間内に更新されていれば、そのエージェントは動いているとみなす。 */
+const AGENT_WINDOW_MS = 3 * 60_000;
 /** 終了したセッションを一覧に残す時間。消えた理由を追えるようにする。 */
 const STOPPED_RETENTION_MS = 5 * 60_000;
 const INVENTORY_INTERVAL_MS = 3_000;
@@ -47,6 +47,8 @@ interface SessionState {
   hookAt: number;
   activeAgents: number;
   agentsCheckedAt: number;
+  /** サブエージェントのログが最後に動いた時刻。親が Agent 実行中は親ログが無音になるため。 */
+  lastAgentActivityAt: number | null;
   endedAt: number | null;
   turnState: TurnState | null;
 }
@@ -147,6 +149,7 @@ export class SessionHub extends EventEmitter {
       hookAt: 0,
       activeAgents: 0,
       agentsCheckedAt: 0,
+      lastAgentActivityAt: null,
       endedAt: raw.alive ? null : Date.now(),
       turnState: null,
     };
@@ -212,9 +215,10 @@ export class SessionHub extends EventEmitter {
 
       if (now - state.agentsCheckedAt >= AGENT_SCAN_INTERVAL_MS) {
         state.agentsCheckedAt = now;
-        const agents = this.countActiveAgents(state);
-        if (agents !== state.activeAgents) {
-          state.activeAgents = agents;
+        const { active, newest } = this.scanAgents(state);
+        if (newest) state.lastAgentActivityAt = Math.max(state.lastAgentActivityAt ?? 0, newest);
+        if (active !== state.activeAgents) {
+          state.activeAgents = active;
           changed = true;
         }
       }
@@ -225,22 +229,25 @@ export class SessionHub extends EventEmitter {
     else if (this.listenerCount("tick") > 0) this.emit("tick", this.snapshot());
   }
 
-  /** 直近で更新されたサブエージェントのログ数を数える。 */
-  private countActiveAgents(state: SessionState): number {
-    if (!state.transcriptPath) return 0;
+  /** 稼働中のサブエージェント数と、サブエージェント側の最終更新時刻を返す。 */
+  private scanAgents(state: SessionState): { active: number; newest: number } {
+    if (!state.transcriptPath) return { active: 0, newest: 0 };
     const dir = subagentDir(state.transcriptPath);
-    if (!existsSync(dir)) return 0;
+    if (!existsSync(dir)) return { active: 0, newest: 0 };
     const now = Date.now();
-    let n = 0;
+    let active = 0;
+    let newest = 0;
     try {
       for (const f of readdirSync(dir)) {
         if (!f.endsWith(".jsonl")) continue;
-        if (now - statSync(join(dir, f)).mtimeMs < AGENT_WINDOW_MS) n++;
+        const mtime = statSync(join(dir, f)).mtimeMs;
+        if (now - mtime < AGENT_WINDOW_MS) active++;
+        if (mtime > newest) newest = mtime;
       }
     } catch {
-      return 0;
+      return { active: 0, newest: 0 };
     }
-    return n;
+    return { active, newest };
   }
 
   // ── フック層 ──────────────────────────────────────
@@ -339,11 +346,15 @@ export class SessionHub extends EventEmitter {
   private statusOf(state: SessionState): { status: SessionStatus; source: StatusSource } {
     if (!state.raw.alive) return { status: "stopped", source: "inventory" };
 
-    const since = state.lastActivityAt === null ? Infinity : Date.now() - state.lastActivityAt;
-    const busy = state.turnState === "busy" && since < STALE_BUSY_MS;
+    // Agent 実行中は親ログが無音になるので、サブエージェント側の更新も活動として数える。
+    const last = lastActivity(state);
+    const since = last === 0 ? Infinity : Date.now() - last;
+    // 親が応答を終えていても、裏でサブエージェントが動いていれば作業は進んでいる。
+    const busy =
+      state.activeAgents > 0 || (state.turnState === "busy" && since < STALE_BUSY_MS);
 
     // ログ側の活動がフックより新しければ、実際には動いている。
-    if (busy && (state.lastActivityAt ?? 0) > state.hookAt) {
+    if (busy && last > state.hookAt) {
       return { status: "working", source: "transcript" };
     }
     if (state.hookStatus) return { status: state.hookStatus, source: "hook" };
@@ -370,7 +381,7 @@ export class SessionHub extends EventEmitter {
         entrypoint: state.raw.entrypoint ?? null,
         version: state.raw.version ?? null,
         startedAt: state.raw.startedAt,
-        lastActivityAt: state.lastActivityAt,
+        lastActivityAt: lastActivity(state) || null,
         currentTool: status === "working" ? state.currentTool : null,
         recentTools: state.recentTools,
         tokens: state.tokens,
@@ -396,6 +407,11 @@ function rank(s: SessionSnapshot): number {
     stopped: 5,
   };
   return order[s.status];
+}
+
+/** 親ログとサブエージェントのうち新しい方。無ければ 0。 */
+function lastActivity(state: SessionState): number {
+  return Math.max(state.lastActivityAt ?? 0, state.lastAgentActivityAt ?? 0);
 }
 
 function truncate(text: string, max: number): string {

@@ -31,12 +31,17 @@ export function SessionCard({ s, now }: { s: SessionSnapshot; now: number }) {
         {s.title ?? "（作業内容 未確定）"}
       </div>
 
-      {s.currentTool && (
+      {s.currentTool ? (
         <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] text-emerald-300">
           <Loader size={11} className="spin-slow shrink-0" />
           {s.currentTool} 実行中
         </div>
-      )}
+      ) : s.activeAgents > 0 ? (
+        <div className="mb-2 flex items-center gap-1.5 text-[12px] text-violet-300">
+          <Loader size={11} className="spin-slow shrink-0" />
+          サブエージェント {s.activeAgents} 実行中
+        </div>
+      ) : null}
 
       {s.statusDetail && s.status !== "working" && (
         <div className="mb-2 text-[12px] text-amber-300">{s.statusDetail}</div>
