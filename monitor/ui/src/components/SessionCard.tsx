@@ -15,7 +15,9 @@ function actionLine(s: SessionSnapshot): string | null {
 
 function escortLine(s: SessionSnapshot): string | null {
   if (!s.agents.length) return null;
-  const first = jobFor(s.agents[0]!.type).label;
+  // agents は更新時刻順なので、代表者は id 順で選んで文言のちらつきを防ぐ。
+  const head = [...s.agents].sort((a, b) => a.id.localeCompare(b.id))[0]!;
+  const first = jobFor(head.type).label;
   return s.agents.length > 1 ? `${first} ほか${s.agents.length - 1}名が随伴` : `${first}が随伴`;
 }
 

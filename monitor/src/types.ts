@@ -23,7 +23,7 @@ export interface AgentInfo {
   id: string;
   /** `developer-plugin:code-reviewer` のような種別。ログの attributionAgent から取る。 */
   type: string | null;
-  /** ログが直近に更新されている（＝まだ動いている）。 */
+  /** 直近に動いているものだけを載せるので、ここは常に true。 */
   active: boolean;
   lastActivityAt: number;
 }
@@ -51,10 +51,8 @@ export interface SessionSnapshot {
   currentSkill: string | null;
   /** 何をしているかの一行。ツールの description から取る。 */
   currentAction: string | null;
-  recentTools: string[];
   tokens: TokenUsage | null;
   agents: AgentInfo[];
-  activeAgents: number;
 }
 
 export type FeedKind = "tool" | "prompt" | "message" | "status" | "session" | "agent";

@@ -43,7 +43,6 @@ interface SessionState {
   currentTool: string | null;
   currentSkill: string | null;
   currentAction: string | null;
-  recentTools: string[];
   tokens: TokenUsage | null;
   hookStatus: SessionStatus | null;
   hookDetail: string | null;
@@ -154,7 +153,6 @@ export class SessionHub extends EventEmitter {
       currentTool: null,
       currentSkill: null,
       currentAction: null,
-      recentTools: [],
       tokens: null,
       hookStatus: null,
       hookDetail: null,
@@ -213,7 +211,6 @@ export class SessionHub extends EventEmitter {
           // 配下のツールには skill が無い。null で塗り潰さず、新しいスキルが来た時だけ差し替える。
           if (ev.toolDetail?.skill) state.currentSkill = ev.toolDetail.skill;
           state.currentAction = ev.toolDetail?.description ?? null;
-          state.recentTools = [...state.recentTools, ...ev.tools].slice(-12);
           for (const tool of ev.tools) this.push(id, "tool", tool, tool);
           // フックより新しい行を読んだ時だけ「待ち」を解く。古い行で権限待ちを消さない。
           if (!ev.at || ev.at > state.hookAt) {
@@ -227,8 +224,8 @@ export class SessionHub extends EventEmitter {
           // スキルは配下のツールが動く間ずっと続く。次の指示が来るまで保持する。
           if (ev.userKind === "prompt") state.currentSkill = null;
         } else if (ev.type === "assistant" && ev.text) {
+          // スキルは途中で一言述べても続いている。解除は次のユーザー指示だけに任せる。
           state.currentTool = null;
-          state.currentSkill = null;
           state.currentAction = null;
           this.push(id, "message", truncate(ev.text, 160));
         }
@@ -352,8 +349,10 @@ export class SessionHub extends EventEmitter {
         break;
       case "PreToolUse":
         status = "working";
-        state.currentTool = payload.tool_name ?? state.currentTool;
-        state.currentAction = null;
+        if (payload.tool_name && payload.tool_name !== state.currentTool) {
+          state.currentTool = payload.tool_name;
+          state.currentAction = null;
+        }
         break;
     }
 
@@ -431,10 +430,9 @@ export class SessionHub extends EventEmitter {
         currentTool: status === "working" ? state.currentTool : null,
         currentSkill: status === "working" ? state.currentSkill : null,
         currentAction: status === "working" ? state.currentAction : null,
-        recentTools: state.recentTools,
         tokens: state.tokens,
-        agents: status === "working" ? state.agents : [],
-        activeAgents: status === "working" ? state.agents.filter((a) => a.active).length : 0,
+        // 権限待ちの裏で子が回っていることは隠さない。終了したセッションだけ空にする。
+        agents: status === "stopped" ? [] : state.agents,
       });
     }
     return out.sort((a, b) => rank(a) - rank(b) || a.project.localeCompare(b.project));

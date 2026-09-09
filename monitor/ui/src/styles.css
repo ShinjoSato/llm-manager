@@ -52,10 +52,6 @@ body::before {
   .badge {
     @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap;
   }
-  .tool-chip {
-    @apply rounded border border-white/8 bg-white/5 px-1.5 py-px text-[10px] text-slate-400;
-    font-family: var(--font-mono);
-  }
   .link { @apply text-cyan-300 transition hover:text-cyan-200 hover:underline; }
 }
 

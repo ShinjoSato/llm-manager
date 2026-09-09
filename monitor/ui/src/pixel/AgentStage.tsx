@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { AgentInfo, SessionStatus } from "../../../src/types.js";
 import { PixelArt, type Palette } from "./PixelArt.js";
 import { itemFor, jobFor, jobPalette, SKIN } from "./kit.js";
@@ -48,6 +49,8 @@ const LOOK: Record<SessionStatus, { sprite: Sprite; palette: Palette; mark?: Spr
 
 const MAX_KIDS = 4;
 const FALLBACK_MARK: Palette = { A: "#94a3b8" };
+// memo が効くよう毎レンダー作り直さない。
+const ITEM_GLOW: CSSProperties = { filter: "drop-shadow(0 0 7px rgba(52,211,153,.35))" };
 
 export function AgentStage({
   status,
@@ -92,7 +95,7 @@ export function AgentStage({
           palette={item.palette}
           scale={5}
           className="bob -ml-2 mb-3"
-          style={{ filter: "drop-shadow(0 0 7px rgba(52,211,153,.35))" }}
+          style={ITEM_GLOW}
         />
       )}
 

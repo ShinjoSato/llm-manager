@@ -62,7 +62,8 @@ function parseLine(line: string): ParsedEvent | null {
     const isResult =
       Array.isArray(content) &&
       content.some((c: any) => c && typeof c === "object" && c.type === "tool_result");
-    ev.userKind = isResult ? "tool_result" : "prompt";
+    // isMeta はスキル本文やフックの注入。ユーザーの新しい指示として扱わない。
+    ev.userKind = isResult || o.isMeta === true ? "tool_result" : "prompt";
   }
 
   if (type === "assistant" && o.message && typeof o.message === "object") {
@@ -73,7 +74,9 @@ function parseLine(line: string): ParsedEvent | null {
       if (!c || typeof c !== "object") continue;
       if (c.type === "tool_use" && typeof c.name === "string") {
         tools.push(c.name);
-        ev.toolDetail = toolDetail(c.name, c.input);
+        const detail = toolDetail(c.name, c.input);
+        // 並列呼び出しに Skill が混ざった時に取り逃さないよう、skill 付きを優先する。
+        if (!ev.toolDetail || (detail.skill && !ev.toolDetail.skill)) ev.toolDetail = detail;
       } else if (c.type === "text" && typeof c.text === "string") text += c.text;
     }
     if (tools.length) ev.tools = tools;
