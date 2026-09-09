@@ -1,0 +1,119 @@
+// monitor の HTTP サーバー。SSE で UI にリアルタイム push する。
+//   GET  /api/health
+//   GET  /api/sessions   スナップショット
+//   GET  /api/feed       直近のライブフィード
+//   POST /hook           Claude Code のフックから状態遷移を受け取る
+//   GET  /events         SSE（sessions / feed）
+import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
+import { existsSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { SessionHub } from "./hub.js";
+import type { FeedItem, HookPayload, SessionSnapshot } from "./types.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const UI_DIST = join(HERE, "..", "ui", "dist");
+
+const hub = new SessionHub();
+hub.setMaxListeners(0); // SSE 1 接続につき 3 リスナー。タブを開く数だけ増える。
+hub.start();
+
+// CORS は付けない。UI は同一オリジン配信で、開発時は Vite の proxy 経由になる。
+// 付けるとブラウザで開いた任意のサイトから cwd や作業内容を読めてしまう。
+const app = new Hono();
+
+app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
+app.get("/api/sessions", (c) => c.json(hub.snapshot()));
+app.get("/api/feed", (c) => c.json(hub.recentFeed()));
+
+app.post("/hook", async (c) => {
+  let payload: HookPayload;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "invalid json" }, 400);
+  }
+  const applied = hub.applyHook(payload);
+  // 未知のセッションでも 200 を返す（フック側を失敗させないため）。
+  return c.json({ ok: true, applied });
+});
+
+app.get("/events", (c) =>
+  streamSSE(c, async (stream) => {
+    let closed = false;
+    let latest: SessionSnapshot[] | null = hub.snapshot();
+    let dirty = true;
+    const feedQueue: FeedItem[] = [];
+
+    const onSessions = (s: SessionSnapshot[]) => {
+      latest = s;
+      dirty = true;
+    };
+    const onTick = (s: SessionSnapshot[]) => {
+      latest = s;
+    };
+    const onFeed = (item: FeedItem) => {
+      feedQueue.push(item);
+    };
+    const cleanup = () => {
+      closed = true;
+      hub.off("sessions", onSessions);
+      hub.off("tick", onTick);
+      hub.off("feed", onFeed);
+    };
+    stream.onAbort(cleanup);
+
+    // 登録から解除までを try で囲む。初回 write が失敗してもリスナーを残さない。
+    try {
+      hub.on("sessions", onSessions);
+      hub.on("tick", onTick);
+      hub.on("feed", onFeed);
+
+      await stream.writeSSE({ event: "feed-batch", data: JSON.stringify(hub.recentFeed()) });
+
+      let lastSent = 0;
+      while (!closed) {
+        const now = Date.now();
+        // 変化があれば即座に、無くても 1 秒ごとに送って経過時間の表示を進める。
+        if (latest && (dirty || now - lastSent >= 1000)) {
+          await stream.writeSSE({ event: "sessions", data: JSON.stringify(latest) });
+          dirty = false;
+          lastSent = now;
+        }
+        while (feedQueue.length) {
+          await stream.writeSSE({ event: "feed", data: JSON.stringify(feedQueue.shift()) });
+        }
+        await stream.sleep(120);
+      }
+    } finally {
+      cleanup();
+    }
+  }),
+);
+
+if (existsSync(UI_DIST)) {
+  const rel = relative(process.cwd(), UI_DIST) || ".";
+  app.use("/*", serveStatic({ root: rel, index: "index.html" }));
+  app.get("/*", serveStatic({ path: join(rel, "index.html") }));
+} else {
+  app.get("/", (c) =>
+    c.text("UI が未ビルドです。`cd monitor/ui && npm install && npm run build` を実行してください。", 503),
+  );
+}
+
+const port = Number(process.env.PORT ?? 8766);
+serve({ fetch: app.fetch, port }, (info) => {
+  console.log(`ai-manager monitor: http://localhost:${info.port}`);
+  console.log(`  GET /events (SSE) | GET /api/sessions | POST /hook`);
+  if (!existsSync(UI_DIST)) console.log("  ⚠ ui/dist が無いため UI は配信されません");
+});
+
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    hub.stop();
+    process.exit(0);
+  });
+}
