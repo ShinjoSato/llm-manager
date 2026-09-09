@@ -18,6 +18,14 @@ export interface TokenUsage {
   cacheRead: number;
 }
 
+/** 親に随伴しているサブエージェント 1 体。 */
+export interface AgentInfo {
+  id: string;
+  /** `developer-plugin:code-reviewer` のような種別。meta.json の agentType から取る。 */
+  type: string | null;
+  lastActivityAt: number;
+}
+
 /** UI に配る 1 セッション分のスナップショット。 */
 export interface SessionSnapshot {
   sessionId: string;
@@ -37,9 +45,12 @@ export interface SessionSnapshot {
   startedAt: number;
   lastActivityAt: number | null;
   currentTool: string | null;
-  recentTools: string[];
+  /** 実行中スキルのフルネーム（例 `developer-plugin:dev-done`）。 */
+  currentSkill: string | null;
+  /** 何をしているかの一行。ツールの description から取る。 */
+  currentAction: string | null;
   tokens: TokenUsage | null;
-  activeAgents: number;
+  agents: AgentInfo[];
 }
 
 export type FeedKind = "tool" | "prompt" | "message" | "status" | "session" | "agent";

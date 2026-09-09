@@ -1,11 +1,12 @@
 // 在庫層・実況層・フック層を 1 つの状態に束ね、変化を購読者へ流す。
 import { EventEmitter } from "node:events";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { scanSessions } from "./inventory.js";
 import { resolveTranscript, subagentDir } from "./paths.js";
 import { primeMeta, TranscriptReader } from "./transcript.js";
 import type {
+  AgentInfo,
   FeedItem,
   FeedKind,
   HookPayload,
@@ -40,12 +41,13 @@ interface SessionState {
   lastPrompt: string | null;
   lastActivityAt: number | null;
   currentTool: string | null;
-  recentTools: string[];
+  currentSkill: string | null;
+  currentAction: string | null;
   tokens: TokenUsage | null;
   hookStatus: SessionStatus | null;
   hookDetail: string | null;
   hookAt: number;
-  activeAgents: number;
+  agents: AgentInfo[];
   agentsCheckedAt: number;
   /** サブエージェントのログが最後に動いた時刻。親が Agent 実行中は親ログが無音になるため。 */
   lastAgentActivityAt: number | null;
@@ -63,6 +65,7 @@ export class SessionHub extends EventEmitter {
   private sessions = new Map<string, SessionState>();
   private feed: FeedItem[] = [];
   private feedSeq = 0;
+  private agentTypes = new Map<string, string>();
   private timers: NodeJS.Timeout[] = [];
 
   start(): void {
@@ -122,6 +125,12 @@ export class SessionHub extends EventEmitter {
         this.push(id, "session", "セッション終了");
         changed = true;
       } else if (now - state.endedAt > STOPPED_RETENTION_MS) {
+        if (state.transcriptPath) {
+          const dir = subagentDir(state.transcriptPath);
+          for (const key of this.agentTypes.keys()) {
+            if (key.startsWith(dir)) this.agentTypes.delete(key);
+          }
+        }
         this.sessions.delete(id);
         changed = true;
       }
@@ -142,12 +151,13 @@ export class SessionHub extends EventEmitter {
       lastPrompt: meta.lastPrompt ?? null,
       lastActivityAt: null,
       currentTool: null,
-      recentTools: [],
+      currentSkill: null,
+      currentAction: null,
       tokens: null,
       hookStatus: null,
       hookDetail: null,
       hookAt: 0,
-      activeAgents: 0,
+      agents: [],
       agentsCheckedAt: 0,
       lastAgentActivityAt: null,
       endedAt: raw.alive ? null : Date.now(),
@@ -198,7 +208,9 @@ export class SessionHub extends EventEmitter {
 
         if (ev.tools?.length) {
           state.currentTool = ev.tools[ev.tools.length - 1] ?? null;
-          state.recentTools = [...state.recentTools, ...ev.tools].slice(-12);
+          // 配下のツールには skill が無い。null で塗り潰さず、新しいスキルが来た時だけ差し替える。
+          if (ev.toolDetail?.skill) state.currentSkill = ev.toolDetail.skill;
+          state.currentAction = ev.toolDetail?.description ?? null;
           for (const tool of ev.tools) this.push(id, "tool", tool, tool);
           // フックより新しい行を読んだ時だけ「待ち」を解く。古い行で権限待ちを消さない。
           if (!ev.at || ev.at > state.hookAt) {
@@ -206,21 +218,27 @@ export class SessionHub extends EventEmitter {
             state.hookDetail = null;
           }
         } else if (ev.type === "user") {
-          state.currentTool = null; // tool_result が返った = ツールは終わっている
-        } else if (ev.type === "assistant" && ev.text) {
+          // tool_result が返った = ツールは終わっている
           state.currentTool = null;
+          state.currentAction = null;
+          // スキルは配下のツールが動く間ずっと続く。次の指示が来るまで保持する。
+          if (ev.userKind === "prompt") state.currentSkill = null;
+        } else if (ev.type === "assistant" && ev.text) {
+          // スキルは途中で一言述べても続いている。解除は次のユーザー指示だけに任せる。
+          state.currentTool = null;
+          state.currentAction = null;
           this.push(id, "message", truncate(ev.text, 160));
         }
       }
 
       if (now - state.agentsCheckedAt >= AGENT_SCAN_INTERVAL_MS) {
         state.agentsCheckedAt = now;
-        const { active, newest } = this.scanAgents(state);
+        const { agents, newest } = this.scanAgents(state);
         if (newest) state.lastAgentActivityAt = Math.max(state.lastAgentActivityAt ?? 0, newest);
-        if (active !== state.activeAgents) {
-          state.activeAgents = active;
-          changed = true;
-        }
+        const key = (list: AgentInfo[]) =>
+          list.map((a) => `${a.id}:${a.type ?? ""}`).sort().join();
+        if (key(agents) !== key(state.agents)) changed = true;
+        state.agents = agents;
       }
     }
 
@@ -229,25 +247,49 @@ export class SessionHub extends EventEmitter {
     else if (this.listenerCount("tick") > 0) this.emit("tick", this.snapshot());
   }
 
-  /** 稼働中のサブエージェント数と、サブエージェント側の最終更新時刻を返す。 */
-  private scanAgents(state: SessionState): { active: number; newest: number } {
-    if (!state.transcriptPath) return { active: 0, newest: 0 };
+  /** 稼働中のサブエージェント一覧と、サブエージェント側の最終更新時刻を返す。 */
+  private scanAgents(state: SessionState): { agents: AgentInfo[]; newest: number } {
+    if (!state.transcriptPath) return { agents: [], newest: 0 };
     const dir = subagentDir(state.transcriptPath);
-    if (!existsSync(dir)) return { active: 0, newest: 0 };
+    if (!existsSync(dir)) return { agents: [], newest: 0 };
     const now = Date.now();
-    let active = 0;
+    const agents: AgentInfo[] = [];
     let newest = 0;
     try {
       for (const f of readdirSync(dir)) {
         if (!f.endsWith(".jsonl")) continue;
-        const mtime = statSync(join(dir, f)).mtimeMs;
-        if (now - mtime < AGENT_WINDOW_MS) active++;
+        const path = join(dir, f);
+        const mtime = statSync(path).mtimeMs;
         if (mtime > newest) newest = mtime;
+        if (now - mtime >= AGENT_WINDOW_MS) continue;
+        agents.push({
+          id: f.replace(/^agent-/, "").replace(/\.jsonl$/, ""),
+          type: this.agentType(path),
+          lastActivityAt: mtime,
+        });
       }
     } catch {
-      return { active: 0, newest: 0 };
+      return { agents: [], newest: 0 };
     }
-    return { active, newest };
+    agents.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    return { agents, newest };
+  }
+
+  /** サブエージェントの種別。ログと同時に書かれる meta.json に入っている。 */
+  private agentType(path: string): string | null {
+    const metaPath = path.replace(/\.jsonl$/, ".meta.json");
+    const cached = this.agentTypes.get(metaPath);
+    if (cached !== undefined) return cached || null;
+    let type: string | null = null;
+    try {
+      const o = JSON.parse(readFileSync(metaPath, "utf8"));
+      if (typeof o.agentType === "string") type = o.agentType;
+    } catch {
+      return null;
+    }
+    // 見つからない場合も覚える。空文字は「読んだが無かった」の意味。
+    this.agentTypes.set(metaPath, type ?? "");
+    return type;
   }
 
   // ── フック層 ──────────────────────────────────────
@@ -307,7 +349,10 @@ export class SessionHub extends EventEmitter {
         break;
       case "PreToolUse":
         status = "working";
-        state.currentTool = payload.tool_name ?? state.currentTool;
+        if (payload.tool_name && payload.tool_name !== state.currentTool) {
+          state.currentTool = payload.tool_name;
+          state.currentAction = null;
+        }
         break;
     }
 
@@ -351,7 +396,7 @@ export class SessionHub extends EventEmitter {
     const since = last === 0 ? Infinity : Date.now() - last;
     // 親が応答を終えていても、裏でサブエージェントが動いていれば作業は進んでいる。
     const busy =
-      state.activeAgents > 0 || (state.turnState === "busy" && since < STALE_BUSY_MS);
+      state.agents.length > 0 || (state.turnState === "busy" && since < STALE_BUSY_MS);
 
     // ログ側の活動がフックより新しければ、実際には動いている。
     if (busy && last > state.hookAt) {
@@ -383,9 +428,11 @@ export class SessionHub extends EventEmitter {
         startedAt: state.raw.startedAt,
         lastActivityAt: lastActivity(state) || null,
         currentTool: status === "working" ? state.currentTool : null,
-        recentTools: state.recentTools,
+        currentSkill: status === "working" ? state.currentSkill : null,
+        currentAction: status === "working" ? state.currentAction : null,
         tokens: state.tokens,
-        activeAgents: state.activeAgents,
+        // 権限待ちの裏で子が回っていることは隠さない。終了したセッションだけ空にする。
+        agents: status === "stopped" ? [] : state.agents,
       });
     }
     return out.sort((a, b) => rank(a) - rank(b) || a.project.localeCompare(b.project));

@@ -1,17 +1,36 @@
-import { GitBranch, Loader, Users } from "lucide-react";
+import { GitBranch } from "lucide-react";
 import type { SessionSnapshot } from "../../../src/types.js";
 import { ago, dur, kilo } from "../format.js";
+import { AgentStage } from "../pixel/AgentStage.js";
+import { itemForVerb, jobFor, skillLabel } from "../pixel/kit.js";
 import { styleOf } from "../status.js";
+
+/** いま何をしているかの一行。スキルの銘 > 具体的な説明 > 持ち物の動作 の順に選ぶ。 */
+function actionLine(s: SessionSnapshot): string | null {
+  if (s.status !== "working") return null;
+  if (s.currentSkill) return `巻物『${skillLabel(s.currentSkill)}』を広げている`;
+  if (s.currentAction) return s.currentAction;
+  return itemForVerb(s.currentTool);
+}
+
+function escortLine(s: SessionSnapshot): string | null {
+  if (!s.agents.length) return null;
+  // agents は更新時刻順なので、代表者は id 順で選んで文言のちらつきを防ぐ。
+  const head = [...s.agents].sort((a, b) => a.id.localeCompare(b.id))[0]!;
+  const first = jobFor(head.type).label;
+  return s.agents.length > 1 ? `${first} ほか${s.agents.length - 1}名が随伴` : `${first}が随伴`;
+}
 
 export function SessionCard({ s, now }: { s: SessionSnapshot; now: number }) {
   const st = styleOf(s.status);
-  const trail = s.recentTools.slice(-6);
+  const action = actionLine(s);
+  const escort = escortLine(s);
 
   return (
     <div className="glass relative overflow-hidden p-4">
       <div className={`absolute inset-y-0 left-0 w-[3px] ${st.bar}`} />
 
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-1 flex items-center gap-2">
         <span className="truncate text-[14px] font-semibold text-slate-100">{s.project}</span>
         {s.branch && (
           <span className="chip inline-flex max-w-[150px] items-center gap-1 font-mono">
@@ -20,54 +39,33 @@ export function SessionCard({ s, now }: { s: SessionSnapshot; now: number }) {
           </span>
         )}
         <span className={`badge ml-auto ${st.badge}`}>
-          <i
-            className={`h-1.5 w-1.5 rounded-full ${st.dot} ${st.breathe ? "breathe" : ""}`}
-          />
+          <i className={`h-1.5 w-1.5 rounded-full ${st.dot} ${st.breathe ? "breathe" : ""}`} />
           {st.label}
         </span>
       </div>
 
-      <div className={`mb-2 text-[13px] ${s.title ? "text-slate-200" : "text-slate-500"}`}>
-        {s.title ?? "（作業内容 未確定）"}
-      </div>
+      <AgentStage
+        status={s.status}
+        tool={s.currentTool}
+        skill={s.currentSkill}
+        agents={s.agents}
+      />
 
-      {s.currentTool ? (
-        <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] text-emerald-300">
-          <Loader size={11} className="spin-slow shrink-0" />
-          {s.currentTool} 実行中
+      <div className="mb-2 min-h-[36px] px-1 text-center">
+        {action && <div className="truncate text-[12px] text-emerald-300">{action}</div>}
+        {s.statusDetail && s.status !== "working" && (
+          <div className="truncate text-[12px] text-amber-300">{s.statusDetail}</div>
+        )}
+        {escort && <div className="truncate text-[11px] text-violet-300">{escort}</div>}
+        <div className="truncate text-[11.5px] text-slate-400" title={s.title ?? undefined}>
+          {s.title ?? "（作業内容 未確定）"}
         </div>
-      ) : s.activeAgents > 0 ? (
-        <div className="mb-2 flex items-center gap-1.5 text-[12px] text-violet-300">
-          <Loader size={11} className="spin-slow shrink-0" />
-          サブエージェント {s.activeAgents} 実行中
-        </div>
-      ) : null}
-
-      {s.statusDetail && s.status !== "working" && (
-        <div className="mb-2 text-[12px] text-amber-300">{s.statusDetail}</div>
-      )}
-
-      <div className="mb-2 flex min-h-[18px] flex-wrap gap-1">
-        {trail.map((t, i) => (
-          <span
-            key={`${i}-${t}`}
-            className={`tool-chip ${i === trail.length - 1 ? "border-white/20 text-slate-200" : ""}`}
-          >
-            {t}
-          </span>
-        ))}
       </div>
 
       <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-white/8 pt-2 text-[11px] tabular-nums text-slate-500">
         <span>最終活動 {ago(s.lastActivityAt, now)}</span>
         <span>稼働 {dur(s.startedAt, now)}</span>
         {s.tokens && <span>キャッシュ {kilo(s.tokens.cacheRead)}</span>}
-        {s.activeAgents > 0 && (
-          <span className="inline-flex items-center gap-1 text-violet-300">
-            <Users size={11} />
-            {s.activeAgents}
-          </span>
-        )}
         <span className="ml-auto">{s.statusSource === "hook" ? "hook" : "log"}</span>
       </div>
     </div>

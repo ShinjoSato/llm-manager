@@ -9,6 +9,14 @@ const BOOTSTRAP_BYTES = 512 * 1024;
 /** メタ情報スキャンの上限。巨大なログでも初回が止まらないようにする。 */
 const MAX_SCAN_BYTES = 32 * 1024 * 1024;
 
+/** ツール呼び出しの中身。キャラの持ち物と一言に使う。 */
+export interface ToolDetail {
+  name: string;
+  skill?: string;
+  subagentType?: string;
+  description?: string;
+}
+
 export interface ParsedEvent {
   type: string;
   at: number | null;
@@ -16,8 +24,42 @@ export interface ParsedEvent {
   lastPrompt?: string;
   branch?: string;
   tools?: string[];
+  toolDetail?: ToolDetail;
+  /** user 行の中身。tool_result と実際のユーザー入力を区別する。 */
+  userKind?: "tool_result" | "prompt";
   text?: string;
   usage?: TokenUsage;
+}
+
+function toolDetail(name: string, input: unknown): ToolDetail {
+  const detail: ToolDetail = { name };
+  if (!input || typeof input !== "object") return detail;
+  const o = input as Record<string, unknown>;
+  if (typeof o.skill === "string") detail.skill = o.skill;
+  if (typeof o.subagent_type === "string") detail.subagentType = o.subagent_type;
+  if (typeof o.description === "string") detail.description = o.description;
+  return detail;
+}
+
+/** ユーザーが打った指示はタグで始まらない。スラッシュコマンドだけは指示として扱う。 */
+const USER_TAGS = new Set(["command-name", "command-message"]);
+
+/**
+ * user 行が仕組み側の注入か。task-notification / ide_opened_file / system-reminder など、
+ * 種別は増えるので列挙せず「タグで始まるか」で見る。
+ */
+function isInjected(content: unknown): boolean {
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((c: any) => c && typeof c === "object" && c.type === "text")
+            .map((c: any) => c.text ?? "")
+            .join("")
+        : "";
+  const tag = /^\s*<([a-zA-Z][\w-]*)/.exec(text)?.[1];
+  return tag !== undefined && !USER_TAGS.has(tag);
 }
 
 function parseLine(line: string): ParsedEvent | null {
@@ -36,14 +78,26 @@ function parseLine(line: string): ParsedEvent | null {
   if (type === "ai-title" && typeof o.aiTitle === "string") ev.title = o.aiTitle;
   if (type === "last-prompt" && typeof o.lastPrompt === "string") ev.lastPrompt = o.lastPrompt;
 
+  if (type === "user" && o.message && typeof o.message === "object") {
+    const content = o.message.content;
+    const isResult =
+      Array.isArray(content) &&
+      content.some((c: any) => c && typeof c === "object" && c.type === "tool_result");
+    ev.userKind = isResult || o.isMeta === true || isInjected(content) ? "tool_result" : "prompt";
+  }
+
   if (type === "assistant" && o.message && typeof o.message === "object") {
     const content = Array.isArray(o.message.content) ? o.message.content : [];
     const tools: string[] = [];
     let text = "";
     for (const c of content) {
       if (!c || typeof c !== "object") continue;
-      if (c.type === "tool_use" && typeof c.name === "string") tools.push(c.name);
-      else if (c.type === "text" && typeof c.text === "string") text += c.text;
+      if (c.type === "tool_use" && typeof c.name === "string") {
+        tools.push(c.name);
+        const detail = toolDetail(c.name, c.input);
+        // skill 付きは最優先。それ以外は currentTool と揃うよう後勝ちにする。
+        if (detail.skill || !ev.toolDetail?.skill) ev.toolDetail = detail;
+      } else if (c.type === "text" && typeof c.text === "string") text += c.text;
     }
     if (tools.length) ev.tools = tools;
     if (text.trim()) ev.text = text.trim();
