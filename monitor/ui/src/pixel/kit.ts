@@ -42,11 +42,34 @@ const ITEMS: Record<string, Item> = {
 
 const FALLBACK: Item = { sprite: ITEM_NOTE, palette: METAL, verb: "手を動かしている" };
 
-export function itemFor(tool: string | null): Item | null {
+export function itemFor(tool: string | null, skill?: string | null): Item | null {
+  // スキル実行中は配下のツールが次々変わるので、巻物を持たせ続ける。
+  if (skill) return ITEMS.Skill!;
   if (!tool) return null;
   // Agent は子が出るので持ち物にしない。
   if (tool === "Agent" || tool === "Task") return null;
   return ITEMS[tool] ?? FALLBACK;
+}
+
+/** 一言に使う動作だけを取り出す。 */
+export function itemForVerb(tool: string | null): string | null {
+  return itemFor(tool)?.verb ?? null;
+}
+
+/** 肌と目の色は職業によらず共通。 */
+export const SKIN: Palette = { S: "#f6d3ab", K: "#0a0e14" };
+
+const jobPalettes = new Map<string, Palette>();
+
+/** 同じ色の組み合わせでは同じオブジェクトを返す。毎回作ると memo が外れる。 */
+export function jobPalette(job: Job): Palette {
+  const key = `${job.light}/${job.dark}`;
+  let p = jobPalettes.get(key);
+  if (!p) {
+    p = { ...SKIN, C: job.light, E: job.dark, F: job.dark };
+    jobPalettes.set(key, p);
+  }
+  return p;
 }
 
 export interface Job {

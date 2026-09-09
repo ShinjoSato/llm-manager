@@ -25,6 +25,8 @@ export interface ParsedEvent {
   branch?: string;
   tools?: string[];
   toolDetail?: ToolDetail;
+  /** user 行の中身。tool_result と実際のユーザー入力を区別する。 */
+  userKind?: "tool_result" | "prompt";
   text?: string;
   usage?: TokenUsage;
 }
@@ -54,6 +56,14 @@ function parseLine(line: string): ParsedEvent | null {
   if (typeof o.gitBranch === "string" && o.gitBranch) ev.branch = o.gitBranch;
   if (type === "ai-title" && typeof o.aiTitle === "string") ev.title = o.aiTitle;
   if (type === "last-prompt" && typeof o.lastPrompt === "string") ev.lastPrompt = o.lastPrompt;
+
+  if (type === "user" && o.message && typeof o.message === "object") {
+    const content = o.message.content;
+    const isResult =
+      Array.isArray(content) &&
+      content.some((c: any) => c && typeof c === "object" && c.type === "tool_result");
+    ev.userKind = isResult ? "tool_result" : "prompt";
+  }
 
   if (type === "assistant" && o.message && typeof o.message === "object") {
     const content = Array.isArray(o.message.content) ? o.message.content : [];

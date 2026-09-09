@@ -1,6 +1,6 @@
 import type { AgentInfo, SessionStatus } from "../../../src/types.js";
 import { PixelArt, type Palette } from "./PixelArt.js";
-import { itemFor, jobFor } from "./kit.js";
+import { itemFor, jobFor, jobPalette, SKIN } from "./kit.js";
 import {
   AGENT_DOWN,
   AGENT_SIT,
@@ -12,10 +12,8 @@ import {
   type Sprite,
 } from "./sprites.js";
 
-const SKIN = { S: "#f6d3ab", K: "#0a0e14" };
-
 /** 状態ごとの姿勢・色・頭上マーク。 */
-const LOOK: Record<SessionStatus, { sprite: Sprite; palette: Palette; mark?: Sprite; markColor?: string }> = {
+const LOOK: Record<SessionStatus, { sprite: Sprite; palette: Palette; mark?: Sprite; markPalette?: Palette }> = {
   working: {
     sprite: AGENT_STAND,
     palette: { ...SKIN, G: "#34d399", B: "#10b981", D: "#0f766e" },
@@ -24,13 +22,13 @@ const LOOK: Record<SessionStatus, { sprite: Sprite; palette: Palette; mark?: Spr
     sprite: AGENT_STAND,
     palette: { ...SKIN, G: "#fbbf24", B: "#d97706", D: "#92400e" },
     mark: MARK_BANG,
-    markColor: "#fbbf24",
+    markPalette: { A: "#fbbf24" },
   },
   waiting: {
     sprite: AGENT_STAND,
     palette: { ...SKIN, G: "#60a5fa", B: "#2563eb", D: "#1e40af" },
     mark: MARK_QUESTION,
-    markColor: "#60a5fa",
+    markPalette: { A: "#60a5fa" },
   },
   error: {
     sprite: AGENT_DOWN,
@@ -40,7 +38,7 @@ const LOOK: Record<SessionStatus, { sprite: Sprite; palette: Palette; mark?: Spr
     sprite: AGENT_SIT,
     palette: { S: "#cbb99c", K: "#0a0e14", G: "#64748b", B: "#475569", D: "#334155" },
     mark: MARK_SLEEP,
-    markColor: "#64748b",
+    markPalette: { A: "#64748b" },
   },
   stopped: {
     sprite: AGENT_SIT,
@@ -49,18 +47,21 @@ const LOOK: Record<SessionStatus, { sprite: Sprite; palette: Palette; mark?: Spr
 };
 
 const MAX_KIDS = 4;
+const FALLBACK_MARK: Palette = { A: "#94a3b8" };
 
 export function AgentStage({
   status,
   tool,
+  skill,
   agents,
 }: {
   status: SessionStatus;
   tool: string | null;
+  skill: string | null;
   agents: AgentInfo[];
 }) {
   const look = LOOK[status] ?? LOOK.idle;
-  const item = status === "working" ? itemFor(tool) : null;
+  const item = status === "working" ? itemFor(tool, skill) : null;
   const kids = agents.slice(0, MAX_KIDS);
   const rest = agents.length - kids.length;
 
@@ -72,7 +73,7 @@ export function AgentStage({
         {look.mark && (
           <PixelArt
             sprite={look.mark}
-            palette={{ A: look.markColor ?? "#94a3b8" }}
+            palette={look.markPalette ?? FALLBACK_MARK}
             scale={3}
             className={`absolute -right-1 ${status === "idle" || status === "stopped" ? "top-6" : "top-0"}`}
           />
@@ -103,7 +104,7 @@ export function AgentStage({
               <PixelArt
                 key={a.id}
                 sprite={KID_STAND}
-                palette={{ ...SKIN, C: job.light, E: job.dark, F: job.dark }}
+                palette={jobPalette(job)}
                 scale={3}
                 className="bob-slow"
                 title={job.label}

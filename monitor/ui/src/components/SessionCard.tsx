@@ -2,7 +2,7 @@ import { GitBranch } from "lucide-react";
 import type { SessionSnapshot } from "../../../src/types.js";
 import { ago, dur, kilo } from "../format.js";
 import { AgentStage } from "../pixel/AgentStage.js";
-import { itemFor, jobFor, skillLabel } from "../pixel/kit.js";
+import { itemForVerb, jobFor, skillLabel } from "../pixel/kit.js";
 import { styleOf } from "../status.js";
 
 /** いま何をしているかの一行。スキルの銘 > 具体的な説明 > 持ち物の動作 の順に選ぶ。 */
@@ -10,7 +10,7 @@ function actionLine(s: SessionSnapshot): string | null {
   if (s.status !== "working") return null;
   if (s.currentSkill) return `巻物『${skillLabel(s.currentSkill)}』を広げている`;
   if (s.currentAction) return s.currentAction;
-  return itemFor(s.currentTool)?.verb ?? null;
+  return itemForVerb(s.currentTool);
 }
 
 function escortLine(s: SessionSnapshot): string | null {
@@ -42,10 +42,18 @@ export function SessionCard({ s, now }: { s: SessionSnapshot; now: number }) {
         </span>
       </div>
 
-      <AgentStage status={s.status} tool={s.currentTool} agents={s.agents} />
+      <AgentStage
+        status={s.status}
+        tool={s.currentTool}
+        skill={s.currentSkill}
+        agents={s.agents}
+      />
 
       <div className="mb-2 min-h-[36px] px-1 text-center">
         {action && <div className="truncate text-[12px] text-emerald-300">{action}</div>}
+        {s.statusDetail && s.status !== "working" && (
+          <div className="truncate text-[12px] text-amber-300">{s.statusDetail}</div>
+        )}
         {escort && <div className="truncate text-[11px] text-violet-300">{escort}</div>}
         <div className="truncate text-[11.5px] text-slate-400" title={s.title ?? undefined}>
           {s.title ?? "（作業内容 未確定）"}

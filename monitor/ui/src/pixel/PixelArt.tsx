@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo, type CSSProperties } from "react";
 import type { Sprite } from "./sprites.js";
 
 export type Palette = Record<string, string>;
@@ -26,7 +26,7 @@ function toRuns(rows: Sprite): Run[] {
   return out;
 }
 
-export function PixelArt({
+export const PixelArt = memo(function PixelArt({
   sprite,
   palette,
   scale = 4,
@@ -38,11 +38,12 @@ export function PixelArt({
   palette: Palette;
   scale?: number;
   className?: string;
-  style?: React.CSSProperties;
+  style?: CSSProperties;
   title?: string;
 }) {
   const runs = useMemo(() => toRuns(sprite), [sprite]);
-  const w = useMemo(() => Math.max(...sprite.map((r) => r.length)), [sprite]);
+  // 空配列だと Math.max が -Infinity を返して viewBox が壊れる。
+  const w = useMemo(() => (sprite.length ? Math.max(...sprite.map((r) => r.length)) : 0), [sprite]);
   const h = sprite.length;
 
   return (
@@ -64,4 +65,4 @@ export function PixelArt({
       })}
     </svg>
   );
-}
+});
