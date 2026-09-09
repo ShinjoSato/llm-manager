@@ -21,6 +21,8 @@
         --stopped: #3f4c5e;
       }
       * { box-sizing: border-box; }
+      /* display を指定した要素にも hidden を効かせる（.tool の flex に負けるため）。 */
+      [hidden] { display: none !important; }
       body {
         margin: 0;
         background: var(--bg);
@@ -43,7 +45,7 @@
         width: 8px; height: 8px; border-radius: 50%; background: var(--error);
         display: inline-block; transition: background .3s;
       }
-      .conn.live i { background: var(--working); animation: pulse 2s infinite; }
+      .conn.live i { background: var(--working); }
 
       main {
         display: grid; grid-template-columns: minmax(0, 1fr) 340px;
@@ -56,15 +58,15 @@
       .card {
         background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
         padding: 13px 14px; position: relative; overflow: hidden;
-        transition: border-color .3s, transform .12s;
       }
       .card::before {
         content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
         background: var(--c); opacity: .9;
       }
-      .card.flash { animation: flash .55s ease-out; }
+      /* ツール実行の合図。派手すぎないよう淡く 1 回だけ差す。 */
+      .card.flash { animation: flash 1s ease-out; }
       @keyframes flash {
-        0% { background: color-mix(in srgb, var(--c) 22%, var(--panel)); }
+        0% { background: color-mix(in srgb, var(--c) 10%, var(--panel)); }
         100% { background: var(--panel); }
       }
       .card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -83,19 +85,20 @@
         border-radius: 20px; padding: 2px 9px 2px 7px; white-space: nowrap;
       }
       .badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
-      .badge.animate i { animation: pulse 1.4s infinite; }
-      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+      .badge.animate i { animation: pulse 2.6s ease-in-out infinite; }
+      @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 
       .title { font-size: 13px; color: var(--text); margin-bottom: 7px; min-height: 20px; }
       .title.empty { color: var(--dim); }
       .tool {
-        display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+        display: flex; align-items: center; gap: 6px; font-size: 12px;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         color: var(--working); margin-bottom: 7px;
       }
       .tool .spinner {
-        width: 9px; height: 9px; border: 1.5px solid color-mix(in srgb, var(--working) 30%, transparent);
-        border-top-color: var(--working); border-radius: 50%; animation: spin .7s linear infinite;
+        width: 9px; height: 9px; flex: none;
+        border: 1.5px solid color-mix(in srgb, var(--working) 30%, transparent);
+        border-top-color: var(--working); border-radius: 50%; animation: spin 1s linear infinite;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
       .detail { font-size: 12px; color: var(--permission); margin-bottom: 7px; }
@@ -105,9 +108,7 @@
         font-variant-numeric: tabular-nums;
       }
       .meta span { white-space: nowrap; }
-      .tools-trail {
-        display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; min-height: 18px;
-      }
+      .tools-trail { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; min-height: 18px; }
       .chip {
         font-size: 10px; color: var(--muted); background: var(--panel-2);
         border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px;
@@ -127,9 +128,9 @@
       .item {
         display: grid; grid-template-columns: 52px 1fr; gap: 8px;
         padding: 5px 8px; border-radius: 6px; font-size: 12px;
-        animation: slide .3s ease-out;
+        animation: slide .25s ease-out;
       }
-      @keyframes slide { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+      @keyframes slide { from { opacity: 0; } to { opacity: 1; } }
       .item time { color: var(--dim); font-size: 10.5px; font-variant-numeric: tabular-nums; padding-top: 1px; }
       .item .body { min-width: 0; }
       .item .proj { font-size: 10.5px; color: var(--k); font-weight: 600; }
@@ -139,6 +140,10 @@
       .item.prompt .txt { color: #c9b6f0; }
 
       .empty-state { color: var(--dim); padding: 40px 0; text-align: center; font-size: 13px; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .badge.animate i, .card.flash, .tool .spinner, .item { animation: none !important; }
+      }
     </style>
   </head>
   <body>
@@ -174,11 +179,14 @@
         tool: "#7dd3fc", prompt: "#c9b6f0", message: "#94a3b8",
         status: "#fbbf24", session: "#34d399", agent: "#f0abfc",
       };
+      /** ツールが連続しても、この間隔より短いフラッシュは間引く。 */
+      const FLASH_COOLDOWN_MS = 1500;
 
       const grid = document.getElementById("grid");
       const feedEl = document.getElementById("feed");
       const conn = document.getElementById("conn");
       const cards = new Map();
+      const lastFlash = new Map();
       let sessions = [];
 
       const pad = (n) => String(n).padStart(2, "0");
@@ -202,109 +210,178 @@
       }
       const kilo = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
+      /** 値が変わった時だけ書き換える。毎回代入すると再描画とアニメ再開を招く。 */
+      const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+      const setShown = (node, shown) => { if (node.hidden === shown) node.hidden = !shown; };
+
+      /** カードは 1 度だけ組み立て、以後は中身を差分更新する。 */
+      function buildCard() {
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `
+          <div class="card-top">
+            <span class="project"></span>
+            <span class="branch" hidden></span>
+            <span class="badge"><i></i><span class="badge-label"></span></span>
+          </div>
+          <div class="title"></div>
+          <div class="tool" hidden><span class="spinner"></span><span class="tool-name"></span></div>
+          <div class="detail" hidden></div>
+          <div class="tools-trail"></div>
+          <div class="meta">
+            <span class="m-activity"></span><span class="m-uptime"></span>
+            <span class="m-cache" hidden></span><span class="m-agents" hidden></span>
+            <span class="m-source"></span>
+          </div>`;
+        const q = (sel) => el.querySelector(sel);
+        return {
+          el, trailKey: "",
+          project: q(".project"), branch: q(".branch"),
+          badge: q(".badge"), badgeLabel: q(".badge-label"),
+          title: q(".title"), tool: q(".tool"), toolName: q(".tool-name"),
+          detail: q(".detail"), trail: q(".tools-trail"),
+          activity: q(".m-activity"), uptime: q(".m-uptime"),
+          cache: q(".m-cache"), agents: q(".m-agents"), source: q(".m-source"),
+        };
+      }
+
+      function paint(c, s) {
+        const st = STATUS[s.status] ?? STATUS.idle;
+        if (c.el.style.getPropertyValue("--c") !== st.color) c.el.style.setProperty("--c", st.color);
+
+        setText(c.project, s.project);
+        setText(c.branch, s.branch ?? "");
+        setShown(c.branch, Boolean(s.branch));
+
+        setText(c.badgeLabel, st.label);
+        c.badge.classList.toggle("animate", st.animate);
+
+        setText(c.title, s.title ?? "（作業内容 未確定）");
+        c.title.classList.toggle("empty", !s.title);
+
+        setShown(c.tool, Boolean(s.currentTool));
+        if (s.currentTool) setText(c.toolName, `${s.currentTool} 実行中`);
+
+        const showDetail = Boolean(s.statusDetail) && s.status !== "working";
+        setShown(c.detail, showDetail);
+        if (showDetail) setText(c.detail, s.statusDetail);
+
+        const trail = s.recentTools.slice(-6);
+        const key = trail.join(" ");
+        if (key !== c.trailKey) {
+          c.trailKey = key;
+          c.trail.replaceChildren(...trail.map((t, i) => {
+            const chip = document.createElement("span");
+            chip.className = i === trail.length - 1 ? "chip last" : "chip";
+            chip.textContent = t;
+            return chip;
+          }));
+        }
+
+        setText(c.activity, `最終活動 ${ago(s.lastActivityAt)}`);
+        setText(c.uptime, `稼働 ${dur(s.startedAt)}`);
+        setShown(c.cache, Boolean(s.tokens));
+        if (s.tokens) setText(c.cache, `キャッシュ ${kilo(s.tokens.cacheRead)}`);
+        setShown(c.agents, s.activeAgents > 0);
+        if (s.activeAgents) setText(c.agents, `サブエージェント ${s.activeAgents}`);
+        setText(c.source, s.statusSource === "hook" ? "hook" : "log");
+      }
+
       function render(list) {
         sessions = list;
         if (!list.length) {
-          grid.innerHTML = '<div class="empty-state">稼働中の Claude Code セッションがありません</div>';
+          if (!grid.querySelector(".empty-state")) {
+            grid.replaceChildren(Object.assign(document.createElement("div"), {
+              className: "empty-state",
+              textContent: "稼働中の Claude Code セッションがありません",
+            }));
+          }
           cards.clear();
-        } else {
-          const empty = grid.querySelector(".empty-state");
-          if (empty) { grid.innerHTML = ""; cards.clear(); }
-          for (const s of list) {
-            let card = cards.get(s.sessionId);
-            if (!card) {
-              card = document.createElement("div");
-              card.className = "card";
-              cards.set(s.sessionId, card);
-            }
-            paint(card, s);
-            grid.appendChild(card); // 並び順を状態順に保つ
-          }
-          for (const [id, card] of cards) {
-            if (!list.some((s) => s.sessionId === id)) { card.remove(); cards.delete(id); }
-          }
+          stats(list);
+          return;
+        }
+        const placeholder = grid.querySelector(".empty-state");
+        if (placeholder) { grid.replaceChildren(); cards.clear(); }
+
+        list.forEach((s, i) => {
+          let c = cards.get(s.sessionId);
+          if (!c) { c = buildCard(); cards.set(s.sessionId, c); }
+          paint(c, s);
+          // 並び順が変わった時だけ動かす（無条件の appendChild は再挿入でアニメを乱す）。
+          if (grid.children[i] !== c.el) grid.insertBefore(c.el, grid.children[i] ?? null);
+        });
+        for (const [id, c] of cards) {
+          if (!list.some((s) => s.sessionId === id)) { c.el.remove(); cards.delete(id); }
         }
         stats(list);
       }
 
-      function paint(card, s) {
-        const st = STATUS[s.status] ?? STATUS.idle;
-        card.style.setProperty("--c", st.color);
-        const trail = s.recentTools.slice(-6);
-        card.innerHTML = `
-          <div class="card-top">
-            <span class="project">${esc(s.project)}</span>
-            ${s.branch ? `<span class="branch">${esc(s.branch)}</span>` : ""}
-            <span class="badge ${st.animate ? "animate" : ""}"><i></i>${st.label}</span>
-          </div>
-          <div class="title ${s.title ? "" : "empty"}">${esc(s.title ?? "（作業内容 未確定）")}</div>
-          ${s.currentTool ? `<div class="tool"><span class="spinner"></span>${esc(s.currentTool)} 実行中</div>` : ""}
-          ${s.statusDetail && s.status !== "working" ? `<div class="detail">${esc(s.statusDetail)}</div>` : ""}
-          <div class="tools-trail">
-            ${trail.map((t, i) => `<span class="chip ${i === trail.length - 1 ? "last" : ""}">${esc(t)}</span>`).join("")}
-          </div>
-          <div class="meta">
-            <span>最終活動 ${ago(s.lastActivityAt)}</span>
-            <span>稼働 ${dur(s.startedAt)}</span>
-            ${s.tokens ? `<span>キャッシュ ${kilo(s.tokens.cacheRead)}</span>` : ""}
-            ${s.activeAgents ? `<span>サブエージェント ${s.activeAgents}</span>` : ""}
-            <span>${s.statusSource === "hook" ? "hook" : "log"}</span>
-          </div>`;
-      }
-
       function stats(list) {
-        const by = (f) => list.filter(f).length;
-        document.getElementById("s-working").textContent = by((s) => s.status === "working");
-        document.getElementById("s-attention").textContent = by((s) =>
-          ["permission", "waiting", "error"].includes(s.status));
-        document.getElementById("s-idle").textContent = by((s) => s.status === "idle");
-        document.getElementById("s-total").textContent = list.filter((s) => s.alive).length;
+        const by = (f) => String(list.filter(f).length);
+        setText(document.getElementById("s-working"), by((s) => s.status === "working"));
+        setText(document.getElementById("s-attention"),
+          by((s) => ["permission", "waiting", "error"].includes(s.status)));
+        setText(document.getElementById("s-idle"), by((s) => s.status === "idle"));
+        setText(document.getElementById("s-total"), by((s) => s.alive));
       }
 
       function addFeed(item, prepend = true) {
         const el = document.createElement("div");
         el.className = `item ${item.kind}`;
         el.style.setProperty("--k", KIND_COLOR[item.kind] ?? "#94a3b8");
-        el.innerHTML = `<time>${clock(item.at)}</time>
-          <div class="body"><div class="proj">${esc(item.project)}</div>
-          <div class="txt">${esc(item.text)}</div></div>`;
+        const time = document.createElement("time");
+        time.textContent = clock(item.at);
+        const body = document.createElement("div");
+        body.className = "body";
+        const proj = document.createElement("div");
+        proj.className = "proj";
+        proj.textContent = item.project;
+        const txt = document.createElement("div");
+        txt.className = "txt";
+        txt.textContent = item.text;
+        body.append(proj, txt);
+        el.append(time, body);
         if (prepend) feedEl.prepend(el); else feedEl.appendChild(el);
         while (feedEl.childElementCount > 150) feedEl.lastElementChild.remove();
 
-        const card = cards.get(item.sessionId);
-        if (card && item.kind === "tool") {
-          card.classList.remove("flash");
-          void card.offsetWidth; // アニメを再生させるためリフローを挟む
-          card.classList.add("flash");
-        }
-      }
-
-      function esc(s) {
-        return String(s ?? "").replace(/[&<>"']/g, (c) =>
-          ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+        if (item.kind !== "tool") return;
+        const c = cards.get(item.sessionId);
+        const now = Date.now();
+        if (!c || now - (lastFlash.get(item.sessionId) ?? 0) < FLASH_COOLDOWN_MS) return;
+        lastFlash.set(item.sessionId, now);
+        c.el.classList.remove("flash");
+        void c.el.offsetWidth; // アニメを再生させるためリフローを挟む
+        c.el.classList.add("flash");
       }
 
       function connect() {
         const es = new EventSource("/events");
         es.addEventListener("open", () => {
           conn.className = "conn live";
-          conn.querySelector("span").textContent = "リアルタイム接続";
+          setText(conn.querySelector("span"), "リアルタイム接続");
         });
         es.addEventListener("sessions", (e) => render(JSON.parse(e.data)));
         es.addEventListener("feed", (e) => addFeed(JSON.parse(e.data)));
         es.addEventListener("feed-batch", (e) => {
-          feedEl.innerHTML = "";
+          feedEl.replaceChildren();
           for (const item of JSON.parse(e.data).reverse()) addFeed(item, false);
         });
         es.addEventListener("error", () => {
           conn.className = "conn";
-          conn.querySelector("span").textContent = "再接続中…";
+          setText(conn.querySelector("span"), "再接続中…");
         });
       }
 
       connect();
-      // 経過時間の表示だけはサーバーを待たずに進める。
-      setInterval(() => { if (sessions.length) render(sessions); }, 1000);
+      // 経過時間の表示だけを進める。カードは作り直さない。
+      setInterval(() => {
+        for (const s of sessions) {
+          const c = cards.get(s.sessionId);
+          if (!c) continue;
+          setText(c.activity, `最終活動 ${ago(s.lastActivityAt)}`);
+          setText(c.uptime, `稼働 ${dur(s.startedAt)}`);
+        }
+      }, 1000);
     </script>
   </body>
 </html>
