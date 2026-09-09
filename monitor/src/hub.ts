@@ -16,8 +16,11 @@ import type {
   TokenUsage,
 } from "./types.js";
 
-/** 最後の活動からこの時間内なら「稼働中」とみなす（フックが無い時の推定）。 */
-const WORKING_WINDOW_MS = 15_000;
+/**
+ * ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない。
+ * 中断やクラッシュで tool_use が最後のまま残ったセッションを永久に稼働中にしないための保険。
+ */
+const STALE_BUSY_MS = 10 * 60_000;
 /** サブエージェントのログがこの時間内に更新されていれば稼働中とみなす。 */
 const AGENT_WINDOW_MS = 60_000;
 /** 終了したセッションを一覧に残す時間。消えた理由を追えるようにする。 */
@@ -45,7 +48,14 @@ interface SessionState {
   activeAgents: number;
   agentsCheckedAt: number;
   endedAt: number | null;
+  turnState: TurnState | null;
 }
+
+/**
+ * ログの終わり方。busy はモデルの番（ツール実行中・長考中）で、無音でも動いている。
+ * ツール実行や思考の間はログが数分書かれないため、経過時間だけでは稼働を判定できない。
+ */
+type TurnState = "busy" | "settled";
 
 export class SessionHub extends EventEmitter {
   private sessions = new Map<string, SessionState>();
@@ -138,6 +148,7 @@ export class SessionHub extends EventEmitter {
       activeAgents: 0,
       agentsCheckedAt: 0,
       endedAt: raw.alive ? null : Date.now(),
+      turnState: null,
     };
   }
 
@@ -173,6 +184,14 @@ export class SessionHub extends EventEmitter {
         }
         if (ev.at) state.lastActivityAt = Math.max(state.lastActivityAt ?? 0, ev.at);
         if (ev.usage) state.tokens = ev.usage;
+
+        // thinking だけの assistant 行では判定を変えない（応答が終わったとは限らない）。
+        if (ev.type === "assistant") {
+          if (ev.tools?.length) state.turnState = "busy";
+          else if (ev.text) state.turnState = "settled";
+        } else if (ev.type === "user") {
+          state.turnState = "busy"; // プロンプト送信か tool_result。どちらも次はモデルの番
+        }
 
         if (ev.tools?.length) {
           state.currentTool = ev.tools[ev.tools.length - 1] ?? null;
@@ -320,14 +339,15 @@ export class SessionHub extends EventEmitter {
   private statusOf(state: SessionState): { status: SessionStatus; source: StatusSource } {
     if (!state.raw.alive) return { status: "stopped", source: "inventory" };
 
-    const active =
-      state.lastActivityAt !== null && Date.now() - state.lastActivityAt < WORKING_WINDOW_MS;
+    const since = state.lastActivityAt === null ? Infinity : Date.now() - state.lastActivityAt;
+    const busy = state.turnState === "busy" && since < STALE_BUSY_MS;
+
     // ログ側の活動がフックより新しければ、実際には動いている。
-    if (active && state.lastActivityAt! > state.hookAt) {
+    if (busy && (state.lastActivityAt ?? 0) > state.hookAt) {
       return { status: "working", source: "transcript" };
     }
     if (state.hookStatus) return { status: state.hookStatus, source: "hook" };
-    return { status: active ? "working" : "idle", source: "transcript" };
+    return { status: busy ? "working" : "idle", source: "transcript" };
   }
 
   snapshot(): SessionSnapshot[] {
