@@ -53,6 +53,8 @@ export interface SessionSnapshot {
   currentAction: string | null;
   tokens: TokenUsage | null;
   agents: AgentInfo[];
+  /** 受信箱ソケットが見つかっている＝メッセージを送れる。 */
+  canReceive: boolean;
 }
 
 export type FeedKind = "tool" | "prompt" | "message" | "status" | "session" | "agent";
@@ -78,6 +80,8 @@ export interface RawSession {
   version?: string;
   entrypoint?: string;
   kind?: string;
+  /** 受信箱ソケット。ここへ投稿すると、そのセッションにメッセージが届く。 */
+  messagingSocketPath?: string;
   alive: boolean;
 }
 

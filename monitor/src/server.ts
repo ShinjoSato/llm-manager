@@ -2,6 +2,7 @@
 //   GET  /api/health
 //   GET  /api/sessions   スナップショット
 //   GET  /api/feed       直近のライブフィード
+//   POST /api/sessions/:id/message  そのセッションの受信箱へテキストを投稿
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
 //   GET  /events         SSE（sessions / feed）
 import { serve } from "@hono/node-server";
@@ -28,6 +29,20 @@ const app = new Hono();
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
 app.get("/api/feed", (c) => c.json(hub.recentFeed()));
+
+app.post("/api/sessions/:sessionId/message", async (c) => {
+  let body: { text?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "invalid json" }, 400);
+  }
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (!text) return c.json({ ok: false, error: "text が空です" }, 400);
+
+  const result = await hub.sendMessage(c.req.param("sessionId"), text);
+  return c.json(result, result.ok ? 200 : 409);
+});
 
 app.post("/hook", async (c) => {
   let payload: HookPayload;

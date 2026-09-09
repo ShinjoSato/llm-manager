@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { scanSessions } from "./inventory.js";
 import { resolveTranscript, subagentDir } from "./paths.js";
+import { defaultSocketPath, expandHome, sendToSession, type SendResult } from "./messaging.js";
 import { primeMeta, TranscriptReader } from "./transcript.js";
 import type {
   AgentInfo,
@@ -431,11 +432,38 @@ export class SessionHub extends EventEmitter {
         currentSkill: status === "working" ? state.currentSkill : null,
         currentAction: status === "working" ? state.currentAction : null,
         tokens: state.tokens,
+        canReceive: this.socketFor(state.raw) !== null,
         // 権限待ちの裏で子が回っていることは隠さない。終了したセッションだけ空にする。
         agents: status === "stopped" ? [] : state.agents,
       });
     }
     return out.sort((a, b) => rank(a) - rank(b) || a.project.localeCompare(b.project));
+  }
+
+  /** 受信箱ソケットの位置。レジストリの値を優先し、無ければ既定の場所を探す。 */
+  private socketFor(raw: RawSession): string | null {
+    if (raw.messagingSocketPath) {
+      const p = expandHome(raw.messagingSocketPath);
+      if (existsSync(p)) return p;
+    }
+    return defaultSocketPath(raw.pid);
+  }
+
+  /** 指定セッションへ 1 通送る。届いたテキストは「別セッションからのメッセージ」として扱われる。 */
+  async sendMessage(sessionId: string, text: string): Promise<SendResult> {
+    const state = this.sessions.get(sessionId);
+    if (!state) return { ok: false, error: "セッションが見つかりません" };
+    if (!state.raw.alive) return { ok: false, error: "セッションは終了しています" };
+    const socket = this.socketFor(state.raw);
+    if (!socket) return { ok: false, error: "受信箱ソケットが見つかりません" };
+
+    const result = await sendToSession(socket, text);
+    this.push(
+      sessionId,
+      "status",
+      result.ok ? `メッセージを送信: ${truncate(text, 60)}` : `送信失敗: ${result.error}`,
+    );
+    return result;
   }
 
   recentFeed(limit = 80): FeedItem[] {

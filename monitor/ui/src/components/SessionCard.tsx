@@ -2,6 +2,7 @@ import { GitBranch } from "lucide-react";
 import type { SessionSnapshot } from "../../../src/types.js";
 import { ago, dur, kilo } from "../format.js";
 import { AgentStage } from "../pixel/AgentStage.js";
+import { MessageInput } from "./MessageInput.js";
 import { itemForVerb, jobFor, skillLabel } from "../pixel/kit.js";
 import { styleOf } from "../status.js";
 
@@ -68,6 +69,8 @@ export function SessionCard({ s, now }: { s: SessionSnapshot; now: number }) {
         {s.tokens && <span>キャッシュ {kilo(s.tokens.cacheRead)}</span>}
         <span className="ml-auto">{s.statusSource === "hook" ? "hook" : "log"}</span>
       </div>
+
+      <MessageInput sessionId={s.sessionId} disabled={!s.canReceive} />
     </div>
   );
 }
