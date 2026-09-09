@@ -21,10 +21,8 @@ export interface TokenUsage {
 /** 親に随伴しているサブエージェント 1 体。 */
 export interface AgentInfo {
   id: string;
-  /** `developer-plugin:code-reviewer` のような種別。ログの attributionAgent から取る。 */
+  /** `developer-plugin:code-reviewer` のような種別。meta.json の agentType から取る。 */
   type: string | null;
-  /** 直近に動いているものだけを載せるので、ここは常に true。 */
-  active: boolean;
   lastActivityAt: number;
 }
 

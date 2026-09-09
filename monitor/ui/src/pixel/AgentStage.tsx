@@ -65,7 +65,8 @@ export function AgentStage({
 }) {
   const look = LOOK[status] ?? LOOK.idle;
   const item = status === "working" ? itemFor(tool, skill) : null;
-  const kids = agents.slice(0, MAX_KIDS);
+  // 直近に動いている順で選び、描画は id 順に固定する（2 秒ごとに並びが入れ替わるのを防ぐ）。
+  const kids = agents.slice(0, MAX_KIDS).sort((a, b) => a.id.localeCompare(b.id));
   const rest = agents.length - kids.length;
 
   return (

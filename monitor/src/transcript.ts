@@ -41,6 +41,27 @@ function toolDetail(name: string, input: unknown): ToolDetail {
   return detail;
 }
 
+/** ユーザーが打った指示はタグで始まらない。スラッシュコマンドだけは指示として扱う。 */
+const USER_TAGS = new Set(["command-name", "command-message"]);
+
+/**
+ * user 行が仕組み側の注入か。task-notification / ide_opened_file / system-reminder など、
+ * 種別は増えるので列挙せず「タグで始まるか」で見る。
+ */
+function isInjected(content: unknown): boolean {
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((c: any) => c && typeof c === "object" && c.type === "text")
+            .map((c: any) => c.text ?? "")
+            .join("")
+        : "";
+  const tag = /^\s*<([a-zA-Z][\w-]*)/.exec(text)?.[1];
+  return tag !== undefined && !USER_TAGS.has(tag);
+}
+
 function parseLine(line: string): ParsedEvent | null {
   let o: Record<string, any>;
   try {
@@ -62,8 +83,7 @@ function parseLine(line: string): ParsedEvent | null {
     const isResult =
       Array.isArray(content) &&
       content.some((c: any) => c && typeof c === "object" && c.type === "tool_result");
-    // isMeta はスキル本文やフックの注入。ユーザーの新しい指示として扱わない。
-    ev.userKind = isResult || o.isMeta === true ? "tool_result" : "prompt";
+    ev.userKind = isResult || o.isMeta === true || isInjected(content) ? "tool_result" : "prompt";
   }
 
   if (type === "assistant" && o.message && typeof o.message === "object") {
@@ -75,8 +95,8 @@ function parseLine(line: string): ParsedEvent | null {
       if (c.type === "tool_use" && typeof c.name === "string") {
         tools.push(c.name);
         const detail = toolDetail(c.name, c.input);
-        // 並列呼び出しに Skill が混ざった時に取り逃さないよう、skill 付きを優先する。
-        if (!ev.toolDetail || (detail.skill && !ev.toolDetail.skill)) ev.toolDetail = detail;
+        // skill 付きは最優先。それ以外は currentTool と揃うよう後勝ちにする。
+        if (detail.skill || !ev.toolDetail?.skill) ev.toolDetail = detail;
       } else if (c.type === "text" && typeof c.text === "string") text += c.text;
     }
     if (tools.length) ev.tools = tools;

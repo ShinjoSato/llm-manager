@@ -265,7 +265,6 @@ export class SessionHub extends EventEmitter {
         agents.push({
           id: f.replace(/^agent-/, "").replace(/\.jsonl$/, ""),
           type: this.agentType(path),
-          active: true,
           lastActivityAt: mtime,
         });
       }
@@ -280,7 +279,7 @@ export class SessionHub extends EventEmitter {
   private agentType(path: string): string | null {
     const metaPath = path.replace(/\.jsonl$/, ".meta.json");
     const cached = this.agentTypes.get(metaPath);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) return cached || null;
     let type: string | null = null;
     try {
       const o = JSON.parse(readFileSync(metaPath, "utf8"));
@@ -288,7 +287,8 @@ export class SessionHub extends EventEmitter {
     } catch {
       return null;
     }
-    if (type) this.agentTypes.set(metaPath, type);
+    // 見つからない場合も覚える。空文字は「読んだが無かった」の意味。
+    this.agentTypes.set(metaPath, type ?? "");
     return type;
   }
 
@@ -396,7 +396,7 @@ export class SessionHub extends EventEmitter {
     const since = last === 0 ? Infinity : Date.now() - last;
     // 親が応答を終えていても、裏でサブエージェントが動いていれば作業は進んでいる。
     const busy =
-      state.agents.some((a) => a.active) || (state.turnState === "busy" && since < STALE_BUSY_MS);
+      state.agents.length > 0 || (state.turnState === "busy" && since < STALE_BUSY_MS);
 
     // ログ側の活動がフックより新しければ、実際には動いている。
     if (busy && last > state.hookAt) {
