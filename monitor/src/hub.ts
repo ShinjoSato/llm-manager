@@ -20,8 +20,12 @@ import type {
 const WORKING_WINDOW_MS = 15_000;
 /** サブエージェントのログがこの時間内に更新されていれば稼働中とみなす。 */
 const AGENT_WINDOW_MS = 60_000;
+/** 終了したセッションを一覧に残す時間。消えた理由を追えるようにする。 */
+const STOPPED_RETENTION_MS = 5 * 60_000;
 const INVENTORY_INTERVAL_MS = 3_000;
 const TRANSCRIPT_INTERVAL_MS = 250;
+/** サブエージェント数の走査は syscall が多いので実況ポーリングより粗くする。 */
+const AGENT_SCAN_INTERVAL_MS = 2_000;
 const FEED_LIMIT = 300;
 
 interface SessionState {
@@ -39,6 +43,8 @@ interface SessionState {
   hookDetail: string | null;
   hookAt: number;
   activeAgents: number;
+  agentsCheckedAt: number;
+  endedAt: number | null;
 }
 
 export class SessionHub extends EventEmitter {
@@ -48,10 +54,14 @@ export class SessionHub extends EventEmitter {
   private timers: NodeJS.Timeout[] = [];
 
   start(): void {
-    this.scanInventory();
-    this.pollTranscripts();
-    this.timers.push(setInterval(() => this.scanInventory(), INVENTORY_INTERVAL_MS));
-    this.timers.push(setInterval(() => this.pollTranscripts(), TRANSCRIPT_INTERVAL_MS));
+    this.guard(() => this.scanInventory());
+    this.guard(() => this.pollTranscripts());
+    this.timers.push(
+      setInterval(() => this.guard(() => this.scanInventory()), INVENTORY_INTERVAL_MS),
+    );
+    this.timers.push(
+      setInterval(() => this.guard(() => this.pollTranscripts()), TRANSCRIPT_INTERVAL_MS),
+    );
   }
 
   stop(): void {
@@ -59,9 +69,19 @@ export class SessionHub extends EventEmitter {
     this.timers = [];
   }
 
+  /** 監視ループの例外でプロセスごと落とさない。 */
+  private guard(fn: () => void): void {
+    try {
+      fn();
+    } catch (err) {
+      console.error("[monitor] poll error:", err);
+    }
+  }
+
   // ── 在庫層 ────────────────────────────────────────
   private scanInventory(): void {
     const seen = new Set<string>();
+    const now = Date.now();
     let changed = false;
 
     for (const raw of scanSessions()) {
@@ -78,17 +98,21 @@ export class SessionHub extends EventEmitter {
         if (!raw.alive) this.push(raw.sessionId, "session", "セッション終了");
       }
       existing.raw = raw;
+      existing.endedAt = raw.alive ? null : (existing.endedAt ?? now);
     }
 
-    // レジストリから消えたセッションは終了済み。
+    // レジストリから消えたセッションは終了済み。しばらく墓標として残してから捨てる。
     for (const [id, state] of this.sessions) {
       if (seen.has(id)) continue;
-      if (state.raw.alive) {
+      if (state.endedAt === null) {
+        state.endedAt = now;
         state.raw = { ...state.raw, alive: false };
         this.push(id, "session", "セッション終了");
+        changed = true;
+      } else if (now - state.endedAt > STOPPED_RETENTION_MS) {
+        this.sessions.delete(id);
+        changed = true;
       }
-      changed = true;
-      this.sessions.delete(id);
     }
 
     if (changed) this.emitUpdate();
@@ -112,11 +136,14 @@ export class SessionHub extends EventEmitter {
       hookDetail: null,
       hookAt: 0,
       activeAgents: 0,
+      agentsCheckedAt: 0,
+      endedAt: raw.alive ? null : Date.now(),
     };
   }
 
   // ── 実況層 ────────────────────────────────────────
   private pollTranscripts(): void {
+    const now = Date.now();
     let changed = false;
 
     for (const [id, state] of this.sessions) {
@@ -151,25 +178,32 @@ export class SessionHub extends EventEmitter {
           state.currentTool = ev.tools[ev.tools.length - 1] ?? null;
           state.recentTools = [...state.recentTools, ...ev.tools].slice(-12);
           for (const tool of ev.tools) this.push(id, "tool", tool, tool);
-          // ツールを呼んだ = 動いている。フックの古い「待ち」判定を捨てる。
-          state.hookStatus = null;
-          state.hookDetail = null;
+          // フックより新しい行を読んだ時だけ「待ち」を解く。古い行で権限待ちを消さない。
+          if (!ev.at || ev.at > state.hookAt) {
+            state.hookStatus = null;
+            state.hookDetail = null;
+          }
+        } else if (ev.type === "user") {
+          state.currentTool = null; // tool_result が返った = ツールは終わっている
         } else if (ev.type === "assistant" && ev.text) {
           state.currentTool = null;
           this.push(id, "message", truncate(ev.text, 160));
         }
       }
 
-      const agents = this.countActiveAgents(state);
-      if (agents !== state.activeAgents) {
-        state.activeAgents = agents;
-        changed = true;
+      if (now - state.agentsCheckedAt >= AGENT_SCAN_INTERVAL_MS) {
+        state.agentsCheckedAt = now;
+        const agents = this.countActiveAgents(state);
+        if (agents !== state.activeAgents) {
+          state.activeAgents = agents;
+          changed = true;
+        }
       }
     }
 
     // 経過時間だけで working -> idle に落ちる分も配信したいので、変化が無くても定期的に流す。
     if (changed) this.emitUpdate();
-    else this.emitTick();
+    else if (this.listenerCount("tick") > 0) this.emit("tick", this.snapshot());
   }
 
   /** 直近で更新されたサブエージェントのログ数を数える。 */
@@ -195,8 +229,13 @@ export class SessionHub extends EventEmitter {
   applyHook(payload: HookPayload): boolean {
     const id = payload.session_id;
     if (!id) return false;
-    const state = this.sessions.get(id);
-    if (!state) return false;
+    let state = this.sessions.get(id);
+    if (!state) {
+      // 在庫スキャンより先に hook が来ることがある。取り込んでから拾い直す。
+      this.guard(() => this.scanInventory());
+      state = this.sessions.get(id);
+      if (!state) return false;
+    }
 
     const event = payload.hook_event_name ?? "";
     const now = Date.now();
@@ -223,6 +262,9 @@ export class SessionHub extends EventEmitter {
           status = "waiting";
           detail = payload.notification_message ?? null;
           feed = { kind: "status", text: "入力待ちで停止中" };
+        } else {
+          // 未知の種別を握り潰すと、フック層が効いていないことに気づけない。
+          feed = { kind: "status", text: `通知: ${type || "(種別なし)"}` };
         }
         break;
       }
@@ -275,12 +317,8 @@ export class SessionHub extends EventEmitter {
     this.emit("sessions", this.snapshot());
   }
 
-  private emitTick(): void {
-    this.emit("tick", this.snapshot());
-  }
-
   private statusOf(state: SessionState): { status: SessionStatus; source: StatusSource } {
-    if (!state.raw.alive) return { status: "stopped", source: "transcript" };
+    if (!state.raw.alive) return { status: "stopped", source: "inventory" };
 
     const active =
       state.lastActivityAt !== null && Date.now() - state.lastActivityAt < WORKING_WINDOW_MS;

@@ -10,6 +10,7 @@ data/appstore.json
 # Node / ビルド成果物
 node_modules/
 web/dist/
+monitor/ui/dist/
 *.tsbuildinfo
 
 # OS / エディタ

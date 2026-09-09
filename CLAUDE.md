@@ -78,7 +78,7 @@ scripts/                 補助シェル（dev.sh で API+Web 同時起動 / boa
 - **本番配信（サーバー1つで完結）**: `cd web && npm run build` → `cd ../server && npm run http` → http://localhost:8765
   - `web/dist` があれば HTTP サーバーが React も同一ポートで配信する。
 - **データだけ再生成**: `cd server && npm run collect`
-- **セッション監視（monitor・独立プロセス）**: `cd monitor && npm install && npm start` → http://localhost:8766
+- **セッション監視（monitor・独立プロセス）**: `cd monitor && npm install && npm run build && npm start` → http://localhost:8766
 - 依存は各ディレクトリで `npm install`（server / web）。Node 24 系。
 
 ### Claude Code 連携（MCP）— ここが要
@@ -162,7 +162,7 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - **在庫層**（3秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)` で稼働セッション一覧を復元。
 - **実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl` の末尾差分から実行中ツール・ブランチ・作業内容・トークン量を取る。`ai-title` は先頭寄りにしか出ないため初回だけ広く遡る（`primeMeta`）。
 - **フック層**（任意）: `POST /hook`。**「なぜ止まっているか」（権限待ち・入力待ち・APIエラー）はログに一切残らない**ので、これはフックでしか取れない。設定は `monitor/README.md` のスニペットを `~/.claude/settings.json` に入れる（**`async: true` 必須**。付けないと全プロジェクトの応答をブロックする）。
-- UI は `monitor/public/index.html`（ビルド不要・SSE を EventSource で購読）。
+- UI は `monitor/ui/`（React + Vite + Tailwind v4。`web/` と同じデザイントークンを使うので見た目が揃う）。SSE を EventSource で購読し、差分描画は React に任せる。
 - 制約: macOS ローカルのセッションのみ（クラウドセッションは映らない）。ログの粒度はターン／ツール単位で、生成中テキストは流れない。
 
 ## スプレッドシート勉強管理

@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/* ── ダークコマンドセンター: デザイントークン（web/ と共通） ── */
+@theme {
+  --color-ink: #060911;
+  --color-panel: rgba(255, 255, 255, 0.04);
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-accent: #34d399; /* emerald-400 */
+  --color-accent2: #22d3ee; /* cyan-400 */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink);
+  color: #e2e8f0;
+  font-family: -apple-system, "Hiragino Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 背景のアンビエントグロー */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(60rem 40rem at 12% -8%, rgba(52, 211, 153, 0.10), transparent 60%),
+    radial-gradient(50rem 36rem at 95% 0%, rgba(34, 211, 238, 0.08), transparent 55%),
+    radial-gradient(70rem 50rem at 60% 110%, rgba(99, 102, 241, 0.08), transparent 60%);
+}
+
+@layer components {
+  .glass,
+  .card {
+    @apply rounded-2xl border border-white/10 bg-white/[0.035] backdrop-blur-xl;
+    box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.04) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.8);
+  }
+  .card {
+    @apply p-5;
+  }
+  .card-title {
+    @apply mb-4 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-slate-400;
+  }
+  .chip {
+    @apply rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-medium text-slate-300;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap;
+  }
+  .tool-chip {
+    @apply rounded border border-white/8 bg-white/5 px-1.5 py-px text-[10px] text-slate-400;
+    font-family: var(--font-mono);
+  }
+  .link { @apply text-cyan-300 transition hover:text-cyan-200 hover:underline; }
+}
+
+/* 状態ドットの呼吸。振幅を抑えて目に障らない範囲に留める。 */
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.breathe { animation: breathe 2.6s ease-in-out infinite; }
+
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+.spin-slow { animation: spin-slow 1s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .breathe, .spin-slow { animation: none; }
+}
+
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }

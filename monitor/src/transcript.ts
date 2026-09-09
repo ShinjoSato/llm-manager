@@ -1,10 +1,13 @@
 // 実況層: セッションログ(jsonl)の末尾差分を読んで「今なにをしているか」を取り出す。
 // ログはツール実行と同時に追記されるが、書かれる単位はターン／ツール呼び出しであってトークン単位ではない。
 import { openSync, readSync, closeSync, statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import type { TokenUsage } from "./types.js";
 
 /** 初回に遡って読む量。ログは数MBまで育つので全読みしない。 */
 const BOOTSTRAP_BYTES = 512 * 1024;
+/** メタ情報スキャンの上限。巨大なログでも初回が止まらないようにする。 */
+const MAX_SCAN_BYTES = 32 * 1024 * 1024;
 
 export interface ParsedEvent {
   type: string;
@@ -57,9 +60,6 @@ function parseLine(line: string): ParsedEvent | null {
   return ev;
 }
 
-/** 走査の上限。巨大なログでも初回スキャンが止まらないようにする。 */
-const MAX_SCAN_BYTES = 32 * 1024 * 1024;
-
 function readTail(path: string, maxBytes: number): string {
   let size: number;
   try {
@@ -111,8 +111,17 @@ export class TranscriptReader {
   private offset = 0;
   private carry = "";
   private primed = false;
+  // 読み取り境界に跨がったマルチバイト文字を持ち越す（string で持つと U+FFFD に潰れる）。
+  private decoder = new StringDecoder("utf8");
 
   constructor(readonly path: string) {}
+
+  private reset(): void {
+    this.offset = 0;
+    this.carry = "";
+    this.primed = false;
+    this.decoder = new StringDecoder("utf8");
+  }
 
   /** サイズが変わっていなければ何もしない。追記分をパースして返す。 */
   read(): ParsedEvent[] {
@@ -123,19 +132,18 @@ export class TranscriptReader {
       return [];
     }
 
-    if (size < this.offset) {
-      // ローテートや切り詰め。読み直す。
-      this.offset = 0;
-      this.carry = "";
-      this.primed = false;
-    }
+    if (size < this.offset) this.reset(); // ローテートや切り詰め
     if (size === this.offset && this.primed) return [];
 
     let start = this.offset;
     let dropFirstLine = false;
     if (!this.primed) {
       start = Math.max(0, size - BOOTSTRAP_BYTES);
-      dropFirstLine = start > 0; // 途中から読むと先頭行が欠ける
+      if (start > 0) {
+        // 直前の 1 バイトも読む。それが改行なら分割後の先頭が空文字になり、行を失わない。
+        start -= 1;
+        dropFirstLine = true;
+      }
     }
     if (size <= start) {
       this.offset = size;
@@ -143,7 +151,6 @@ export class TranscriptReader {
       return [];
     }
 
-    const buf = Buffer.allocUnsafe(size - start);
     let fd: number;
     try {
       fd = openSync(this.path, "r");
@@ -151,7 +158,9 @@ export class TranscriptReader {
       return [];
     }
     let bytes = 0;
+    let buf: Buffer;
     try {
+      buf = Buffer.allocUnsafe(size - start);
       bytes = readSync(fd, buf, 0, buf.length, start);
     } catch {
       return [];
@@ -160,8 +169,8 @@ export class TranscriptReader {
     }
 
     this.offset = start + bytes;
-    const chunk = this.carry + buf.subarray(0, bytes).toString("utf8");
-    const lines = chunk.split("\n");
+    const chunk = this.decoder.write(buf.subarray(0, bytes));
+    const lines = (this.carry + chunk).split("\n");
     this.carry = lines.pop() ?? ""; // 最後は書き込み途中の可能性があるので持ち越す
     if (dropFirstLine) lines.shift();
     this.primed = true;

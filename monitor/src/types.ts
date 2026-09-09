@@ -10,7 +10,7 @@ export type SessionStatus =
   | "error" // API エラー等で停止
   | "stopped"; // プロセスが終了
 
-export type StatusSource = "hook" | "transcript";
+export type StatusSource = "hook" | "transcript" | "inventory";
 
 export interface TokenUsage {
   input: number;
