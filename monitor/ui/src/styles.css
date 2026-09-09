@@ -69,8 +69,13 @@ body::before {
 @keyframes spin-slow { to { transform: rotate(360deg); } }
 .spin-slow { animation: spin-slow 1s linear infinite; }
 
+/* ドット絵らしく 2 コマで跳ねる。滑らかに動かすと絵の質感と合わない。 */
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+.bob { animation: bob 1.1s steps(2, end) infinite; }
+.bob-slow { animation: bob 2.2s steps(2, end) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
-  .breathe, .spin-slow { animation: none; }
+  .breathe, .spin-slow, .bob, .bob-slow { animation: none; }
 }
 
 * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }

@@ -9,6 +9,14 @@ const BOOTSTRAP_BYTES = 512 * 1024;
 /** メタ情報スキャンの上限。巨大なログでも初回が止まらないようにする。 */
 const MAX_SCAN_BYTES = 32 * 1024 * 1024;
 
+/** ツール呼び出しの中身。キャラの持ち物と一言に使う。 */
+export interface ToolDetail {
+  name: string;
+  skill?: string;
+  subagentType?: string;
+  description?: string;
+}
+
 export interface ParsedEvent {
   type: string;
   at: number | null;
@@ -16,8 +24,19 @@ export interface ParsedEvent {
   lastPrompt?: string;
   branch?: string;
   tools?: string[];
+  toolDetail?: ToolDetail;
   text?: string;
   usage?: TokenUsage;
+}
+
+function toolDetail(name: string, input: unknown): ToolDetail {
+  const detail: ToolDetail = { name };
+  if (!input || typeof input !== "object") return detail;
+  const o = input as Record<string, unknown>;
+  if (typeof o.skill === "string") detail.skill = o.skill;
+  if (typeof o.subagent_type === "string") detail.subagentType = o.subagent_type;
+  if (typeof o.description === "string") detail.description = o.description;
+  return detail;
 }
 
 function parseLine(line: string): ParsedEvent | null {
@@ -42,8 +61,10 @@ function parseLine(line: string): ParsedEvent | null {
     let text = "";
     for (const c of content) {
       if (!c || typeof c !== "object") continue;
-      if (c.type === "tool_use" && typeof c.name === "string") tools.push(c.name);
-      else if (c.type === "text" && typeof c.text === "string") text += c.text;
+      if (c.type === "tool_use" && typeof c.name === "string") {
+        tools.push(c.name);
+        ev.toolDetail = toolDetail(c.name, c.input);
+      } else if (c.type === "text" && typeof c.text === "string") text += c.text;
     }
     if (tools.length) ev.tools = tools;
     if (text.trim()) ev.text = text.trim();
