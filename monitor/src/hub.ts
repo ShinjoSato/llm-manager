@@ -4,7 +4,13 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { scanSessions } from "./inventory.js";
 import { resolveTranscript, subagentDir } from "./paths.js";
-import { defaultSocketPath, expandHome, sendToSession, type SendResult } from "./messaging.js";
+import {
+  defaultSocketPath,
+  expandHome,
+  isOwnSocket,
+  sendToSession,
+  type SendResult,
+} from "./messaging.js";
 import { primeMeta, TranscriptReader } from "./transcript.js";
 import type {
   AgentInfo,
@@ -52,6 +58,8 @@ interface SessionState {
   agentsCheckedAt: number;
   /** サブエージェントのログが最後に動いた時刻。親が Agent 実行中は親ログが無音になるため。 */
   lastAgentActivityAt: number | null;
+  /** 受信箱ソケットの位置。在庫スキャンのたびに解決し直す。 */
+  socketPath: string | null;
   endedAt: number | null;
   turnState: TurnState | null;
 }
@@ -115,6 +123,7 @@ export class SessionHub extends EventEmitter {
       }
       existing.raw = raw;
       existing.endedAt = raw.alive ? null : (existing.endedAt ?? now);
+      existing.socketPath = this.socketFor(raw);
     }
 
     // レジストリから消えたセッションは終了済み。しばらく墓標として残してから捨てる。
@@ -161,6 +170,7 @@ export class SessionHub extends EventEmitter {
       agents: [],
       agentsCheckedAt: 0,
       lastAgentActivityAt: null,
+      socketPath: null,
       endedAt: raw.alive ? null : Date.now(),
       turnState: null,
     };
@@ -432,7 +442,7 @@ export class SessionHub extends EventEmitter {
         currentSkill: status === "working" ? state.currentSkill : null,
         currentAction: status === "working" ? state.currentAction : null,
         tokens: state.tokens,
-        canReceive: this.socketFor(state.raw) !== null,
+        canReceive: state.raw.alive && state.socketPath !== null,
         // 権限待ちの裏で子が回っていることは隠さない。終了したセッションだけ空にする。
         agents: status === "stopped" ? [] : state.agents,
       });
@@ -444,7 +454,7 @@ export class SessionHub extends EventEmitter {
   private socketFor(raw: RawSession): string | null {
     if (raw.messagingSocketPath) {
       const p = expandHome(raw.messagingSocketPath);
-      if (existsSync(p)) return p;
+      if (isOwnSocket(p)) return p;
     }
     return defaultSocketPath(raw.pid);
   }
@@ -452,16 +462,19 @@ export class SessionHub extends EventEmitter {
   /** 指定セッションへ 1 通送る。届いたテキストは「別セッションからのメッセージ」として扱われる。 */
   async sendMessage(sessionId: string, text: string): Promise<SendResult> {
     const state = this.sessions.get(sessionId);
-    if (!state) return { ok: false, error: "セッションが見つかりません" };
-    if (!state.raw.alive) return { ok: false, error: "セッションは終了しています" };
-    const socket = this.socketFor(state.raw);
-    if (!socket) return { ok: false, error: "受信箱ソケットが見つかりません" };
+    if (!state) return { ok: false, error: "セッションが見つかりません", code: "not_found" };
+    if (!state.raw.alive)
+      return { ok: false, error: "セッションは終了しています", code: "not_alive" };
+    const socket = state.socketPath ?? this.socketFor(state.raw);
+    if (!socket)
+      return { ok: false, error: "受信箱ソケットが見つかりません", code: "no_socket" };
 
     const result = await sendToSession(socket, text);
+    // 受理されたかまでは分からないので、送ったことだけを記録する。
     this.push(
       sessionId,
       "status",
-      result.ok ? `メッセージを送信: ${truncate(text, 60)}` : `送信失敗: ${result.error}`,
+      result.ok ? `伝言を送信: ${truncate(text, 60)}` : `送信失敗: ${result.error}`,
     );
     return result;
   }
