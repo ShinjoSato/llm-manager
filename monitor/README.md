@@ -11,7 +11,11 @@ npm start
 # → http://localhost:8766
 ```
 
-読み取り専用で、セッションへの操作・送信は一切しない。
+**localhost 限定**（`127.0.0.1` にのみ bind）。認証が無く、セッションへ書き込む口があるため外部には出さない。
+
+セッションから読むのは記録だけで、こちらから行うのは「伝言を 1 通送る」ことだけ。
+届いたテキストは受信側で**別セッションからのメッセージ**として扱われ、指示や承認にはならない
+（権限の承認・設定変更・スラッシュコマンドの実行はいずれも不可）。
 
 ### 開発時（ホットリロード）
 
@@ -92,10 +96,24 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/sessions` | 全セッションのスナップショット |
 | GET | `/api/feed` | 直近のライブフィード |
 | GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント |
+| POST | `/api/sessions/:id/message` | そのセッションの受信箱へ伝言を送る |
 | POST | `/hook` | フックの JSON をそのまま受け取る |
 
-CORS は付けていない（UI は同一オリジン配信、開発時は Vite の proxy 経由）。
-付けると、ブラウザで開いた任意のサイトから cwd や作業内容を読めてしまうため。
+CORS は付けていない（UI は同一オリジン配信、開発時は Vite の proxy 経由）。付けると、
+ブラウザで開いた任意のサイトから cwd や作業内容を読まれるうえ、**セッションへ伝言を送られる**。
+同じ理由で `/api/sessions/:id/message` は `content-type: application/json` を必須にしている
+（プリフライトを回避した cross-origin POST を弾くため）。
+
+## 伝言を送る
+
+各カードの入力欄から、そのセッションの受信箱ソケットへ 1 通送れる。経路は公式に文書化された
+もので（cross-session messaging の「The session's inbox socket」）、行区切りの JSON を書く。
+
+- ソケットはレジストリの `messagingSocketPath` を優先し、無ければ `/tmp/cc-socks/<pid>.sock`
+  と `/tmp/cc-socks-<uid>/<pid>.sock` を探す。いずれも `lstat` で「自分が所有する Unix ソケット」
+  であることを確かめてから使う
+- 上限 10 万文字。成功は「書き終えた」までの保証で、受信側が受理したかまでは分からない
+- 新しいセッションの起動口（`claude --bg` / `claude -p`）は設けていない
 
 ## 構成
 

@@ -46,6 +46,8 @@ export function scanSessions(): RawSession[] {
       version: typeof raw.version === "string" ? raw.version : undefined,
       entrypoint: typeof raw.entrypoint === "string" ? raw.entrypoint : undefined,
       kind: typeof raw.kind === "string" ? raw.kind : undefined,
+      messagingSocketPath:
+        typeof raw.messagingSocketPath === "string" ? raw.messagingSocketPath : undefined,
       alive: isAlive(pid),
     });
   }

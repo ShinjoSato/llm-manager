@@ -2,6 +2,7 @@
 //   GET  /api/health
 //   GET  /api/sessions   スナップショット
 //   GET  /api/feed       直近のライブフィード
+//   POST /api/sessions/:id/message  そのセッションの受信箱へテキストを投稿
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
 //   GET  /events         SSE（sessions / feed）
 import { serve } from "@hono/node-server";
@@ -28,6 +29,32 @@ const app = new Hono();
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
 app.get("/api/feed", (c) => c.json(hub.recentFeed()));
+
+/** 送信テキストの上限。受信側は約 100 万文字で拒否するが、その手前で切る。 */
+const MAX_MESSAGE_CHARS = 100_000;
+
+app.post("/api/sessions/:sessionId/message", async (c) => {
+  // content-type を必須にして、プリフライトを回避した cross-origin POST を弾く。
+  if (!c.req.header("content-type")?.startsWith("application/json")) {
+    return c.json({ ok: false, error: "content-type must be application/json" }, 415);
+  }
+  let body: { text?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "invalid json" }, 400);
+  }
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (!text) return c.json({ ok: false, error: "text が空です" }, 400);
+  if (text.length > MAX_MESSAGE_CHARS) {
+    return c.json({ ok: false, error: `長すぎます（${MAX_MESSAGE_CHARS} 文字まで）` }, 413);
+  }
+
+  const result = await hub.sendMessage(c.req.param("sessionId"), text);
+  if (result.ok) return c.json(result);
+  const status = result.code === "not_found" ? 404 : result.code === "unreachable" ? 502 : 409;
+  return c.json(result, status);
+});
 
 app.post("/hook", async (c) => {
   let payload: HookPayload;
@@ -105,7 +132,8 @@ if (existsSync(UI_DIST)) {
 }
 
 const port = Number(process.env.PORT ?? 8766);
-serve({ fetch: app.fetch, port }, (info) => {
+// localhost 限定。認証が無く、セッションへの書き込み口もあるため外部に出さない。
+serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => {
   console.log(`ai-manager monitor: http://localhost:${info.port}`);
   console.log(`  GET /events (SSE) | GET /api/sessions | POST /hook`);
   if (!existsSync(UI_DIST)) console.log("  ⚠ ui/dist が無いため UI は配信されません");

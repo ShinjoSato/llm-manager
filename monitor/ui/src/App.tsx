@@ -38,6 +38,9 @@ export function App() {
           <Radio size={11} className={connected ? "breathe" : ""} />
           {connected ? "リアルタイム接続" : "再接続中…"}
         </span>
+        <span className="text-[11px] text-slate-500">
+          伝言は「別セッションからのメッセージ」として届きます（指示や承認としては扱われません）
+        </span>
       </header>
 
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
