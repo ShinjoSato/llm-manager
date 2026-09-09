@@ -170,7 +170,7 @@ export class SessionHub extends EventEmitter {
       agents: [],
       agentsCheckedAt: 0,
       lastAgentActivityAt: null,
-      socketPath: null,
+      socketPath: this.socketFor(raw),
       endedAt: raw.alive ? null : Date.now(),
       turnState: null,
     };
