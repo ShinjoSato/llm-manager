@@ -83,7 +83,7 @@ export function App() {
             sorted.map((s) => <SessionCard key={s.sessionId} s={s} now={now} />)
           )}
         </div>
-        <LiveFeed items={feed} />
+        <LiveFeed items={feed} sessions={sorted} />
       </div>
     </div>
   );
