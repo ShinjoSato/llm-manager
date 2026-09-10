@@ -1,10 +1,14 @@
 import { GitBranch } from "lucide-react";
+import { lazy, Suspense } from "react";
 import type { SessionSnapshot } from "../../../src/types.js";
 import { ago, dur, kilo } from "../format.js";
 import { AgentStage } from "../pixel/AgentStage.js";
 import { MessageInput } from "./MessageInput.js";
 import { itemForVerb, jobFor, skillLabel } from "../pixel/kit.js";
 import { styleOf } from "../status.js";
+
+// 立体表示に切り替えた時だけ three.js を読み込む。2D のままなら一切読まない。
+const VoxelArt = lazy(() => import("../three/VoxelArt.js"));
 
 /** いま何をしているかの一行。スキルの銘 > 具体的な説明 > 持ち物の動作 の順に選ぶ。 */
 function actionLine(s: SessionSnapshot): string | null {
@@ -22,7 +26,16 @@ function escortLine(s: SessionSnapshot): string | null {
   return s.agents.length > 1 ? `${first} ほか${s.agents.length - 1}名が随伴` : `${first}が随伴`;
 }
 
-export function SessionCard({ s, now }: { s: SessionSnapshot; now: number }) {
+export function SessionCard({
+  s,
+  now,
+  solid,
+}: {
+  s: SessionSnapshot;
+  now: number;
+  /** キャラを立体で描く。読み込み中は 2D のまま見せる。 */
+  solid: boolean;
+}) {
   const st = styleOf(s.status);
   const action = actionLine(s);
   const escort = escortLine(s);
@@ -45,7 +58,13 @@ export function SessionCard({ s, now }: { s: SessionSnapshot; now: number }) {
         </span>
       </div>
 
-      <AgentStage session={s} now={now} />
+      {solid ? (
+        <Suspense fallback={<AgentStage session={s} now={now} />}>
+          <AgentStage session={s} now={now} art={VoxelArt} />
+        </Suspense>
+      ) : (
+        <AgentStage session={s} now={now} />
+      )}
 
       <div className="mb-2 min-h-[36px] px-1 text-center">
         {action && <div className="truncate text-[12px] text-emerald-300">{action}</div>}

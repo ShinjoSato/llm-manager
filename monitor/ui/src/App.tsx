@@ -1,16 +1,21 @@
-import { Activity, AlertTriangle, Bell, BellOff, Layers, Pause, Radio } from "lucide-react";
-import { useMemo } from "react";
+import { Activity, AlertTriangle, Bell, BellOff, Box, Layers, Pause, Radio } from "lucide-react";
+import { lazy, Suspense, useMemo } from "react";
 import { LiveFeed } from "./components/LiveFeed.js";
 import { SessionCard } from "./components/SessionCard.js";
 import { StatCard } from "./components/ui.js";
 import { styleOf } from "./status.js";
 import { useMonitor, useNow } from "./useMonitor.js";
 import { useNotify } from "./useNotify.js";
+import { useRender3D } from "./render3d.js";
+
+// 描画面はキャラと同じ塊に入るので、立体表示にした時だけ読み込まれる。
+const Stage3DCanvas = lazy(() => import("./three/Stage3DCanvas.js"));
 
 export function App() {
   const { sessions, feed, connected } = useMonitor();
   const now = useNow();
   const notify = useNotify(sessions);
+  const [solid, toggleSolid] = useRender3D();
 
   const sorted = useMemo(
     () =>
@@ -26,6 +31,11 @@ export function App() {
 
   return (
     <div className="mx-auto max-w-[1700px] p-5">
+      {solid && (
+        <Suspense fallback={null}>
+          <Stage3DCanvas />
+        </Suspense>
+      )}
       <header className="mb-5 flex flex-wrap items-center gap-3">
         <h1 className="text-[15px] font-semibold tracking-wide text-slate-100">
           Claude Code Monitor
@@ -45,6 +55,19 @@ export function App() {
         </span>
 
         <div className="ml-auto flex items-center gap-1.5">
+          <button
+            onClick={toggleSolid}
+            title="キャラを立体で表示する（初回だけ読み込みに少し時間がかかります）"
+            aria-pressed={solid}
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition ${
+              solid
+                ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
+                : "border-white/10 bg-white/5 text-slate-500 hover:bg-white/10"
+            }`}
+          >
+            <Box size={10} />
+            立体
+          </button>
           <NotifyToggle
             label="要対応"
             hint="許可待ち・入力待ち・エラーになった時に知らせる"
@@ -129,7 +152,9 @@ export function App() {
               稼働中の Claude Code セッションがありません
             </div>
           ) : (
-            sorted.map((s) => <SessionCard key={s.sessionId} s={s} now={now} />)
+            sorted.map((s) => (
+              <SessionCard key={s.sessionId} s={s} now={now} solid={solid} />
+            ))
           )}
         </div>
         <LiveFeed items={feed} sessions={sorted} />
