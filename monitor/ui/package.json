@@ -6,12 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "tsx test/markdown.test.tsx"
   },
   "dependencies": {
     "lucide-react": "^1.17.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
@@ -20,6 +23,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.7.2",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "tsx": "^4.19.2"
   }
 }
