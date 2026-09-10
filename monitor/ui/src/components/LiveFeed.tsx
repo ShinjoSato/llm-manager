@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FeedItem, FeedKind, SessionSnapshot } from "../../../src/types.js";
 import { clock } from "../format.js";
 import { loadHidden, nextHidden, pruneHidden, saveHidden } from "./feedFilter.js";
+import { Markdown } from "./Markdown.js";
 import { Empty } from "./ui.js";
 
 const KIND: Record<FeedKind, { color: string; mono: boolean }> = {
@@ -134,11 +135,15 @@ export function LiveFeed({
                 </time>
                 <div className="min-w-0">
                   <div className={`text-[10.5px] font-semibold ${kind.color}`}>{item.project}</div>
-                  <div
-                    className={`break-words text-[12px] text-slate-400 ${kind.mono ? "font-mono text-slate-300" : ""}`}
-                  >
-                    {item.text}
-                  </div>
+                  {kind.mono ? (
+                    <div className="break-words font-mono text-[12px] text-slate-300">
+                      {item.text}
+                    </div>
+                  ) : (
+                    <div className="text-[12px] text-slate-400">
+                      <Markdown text={item.text} />
+                    </div>
+                  )}
                 </div>
               </div>
             );
