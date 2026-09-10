@@ -1,7 +1,10 @@
 import type { CSSProperties } from "react";
-import type { AgentInfo, SessionStatus } from "../../../src/types.js";
+import type { AgentInfo, SessionSnapshot, SessionStatus } from "../../../src/types.js";
+import { Tooltip, type TooltipRow } from "../components/Tooltip.js";
+import { ago, dur } from "../format.js";
 import { PixelArt, type Palette } from "./PixelArt.js";
-import { itemFor, jobFor, jobPalette, SKIN } from "./kit.js";
+import { styleOf } from "../status.js";
+import { itemFor, jobFor, jobPalette, skillLabel, SKIN } from "./kit.js";
 import {
   AGENT_DOWN,
   AGENT_SIT,
@@ -13,37 +16,52 @@ import {
   type Sprite,
 } from "./sprites.js";
 
+interface Look {
+  sprite: Sprite;
+  palette: Palette;
+  mark?: Sprite;
+  markPalette?: Palette;
+  /** その状態が何を意味するか。ラベル自体は status.ts の 1 箇所に持たせる。 */
+  note: string;
+}
+
 /** 状態ごとの姿勢・色・頭上マーク。 */
-const LOOK: Record<SessionStatus, { sprite: Sprite; palette: Palette; mark?: Sprite; markPalette?: Palette }> = {
+const LOOK: Record<SessionStatus, Look> = {
   working: {
     sprite: AGENT_STAND,
     palette: { ...SKIN, G: "#34d399", B: "#10b981", D: "#0f766e" },
+    note: "ツールを実行しているか、応答を組み立てている",
   },
   permission: {
     sprite: AGENT_STAND,
     palette: { ...SKIN, G: "#fbbf24", B: "#d97706", D: "#92400e" },
     mark: MARK_BANG,
     markPalette: { A: "#fbbf24" },
+    note: "許可を求めて止まっている。あなたの操作が要る",
   },
   waiting: {
     sprite: AGENT_STAND,
     palette: { ...SKIN, G: "#60a5fa", B: "#2563eb", D: "#1e40af" },
     mark: MARK_QUESTION,
     markPalette: { A: "#60a5fa" },
+    note: "問いかけたまま止まっている。あなたの返答が要る",
   },
   error: {
     sprite: AGENT_DOWN,
     palette: { ...SKIN, G: "#f87171", B: "#dc2626", D: "#991b1b" },
+    note: "API エラーなどでターンが終わっている",
   },
   idle: {
     sprite: AGENT_SIT,
     palette: { S: "#cbb99c", K: "#0a0e14", G: "#64748b", B: "#475569", D: "#334155" },
     mark: MARK_SLEEP,
     markPalette: { A: "#64748b" },
+    note: "応答を終えて次の指示を待っている",
   },
   stopped: {
     sprite: AGENT_SIT,
     palette: { S: "#8b8378", K: "#1e293b", G: "#3f4c5e", B: "#334155", D: "#1e293b" },
+    note: "プロセスが終了している（5 分で一覧から消える）",
   },
 };
 
@@ -52,72 +70,103 @@ const FALLBACK_MARK: Palette = { A: "#94a3b8" };
 // memo が効くよう毎レンダー作り直さない。
 const ITEM_GLOW: CSSProperties = { filter: "drop-shadow(0 0 7px rgba(52,211,153,.35))" };
 
-export function AgentStage({
-  status,
-  tool,
-  skill,
-  agents,
-}: {
-  status: SessionStatus;
-  tool: string | null;
-  skill: string | null;
-  agents: AgentInfo[];
-}) {
-  const look = LOOK[status] ?? LOOK.idle;
-  const item = status === "working" ? itemFor(tool, skill) : null;
+export function AgentStage({ session: s, now }: { session: SessionSnapshot; now: number }) {
+  const look = LOOK[s.status] ?? LOOK.idle;
+  const item = s.status === "working" ? itemFor(s.currentTool, s.currentSkill) : null;
   // 直近に動いている順で選び、描画は id 順に固定する（2 秒ごとに並びが入れ替わるのを防ぐ）。
-  const kids = agents.slice(0, MAX_KIDS).sort((a, b) => a.id.localeCompare(b.id));
-  const rest = agents.length - kids.length;
+  const kids = s.agents.slice(0, MAX_KIDS).sort((a, b) => a.id.localeCompare(b.id));
+  const rest = s.agents.length - kids.length;
+
+  const statusLabel = styleOf(s.status).label;
+  const parentRows: TooltipRow[] = [
+    { label: "状態", value: `${statusLabel} — ${look.note}` },
+    { label: "ブランチ", value: s.branch ?? "—", mono: true },
+    { label: "稼働", value: `${dur(s.startedAt, now)}（最終活動 ${ago(s.lastActivityAt, now)}）` },
+    { label: "場所", value: s.cwd, mono: true },
+    { label: "セッション", value: `${s.name} · pid ${s.pid}`, mono: true },
+  ];
+  if (s.statusDetail) parentRows.splice(1, 0, { label: "詳細", value: s.statusDetail });
 
   return (
     <div className="relative flex min-h-[104px] items-end justify-center gap-1.5 pb-1">
       <div className="pointer-events-none absolute inset-x-[14%] bottom-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
 
-      <div className="relative">
-        {look.mark && (
+      <Tooltip title={s.project} subtitle={s.title ?? "作業内容 未確定"} rows={parentRows}>
+        <span className="relative inline-flex">
+          {look.mark && (
+            <PixelArt
+              sprite={look.mark}
+              palette={look.markPalette ?? FALLBACK_MARK}
+              scale={3}
+              className={`absolute -right-1 ${s.status === "idle" || s.status === "stopped" ? "top-6" : "top-0"}`}
+            />
+          )}
           <PixelArt
-            sprite={look.mark}
-            palette={look.markPalette ?? FALLBACK_MARK}
-            scale={3}
-            className={`absolute -right-1 ${status === "idle" || status === "stopped" ? "top-6" : "top-0"}`}
+            sprite={look.sprite}
+            palette={look.palette}
+            scale={5}
+            className={s.status === "working" ? "bob" : ""}
+            label={`${s.project}（${statusLabel}）`}
           />
-        )}
-        <PixelArt
-          sprite={look.sprite}
-          palette={look.palette}
-          scale={5}
-          className={status === "working" ? "bob" : ""}
-        />
-      </div>
+        </span>
+      </Tooltip>
 
       {item && (
-        <PixelArt
-          sprite={item.sprite}
-          palette={item.palette}
-          scale={5}
-          className="bob -ml-2 mb-3"
-          style={ITEM_GLOW}
-        />
+        <Tooltip
+          title={
+            s.currentSkill ? `スキル『${skillLabel(s.currentSkill)}』` : (s.currentTool ?? "ツール")
+          }
+          subtitle={item.verb}
+          rows={[
+            ...(s.currentSkill
+              ? [{ label: "スキル", value: s.currentSkill, mono: true } as TooltipRow]
+              : []),
+            { label: "ツール", value: s.currentTool ?? "—", mono: true },
+            ...(s.currentAction ? [{ label: "内容", value: s.currentAction } as TooltipRow] : []),
+          ]}
+        >
+          <PixelArt
+            sprite={item.sprite}
+            palette={item.palette}
+            scale={5}
+            className="bob -ml-2 mb-3"
+            style={ITEM_GLOW}
+            label={s.currentSkill ? skillLabel(s.currentSkill) : (s.currentTool ?? "持ち物")}
+          />
+        </Tooltip>
       )}
 
       {kids.length > 0 && (
         <div className="flex items-end gap-1">
-          {kids.map((a) => {
-            const job = jobFor(a.type);
-            return (
-              <PixelArt
-                key={a.id}
-                sprite={KID_STAND}
-                palette={jobPalette(job)}
-                scale={3}
-                className="bob-slow"
-                title={job.label}
-              />
-            );
-          })}
+          {kids.map((a) => (
+            <KidSprite key={a.id} agent={a} now={now} />
+          ))}
           {rest > 0 && <span className="mb-1 text-[10px] text-slate-500">+{rest}</span>}
         </div>
       )}
     </div>
+  );
+}
+
+function KidSprite({ agent, now }: { agent: AgentInfo; now: number }) {
+  const job = jobFor(agent.type);
+  return (
+    <Tooltip
+      title={job.label}
+      subtitle={job.role}
+      focusable={false}
+      rows={[
+        { label: "種別", value: agent.type ?? "（不明）", mono: true },
+        { label: "最終活動", value: ago(agent.lastActivityAt, now) },
+      ]}
+    >
+      <PixelArt
+        sprite={KID_STAND}
+        palette={jobPalette(job)}
+        scale={3}
+        className="bob-slow"
+        label={`${job.label} — ${job.role}`}
+      />
+    </Tooltip>
   );
 }

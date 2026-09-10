@@ -74,31 +74,38 @@ export function jobPalette(job: Job): Palette {
 
 export interface Job {
   label: string;
+  /** 何をする役割か。ツールチップで出す。 */
+  role: string;
   /** 明色（頭・上半身）と濃色（胴）。 */
   light: string;
   dark: string;
 }
 
 const JOBS: Record<string, Job> = {
-  "developer-plugin:code-reviewer": { label: "監査役", light: "#fbbf24", dark: "#b45309" },
-  "developer-plugin:swiftui-implementer": { label: "iOS職人", light: "#60a5fa", dark: "#1d4ed8" },
-  "developer-plugin:go-api-implementer": { label: "サーバ職人", light: "#22d3ee", dark: "#0e7490" },
-  "developer-plugin:ios-sim-tester": { label: "試験官", light: "#4ade80", dark: "#15803d" },
-  "developer-plugin:ios-context-scout": { label: "斥候", light: "#c084fc", dark: "#7e22ce" },
-  "developer-plugin:pr-verifier": { label: "検証官", light: "#f472b6", dark: "#be185d" },
-  "developer-plugin:agent-scout": { label: "斥候", light: "#c084fc", dark: "#7e22ce" },
-  "developer-plugin:prompt-analyst": { label: "記録係", light: "#a3e635", dark: "#4d7c0f" },
-  "appstore-plugin:appstore-review": { label: "審査官", light: "#fb923c", dark: "#c2410c" },
-  "appstore-plugin:appstore-meta-inspector": { label: "調査役", light: "#fb923c", dark: "#c2410c" },
-  "fable-mode-plugin:fable-verifier": { label: "検証官", light: "#f472b6", dark: "#be185d" },
-  "fable-mode-plugin:fable-judge": { label: "審判", light: "#facc15", dark: "#a16207" },
-  "fable-mode-plugin:fable-ui-reviewer": { label: "意匠番", light: "#e879f9", dark: "#a21caf" },
-  Explore: { label: "斥候", light: "#c084fc", dark: "#7e22ce" },
-  Plan: { label: "軍師", light: "#818cf8", dark: "#4338ca" },
-  "general-purpose": { label: "何でも屋", light: "#94a3b8", dark: "#475569" },
+  "developer-plugin:code-reviewer": { label: "監査役", role: "差分を静的にレビューする", light: "#fbbf24", dark: "#b45309" },
+  "developer-plugin:swiftui-implementer": { label: "iOS職人", role: "iOS（SwiftUI）を実装する", light: "#60a5fa", dark: "#1d4ed8" },
+  "developer-plugin:go-api-implementer": { label: "サーバ職人", role: "Go の API と DB 層を実装する", light: "#22d3ee", dark: "#0e7490" },
+  "developer-plugin:ios-sim-tester": { label: "試験官", role: "シミュレータで操作して確かめる", light: "#4ade80", dark: "#15803d" },
+  "developer-plugin:ios-context-scout": { label: "斥候", role: "既存構成を調べて地図を返す", light: "#c084fc", dark: "#7e22ce" },
+  "developer-plugin:pr-verifier": { label: "検証官", role: "PR を実際に動かして検証する", light: "#f472b6", dark: "#be185d" },
+  "developer-plugin:agent-scout": { label: "斥候", role: "agents / skills 構成を診断する", light: "#c084fc", dark: "#7e22ce" },
+  "developer-plugin:prompt-analyst": { label: "記録係", role: "プロンプト履歴を分析する", light: "#a3e635", dark: "#4d7c0f" },
+  "appstore-plugin:appstore-review": { label: "審査官", role: "App Store 審査観点で点検する", light: "#fb923c", dark: "#c2410c" },
+  "appstore-plugin:appstore-meta-inspector": { label: "調査役", role: "App Store Connect の登録内容を読む", light: "#fb923c", dark: "#c2410c" },
+  "fable-mode-plugin:fable-verifier": { label: "検証官", role: "実装への反証を試みる", light: "#f472b6", dark: "#be185d" },
+  "fable-mode-plugin:fable-judge": { label: "審判", role: "複数案を採点して順位づける", light: "#facc15", dark: "#a16207" },
+  "fable-mode-plugin:fable-ui-reviewer": { label: "意匠番", role: "UI の見た目を審査する", light: "#e879f9", dark: "#a21caf" },
+  Explore: { label: "斥候", role: "広く探索して場所を特定する", light: "#c084fc", dark: "#7e22ce" },
+  Plan: { label: "軍師", role: "実装の計画を立てる", light: "#818cf8", dark: "#4338ca" },
+  "general-purpose": { label: "何でも屋", role: "汎用の調査・作業", light: "#94a3b8", dark: "#475569" },
 };
 
-const UNKNOWN_JOB: Job = { label: "従者", light: "#94a3b8", dark: "#475569" };
+const UNKNOWN_JOB: Job = {
+  label: "従者",
+  role: "種別が判別できないサブエージェント",
+  light: "#94a3b8",
+  dark: "#475569",
+};
 
 export function jobFor(type: string | null): Job {
   if (!type) return UNKNOWN_JOB;

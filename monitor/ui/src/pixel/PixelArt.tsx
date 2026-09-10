@@ -32,14 +32,15 @@ export const PixelArt = memo(function PixelArt({
   scale = 4,
   className = "",
   style,
-  title,
+  label,
 }: {
   sprite: Sprite;
   palette: Palette;
   scale?: number;
   className?: string;
   style?: CSSProperties;
-  title?: string;
+  /** 読み上げ用。見えるツールチップは Tooltip が担う（<title> だと二重に出る）。 */
+  label?: string;
 }) {
   const runs = useMemo(() => toRuns(sprite), [sprite]);
   // 空配列だと Math.max が -Infinity を返して viewBox が壊れる。
@@ -54,10 +55,10 @@ export const PixelArt = memo(function PixelArt({
       shapeRendering="crispEdges"
       className={className}
       style={style}
-      role={title ? "img" : undefined}
-      aria-hidden={title ? undefined : "true"}
+      role={label ? "img" : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : "true"}
     >
-      {title && <title>{title}</title>}
       {runs.map((r, i) => {
         const fill = palette[r.ch];
         if (!fill) return null;
