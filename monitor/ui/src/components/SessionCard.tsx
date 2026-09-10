@@ -45,12 +45,7 @@ export function SessionCard({ s, now }: { s: SessionSnapshot; now: number }) {
         </span>
       </div>
 
-      <AgentStage
-        status={s.status}
-        tool={s.currentTool}
-        skill={s.currentSkill}
-        agents={s.agents}
-      />
+      <AgentStage session={s} now={now} />
 
       <div className="mb-2 min-h-[36px] px-1 text-center">
         {action && <div className="truncate text-[12px] text-emerald-300">{action}</div>}
