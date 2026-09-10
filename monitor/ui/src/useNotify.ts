@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import type { SessionSnapshot, SessionStatus } from "../../src/types.js";
 
 const STORAGE_KEY = "monitor.notify";
-/** 同じセッションで鳴らし続けないための間隔。5 つ同時に遷移しても連発しない。 */
-const COOLDOWN_MS = 20_000;
+/**
+ * 同じセッションで鳴らし続けないための間隔。
+ * 許可プロンプトは数秒間隔で続くことがあるので、長くすると 2 つ目を取りこぼす。
+ */
+const COOLDOWN_MS = 4_000;
 
 export interface NotifySetting {
   /** 応答が終わって次の指示待ちになった時。 */
@@ -53,8 +56,10 @@ function labelFor(status: SessionStatus, detail: string | null): string {
       return "入力を待っています";
     case "error":
       return detail ? `停止しました: ${detail}` : "停止しました";
-    default:
+    case "idle":
       return "応答が終わりました";
+    default:
+      return "状態が変わりました";
   }
 }
 
@@ -89,18 +94,38 @@ export function useNotify(sessions: SessionSnapshot[]) {
     // 消えたセッションの記録は残さない。
     const alive = new Set(sessions.map((s) => s.sessionId));
     for (const id of [...before.keys()]) if (!alive.has(id)) before.delete(id);
+    for (const id of [...lastNotified.current.keys()]) {
+      if (!alive.has(id)) lastNotified.current.delete(id);
+    }
   }, [sessions, setting]);
 
-  /** 設定を変える。有効にする時だけ許可を求める。 */
-  async function update(next: NotifySetting) {
-    const turningOn = (next.idle && !setting.idle) || (next.attention && !setting.attention);
-    if (turningOn && typeof Notification !== "undefined" && Notification.permission === "default") {
-      setPermission(await Notification.requestPermission());
+  /** 通知の許可を求める。ユーザー操作からのみ呼べる。 */
+  async function requestPermission() {
+    if (typeof Notification === "undefined") return;
+    try {
+      const p = await Notification.requestPermission();
+      // 古い実装はコールバック形式で undefined を返す。
+      if (p) setPermission(p);
+      else setPermission(Notification.permission);
+    } catch {
+      // 要求が失敗しても設定の変更は通す。
     }
-    setSetting(next);
   }
 
-  return { setting, permission, update };
+  /** 設定を変える。有効にする時は許可も求める。 */
+  async function update(next: NotifySetting) {
+    // 直前の値ではなく更新関数で反映する（許可ダイアログ中に別のトグルを押しても消えない）。
+    setSetting(() => next);
+    const wantsAny = next.idle || next.attention;
+    if (wantsAny && typeof Notification !== "undefined" && Notification.permission === "default") {
+      await requestPermission();
+    }
+  }
+
+  /** 通知を出したいのに許可がまだ取れていない。 */
+  const needsPermission = (setting.idle || setting.attention) && permission === "default";
+
+  return { setting, permission, needsPermission, requestPermission, update };
 }
 
 function show(s: SessionSnapshot): void {

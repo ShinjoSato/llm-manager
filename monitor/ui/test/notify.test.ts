@@ -41,5 +41,9 @@ t("両方オフなら何も鳴らない", shouldNotify("working", "permission", 
 // localStorage が無い Node 上でも既定値に落ちる
 t("localStorage が無くても既定値を返す", typeof loadSetting().attention === "boolean", true);
 
+// 既定でどれかがオンなら、許可を求める導線が要る（オンなのに鳴らない状態を作らない）
+const d = loadSetting();
+t("既定でどれかがオンになっている", d.idle || d.attention, true);
+
 console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗`);
 if (ng) process.exitCode = 1;
