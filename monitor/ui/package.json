@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "tsx test/markdown.test.tsx"
+    "test": "tsx test/markdown.test.tsx && tsx test/notify.test.ts"
   },
   "dependencies": {
     "lucide-react": "^1.17.0",
