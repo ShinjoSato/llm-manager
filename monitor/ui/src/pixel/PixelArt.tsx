@@ -1,7 +1,21 @@
-import { memo, useMemo, type CSSProperties } from "react";
+import { memo, useMemo, type ComponentType, type CSSProperties } from "react";
 import type { Sprite } from "./sprites.js";
 
 export type Palette = Record<string, string>;
+
+export interface ArtProps {
+  sprite: Sprite;
+  palette: Palette;
+  /** 1 マスあたりの画素数。2D と 3D で同じ大きさに揃えるための単位。 */
+  scale?: number;
+  className?: string;
+  style?: CSSProperties;
+  /** 読み上げ用。見えるツールチップは Tooltip が担う（<title> だと二重に出る）。 */
+  label?: string;
+}
+
+/** 絵の描き方だけを差し替えられるようにする（2D の SVG / 3D の立方体）。 */
+export type ArtComponent = ComponentType<ArtProps>;
 
 interface Run {
   x: number;
@@ -33,15 +47,7 @@ export const PixelArt = memo(function PixelArt({
   className = "",
   style,
   label,
-}: {
-  sprite: Sprite;
-  palette: Palette;
-  scale?: number;
-  className?: string;
-  style?: CSSProperties;
-  /** 読み上げ用。見えるツールチップは Tooltip が担う（<title> だと二重に出る）。 */
-  label?: string;
-}) {
+}: ArtProps) {
   const runs = useMemo(() => toRuns(sprite), [sprite]);
   // 空配列だと Math.max が -Infinity を返して viewBox が壊れる。
   const w = useMemo(() => (sprite.length ? Math.max(...sprite.map((r) => r.length)) : 0), [sprite]);
