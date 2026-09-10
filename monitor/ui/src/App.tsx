@@ -1,14 +1,16 @@
-import { Activity, AlertTriangle, Layers, Pause, Radio } from "lucide-react";
+import { Activity, AlertTriangle, Bell, BellOff, Layers, Pause, Radio } from "lucide-react";
 import { useMemo } from "react";
 import { LiveFeed } from "./components/LiveFeed.js";
 import { SessionCard } from "./components/SessionCard.js";
 import { StatCard } from "./components/ui.js";
 import { styleOf } from "./status.js";
 import { useMonitor, useNow } from "./useMonitor.js";
+import { useNotify } from "./useNotify.js";
 
 export function App() {
   const { sessions, feed, connected } = useMonitor();
   const now = useNow();
+  const notify = useNotify(sessions);
 
   const sorted = useMemo(
     () =>
@@ -41,6 +43,29 @@ export function App() {
         <span className="text-[11px] text-slate-500">
           伝言は「別セッションからのメッセージ」として届きます（指示や承認としては扱われません）
         </span>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <NotifyToggle
+            label="要対応"
+            hint="許可待ち・入力待ち・エラーになった時に知らせる"
+            on={notify.setting.attention}
+            onClick={() =>
+              void notify.update({ ...notify.setting, attention: !notify.setting.attention })
+            }
+          />
+          <NotifyToggle
+            label="待機"
+            hint="応答が終わって次の指示待ちになった時に知らせる"
+            on={notify.setting.idle}
+            onClick={() => void notify.update({ ...notify.setting, idle: !notify.setting.idle })}
+          />
+          {notify.permission === "denied" && (
+            <span className="text-[10px] text-rose-300">通知がブラウザで拒否されています</span>
+          )}
+          {notify.permission === "unsupported" && (
+            <span className="text-[10px] text-slate-500">このブラウザは通知に未対応</span>
+          )}
+        </div>
       </header>
 
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -86,5 +111,33 @@ export function App() {
         <LiveFeed items={feed} sessions={sorted} />
       </div>
     </div>
+  );
+}
+
+function NotifyToggle({
+  label,
+  hint,
+  on,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  on: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={hint}
+      aria-pressed={on}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition ${
+        on
+          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+          : "border-white/10 bg-white/5 text-slate-500 hover:bg-white/10"
+      }`}
+    >
+      {on ? <Bell size={10} /> : <BellOff size={10} />}
+      {label}
+    </button>
   );
 }
