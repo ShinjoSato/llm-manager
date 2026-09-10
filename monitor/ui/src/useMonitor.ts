@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { FeedItem, SessionSnapshot } from "../../src/types.js";
 
-const FEED_LIMIT = 150;
+// 絞り込みは表示段で行うため、非表示セッションもこの上限を消費する。少し余裕を持たせる。
+const FEED_LIMIT = 400;
 
 /** SSE を購読してセッションとライブフィードを保持する。 */
 export function useMonitor() {

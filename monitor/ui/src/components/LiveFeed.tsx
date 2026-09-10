@@ -16,7 +16,8 @@ const KIND: Record<FeedKind, { color: string; mono: boolean }> = {
 /** 同じプロジェクトに複数セッションがある時だけブランチを添えて区別する。 */
 function chipLabel(s: SessionSnapshot, all: SessionSnapshot[]): string {
   const dup = all.filter((x) => x.project === s.project).length > 1;
-  return dup && s.branch ? `${s.project}:${s.branch}` : s.project;
+  if (!dup) return s.project;
+  return s.branch ? `${s.project}:${s.branch}` : `${s.project}#${s.pid}`;
 }
 
 export function LiveFeed({
@@ -28,17 +29,23 @@ export function LiveFeed({
 }) {
   const [hidden, setHidden] = useState<string[]>(loadHidden);
 
-  // 終了して一覧から消えたセッションの設定は捨てる（localStorage に溜めない）。
+  // 保存はここ 1 箇所に寄せる（更新関数の中で副作用を起こさない）。
+  useEffect(() => saveHidden(hidden), [hidden]);
+
+  // 一覧にも履歴にも無くなった設定だけ捨てる。フィードに残っている分は隠したままにする。
+  const knownIds = useMemo(() => {
+    const ids = new Set(sessions.map((s) => s.sessionId));
+    for (const i of items) ids.add(i.sessionId);
+    return [...ids];
+  }, [sessions, items]);
+
   useEffect(() => {
-    if (!sessions.length) return;
-    const aliveIds = sessions.map((s) => s.sessionId);
+    if (!knownIds.length) return;
     setHidden((prev) => {
-      const next = pruneHidden(prev, aliveIds);
-      if (next.length === prev.length) return prev;
-      saveHidden(next);
-      return next;
+      const next = pruneHidden(prev, knownIds);
+      return next.length === prev.length ? prev : next;
     });
-  }, [sessions]);
+  }, [knownIds]);
 
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
   const visible = useMemo(
@@ -51,13 +58,18 @@ export function LiveFeed({
     return m;
   }, [items]);
 
-  const update = (next: string[]) => {
-    setHidden(next);
-    saveHidden(next);
-  };
-
+  const allIds = useMemo(() => sessions.map((s) => s.sessionId), [sessions]);
   const toggle = (id: string, only: boolean) =>
-    update(nextHidden(hidden, sessions.map((s) => s.sessionId), id, only));
+    setHidden((prev) => nextHidden(prev, allIds, id, only));
+
+  // チップはステータス順に動かさない。押そうとした対象が入れ替わるのを防ぐ。
+  const chipSessions = useMemo(
+    () =>
+      [...sessions].sort(
+        (a, b) => a.project.localeCompare(b.project) || a.sessionId.localeCompare(b.sessionId),
+      ),
+    [sessions],
+  );
 
   const shownCount = sessions.length - sessions.filter((s) => hiddenSet.has(s.sessionId)).length;
   const filtering = hidden.length > 0;
@@ -73,10 +85,10 @@ export function LiveFeed({
         )}
       </h2>
 
-      {sessions.length > 0 && (
+      {(chipSessions.length > 0 || filtering) && (
         <div className="flex flex-wrap gap-1 border-b border-white/8 px-3 py-2">
           <button
-            onClick={() => update([])}
+            onClick={() => setHidden([])}
             disabled={!filtering}
             className={`rounded-full border px-2 py-0.5 text-[10px] transition disabled:opacity-40 ${
               filtering
@@ -86,20 +98,20 @@ export function LiveFeed({
           >
             すべて
           </button>
-          {sessions.map((s) => {
+          {chipSessions.map((s) => {
             const off = hiddenSet.has(s.sessionId);
             return (
               <button
                 key={s.sessionId}
                 onClick={(e) => toggle(s.sessionId, e.altKey)}
-                title={`${s.cwd}\n${s.branch ?? ""}\nOption+クリックでこれだけ表示`}
+                title={`${s.cwd}\n${s.branch ?? ""}\n直近の記録 ${counts.get(s.sessionId) ?? 0} 件\nOption+クリックでこれだけ表示`}
                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition ${
                   off
                     ? "border-white/8 bg-transparent text-slate-600 line-through"
                     : "border-white/12 bg-white/5 text-slate-300 hover:bg-white/10"
                 }`}
               >
-                <span className="max-w-[110px] truncate">{chipLabel(s, sessions)}</span>
+                <span className="max-w-[110px] truncate">{chipLabel(s, chipSessions)}</span>
                 <span className={off ? "text-slate-700" : "text-slate-500"}>
                   {counts.get(s.sessionId) ?? 0}
                 </span>
