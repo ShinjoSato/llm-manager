@@ -19,6 +19,29 @@ const DEFAULT: NotifySetting = { idle: false, attention: true };
 
 const ATTENTION: SessionStatus[] = ["permission", "waiting", "error"];
 
+/** 1 回分の走査で通知すべきセッション。prev と lastNotified はここで更新する。 */
+export function collectPending<T extends { sessionId: string; status: SessionStatus }>(
+  sessions: T[],
+  prev: Map<string, SessionStatus>,
+  lastNotified: Map<string, number>,
+  setting: NotifySetting,
+  now: number,
+): { session: T; was: SessionStatus }[] {
+  const out: { session: T; was: SessionStatus }[] = [];
+  for (const s of sessions) {
+    const was = prev.get(s.sessionId);
+    prev.set(s.sessionId, s.status);
+    if (!shouldNotify(was, s.status, setting)) continue;
+    if (now - (lastNotified.get(s.sessionId) ?? 0) < COOLDOWN_MS) continue;
+    lastNotified.set(s.sessionId, now);
+    out.push({ session: s, was: was as SessionStatus });
+  }
+  const alive = new Set(sessions.map((s) => s.sessionId));
+  for (const id of [...prev.keys()]) if (!alive.has(id)) prev.delete(id);
+  for (const id of [...lastNotified.keys()]) if (!alive.has(id)) lastNotified.delete(id);
+  return out;
+}
+
 /** その遷移で鳴らすか。初回（was が無い）と据え置きは鳴らさない。 */
 export function shouldNotify(
   was: SessionStatus | undefined,
@@ -74,28 +97,15 @@ export function useNotify(sessions: SessionSnapshot[]) {
   );
   const prev = useRef(new Map<string, SessionStatus>());
   const lastNotified = useRef(new Map<string, number>());
+  const [lastAttempt, setLastAttempt] = useState<string | null>(null);
 
   useEffect(() => saveSetting(setting), [setting]);
 
   useEffect(() => {
-    const before = prev.current;
-    const now = Date.now();
-
-    for (const s of sessions) {
-      const was = before.get(s.sessionId);
-      before.set(s.sessionId, s.status);
-      if (!shouldNotify(was, s.status, setting)) continue;
-      if (now - (lastNotified.current.get(s.sessionId) ?? 0) < COOLDOWN_MS) continue;
-
-      lastNotified.current.set(s.sessionId, now);
-      show(s);
-    }
-
-    // 消えたセッションの記録は残さない。
-    const alive = new Set(sessions.map((s) => s.sessionId));
-    for (const id of [...before.keys()]) if (!alive.has(id)) before.delete(id);
-    for (const id of [...lastNotified.current.keys()]) {
-      if (!alive.has(id)) lastNotified.current.delete(id);
+    const pending = collectPending(sessions, prev.current, lastNotified.current, setting, Date.now());
+    for (const { session, was } of pending) {
+      const sent = show(session);
+      setLastAttempt(`${session.project} ${was} → ${session.status} ${sent ? "通知した" : "出せず(許可なし)"}`);
     }
   }, [sessions, setting]);
 
@@ -122,14 +132,25 @@ export function useNotify(sessions: SessionSnapshot[]) {
     }
   }
 
+  /** 実際に 1 通出してみる。許可と OS 設定がそろっているかの確認用。 */
+  function test() {
+    show({
+      project: "Claude Code Monitor",
+      branch: null,
+      status: "idle",
+      statusDetail: null,
+      sessionId: "monitor-test",
+    } as SessionSnapshot);
+  }
+
   /** 通知を出したいのに許可がまだ取れていない。 */
   const needsPermission = (setting.idle || setting.attention) && permission === "default";
 
-  return { setting, permission, needsPermission, requestPermission, update };
+  return { setting, permission, needsPermission, requestPermission, update, test, lastAttempt };
 }
 
-function show(s: SessionSnapshot): void {
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+function show(s: SessionSnapshot): boolean {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
   try {
     const n = new Notification(`${s.project}${s.branch ? ` (${s.branch})` : ""}`, {
       body: labelFor(s.status, s.statusDetail),
@@ -139,7 +160,9 @@ function show(s: SessionSnapshot): void {
       window.focus();
       n.close();
     };
+    return true;
   } catch {
     // 通知が出せない状況でも画面は壊さない。
+    return false;
   }
 }

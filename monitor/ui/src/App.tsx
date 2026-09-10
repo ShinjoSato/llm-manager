@@ -67,8 +67,24 @@ export function App() {
               通知を許可する
             </button>
           )}
+          {notify.lastAttempt && (
+            <span className="text-[10px] text-slate-500" title="直近に検出した状態変化">
+              {notify.lastAttempt}
+            </span>
+          )}
+          {notify.permission === "granted" && (
+            <button
+              onClick={notify.test}
+              title="通知が実際に出せるかを確かめる"
+              className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-400 transition hover:bg-white/10"
+            >
+              通知を試す
+            </button>
+          )}
           {notify.permission === "denied" && (
-            <span className="text-[10px] text-rose-300">通知がブラウザで拒否されています</span>
+            <span className="text-[10px] text-rose-300">
+              通知がブラウザで拒否されています（サイト設定から許可してください）
+            </span>
           )}
           {notify.permission === "unsupported" && (
             <span className="text-[10px] text-slate-500">このブラウザは通知に未対応</span>

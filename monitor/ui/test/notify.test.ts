@@ -47,3 +47,72 @@ t("既定でどれかがオンになっている", d.idle || d.attention, true);
 
 console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗`);
 if (ng) process.exitCode = 1;
+
+// ── SSE が毎秒フルスナップショットを送る流れを再現する ──
+import { collectPending } from "../src/useNotify.js";
+import type { SessionStatus } from "../../src/types.js";
+
+function feed(
+  prev: Map<string, SessionStatus>,
+  last: Map<string, number>,
+  status: SessionStatus,
+  now: number,
+  setting = BOTH,
+) {
+  return collectPending(
+    [{ sessionId: "s1", project: "janken-five", status }],
+    prev, last, setting, now,
+  );
+}
+
+{
+  const prev = new Map<string, SessionStatus>();
+  const last = new Map<string, number>();
+  let now = 1_000_000;
+
+  // 接続直後のスナップショット
+  t("接続直後は鳴らない", feed(prev, last, "idle", now).length === 0, true);
+  now += 1000;
+  t("同じ状態が続いても鳴らない", feed(prev, last, "idle", now).length === 0, true);
+  now += 1000;
+  // ここで権限待ちに変わる
+  const hit = feed(prev, last, "permission", now);
+  t("idle → permission で 1 件検出される", hit.length === 1, true);
+  t("検出された前の状態が idle", hit[0]?.was === "idle", true);
+  now += 1000;
+  t("次の秒は同じ状態なので鳴らない", feed(prev, last, "permission", now).length === 0, true);
+  now += 1000;
+  t("permission → idle は鳴らない（待機オンでも）", feed(prev, last, "idle", now).length === 0, true);
+  now += 5000;
+  t("再び permission になれば鳴る", feed(prev, last, "permission", now).length === 1, true);
+}
+
+{
+  // クールダウン
+  const prev = new Map<string, SessionStatus>();
+  const last = new Map<string, number>();
+  let now = 2_000_000;
+  feed(prev, last, "idle", now);
+  now += 1000;
+  t("1 回目は鳴る", feed(prev, last, "permission", now).length === 1, true);
+  now += 1000;
+  feed(prev, last, "idle", now);
+  now += 1000;
+  t("4 秒以内の 2 回目は抑制される", feed(prev, last, "waiting", now).length === 0, true);
+  now += 5000;
+  feed(prev, last, "idle", now);
+  now += 1000;
+  t("4 秒を過ぎれば再び鳴る", feed(prev, last, "permission", now).length === 1, true);
+}
+
+{
+  // 消えたセッションの掃除
+  const prev = new Map<string, SessionStatus>();
+  const last = new Map<string, number>();
+  collectPending([{ sessionId: "a", project: "x", status: "idle" }], prev, last, BOTH, 1);
+  collectPending([{ sessionId: "b", project: "y", status: "idle" }], prev, last, BOTH, 2);
+  t("消えたセッションの記録は捨てられる", prev.has("a") === false && prev.has("b"), true);
+}
+
+console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗（合計）`);
+if (ng) process.exitCode = 1;
