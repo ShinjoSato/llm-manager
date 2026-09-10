@@ -1,9 +1,9 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-/** カーソルと吹き出しの間隔。 */
+/** アンカーと吹き出しの間隔。 */
 const GAP = 10;
-/** 画面端で切れないように空けるマージン。 */
+/** 画面端から空けるマージン。 */
 const EDGE = 8;
 
 export interface TooltipRow {
@@ -11,13 +11,6 @@ export interface TooltipRow {
   value: string;
   /** 種別やパスなど、等幅で読みたい値。 */
   mono?: boolean;
-}
-
-interface Position {
-  x: number;
-  y: number;
-  /** 上に出すと画面外に出る場合は下に回す。 */
-  below: boolean;
 }
 
 /**
@@ -28,51 +21,79 @@ export function Tooltip({
   title,
   subtitle,
   rows,
+  focusable = true,
   children,
 }: {
   title: string;
   subtitle?: string;
   rows?: TooltipRow[];
+  /** 子スプライトのように数が多いものはタブ順から外す。 */
+  focusable?: boolean;
   children: ReactNode;
 }) {
-  const [pos, setPos] = useState<Position | null>(null);
+  const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLSpanElement>(null);
+  const tip = useRef<HTMLDivElement>(null);
 
+  /** 実寸を測ってから置く。内容で高さが変わるので、閾値では決められない。 */
   const place = useCallback(() => {
-    const el = anchor.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    // 上に出す余地が無ければ下へ。高さは実測前なので概算で判断する。
-    const below = r.top < 160;
-    setPos({ x: r.left + r.width / 2, y: below ? r.bottom + GAP : r.top - GAP, below });
+    const a = anchor.current;
+    const t = tip.current;
+    if (!a || !t) return;
+    const ar = a.getBoundingClientRect();
+    const tr = t.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+
+    const above = ar.top - tr.height - GAP >= EDGE;
+    const top = above ? ar.top - GAP - tr.height : ar.bottom + GAP;
+    const left = ar.left + ar.width / 2 - tr.width / 2;
+
+    t.style.top = `${clamp(top, EDGE, vh - tr.height - EDGE)}px`;
+    t.style.left = `${clamp(left, EDGE, vw - tr.width - EDGE)}px`;
+    t.style.visibility = "visible";
   }, []);
 
-  const hide = useCallback(() => setPos(null), []);
+  const hide = useCallback(() => setOpen(false), []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    // スクロールやリサイズで置き去りにならないよう追従する（キーボード操作中は blur が来ない）。
+    const onMove = () => place();
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") hide();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, place, hide]);
 
   return (
     <>
       <span
         ref={anchor}
-        tabIndex={0}
-        onMouseEnter={place}
+        tabIndex={focusable ? 0 : -1}
+        onMouseEnter={() => setOpen(true)}
         onMouseLeave={hide}
-        onFocus={place}
+        onFocus={() => setOpen(true)}
         onBlur={hide}
         className="inline-flex rounded outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50"
       >
         {children}
       </span>
-      {pos &&
+      {open &&
         createPortal(
           <div
+            ref={tip}
             role="tooltip"
-            style={{
-              position: "fixed",
-              left: pos.x,
-              top: pos.y,
-              transform: `translate(-50%, ${pos.below ? "0" : "-100%"})`,
-              maxWidth: `calc(100vw - ${EDGE * 2}px)`,
-            }}
+            // 実寸を測るまでは見せない。measure 前に描くと一瞬ずれた位置に出る。
+            style={{ position: "fixed", top: 0, left: 0, visibility: "hidden", maxWidth: 340 }}
             className="pointer-events-none z-50 rounded-lg border border-white/12 bg-[#0b1220]/95 px-3 py-2
                        shadow-[0_18px_40px_-18px_rgba(0,0,0,.9)] backdrop-blur-md"
           >
@@ -90,6 +111,10 @@ export function Tooltip({
         )}
     </>
   );
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(Math.max(v, min), Math.max(min, max));
 }
 
 function Row({ row }: { row: TooltipRow }) {

@@ -3,6 +3,7 @@ import type { AgentInfo, SessionSnapshot, SessionStatus } from "../../../src/typ
 import { Tooltip, type TooltipRow } from "../components/Tooltip.js";
 import { ago, dur } from "../format.js";
 import { PixelArt, type Palette } from "./PixelArt.js";
+import { styleOf } from "../status.js";
 import { itemFor, jobFor, jobPalette, skillLabel, SKIN } from "./kit.js";
 import {
   AGENT_DOWN,
@@ -20,8 +21,7 @@ interface Look {
   palette: Palette;
   mark?: Sprite;
   markPalette?: Palette;
-  label: string;
-  /** その状態が何を意味するか。ツールチップで出す。 */
+  /** その状態が何を意味するか。ラベル自体は status.ts の 1 箇所に持たせる。 */
   note: string;
 }
 
@@ -30,7 +30,6 @@ const LOOK: Record<SessionStatus, Look> = {
   working: {
     sprite: AGENT_STAND,
     palette: { ...SKIN, G: "#34d399", B: "#10b981", D: "#0f766e" },
-    label: "稼働中",
     note: "ツールを実行しているか、応答を組み立てている",
   },
   permission: {
@@ -38,7 +37,6 @@ const LOOK: Record<SessionStatus, Look> = {
     palette: { ...SKIN, G: "#fbbf24", B: "#d97706", D: "#92400e" },
     mark: MARK_BANG,
     markPalette: { A: "#fbbf24" },
-    label: "権限待ち",
     note: "許可を求めて止まっている。あなたの操作が要る",
   },
   waiting: {
@@ -46,13 +44,11 @@ const LOOK: Record<SessionStatus, Look> = {
     palette: { ...SKIN, G: "#60a5fa", B: "#2563eb", D: "#1e40af" },
     mark: MARK_QUESTION,
     markPalette: { A: "#60a5fa" },
-    label: "入力待ち",
     note: "問いかけたまま止まっている。あなたの返答が要る",
   },
   error: {
     sprite: AGENT_DOWN,
     palette: { ...SKIN, G: "#f87171", B: "#dc2626", D: "#991b1b" },
-    label: "エラー",
     note: "API エラーなどでターンが終わっている",
   },
   idle: {
@@ -60,13 +56,11 @@ const LOOK: Record<SessionStatus, Look> = {
     palette: { S: "#cbb99c", K: "#0a0e14", G: "#64748b", B: "#475569", D: "#334155" },
     mark: MARK_SLEEP,
     markPalette: { A: "#64748b" },
-    label: "待機",
     note: "応答を終えて次の指示を待っている",
   },
   stopped: {
     sprite: AGENT_SIT,
     palette: { S: "#8b8378", K: "#1e293b", G: "#3f4c5e", B: "#334155", D: "#1e293b" },
-    label: "終了",
     note: "プロセスが終了している（5 分で一覧から消える）",
   },
 };
@@ -83,8 +77,9 @@ export function AgentStage({ session: s, now }: { session: SessionSnapshot; now:
   const kids = s.agents.slice(0, MAX_KIDS).sort((a, b) => a.id.localeCompare(b.id));
   const rest = s.agents.length - kids.length;
 
+  const statusLabel = styleOf(s.status).label;
   const parentRows: TooltipRow[] = [
-    { label: "状態", value: `${look.label} — ${look.note}` },
+    { label: "状態", value: `${statusLabel} — ${look.note}` },
     { label: "ブランチ", value: s.branch ?? "—", mono: true },
     { label: "稼働", value: `${dur(s.startedAt, now)}（最終活動 ${ago(s.lastActivityAt, now)}）` },
     { label: "場所", value: s.cwd, mono: true },
@@ -111,7 +106,7 @@ export function AgentStage({ session: s, now }: { session: SessionSnapshot; now:
             palette={look.palette}
             scale={5}
             className={s.status === "working" ? "bob" : ""}
-            label={`${s.project}（${look.label}）`}
+            label={`${s.project}（${statusLabel}）`}
           />
         </span>
       </Tooltip>
@@ -159,6 +154,7 @@ function KidSprite({ agent, now }: { agent: AgentInfo; now: number }) {
     <Tooltip
       title={job.label}
       subtitle={job.role}
+      focusable={false}
       rows={[
         { label: "種別", value: agent.type ?? "（不明）", mono: true },
         { label: "最終活動", value: ago(agent.lastActivityAt, now) },
