@@ -38,28 +38,3 @@ export function voxelize(sprite: Sprite, palette: Palette): Voxel[] {
 
   return out;
 }
-
-/**
- * 立方体が実際に広がっている大きさ。絵の枠ではなく中身を測る（端の透明は含めない）。
- * カメラの距離を決めるのに使う。
- */
-export function boundsOf(voxels: Voxel[]): { width: number; height: number } {
-  if (!voxels.length) return { width: 0, height: 0 };
-  const xs = voxels.map((v) => v.x);
-  const ys = voxels.map((v) => v.y);
-  return {
-    width: Math.max(...xs) - Math.min(...xs) + 1,
-    height: Math.max(...ys) - Math.min(...ys) + 1,
-  };
-}
-
-/** 中身の重心ではなく外接箱の中心。ここを原点に寄せると回転させても像が暴れない。 */
-export function centerOf(voxels: Voxel[]): { x: number; y: number } {
-  if (!voxels.length) return { x: 0, y: 0 };
-  const xs = voxels.map((v) => v.x);
-  const ys = voxels.map((v) => v.y);
-  return {
-    x: (Math.max(...xs) + Math.min(...xs)) / 2,
-    y: (Math.max(...ys) + Math.min(...ys)) / 2,
-  };
-}

@@ -1,5 +1,5 @@
 // キャラを立体で描くかどうか。既定は 2D（three.js を読み込まずに初期表示を軽く保つ）。
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const STORAGE_KEY = "monitor.render3d";
 
@@ -21,11 +21,7 @@ export function saveRender3D(on: boolean): void {
 
 export function useRender3D(): [boolean, () => void] {
   const [on, setOn] = useState(loadRender3D);
-  const toggle = useCallback(() => {
-    setOn((prev) => {
-      saveRender3D(!prev);
-      return !prev;
-    });
-  }, []);
+  useEffect(() => saveRender3D(on), [on]);
+  const toggle = useCallback(() => setOn((prev) => !prev), []);
   return [on, toggle];
 }

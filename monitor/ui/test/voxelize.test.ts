@@ -1,5 +1,5 @@
 // ドット絵 → 立方体の変換。2D 表示と同じ絵が出ることが前提なので、座標と色の対応を押さえる。
-import { boundsOf, centerOf, voxelize } from "../src/pixel/voxelize.js";
+import { voxelize } from "../src/pixel/voxelize.js";
 import { fitScale, projectedSize } from "../src/three/fit.js";
 import { AGENT_STAND, KID_STAND } from "../src/pixel/sprites.js";
 
@@ -38,20 +38,15 @@ const stand = voxelize(AGENT_STAND, {
   S: "#f6d3ab", K: "#0a0e14", G: "#34d399", B: "#10b981", D: "#0f766e",
 });
 t("親キャラの立方体は 98 個（2D の非透明マスと一致）", stand.length, 98);
-// 絵の枠は 12 列だが左右の端は透明。中身の広がりは 8 列。
-t("大きさは中身の広がりを返す（枠ではない）", boundsOf(stand), { width: 8, height: 15 });
-t("空なら 0", boundsOf([]), { width: 0, height: 0 });
 
 const kid = voxelize(KID_STAND, {
   S: "#f6d3ab", K: "#0a0e14", C: "#60a5fa", E: "#1d4ed8", F: "#1d4ed8",
 });
 t("子キャラの立方体は 82 個", kid.length, 82);
 
-// 外接箱の中心。ここを原点へ寄せてから回す
-t("中心は外接箱の中央", centerOf(small), { x: 0, y: 0.5 });
-t("親キャラの中心は左右対称なので x=0", centerOf(stand).x, 0);
-t("親キャラの中心は高さの中央", centerOf(stand).y, 7);
-t("空なら原点", centerOf([]), { x: 0, y: 0 });
+// 枠の中心（3D 側が原点に寄せる点）に対して、2D と同じ位置に並ぶこと
+t("枠に余白がある絵でも下端は 0 のまま", voxelize(["...", "A.B"], PAL).map((v) => v.y), [0, 0]);
+t("枠の余白ぶん中身は中心より下にある", Math.max(...voxelize(["...", "A.B"], PAL).map((v) => v.y)) < (2 - 1) / 2, true);
 
 // ── 回転させた立体を枠に収める倍率 ──
 t("回さなければ見かけの大きさは元のまま", projectedSize(4, 6, 2, 0, 0), { width: 4, height: 6 });
