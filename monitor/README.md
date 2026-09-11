@@ -97,12 +97,25 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/feed` | 直近のライブフィード |
 | GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント |
 | POST | `/api/sessions/:id/message` | そのセッションの受信箱へ伝言を送る |
+| POST | `/api/sessions/:id/open` | そのセッションの作業場所を開く（`{"app":"vscode"\|"xcode"}`） |
 | POST | `/hook` | フックの JSON をそのまま受け取る |
 
 CORS は付けていない（UI は同一オリジン配信、開発時は Vite の proxy 経由）。付けると、
 ブラウザで開いた任意のサイトから cwd や作業内容を読まれるうえ、**セッションへ伝言を送られる**。
-同じ理由で `/api/sessions/:id/message` は `content-type: application/json` を必須にしている
-（プリフライトを回避した cross-origin POST を弾くため）。
+同じ理由で `/api/sessions/:id/message` と `/api/sessions/:id/open` は `content-type: application/json`
+を必須にしている（プリフライトを回避した cross-origin POST を弾くため）。
+
+## エディタで開く
+
+各カードのボタンから、そのセッションの作業場所を `open -a` で開く。同じパスを開き直すと
+既存ウィンドウが前面に出るので、ウィンドウは増えない。
+
+- 開く先はリクエストで受け取らず `sessionId` から引く。任意パスを受けると、ブラウザで開いた
+  別サイトから任意のファイルを開かせる穴になる。
+- VSCode は cwd、Xcode は `.xcworkspace` / `.xcodeproj`（浅い階層優先・workspace 優先で探索）。
+  見つからないセッションでは Xcode ボタンを出さない。
+- **探索はセッションを見つけた時に 1 回だけ**行う。後から Xcode プロジェクトを作った場合、
+  そのセッションでは Xcode ボタンが出ない（Claude Code を開き直すか monitor を再起動する）。
 
 ## 伝言を送る
 

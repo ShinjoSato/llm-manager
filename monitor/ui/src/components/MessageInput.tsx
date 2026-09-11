@@ -1,5 +1,6 @@
 import { Check, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { readResult } from "../api.js";
 
 type Phase = "idle" | "sending" | "sent" | "error";
 
@@ -33,7 +34,7 @@ export function MessageInput({ sessionId, disabled }: { sessionId: string; disab
         body: JSON.stringify({ text: body }),
         signal: abort.signal,
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
+      const json = await readResult(res);
       if (json.ok) {
         setText("");
         setPhase("sent");

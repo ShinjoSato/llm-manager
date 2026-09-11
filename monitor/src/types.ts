@@ -53,6 +53,8 @@ export interface SessionSnapshot {
   agents: AgentInfo[];
   /** 受信箱ソケットが見つかっている＝メッセージを送れる。 */
   canReceive: boolean;
+  /** Xcode で開ける `.xcworkspace` / `.xcodeproj`。無ければ null。 */
+  xcodeProject: string | null;
 }
 
 export type FeedKind = "tool" | "prompt" | "message" | "status" | "session" | "agent";

@@ -11,7 +11,9 @@ import {
   sendToSession,
   type SendResult,
 } from "./messaging.js";
+import { APP_NAMES, openWithApp, type OpenApp, type OpenResult } from "./open.js";
 import { primeMeta, TranscriptReader } from "./transcript.js";
+import { findXcodeProject } from "./xcode.js";
 import type {
   AgentInfo,
   FeedItem,
@@ -60,6 +62,8 @@ interface SessionState {
   lastAgentActivityAt: number | null;
   /** 受信箱ソケットの位置。在庫スキャンのたびに解決し直す。 */
   socketPath: string | null;
+  /** Xcode で開く対象。cwd は変わらないのでセッション生成時に一度だけ調べる。 */
+  xcodeProject: string | null;
   endedAt: number | null;
   turnState: TurnState | null;
 }
@@ -171,6 +175,7 @@ export class SessionHub extends EventEmitter {
       agentsCheckedAt: 0,
       lastAgentActivityAt: null,
       socketPath: this.socketFor(raw),
+      xcodeProject: findXcodeProject(raw.cwd),
       endedAt: raw.alive ? null : Date.now(),
       turnState: null,
     };
@@ -443,6 +448,7 @@ export class SessionHub extends EventEmitter {
         currentAction: status === "working" ? state.currentAction : null,
         tokens: state.tokens,
         canReceive: state.raw.alive && state.socketPath !== null,
+        xcodeProject: state.xcodeProject,
         // 権限待ちの裏で子が回っていることは隠さない。終了したセッションだけ空にする。
         agents: status === "stopped" ? [] : state.agents,
       });
@@ -475,6 +481,25 @@ export class SessionHub extends EventEmitter {
       sessionId,
       "status",
       result.ok ? `伝言を送信: ${truncate(text, 60)}` : `送信失敗: ${result.error}`,
+    );
+    return result;
+  }
+
+  /** そのセッションの作業場所をエディタで開く。開く先はリクエストではなく cwd から引く。 */
+  async openInApp(sessionId: string, app: OpenApp): Promise<OpenResult> {
+    const state = this.sessions.get(sessionId);
+    if (!state) return { ok: false, error: "セッションが見つかりません", code: "not_found" };
+    if (app === "xcode" && !state.xcodeProject)
+      return { ok: false, error: "Xcode プロジェクトが見つかりません", code: "no_project" };
+    const target = app === "xcode" ? state.xcodeProject! : state.raw.cwd;
+
+    const result = await openWithApp(app, target);
+    this.push(
+      sessionId,
+      "status",
+      result.ok
+        ? `${APP_NAMES[app]} で開きました`
+        : `${APP_NAMES[app]} を開けません: ${truncate(result.error ?? "", 120)}`,
     );
     return result;
   }

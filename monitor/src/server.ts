@@ -3,6 +3,7 @@
 //   GET  /api/sessions   スナップショット
 //   GET  /api/feed       直近のライブフィード
 //   POST /api/sessions/:id/message  そのセッションの受信箱へテキストを投稿
+//   POST /api/sessions/:id/open     そのセッションの作業場所を VSCode / Xcode で開く
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
 //   GET  /events         SSE（sessions / feed）
 import { serve } from "@hono/node-server";
@@ -13,6 +14,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SessionHub } from "./hub.js";
+import { isOpenApp } from "./open.js";
 import type { FeedItem, HookPayload, SessionSnapshot } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +55,25 @@ app.post("/api/sessions/:sessionId/message", async (c) => {
   const result = await hub.sendMessage(c.req.param("sessionId"), text);
   if (result.ok) return c.json(result);
   const status = result.code === "not_found" ? 404 : result.code === "unreachable" ? 502 : 409;
+  return c.json(result, status);
+});
+
+// 開く先はパスで受け取らない。任意パスを受けると、別サイトから任意のファイルを開かせる穴になる。
+app.post("/api/sessions/:sessionId/open", async (c) => {
+  if (!c.req.header("content-type")?.startsWith("application/json")) {
+    return c.json({ ok: false, error: "content-type must be application/json" }, 415);
+  }
+  let body: { app?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "invalid json" }, 400);
+  }
+  if (!isOpenApp(body.app)) return c.json({ ok: false, error: "app は vscode / xcode です" }, 400);
+
+  const result = await hub.openInApp(c.req.param("sessionId"), body.app);
+  if (result.ok) return c.json(result);
+  const status = result.code === "not_found" ? 404 : 409;
   return c.json(result, status);
 });
 
