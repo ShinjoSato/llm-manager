@@ -1,5 +1,6 @@
 import { CodeXml, Hammer } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { readResult } from "../api.js";
 
 type OpenApp = "vscode" | "xcode";
 type Phase = "idle" | "opening" | "opened" | "error";
@@ -40,7 +41,7 @@ export function OpenButtons({
         body: JSON.stringify({ app }),
         signal: abort.signal,
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
+      const json = await readResult(res);
       if (json.ok) {
         setPhase("opened");
         resetTimer.current = window.setTimeout(() => setPhase("idle"), RESET_DELAY_MS);
