@@ -4,6 +4,7 @@ import type { SessionSnapshot } from "../../../src/types.js";
 import { ago, dur, kilo } from "../format.js";
 import { AgentStage } from "../pixel/AgentStage.js";
 import { MessageInput } from "./MessageInput.js";
+import { OpenButtons } from "./OpenButtons.js";
 import { itemForVerb, jobFor, skillLabel } from "../pixel/kit.js";
 import { styleOf } from "../status.js";
 
@@ -83,6 +84,8 @@ export function SessionCard({
         {s.tokens && <span>キャッシュ {kilo(s.tokens.cacheRead)}</span>}
         <span className="ml-auto">{s.statusSource === "hook" ? "hook" : "log"}</span>
       </div>
+
+      <OpenButtons sessionId={s.sessionId} xcodeProject={s.xcodeProject} />
 
       <MessageInput sessionId={s.sessionId} disabled={!s.canReceive} />
     </div>
