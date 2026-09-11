@@ -7,7 +7,8 @@
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
     "build": "npm --prefix ui install && npm --prefix ui run build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/origin.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
