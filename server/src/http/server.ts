@@ -39,12 +39,14 @@ app.use("*", async (c, next) => {
   if (origin !== undefined && !isAllowedOrigin(origin)) {
     return c.json({ ok: false, error: "invalid origin header" }, 403);
   }
+  c.header("X-Content-Type-Options", "nosniff");
   await next();
 });
 
 // 書き込み系は content-type を必須にする。プリフライトを回避した cross-origin のフォーム POST を弾くため。
 const requireJson: MiddlewareHandler = async (c, next) => {
-  if (c.req.method === "POST" && !c.req.header("content-type")?.startsWith("application/json")) {
+  const type = c.req.header("content-type")?.trimStart().toLowerCase();
+  if (c.req.method === "POST" && !type?.startsWith("application/json")) {
     return c.json({ ok: false, error: "content-type must be application/json" }, 415);
   }
   await next();
@@ -64,7 +66,12 @@ app.post("/api/refresh", async (c) => c.json(await collectAndSave()));
 app.get("/api/state", (c) => c.json(readState()));
 
 app.post("/api/state", async (c) => {
-  const body = (await c.req.json()) as ManagerState;
+  let body: ManagerState;
+  try {
+    body = (await c.req.json()) as ManagerState;
+  } catch {
+    return c.json({ ok: false, error: "invalid json" }, 400);
+  }
   return c.json(writeState(body));
 });
 

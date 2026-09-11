@@ -8,7 +8,12 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getDashboard: () => jsonFetch<Dashboard>("/api/dashboard"),
-  refresh: () => jsonFetch<Dashboard>("/api/refresh", { method: "POST" }),
+  refresh: () =>
+    jsonFetch<Dashboard>("/api/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }),
   getState: () => jsonFetch<ManagerState>("/api/state"),
   saveState: (state: ManagerState) =>
     jsonFetch<ManagerState>("/api/state", {
