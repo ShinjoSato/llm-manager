@@ -9,6 +9,8 @@ export default defineConfig({
   server: {
     port: 5174,
     fs: { allow: [resolve(__dirname, "..")] },
+    // 文字列で書くと changeOrigin が既定で入り Host が転送先に書き換わる。
+    // オブジェクト形式にするなら changeOrigin: true が要る（monitor の Host 検証で 403 になる）。
     proxy: {
       "/api": "http://localhost:8766",
       "/events": "http://localhost:8766",

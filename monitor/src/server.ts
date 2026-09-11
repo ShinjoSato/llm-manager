@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SessionHub } from "./hub.js";
+import { isAllowedHost, isAllowedOrigin } from "./origin.js";
 import { isOpenApp } from "./open.js";
 import type { FeedItem, HookPayload, SessionSnapshot } from "./types.js";
 
@@ -24,9 +25,25 @@ const hub = new SessionHub();
 hub.setMaxListeners(0); // SSE 1 接続につき 3 リスナー。タブを開く数だけ増える。
 hub.start();
 
+const port = Number(process.env.PORT ?? 8766);
+// PORT=0 だと OS が別のポートを割り当てるので、実際に待ち受けた値で判定する。
+let boundPort = port;
+
 // CORS は付けない。UI は同一オリジン配信で、開発時は Vite の proxy 経由になる。
 // 付けるとブラウザで開いた任意のサイトから cwd や作業内容を読めてしまう。
 const app = new Hono();
+
+// DNS リバインディング対策。攻撃者のドメインを 127.0.0.1 に向けても Host は攻撃者のもののままなので弾ける。
+app.use("*", async (c, next) => {
+  if (!isAllowedHost(c.req.header("host"), boundPort)) {
+    return c.json({ ok: false, error: "invalid host header" }, 403);
+  }
+  const origin = c.req.header("origin");
+  if (origin !== undefined && !isAllowedOrigin(origin)) {
+    return c.json({ ok: false, error: "invalid origin header" }, 403);
+  }
+  await next();
+});
 
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
@@ -78,6 +95,9 @@ app.post("/api/sessions/:sessionId/open", async (c) => {
 });
 
 app.post("/hook", async (c) => {
+  if (!c.req.header("content-type")?.startsWith("application/json")) {
+    return c.json({ ok: false, error: "content-type must be application/json" }, 415);
+  }
   let payload: HookPayload;
   try {
     payload = await c.req.json();
@@ -152,9 +172,9 @@ if (existsSync(UI_DIST)) {
   );
 }
 
-const port = Number(process.env.PORT ?? 8766);
 // localhost 限定。認証が無く、セッションへの書き込み口もあるため外部に出さない。
 serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => {
+  boundPort = info.port;
   console.log(`ai-manager monitor: http://localhost:${info.port}`);
   console.log(`  GET /events (SSE) | GET /api/sessions | POST /hook`);
   if (!existsSync(UI_DIST)) console.log("  ⚠ ui/dist が無いため UI は配信されません");
