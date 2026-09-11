@@ -1,5 +1,11 @@
 // Host / Origin の判定。迂回されると cwd や作業内容が外部サイトから読めるので境界を押さえる。
-import { isAllowedHost, isAllowedOrigin, splitHostPort } from "../src/origin.js";
+import {
+  isAllowedHost,
+  isAllowedOrigin,
+  isLoopbackAddress,
+  localIPv4Addresses,
+  splitHostPort,
+} from "../src/origin.js";
 
 let ok = 0;
 let ng = 0;
@@ -60,6 +66,37 @@ t("Origin: null は弾く", isAllowedOrigin("null"), false);
 t("空文字は弾く", isAllowedOrigin(""), false);
 t("http/https 以外は弾く", isAllowedOrigin("chrome-extension://abcdef"), false);
 t("file: は弾く", isAllowedOrigin("file:///etc/passwd"), false);
+
+// ── LAN 公開時の追加ホスト ──
+const LAN = new Set(["192.168.0.11"]);
+
+t("LAN IP を通す", isAllowedHost("192.168.0.11:8766", PORT, LAN), true);
+t("LAN IP でもポートが違えば弾く", isAllowedHost("192.168.0.11:8765", PORT, LAN), false);
+t("許可に無い LAN IP は弾く", isAllowedHost("192.168.0.12:8766", PORT, LAN), false);
+t("LAN 公開でもループバックは通す", isAllowedHost("localhost:8766", PORT, LAN), true);
+t("LAN 公開でも外部ドメインは弾く", isAllowedHost("evil.example.com:8766", PORT, LAN), false);
+t("追加ホスト無しなら LAN IP は弾く", isAllowedHost("192.168.0.11:8766", PORT), false);
+t("LAN IP の Origin を通す", isAllowedOrigin("http://192.168.0.11:8766", LAN), true);
+t("追加ホスト無しなら LAN IP の Origin は弾く", isAllowedOrigin("http://192.168.0.11:8766"), false);
+t("LAN 公開でも外部 Origin は弾く", isAllowedOrigin("https://evil.example.com", LAN), false);
+
+// ── 接続元アドレスの判定（Host は詐称できるのでこちらで手元かを見る） ──
+t("127.0.0.1 は手元", isLoopbackAddress("127.0.0.1"), true);
+t("127.x の別アドレスも手元", isLoopbackAddress("127.1.2.3"), true);
+t("::1 は手元", isLoopbackAddress("::1"), true);
+t("IPv4 射影の 127.0.0.1 は手元", isLoopbackAddress("::ffff:127.0.0.1"), true);
+t("LAN IP は手元ではない", isLoopbackAddress("192.168.0.11"), false);
+t("IPv4 射影の LAN IP も手元ではない", isLoopbackAddress("::ffff:192.168.0.11"), false);
+t("127 で始まる別アドレスは手元ではない", isLoopbackAddress("1270.0.0.1"), false);
+t("アドレス不明は手元ではない", isLoopbackAddress(undefined), false);
+t("空文字は手元ではない", isLoopbackAddress(""), false);
+
+// 列挙した自分の IPv4 にループバックが混ざると、トークン無しで通る穴になる
+t(
+  "自分の IPv4 にループバックは含まれない",
+  localIPv4Addresses().some(isLoopbackAddress),
+  false,
+);
 
 console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗`);
 if (ng) process.exitCode = 1;
