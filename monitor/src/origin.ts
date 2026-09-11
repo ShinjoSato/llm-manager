@@ -35,7 +35,11 @@ export function isAllowedHost(
   return hostPort === String(port) || (hostPort === "" && port === 80);
 }
 
-export function isAllowedOrigin(value: string, extra: ReadonlySet<string> = NO_EXTRA): boolean {
+export function isAllowedOrigin(
+  value: string,
+  port: number,
+  extra: ReadonlySet<string> = NO_EXTRA,
+): boolean {
   let url: URL;
   try {
     url = new URL(value); // Origin: null（sandbox iframe 等）はここで弾かれる。
@@ -44,7 +48,9 @@ export function isAllowedOrigin(value: string, extra: ReadonlySet<string> = NO_E
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
   // 開発時の Vite は別ポートで配信するので、ループバックならポートは問わない。
-  return LOOPBACK_HOSTS.has(url.hostname) || extra.has(url.hostname);
+  if (LOOPBACK_HOSTS.has(url.hostname)) return true;
+  // 同じ IP の別ポートで動く別サービスとは cookie を共有するので、LAN 側はポートまで見る。
+  return extra.has(url.hostname) && url.port === String(port);
 }
 
 /** 接続元が手元かどうか。Host は詐称できるのでソケットのアドレスで判定する。 */
@@ -52,6 +58,11 @@ export function isLoopbackAddress(value: string | undefined): boolean {
   if (!value) return false;
   const addr = value.startsWith("::ffff:") ? value.slice("::ffff:".length) : value; // IPv4 射影アドレス
   return addr === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(addr);
+}
+
+/** 家庭内 LAN で使われる帯。VPN や Docker の仮想 IF を案内 URL から外す。 */
+export function isPrivateIPv4(address: string): boolean {
+  return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address);
 }
 
 /** 自分の非ループバック IPv4。LAN 公開時の許可ホストと案内 URL に使う。 */
