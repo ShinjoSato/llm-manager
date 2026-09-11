@@ -24,9 +24,57 @@ const hub = new SessionHub();
 hub.setMaxListeners(0); // SSE 1 接続につき 3 リスナー。タブを開く数だけ増える。
 hub.start();
 
+const port = Number(process.env.PORT ?? 8766);
+
+/** ループバックを指すホスト名。これ以外は外部のドメイン。 */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/** `host:port` をホストとポートに割る。`[::1]:8766` のブラケット形式も扱う。 */
+function splitHostPort(value: string): { host: string; port: string } {
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    if (end < 0) return { host: value, port: "" };
+    return { host: value.slice(0, end + 1), port: value.slice(end + 2) };
+  }
+  const sep = value.lastIndexOf(":");
+  return sep < 0 ? { host: value, port: "" } : { host: value.slice(0, sep), port: value.slice(sep + 1) };
+}
+
+function isAllowedHost(value: string | undefined): boolean {
+  if (!value) return false; // Host 無し（HTTP/1.0 等）は塞ぐ側に倒す。ブラウザは必ず付ける。
+  const { host, port: hostPort } = splitHostPort(value.toLowerCase()); // ホスト名は大文字小文字を区別しない
+  if (!LOOPBACK_HOSTS.has(host)) return false;
+  // 既定ポート(80)で待つ時だけブラウザがポートを省く。
+  return hostPort === String(port) || (hostPort === "" && port === 80);
+}
+
+function isAllowedOrigin(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value); // Origin: null（sandbox iframe 等）はここで弾かれる。
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  // 開発時の Vite は別ポートで配信するので、ループバックならポートは問わない。
+  return LOOPBACK_HOSTS.has(url.hostname);
+}
+
 // CORS は付けない。UI は同一オリジン配信で、開発時は Vite の proxy 経由になる。
 // 付けるとブラウザで開いた任意のサイトから cwd や作業内容を読めてしまう。
 const app = new Hono();
+
+// DNS リバインディング対策。攻撃者のドメインを 127.0.0.1 に向けても Host は攻撃者のもののままなので弾ける。
+app.use("*", async (c, next) => {
+  if (!isAllowedHost(c.req.header("host"))) {
+    return c.json({ ok: false, error: "invalid host header" }, 403);
+  }
+  const origin = c.req.header("origin");
+  if (origin !== undefined && !isAllowedOrigin(origin)) {
+    return c.json({ ok: false, error: "invalid origin header" }, 403);
+  }
+  await next();
+});
 
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
@@ -152,7 +200,6 @@ if (existsSync(UI_DIST)) {
   );
 }
 
-const port = Number(process.env.PORT ?? 8766);
 // localhost 限定。認証が無く、セッションへの書き込み口もあるため外部に出さない。
 serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => {
   console.log(`ai-manager monitor: http://localhost:${info.port}`);
