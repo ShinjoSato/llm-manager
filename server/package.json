@@ -10,7 +10,8 @@
     "collect": "tsx src/cli.ts",
     "asc": "tsx src/appstore-cli.ts",
     "google-auth": "tsx src/google-auth.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/origin.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
