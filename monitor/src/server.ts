@@ -73,7 +73,7 @@ app.post("/api/sessions/:sessionId/open", async (c) => {
 
   const result = await hub.openInApp(c.req.param("sessionId"), body.app);
   if (result.ok) return c.json(result);
-  const status = result.code === "not_found" ? 404 : result.code === "no_project" ? 409 : 500;
+  const status = result.code === "not_found" ? 404 : 409;
   return c.json(result, status);
 });
 

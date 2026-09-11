@@ -13,7 +13,7 @@ import {
 } from "./messaging.js";
 import { APP_NAMES, openWithApp, type OpenApp, type OpenResult } from "./open.js";
 import { primeMeta, TranscriptReader } from "./transcript.js";
-import { xcodeProjectFor } from "./xcode.js";
+import { findXcodeProject } from "./xcode.js";
 import type {
   AgentInfo,
   FeedItem,
@@ -175,7 +175,7 @@ export class SessionHub extends EventEmitter {
       agentsCheckedAt: 0,
       lastAgentActivityAt: null,
       socketPath: this.socketFor(raw),
-      xcodeProject: xcodeProjectFor(raw.cwd),
+      xcodeProject: findXcodeProject(raw.cwd),
       endedAt: raw.alive ? null : Date.now(),
       turnState: null,
     };
@@ -489,9 +489,9 @@ export class SessionHub extends EventEmitter {
   async openInApp(sessionId: string, app: OpenApp): Promise<OpenResult> {
     const state = this.sessions.get(sessionId);
     if (!state) return { ok: false, error: "セッションが見つかりません", code: "not_found" };
-    const target = app === "xcode" ? state.xcodeProject : state.raw.cwd;
-    if (!target)
+    if (app === "xcode" && !state.xcodeProject)
       return { ok: false, error: "Xcode プロジェクトが見つかりません", code: "no_project" };
+    const target = app === "xcode" ? state.xcodeProject! : state.raw.cwd;
 
     const result = await openWithApp(app, target);
     this.push(
@@ -499,7 +499,7 @@ export class SessionHub extends EventEmitter {
       "status",
       result.ok
         ? `${APP_NAMES[app]} で開きました`
-        : `${APP_NAMES[app]} を開けません: ${result.error}`,
+        : `${APP_NAMES[app]} を開けません: ${truncate(result.error ?? "", 120)}`,
     );
     return result;
   }

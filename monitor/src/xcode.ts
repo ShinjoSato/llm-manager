@@ -3,6 +3,8 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const MAX_DEPTH = 3;
+/** 走査するディレクトリ数の上限。cwd が巨大だと同期走査がイベントループを止める。 */
+const MAX_DIRS = 2_000;
 /** 潜っても無駄か、誤検出のもとになるディレクトリ。 */
 const SKIP = new Set([".git", "Pods", "node_modules", ".build", "DerivedData", "build", ".swiftpm"]);
 
@@ -17,7 +19,9 @@ export function findXcodeProject(dir: string): string | null {
   const queue: Array<[string, number]> = [[dir, 0]];
   let best: Candidate | null = null;
 
-  for (let i = 0; i < queue.length; i++) {
+  for (let i = 0; i < queue.length && i < MAX_DIRS; i++) {
+    // 深さ 0 の候補は最初の 1 周で出揃い、それより浅いものは無いので打ち切れる。
+    if (best?.depth === 0) break;
     const [current, depth] = queue[i]!;
     let entries;
     try {
@@ -33,6 +37,7 @@ export function findXcodeProject(dir: string): string | null {
         if (better(best, depth, workspace)) best = { path, depth, workspace };
         continue;
       }
+      // リンクは辿らない。循環で走査が終わらなくなるため、claude-deck とはここだけ挙動が違う。
       if (!entry.isDirectory() || entry.name.startsWith(".") || SKIP.has(entry.name)) continue;
       if (depth < MAX_DEPTH) queue.push([path, depth + 1]);
     }
@@ -46,13 +51,3 @@ function better(best: Candidate | null, depth: number, workspace: boolean): bool
   return workspace && !best.workspace;
 }
 
-const cache = new Map<string, string | null>();
-
-/** 同じ作業場所を何度も走査しないよう、cwd 単位で覚える。 */
-export function xcodeProjectFor(cwd: string): string | null {
-  const cached = cache.get(cwd);
-  if (cached !== undefined) return cached;
-  const found = findXcodeProject(cwd);
-  cache.set(cwd, found);
-  return found;
-}

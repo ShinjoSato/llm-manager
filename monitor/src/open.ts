@@ -1,5 +1,6 @@
 // macOS の `open` でエディタに開かせる。同じパスを開き直すと既存ウィンドウが前面に出る。
 import { execFile } from "node:child_process";
+import { isAbsolute } from "node:path";
 
 export const OPEN_APPS = ["vscode", "xcode"] as const;
 export type OpenApp = (typeof OPEN_APPS)[number];
@@ -26,9 +27,13 @@ export function isOpenApp(value: unknown): value is OpenApp {
 
 /** シェルを経由せず引数配列で渡す。空白入りのパス（`App Store Checker.xcodeproj`）もそのまま通る。 */
 export function openWithApp(app: OpenApp, target: string): Promise<OpenResult> {
+  // 先頭が `-` のパスは open のオプションとして解釈される。
+  if (!isAbsolute(target)) {
+    return Promise.resolve({ ok: false, error: "開く先が絶対パスではありません", code: "failed" });
+  }
   return new Promise((resolve) => {
     execFile(
-      "open",
+      "/usr/bin/open",
       ["-a", APP_NAMES[app], target],
       { timeout: TIMEOUT_MS },
       (err, _stdout, stderr) => {

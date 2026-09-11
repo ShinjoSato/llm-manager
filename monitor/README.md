@@ -114,6 +114,8 @@ CORS は付けていない（UI は同一オリジン配信、開発時は Vite 
   別サイトから任意のファイルを開かせる穴になる。
 - VSCode は cwd、Xcode は `.xcworkspace` / `.xcodeproj`（浅い階層優先・workspace 優先で探索）。
   見つからないセッションでは Xcode ボタンを出さない。
+- **探索はセッションを見つけた時に 1 回だけ**行う。後から Xcode プロジェクトを作った場合、
+  そのセッションでは Xcode ボタンが出ない（Claude Code を開き直すか monitor を再起動する）。
 
 ## 伝言を送る
 
