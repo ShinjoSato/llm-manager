@@ -80,6 +80,11 @@ scripts/                 補助シェル（dev.sh で API+Web 同時起動 / boa
 - **データだけ再生成**: `cd server && npm run collect`
 - **セッション監視（monitor・独立プロセス）**: `cd monitor && npm install && npm run build && npm start` → http://localhost:8766
 - 依存は各ディレクトリで `npm install`（server / web）。Node 24 系。
+- **server は localhost 限定**。`127.0.0.1` でのみ待ち受け、CORS は付けず、全エンドポイントで `Host` / `Origin`
+  を検証する（ループバック名以外は 403）。書き込み系（`POST /api/state` / `POST /api/refresh`）は
+  `content-type: application/json` 必須（415）。認証が無く手動レイヤーへの書き込み口もあるため外部に出さない。
+  他端末から見たい場合も穴を開けず、SSH ポートフォワード等で繋ぐ。判定は `server/src/http/origin.ts`
+  （monitor と同じ実装。別 npm プロジェクトなので複製で持つ）、テストは `cd server && npm test`。
 
 ### Claude Code 連携（MCP）— ここが要
 - `.mcp.json` で MCP サーバーを登録済み（`ai-manager`）。Claude Code はツールとして直接呼べる:
