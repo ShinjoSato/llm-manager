@@ -168,6 +168,7 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - **実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl` の末尾差分から実行中ツール・ブランチ・作業内容・トークン量を取る。`ai-title` は先頭寄りにしか出ないため初回だけ広く遡る（`primeMeta`）。
 - **フック層**（任意）: `POST /hook`。**「なぜ止まっているか」（権限待ち・入力待ち・APIエラー）はログに一切残らない**ので、これはフックでしか取れない。設定は `monitor/README.md` のスニペットを `~/.claude/settings.json` に入れる（**`async: true` 必須**。付けないと全プロジェクトの応答をブロックする）。
 - UI は `monitor/ui/`（React + Vite + Tailwind v4。`web/` と同じデザイントークンを使うので見た目が揃う）。SSE を EventSource で購読し、差分描画は React に任せる。
+- **同じ Wi-Fi の別端末から見る**: `MONITOR_LAN=1 npm start` の時だけ `0.0.0.0` で待ち受け、トークン（`secrets/monitor-token`・無ければ生成）を持つ端末だけ通す。`?t=<token>` で一度開くと HttpOnly cookie が付き、以降は cookie で通る（`EventSource` がヘッダーを付けられないため SSE には cookie が必須）。起動時に案内 URL と QR をターミナルに出す。ループバックは従来どおりトークン不要。HTTPS ではないので平文で流れる（家庭内 Wi-Fi 前提）。
 - 制約: macOS ローカルのセッションのみ（クラウドセッションは映らない）。ログの粒度はターン／ツール単位で、生成中テキストは流れない。
 
 ## スプレッドシート勉強管理

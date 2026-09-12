@@ -6,20 +6,42 @@
 //   POST /api/sessions/:id/open     そのセッションの作業場所を VSCode / Xcode で開く
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
 //   GET  /events         SSE（sessions / feed）
-import { serve } from "@hono/node-server";
+// 既定はループバック限定。MONITOR_LAN=1 のときだけ LAN へ出し、トークンを持つ端末だけ通す。
+import { serve, type HttpBindings } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
 import { streamSSE } from "hono/streaming";
 import { existsSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SessionHub } from "./hub.js";
-import { isAllowedHost, isAllowedOrigin } from "./origin.js";
+import {
+  isAllowedHost,
+  isAllowedOrigin,
+  isLoopbackAddress,
+  isPrivateIPv4,
+  localIPv4Addresses,
+} from "./origin.js";
 import { isOpenApp } from "./open.js";
+import { loadOrCreateToken, MIN_TOKEN_LENGTH, TOKEN_FILE, tokenEquals } from "./token.js";
 import type { FeedItem, HookPayload, SessionSnapshot } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const UI_DIST = join(HERE, "..", "ui", "dist");
+
+// LAN 公開はオプトイン。既定はループバック限定のまま。
+const lanEnabled = process.env.MONITOR_LAN === "1";
+const lanHosts: ReadonlySet<string> = new Set(lanEnabled ? localIPv4Addresses() : []);
+
+const token = lanEnabled ? loadOrCreateToken() : null;
+if (lanEnabled && !token) {
+  // 設定ミスで無防備に開くより落ちる方が安全。
+  console.error(
+    `MONITOR_LAN=1 ですがトークンを用意できません（${TOKEN_FILE} を読み書きできないか、MONITOR_TOKEN が ${MIN_TOKEN_LENGTH} 文字未満）。起動を中止します。`,
+  );
+  process.exit(1);
+}
 
 const hub = new SessionHub();
 hub.setMaxListeners(0); // SSE 1 接続につき 3 リスナー。タブを開く数だけ増える。
@@ -31,19 +53,69 @@ let boundPort = port;
 
 // CORS は付けない。UI は同一オリジン配信で、開発時は Vite の proxy 経由になる。
 // 付けるとブラウザで開いた任意のサイトから cwd や作業内容を読めてしまう。
-const app = new Hono();
+const app = new Hono<{ Bindings: HttpBindings }>();
 
 // DNS リバインディング対策。攻撃者のドメインを 127.0.0.1 に向けても Host は攻撃者のもののままなので弾ける。
 app.use("*", async (c, next) => {
-  if (!isAllowedHost(c.req.header("host"), boundPort)) {
+  if (!isAllowedHost(c.req.header("host"), boundPort, lanHosts)) {
     return c.json({ ok: false, error: "invalid host header" }, 403);
   }
   const origin = c.req.header("origin");
-  if (origin !== undefined && !isAllowedOrigin(origin)) {
+  if (origin !== undefined && !isAllowedOrigin(origin, boundPort, lanHosts)) {
     return c.json({ ok: false, error: "invalid origin header" }, 403);
   }
   await next();
 });
+
+/** トークンを載せる cookie の名前。 */
+const TOKEN_COOKIE = "monitor_token";
+
+// LAN からはトークンを持つ端末だけ通す。ヘッダーではなく cookie に載せるのは、
+// SSE を張る EventSource がカスタムヘッダーを付けられないため。
+app.use("*", async (c, next) => {
+  if (!token) return next(); // 既定（ループバック限定）は従来どおり素通り
+  if (isLoopbackAddress(c.env.incoming.socket.remoteAddress)) return next();
+
+  const url = new URL(c.req.url);
+  const given = url.searchParams.get("t");
+  if (given !== null) {
+    if (!tokenEquals(token, given)) return c.json({ ok: false, error: "invalid token" }, 401);
+    setCookie(c, TOKEN_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365,
+    });
+    // リダイレクトすると POST の本体が捨てられるので、画面を開く時だけ差し替える。
+    if (c.req.method === "GET" || c.req.method === "HEAD") {
+      url.searchParams.delete("t");
+      // 履歴やスクリーンショットにトークンを残さないため、URL から外して開き直させる。
+      return c.redirect(`${safePath(url.pathname)}${url.search}`, 302);
+    }
+    return next();
+  }
+
+  if (!tokenEquals(token, getCookie(c, TOKEN_COOKIE))) {
+    return unauthorized(c);
+  }
+  await next();
+});
+
+/** `//evil.com` は protocol-relative URL として外部へ飛ぶので、先頭のスラッシュを 1 本に畳む。 */
+function safePath(pathname: string): string {
+  return pathname.startsWith("//") ? `/${pathname.replace(/^\/+/, "")}` : pathname;
+}
+
+/** 画面から開いた時は、次に何をすればいいか分かる形で返す。 */
+function unauthorized(c: Context): Response {
+  if (c.req.header("accept")?.includes("text/html")) {
+    return c.html(
+      "<meta charset=\"utf-8\"><p>この端末は未認証です。Mac の monitor を起動した端末に出ている QR を読み直してください。</p>",
+      401,
+    );
+  }
+  return c.json({ ok: false, error: "unauthorized" }, 401);
+}
 
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
@@ -172,11 +244,25 @@ if (existsSync(UI_DIST)) {
   );
 }
 
-// localhost 限定。認証が無く、セッションへの書き込み口もあるため外部に出さない。
-serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => {
+// 既定は localhost 限定。セッションへの書き込み口があるので、外に出すのは MONITOR_LAN=1 の時だけ。
+serve({ fetch: app.fetch, port, hostname: lanEnabled ? "0.0.0.0" : "127.0.0.1" }, (info) => {
   boundPort = info.port;
   console.log(`ai-manager monitor: http://localhost:${info.port}`);
   console.log(`  GET /events (SSE) | GET /api/sessions | POST /hook`);
+  if (token) {
+    if (lanHosts.size === 0) console.log("  ⚠ LAN の IPv4 が見つかりません（Wi-Fi に繋がっていますか）");
+    // 仮想 IF（VPN・Docker 等）まで QR を出すとどれを読むか分からなくなる。
+    const shown = [...lanHosts].filter(isPrivateIPv4);
+    void (async () => {
+      const { default: qrcode } = await import("qrcode-terminal");
+      for (const host of shown.length ? shown : [...lanHosts]) {
+        const url = `http://${host}:${info.port}/?t=${encodeURIComponent(token)}`;
+        console.log(`\n  LAN: ${url}`);
+        // 64 文字の hex を別端末で手打ちするのは現実的でないので QR で読ませる。
+        qrcode.generate(url, { small: true });
+      }
+    })();
+  }
   if (!existsSync(UI_DIST)) console.log("  ⚠ ui/dist が無いため UI は配信されません");
 });
 
