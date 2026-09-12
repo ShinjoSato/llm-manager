@@ -17,7 +17,7 @@ import { Voxels } from "./Voxels.js";
 import {
   CAPITOL,
   CAPITOL_HEIGHT,
-  CORNICE_TOP,
+  DRUM_TOP,
   glowOf,
   KID_HEIGHT,
   PARENT_HEIGHT,
@@ -28,10 +28,11 @@ import {
 
 /** キャラの厚み。絵の 1 マスを 1 とした値で、VoxelArt と揃えてある。 */
 const FIGURE_DEPTH = 3;
-/** 子は 2 段目の手前に並べる。奥に置くと柱に隠れる。 */
-// 前柱（span/2 = 1.1・半径 0.1）より手前に出す。重なるとめり込んで見える。
-const KID_Z = 1.4;
-const KID_GAP = 0.8;
+/** 親は頂上の床の前端に立たせる。ドームは奥にあるので顔にかからない。 */
+const PARENT_Z = 0.95;
+/** 子は 2 段目の前端に並べる。躯体より手前なので誰も隠れない。 */
+const KID_Z = 1.48;
+const KID_GAP = 1.1;
 
 const stone = new MeshStandardMaterial({ color: "#aeb9cc", roughness: 0.8, metalness: 0.05 });
 const shade = new MeshStandardMaterial({ color: "#8b97ab", roughness: 0.85, metalness: 0.05 });
@@ -44,56 +45,40 @@ const columnGeo = new CylinderGeometry(
 const pierGeo = new CylinderGeometry(
   CAPITOL.piers.radius,
   CAPITOL.piers.radius,
-  CAPITOL.piers.height,
+  CAPITOL.attic.height,
   8,
 );
-const rotundaGeo = new CylinderGeometry(
-  CAPITOL.rotunda.radius,
-  CAPITOL.rotunda.radius,
-  CAPITOL.rotunda.height,
-  8,
-);
-const corniceGeo = new CylinderGeometry(
-  CAPITOL.cornice.radius,
-  CAPITOL.cornice.radius * 1.06,
-  CAPITOL.cornice.height,
-  24,
+const drumGeo = new CylinderGeometry(
+  CAPITOL.drum.radius,
+  CAPITOL.drum.radius * 1.08,
+  CAPITOL.drum.height,
+  20,
 );
 // 上半分だけの球。伏せた椀がドームになる。
 const domeGeo = new SphereGeometry(CAPITOL.dome.radius, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
 const finialGeo = new SphereGeometry(CAPITOL.finial.radius, 10, 8);
-const haloGeo = new CircleGeometry(CAPITOL.footprint * 0.78, 28);
-const shadowGeo = new CircleGeometry(CAPITOL.footprint * 0.62, 24);
+const haloGeo = new CircleGeometry(CAPITOL.footprintX * 0.72, 28);
+const shadowGeo = new CircleGeometry(CAPITOL.footprintX * 0.56, 24);
 const shadowMat = new MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.35 });
 
-/** 土台の列柱。四辺に等間隔で並べ、角は重ねない。 */
+/** 土台の列柱。長辺に等間隔で並べ、短辺は角と重ならない内側だけに立てる。 */
 const COLONNADE = (() => {
-  const { span, perSide } = CAPITOL.colonnade;
-  const half = span / 2;
+  const { spanX, spanZ, perSide } = CAPITOL.colonnade;
+  const hx = spanX / 2;
+  const hz = spanZ / 2;
   const spots: [number, number][] = [];
   for (let i = 0; i < perSide; i++) {
-    const t = -half + (span * i) / (perSide - 1);
-    spots.push([t, -half], [t, half]);
-    if (i > 0 && i < perSide - 1) spots.push([-half, t], [half, t]);
+    const t = -hx + (spanX * i) / (perSide - 1);
+    spots.push([t, -hz], [t, hz]);
   }
+  spots.push([-hx, 0], [hx, 0]);
   return spots;
 })();
 
 const PIERS: [number, number][] = [
-  [-CAPITOL.piers.span / 2, -CAPITOL.piers.span / 2],
-  [CAPITOL.piers.span / 2, -CAPITOL.piers.span / 2],
-  [-CAPITOL.piers.span / 2, CAPITOL.piers.span / 2],
-  [CAPITOL.piers.span / 2, CAPITOL.piers.span / 2],
+  [-CAPITOL.piers.spanX / 2, CAPITOL.piers.z],
+  [CAPITOL.piers.spanX / 2, CAPITOL.piers.z],
 ];
-
-const ROTUNDA = Array.from({ length: CAPITOL.rotunda.count }, (_, i) => {
-  // 半目盛りずらす。0 から始めると柱が真正面に来て親の顔を縦に隠す。
-  const a = ((i + 0.5) / CAPITOL.rotunda.count) * Math.PI * 2;
-  return [Math.sin(a) * CAPITOL.rotunda.ring, Math.cos(a) * CAPITOL.rotunda.ring] as [
-    number,
-    number,
-  ];
-});
 
 /** 同時に建つ建物が揃って明滅しないよう、棟ごとに脈をずらす種を作る。 */
 function phaseOf(id: string): number {
@@ -155,10 +140,10 @@ function Capitol({ session: s }: { session: SessionSnapshot }) {
       <mesh geometry={haloGeo} material={parts.halo} rotation-x={-Math.PI / 2} position-y={0.02} />
 
       <mesh material={shade} position-y={CAPITOL.stepA.height / 2}>
-        <boxGeometry args={[CAPITOL.stepA.size, CAPITOL.stepA.height, CAPITOL.stepA.size]} />
+        <boxGeometry args={[CAPITOL.stepA.width, CAPITOL.stepA.height, CAPITOL.stepA.depth]} />
       </mesh>
       <mesh material={stone} position-y={CAPITOL.stepA.height + CAPITOL.stepB.height / 2}>
-        <boxGeometry args={[CAPITOL.stepB.size, CAPITOL.stepB.height, CAPITOL.stepB.size]} />
+        <boxGeometry args={[CAPITOL.stepB.width, CAPITOL.stepB.height, CAPITOL.stepB.depth]} />
       </mesh>
 
       {COLONNADE.map(([x, z], i) => (
@@ -171,7 +156,14 @@ function Capitol({ session: s }: { session: SessionSnapshot }) {
       ))}
 
       <mesh material={shade} position-y={TIER2_TOP - CAPITOL.tier2.thickness / 2}>
-        <boxGeometry args={[CAPITOL.tier2.size, CAPITOL.tier2.thickness, CAPITOL.tier2.size]} />
+        <boxGeometry args={[CAPITOL.tier2.width, CAPITOL.tier2.thickness, CAPITOL.tier2.depth]} />
+      </mesh>
+
+      <mesh
+        material={stone}
+        position={[0, TIER2_TOP + CAPITOL.attic.height / 2, CAPITOL.attic.z]}
+      >
+        <boxGeometry args={[CAPITOL.attic.width, CAPITOL.attic.height, CAPITOL.attic.depth]} />
       </mesh>
 
       {PIERS.map(([x, z], i) => (
@@ -179,36 +171,30 @@ function Capitol({ session: s }: { session: SessionSnapshot }) {
           key={i}
           geometry={pierGeo}
           material={stone}
-          position={[x, TIER2_TOP + CAPITOL.piers.height / 2, z]}
+          position={[x, TIER2_TOP + CAPITOL.attic.height / 2, z]}
         />
       ))}
 
       <mesh material={shade} position-y={TIER3_TOP - CAPITOL.tier3.thickness / 2}>
-        <boxGeometry args={[CAPITOL.tier3.size, CAPITOL.tier3.thickness, CAPITOL.tier3.size]} />
+        <boxGeometry args={[CAPITOL.tier3.width, CAPITOL.tier3.thickness, CAPITOL.tier3.depth]} />
       </mesh>
 
-      {ROTUNDA.map(([x, z], i) => (
-        <mesh
-          key={i}
-          geometry={rotundaGeo}
-          material={stone}
-          position={[x, TIER3_TOP + CAPITOL.rotunda.height / 2, z]}
-        />
-      ))}
-
       <mesh
-        geometry={corniceGeo}
+        geometry={drumGeo}
         material={stone}
-        position-y={CORNICE_TOP - CAPITOL.cornice.height / 2}
+        position={[0, DRUM_TOP - CAPITOL.drum.height / 2, CAPITOL.drum.z]}
       />
-      <mesh geometry={domeGeo} material={parts.dome} position-y={CORNICE_TOP} />
+      <mesh geometry={domeGeo} material={parts.dome} position={[0, DRUM_TOP, CAPITOL.drum.z]} />
       <mesh
         geometry={finialGeo}
         material={parts.finial}
-        position-y={CAPITOL_HEIGHT - CAPITOL.finial.radius}
+        position={[0, CAPITOL_HEIGHT - CAPITOL.finial.radius, CAPITOL.drum.z]}
       />
 
-      <group position={[0, TIER3_TOP + figures.parentScale / 2, 0.2]} scale={figures.parentScale}>
+      <group
+        position={[0, TIER3_TOP + figures.parentScale / 2, PARENT_Z]}
+        scale={figures.parentScale}
+      >
         <Voxels voxels={figures.parent} depth={FIGURE_DEPTH} />
       </group>
 
