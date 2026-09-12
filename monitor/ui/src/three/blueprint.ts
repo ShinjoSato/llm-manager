@@ -1,6 +1,7 @@
 // 空間の寸法・配置・光り方。three に依らない計算だけを置き、形の組み立てとは分ける。
 import type { SessionStatus } from "../../../src/types.js";
 import { lookOf } from "../pixel/look.js";
+import { AGENT_STAND, ITEM_NOTE } from "../pixel/sprites.js";
 
 /** キャラの背丈（世界の単位）。段に対して小さすぎると誰が居るのか読めない。 */
 export const PARENT_HEIGHT = 1.62;
@@ -214,4 +215,52 @@ export function pulse(status: SessionStatus, t: number): number {
   const beat = BEAT[status] ?? BEAT.idle;
   if (!beat.swing) return beat.base;
   return beat.base + beat.swing * Math.sin(t * beat.speed);
+}
+
+/** 親の絵の 1 マス。持ち物の大きさも跳ねの量もこれに揃えると格子が崩れない。 */
+export const VOXEL = PARENT_HEIGHT / AGENT_STAND.length;
+
+/** 持ち物の背丈。2D と同じく、親と同じ倍率で絵を描いたときの大きさに合わせる。 */
+export const ITEM_HEIGHT = VOXEL * ITEM_NOTE.length;
+
+/** 持ち物を置く親の右隣。絵の幅ぶん離さないと親の胴が隠れる。 */
+export const ITEM_X = 0.98;
+
+/** 少し手前に出す。親と同じ奥行きだと輪郭が溶けて何を持っているか読めない。 */
+export const ITEM_Z = 0.16;
+
+/** 持ち物の下端。手の高さに浮かせる。足元に置くと落とし物に見える。 */
+export const ITEM_LIFT = 0.26;
+
+/** 跳ね方。ドット絵らしく 2 コマで跳ねる。滑らかに動かすと絵の質感と合わない。 */
+export const HOP = {
+  /** 親と持ち物の周期（秒）。2D の bob と揃える。 */
+  period: 1.1,
+  /** サブエージェントの周期（秒）。2D の bob-slow と揃える。 */
+  kidPeriod: 2.2,
+  /** 上げる量（絵のマス数）。半端に上げるとドット絵の格子が崩れて見える。 */
+  rise: 1,
+  /** 子どうしをずらす量（周期に対する割合）。横一列が同時に跳ねると板に見える。 */
+  kidStagger: 0.31,
+} as const;
+
+/** 2 コマの跳ね。周期の前半は地に足を付け、後半だけ浮かせる。 */
+export function hop(t: number, period: number, rise: number): number {
+  if (!(period > 0) || !(rise > 0) || !Number.isFinite(t)) return 0;
+  const phase = ((t % period) + period) % period;
+  return phase < period / 2 ? 0 : rise;
+}
+
+/** 基ごとに脈と跳ねをずらす種（0〜1）。全部が揃って動くと群れが機械仕掛けに見える。 */
+export function phaseOf(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  // 1 文字違いの id が隣り合って建つので、最後に撹拌して下位の違いを全体へ散らす。
+  h ^= h >>> 15;
+  h = Math.imul(h, 2246822507);
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
 }

@@ -1,6 +1,7 @@
 // 空間の寸法と配置。段が読めなくなったりキャラが画角から溢れると意味を失うので、計算を押さえる。
-import { cameraFit, clearSpacingZ, columnsFor, glowOf, gridLayout, pulse, steps, FOOTPRINT_X, FOOTPRINT_Z, KID_GAP, KID_HEIGHT, KID_Y, KID_Z, PARENT_HEIGHT, SKYLINE, STEPS, TOP_Y, ZIGGURAT } from "../src/three/blueprint.js";
-import { AGENT_STAND, KID_STAND } from "../src/pixel/sprites.js";
+import { cameraFit, clearSpacingZ, columnsFor, glowOf, gridLayout, hop, phaseOf, pulse, steps, FOOTPRINT_X, FOOTPRINT_Z, HOP, ITEM_HEIGHT, ITEM_LIFT, ITEM_X, ITEM_Z, KID_GAP, KID_HEIGHT, KID_Y, KID_Z, PARENT_HEIGHT, SKYLINE, STEPS, TOP_Y, VOXEL, ZIGGURAT } from "../src/three/blueprint.js";
+import { AGENT_STAND, ITEM_BOOK, ITEM_CANVAS, ITEM_HAMMER, ITEM_NOTE, ITEM_QUESTION, ITEM_SCOPE, ITEM_SCROLL, ITEM_TERMINAL, KID_STAND } from "../src/pixel/sprites.js";
+import { itemFor } from "../src/pixel/kit.js";
 import { MAX_KIDS } from "../src/pixel/AgentStage.js";
 
 let ok = 0;
@@ -150,6 +151,70 @@ t("終了は待機よりさらに暗い", pulse("stopped", 0) < pulse("idle", 0)
 t("稼働中は時間で明るさが変わる", pulse("working", 0) !== pulse("working", 0.7), true);
 t("要対応は待機より明るい", pulse("permission", 0) > pulse("idle", 0), true);
 t("明るさが負にならない", [0, 0.3, 1, 2.5, 7].every((x) => pulse("error", x) > 0), true);
+
+// ── 持ち物 ──
+const ITEMS = [ITEM_BOOK, ITEM_CANVAS, ITEM_HAMMER, ITEM_NOTE, ITEM_QUESTION, ITEM_SCOPE, ITEM_SCROLL, ITEM_TERMINAL];
+t("持ち物の絵は高さが揃っている", ITEMS.every((sprite) => sprite.length === ITEM_NOTE.length), true);
+t("持ち物は親と同じ倍率で描く", Math.abs(ITEM_HEIGHT / ITEM_NOTE.length - VOXEL) < 1e-9, true);
+t("持ち物は親より小さい", ITEM_HEIGHT < PARENT_HEIGHT, true);
+t("持ち物は親の半分より大きい", ITEM_HEIGHT > PARENT_HEIGHT / 2, true);
+{
+  // 親の胴と持ち物が画面で重なると、何を持っているのかも誰なのかも読めない。
+  const half = artWidth(AGENT_STAND, PARENT_HEIGHT) / 2;
+  const itemHalf = Math.max(...ITEMS.map((sprite) => artWidth(sprite, ITEM_HEIGHT))) / 2;
+  t("持ち物は親に重ならない", ITEM_X - itemHalf > half, true);
+  t("持ち物は離れすぎない", ITEM_X - itemHalf - half < VOXEL * 2, true);
+  t("持ち物は最上段からはみ出さない", ITEM_X + itemHalf < STEPS[STEPS.length - 1]!.width / 2, true);
+  t("持ち物は手前に出す", ITEM_Z > 0, true);
+  t("持ち物は最上段の踏み面に収まる", ITEM_Z < STEPS[STEPS.length - 1]!.depth / 2, true);
+}
+t("持ち物は足元から浮いている", ITEM_LIFT > 0, true);
+t("持ち物は親の頭より下にある", ITEM_LIFT + ITEM_HEIGHT < PARENT_HEIGHT, true);
+t("稼働中のツールには持ち物がある", itemFor("Bash") !== null, true);
+t("スキル実行中は巻物を持つ", itemFor("Bash", "developer-plugin:dev-done")!.sprite, ITEM_SCROLL);
+t("ツールが無ければ持ち物も無い", itemFor(null), null);
+t("子が出るツールは持ち物にしない", itemFor("Agent"), null);
+
+// ── 跳ね ──
+t("跳ねは 2 コマだけ", [0, 0.2, 0.4, 0.6, 0.8, 1, 1.3].every((x) => [0, HOP.rise].includes(hop(x, HOP.period, HOP.rise))), true);
+t("周期の前半は地に足が付く", hop(0.1, 1, 1), 0);
+t("周期の後半は浮く", hop(0.7, 1, 1), 1);
+t("周期ごとに繰り返す", [0.2, 0.7, 1.4].every((x) => hop(x, 1.1, 1) === hop(x + 1.1, 1.1, 1)), true);
+{
+  // 浮いている時間と付いている時間は半々。偏ると跳ねではなく点滅に見える。
+  const n = 220;
+  const up = Array.from({ length: n }, (_, i) => hop((i * HOP.period) / n, HOP.period, 1)).filter(Boolean).length;
+  t("浮く時間と付く時間は半々", up, n / 2);
+}
+t("時刻が負でも落ちない", hop(-0.3, 1, 1), 1);
+t("周期が 0 なら動かない", hop(0.5, 0, 1), 0);
+t("高さが 0 なら動かない", hop(0.5, 1, 0), 0);
+t("時刻が壊れていても動かない", hop(NaN, 1, 1), 0);
+t("跳ねは絵の 1 マスぶん", HOP.rise, 1);
+t("子は親の半分の速さで跳ねる", HOP.kidPeriod, HOP.period * 2);
+t("子をずらす量は周期の内側", HOP.kidStagger > 0 && HOP.kidStagger < 1, true);
+{
+  // 4 体が同時に跳ねないこと（1 枚の板に見えてしまう）。
+  const at = (i: number, x: number) => hop(x + i * HOP.kidStagger * HOP.kidPeriod, HOP.kidPeriod, 1);
+  const sample = [0, 0.4, 0.9, 1.5, 2.1];
+  t("子は同時に跳ばない", sample.some((x) => new Set([0, 1, 2, 3].map((i) => at(i, x))).size > 1), true);
+}
+
+// ── 位相の種 ──
+t("同じセッションは同じ位相", phaseOf("abc-123"), phaseOf("abc-123"));
+t("違うセッションは位相がずれる", phaseOf("abc-123") !== phaseOf("abc-124"), true);
+{
+  // 1 文字違いの id が隣り合って建つので、わずかな差でも大きく離れないと揃って跳ねる。
+  const ids = ["s0", "s1", "s2", "s3", "s4", "s5"];
+  const gaps = ids.slice(1).map((id, i) => Math.abs(phaseOf(id) - phaseOf(ids[i]!)));
+  t("1 文字違いでも位相は離れる", Math.min(...gaps) > 0.1, true);
+}
+t("位相は 0〜1 に収まる", ["", "a", "session-9", "0123456789abcdef"].every((id) => phaseOf(id) >= 0 && phaseOf(id) < 1), true);
+{
+  // 20 基並べても同じ位相に固まらない（揃って明滅すると機械仕掛けに見える）。
+  const ids = Array.from({ length: 20 }, (_, i) => `sess-${i}`);
+  t("多数の基でも位相が散る", new Set(ids.map(phaseOf)).size > 15, true);
+}
 
 console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗`);
 if (ng) process.exitCode = 1;
