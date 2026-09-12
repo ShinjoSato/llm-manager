@@ -38,6 +38,15 @@ MONITOR_LAN=1 npm start
   █▀▀▀▀▀█ … （QR）
 ```
 
+起動したターミナルを探さなくても、**画面のヘッダーの「QR」ボタン**から同じ QR を出せる。
+下に接続用 URL とコピーボタンも出る（Escape / 画面外クリック / ✕ で閉じる）。
+
+- **ボタンが出るのは手元（ループバック）で開いた画面だけ。** 案内を返す `GET /api/lan` と
+  `GET /api/lan/qr.svg` はループバック以外には 404 で、**トークンを持つ LAN 端末にも返さない**。
+  認証済みの端末から他人へトークンを渡せてしまうと、cookie を HttpOnly にして JS から隠している
+  意味が薄れるため。判定は Host ヘッダーではなく接続元アドレス（詐称できない）
+- **QR はサーバーで生成して画像として渡す**（`qrcode-svg`）。トークンが JS や DOM に入らない
+
 - **トークンを持つ端末だけ通す。** `?t=` が一致すると **HttpOnly cookie** を置き、`?t=` の無い URL に
   リダイレクトする（履歴やスクリーンショットにトークンが残りにくい）。以降は cookie だけで通る
 - cookie にしているのは、**`EventSource` がカスタムヘッダーを付けられない**ため。ヘッダー方式にすると
@@ -124,6 +133,8 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/health` | 疎通確認 |
 | GET | `/api/sessions` | 全セッションのスナップショット |
 | GET | `/api/feed` | 直近のライブフィード |
+| GET | `/api/lan` | LAN 接続用の案内 `{enabled, url}`（**ループバック以外は 404**） |
+| GET | `/api/lan/qr.svg` | その QR の SVG（**ループバック以外・LAN 非公開時は 404**） |
 | GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント |
 | POST | `/api/sessions/:id/message` | そのセッションの受信箱へ伝言を送る |
 | POST | `/api/sessions/:id/open` | そのセッションの作業場所を開く（`{"app":"vscode"\|"xcode"}`） |
@@ -178,6 +189,7 @@ src/                 バックエンド（Node 24 / tsx 実行）
   paths.ts           ~/.claude 配下のパス解決（jsonl はスラッグ推測 → 走査でフォールバック）
   origin.ts          Host / Origin / 接続元アドレスの判定（LAN 公開時の許可ホストも）
   token.ts           LAN 公開時の共有トークン（生成・読み出し・固定時間比較）
+  lan.ts             LAN 接続用の案内（URL の組み立てと QR の SVG 生成・ループバック限定）
   inventory.ts       在庫層: セッションレジストリの走査と生存判定
   transcript.ts      実況層: jsonl の末尾差分読みとパース
   hub.ts             3 層の統合・状態判定・イベント発火
@@ -186,7 +198,7 @@ ui/                  React + Vite + TypeScript + Tailwind v4（web/ と同じデ
   src/App.tsx        レイアウトと KPI
   src/useMonitor.ts  SSE 購読フック
   src/status.ts      状態ごとの色・ラベル・並び順
-  src/components/    SessionCard / LiveFeed / ui(StatCard)
+  src/components/    SessionCard / LiveFeed / LanQr(接続用 QR) / ui(StatCard)
 ```
 
 ## 制約

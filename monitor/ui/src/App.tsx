@@ -1,5 +1,6 @@
 import { Activity, AlertTriangle, Bell, BellOff, Box, Layers, Pause, Radio } from "lucide-react";
 import { lazy, Suspense, useMemo } from "react";
+import { LanQrButton } from "./components/LanQr.js";
 import { LiveFeed } from "./components/LiveFeed.js";
 import { SessionCard } from "./components/SessionCard.js";
 import { StatCard } from "./components/ui.js";
@@ -55,6 +56,7 @@ export function App() {
         </span>
 
         <div className="ml-auto flex items-center gap-1.5">
+          <LanQrButton />
           <button
             onClick={toggleSolid}
             title="キャラを立体で表示する（初回だけ読み込みに少し時間がかかります）"
