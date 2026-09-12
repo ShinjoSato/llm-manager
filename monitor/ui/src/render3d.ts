@@ -1,27 +1,34 @@
-// キャラを立体で描くかどうか。既定は 2D（three.js を読み込まずに初期表示を軽く保つ）。
+// 表示の切り替え。既定は 2D で、three.js は立体を選んだ時だけ読み込まれる。
 import { useCallback, useEffect, useState } from "react";
 
 const STORAGE_KEY = "monitor.render3d";
 
-export function loadRender3D(): boolean {
+/** off=平面 / solid=キャラだけ立体 / world=議事堂の空間 */
+export type RenderMode = "off" | "solid" | "world";
+
+const MODES: readonly string[] = ["off", "solid", "world"];
+
+export function loadRenderMode(): RenderMode {
   try {
-    return localStorage.getItem(STORAGE_KEY) === "on";
+    const saved = localStorage.getItem(STORAGE_KEY);
+    // 2 状態だった頃に保存された "on" はキャラだけ立体として読む。
+    if (saved === "on") return "solid";
+    return MODES.includes(saved ?? "") ? (saved as RenderMode) : "off";
   } catch {
-    return false;
+    return "off";
   }
 }
 
-export function saveRender3D(on: boolean): void {
+export function saveRenderMode(mode: RenderMode): void {
   try {
-    localStorage.setItem(STORAGE_KEY, on ? "on" : "off");
+    localStorage.setItem(STORAGE_KEY, mode);
   } catch {
     // プライベートモード等で保存できなくても表示は続ける。
   }
 }
 
-export function useRender3D(): [boolean, () => void] {
-  const [on, setOn] = useState(loadRender3D);
-  useEffect(() => saveRender3D(on), [on]);
-  const toggle = useCallback(() => setOn((prev) => !prev), []);
-  return [on, toggle];
+export function useRenderMode(): [RenderMode, (mode: RenderMode) => void] {
+  const [mode, setMode] = useState(loadRenderMode);
+  useEffect(() => saveRenderMode(mode), [mode]);
+  return [mode, useCallback((next: RenderMode) => setMode(next), [])];
 }

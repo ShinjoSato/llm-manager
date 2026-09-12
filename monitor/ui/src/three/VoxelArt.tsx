@@ -1,9 +1,9 @@
 import { View } from "@react-three/drei";
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
-import { Color, InstancedMesh, Object3D } from "three";
+import { memo, useMemo } from "react";
 import type { ArtProps } from "../pixel/PixelArt.js";
-import { voxelize, type Voxel } from "../pixel/voxelize.js";
+import { voxelize } from "../pixel/voxelize.js";
 import { fitScale, projectedSize } from "./fit.js";
+import { Voxels } from "./Voxels.js";
 
 /** 立方体の厚み。薄いと板に見え、厚いと小さい枠で像が潰れる。 */
 const DEPTH = 3;
@@ -13,34 +13,6 @@ const ROT_X = 0.16;
 /** 幅の狭い記号は同じだけ回すと枠に対して大きくはみ出し、縮められて潰れる。 */
 const THIN_WIDTH = 6;
 const THIN_RATIO = 0.4;
-
-const dummy = new Object3D();
-const color = new Color();
-
-function Voxels({ voxels, depth }: { voxels: Voxel[]; depth: number }) {
-  const mesh = useRef<InstancedMesh>(null);
-
-  useLayoutEffect(() => {
-    const m = mesh.current;
-    if (!m) return;
-    voxels.forEach((v, i) => {
-      dummy.position.set(v.x, v.y, v.z);
-      dummy.updateMatrix();
-      m.setMatrixAt(i, dummy.matrix);
-      m.setColorAt(i, color.set(v.color));
-    });
-    m.instanceMatrix.needsUpdate = true;
-    if (m.instanceColor) m.instanceColor.needsUpdate = true;
-  }, [voxels]);
-
-  return (
-    // 個体ごとの位置は行列で持つので、形状の境界球では正しく判定できない。
-    <instancedMesh ref={mesh} args={[undefined, undefined, voxels.length]} frustumCulled={false}>
-      <boxGeometry args={[1, 1, depth]} />
-      <meshLambertMaterial />
-    </instancedMesh>
-  );
-}
 
 /**
  * PixelArt と同じ引数で、同じ寸法の枠に立体を描く。
