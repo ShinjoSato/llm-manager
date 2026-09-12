@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 
 const STORAGE_KEY = "monitor.render3d";
 
-/** off=平面 / solid=キャラだけ立体 / world=議事堂の空間 */
+/** off=平面 / solid=キャラだけ立体 / world=ピラミッドの空間 */
 export type RenderMode = "off" | "solid" | "world";
 
 const MODES: readonly string[] = ["off", "solid", "world"];

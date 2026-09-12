@@ -6,7 +6,7 @@ import { FOV, World } from "./World.js";
 type Props =
   /** カードの中のキャラだけを立体にする。 */
   | { mode: "solid" }
-  /** セッションごとに議事堂が建つ空間を描く。 */
+  /** セッションごとに段々のピラミッドが建つ空間を描く。 */
   | { mode: "world"; sessions: SessionSnapshot[] };
 
 /**

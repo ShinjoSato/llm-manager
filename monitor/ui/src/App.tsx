@@ -92,7 +92,7 @@ export function App() {
               onSelect={setMode}
               icon={<Landmark size={10} />}
               label="空間"
-              hint="セッションごとに議事堂が建つ空間を出す（初回だけ読み込みに少し時間がかかります）"
+              hint="セッションごとに段々のピラミッドが建つ空間を出す（初回だけ読み込みに少し時間がかかります）"
             />
           </div>
           <NotifyToggle
@@ -175,7 +175,7 @@ export function App() {
       {mode === "world" && (
         <div className="glass relative mb-4 h-[210px] overflow-hidden sm:h-[280px] lg:h-[340px]">
           {sorted.length === 0 ? (
-            <WorldNote text="建つ議事堂がありません" />
+            <WorldNote text="建つピラミッドがありません" />
           ) : (
             <Suspense fallback={<WorldNote text="空間を読み込み中…" />}>
               <Stage3DCanvas mode="world" sessions={sorted} />
@@ -183,7 +183,7 @@ export function App() {
           )}
           {sorted.length > 0 && (
             <span className="pointer-events-none absolute bottom-2 left-3 hidden text-[10px] text-slate-500 sm:block">
-              議事堂 = セッション ／ 頂上 = 親 ／ 2 段目 = サブエージェント
+              ピラミッド = セッション ／ 最上段 = 親 ／ 1 つ下の段 = サブエージェント
             </span>
           )}
         </div>
