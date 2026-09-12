@@ -67,7 +67,7 @@ export function App() {
           伝言は「別セッションからのメッセージ」として届きます（指示や承認としては扱われません）
         </span>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
           <LanQrButton />
           <div className="inline-flex items-center gap-0.5 rounded-full border border-white/10 bg-white/5 p-0.5">
             <ModeButton
@@ -174,12 +174,14 @@ export function App() {
 
       {mode === "world" && (
         <div className="glass relative mb-4 h-[210px] overflow-hidden sm:h-[280px] lg:h-[340px]">
-          <Suspense fallback={<WorldNote text="空間を読み込み中…" />}>
-            <Stage3DCanvas mode="world" sessions={sorted} />
-          </Suspense>
           {sorted.length === 0 ? (
             <WorldNote text="建つ議事堂がありません" />
           ) : (
+            <Suspense fallback={<WorldNote text="空間を読み込み中…" />}>
+              <Stage3DCanvas mode="world" sessions={sorted} />
+            </Suspense>
+          )}
+          {sorted.length > 0 && (
             <span className="pointer-events-none absolute bottom-2 left-3 hidden text-[10px] text-slate-500 sm:block">
               議事堂 = セッション ／ 頂上 = 親 ／ 2 段目 = サブエージェント
             </span>

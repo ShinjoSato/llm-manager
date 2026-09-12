@@ -64,5 +64,20 @@ t("稼働中は時間で明るさが変わる", pulse("working", 0) !== pulse("w
 t("要対応は待機より明るい", pulse("permission", 0) > pulse("idle", 0), true);
 t("明るさが負にならない", [0, 0.3, 1, 2.5, 7].every((x) => pulse("error", x) > 0), true);
 
+// 端数の行も中央に揃う（左詰めだと最後の行だけ偏る）
+{
+  const { spots } = gridLayout(6, 6, 6, 5);
+  const back = spots.slice(5).map((s) => s.x);
+  t("端数の行は中央に 1 棟", back.length, 1);
+  // 奇数行は半間ずらすので、全体の中心からのずれが半間ぶんに収まる
+  t("端数の行が左に寄りすぎない", Math.abs(back[0]!) <= 3 + 1e-9, true);
+}
+{
+  const { spots } = gridLayout(4, 6, 6, 2);
+  const front = spots.slice(0, 2).map((s) => s.x);
+  const back = spots.slice(2).map((s) => s.x);
+  t("行が埋まっていれば従来どおり", front.length === 2 && back.length === 2, true);
+}
+
 console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗`);
 if (ng) process.exitCode = 1;

@@ -72,8 +72,10 @@ export function gridLayout(
   for (let i = 0; i < count; i++) {
     const col = i % cols;
     const row = Math.floor(i / cols);
+    // 端数の行も中央に揃える。行の実数で割らないと最後の行だけ左に寄る。
+    const inRow = Math.min(cols, count - row * cols);
     spots.push({
-      x: (col - (cols - 1) / 2) * spacingX + (row % 2 ? spacingX / 2 : 0),
+      x: (col - (inRow - 1) / 2) * spacingX + (row % 2 ? spacingX / 2 : 0),
       z: -(row - (rows - 1) / 2) * spacingZ,
     });
   }

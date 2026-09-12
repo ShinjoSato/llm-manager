@@ -29,8 +29,9 @@ import {
 /** キャラの厚み。絵の 1 マスを 1 とした値で、VoxelArt と揃えてある。 */
 const FIGURE_DEPTH = 3;
 /** 子は 2 段目の手前に並べる。奥に置くと柱に隠れる。 */
-const KID_Z = 1.2;
-const KID_GAP = 0.95;
+// 前柱（span/2 = 1.1・半径 0.1）より手前に出す。重なるとめり込んで見える。
+const KID_Z = 1.4;
+const KID_GAP = 0.8;
 
 const stone = new MeshStandardMaterial({ color: "#aeb9cc", roughness: 0.8, metalness: 0.05 });
 const shade = new MeshStandardMaterial({ color: "#8b97ab", roughness: 0.85, metalness: 0.05 });
@@ -86,7 +87,8 @@ const PIERS: [number, number][] = [
 ];
 
 const ROTUNDA = Array.from({ length: CAPITOL.rotunda.count }, (_, i) => {
-  const a = (i / CAPITOL.rotunda.count) * Math.PI * 2;
+  // 半目盛りずらす。0 から始めると柱が真正面に来て親の顔を縦に隠す。
+  const a = ((i + 0.5) / CAPITOL.rotunda.count) * Math.PI * 2;
   return [Math.sin(a) * CAPITOL.rotunda.ring, Math.cos(a) * CAPITOL.rotunda.ring] as [
     number,
     number,
@@ -113,6 +115,12 @@ function Capitol({ session: s }: { session: SessionSnapshot }) {
     };
   }, [glow]);
 
+  const kidKey = s.agents
+    .slice(0, MAX_KIDS)
+    .map((a) => `${a.id}:${a.type ?? ""}`)
+    .sort()
+    .join(",");
+
   const figures = useMemo(() => {
     const look = lookOf(s.status);
     const parentScale = PARENT_HEIGHT / look.sprite.length;
@@ -126,7 +134,8 @@ function Capitol({ session: s }: { session: SessionSnapshot }) {
       kids,
       kidScale: KID_HEIGHT / KID_STAND.length,
     };
-  }, [s.status, s.agents]);
+  // agents は毎秒作り直されるので、中身が同じなら組み直さない。
+  }, [s.status, kidKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 状態が変わると材質を作り直すので、前のものは明示的に捨てる。
   useEffect(() => () => [parts.dome, parts.finial, parts.halo].forEach((m) => m.dispose()), [parts]);
