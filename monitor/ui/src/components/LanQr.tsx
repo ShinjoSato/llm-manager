@@ -1,5 +1,5 @@
 import { Check, Copy, QrCode, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 interface LanInfo {
@@ -7,9 +7,14 @@ interface LanInfo {
   url: string | null;
 }
 
-/** この画面を手元で開いているか。ブラケットを外した `::1` が `location.hostname` に入る。 */
+/** この画面を手元で開いているか。IPv6 はブラケット付きで location.hostname に入る。 */
 function isLoopbackHost(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "::1" || /^127\./.test(hostname);
+  return (
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "[::1]" ||
+    /^127\./.test(hostname)
+  );
 }
 
 /**
@@ -19,6 +24,7 @@ function isLoopbackHost(hostname: string): boolean {
 export function LanQrButton() {
   const [info, setInfo] = useState<LanInfo | null>(null);
   const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
 
   useEffect(() => {
     // 手元以外には案内が出ない（サーバーが 404 にする）ので、そもそも叩かない。
@@ -57,7 +63,7 @@ export function LanQrButton() {
         <QrCode size={10} />
         QR
       </button>
-      {open && <LanQrDialog url={info.url} onClose={() => setOpen(false)} />}
+      {open && <LanQrDialog url={info.url} onClose={close} />}
     </>
   );
 }
@@ -66,8 +72,12 @@ function LanQrDialog({ url, onClose }: { url: string | null; onClose: () => void
   const closeButton = useRef<HTMLButtonElement>(null);
   const [broken, setBroken] = useState(false);
 
+  // 毎秒の再描画で焦点を奪い返さないよう、初期フォーカスは開いた時の 1 回だけにする。
   useEffect(() => {
     closeButton.current?.focus();
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };

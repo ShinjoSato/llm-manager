@@ -45,7 +45,16 @@ export function lanQrSvgFor(
 ): string | null {
   const info = lanInfoFor(remoteAddress, hosts, port, token);
   if (!info?.enabled || !info.url) return null;
-  return qrSvg(info.url);
+  return qrSvgOrNull(info.url);
+}
+
+/** QR に収まらない長さのトークンを置かれても 500 にしない。 */
+export function qrSvgOrNull(content: string): string | null {
+  try {
+    return qrSvg(content);
+  } catch {
+    return null;
+  }
 }
 
 /** join で 1 本の path にまとめる。モジュールを個別の rect で描くと SVG が数百要素に膨らむ。 */

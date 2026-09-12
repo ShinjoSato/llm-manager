@@ -1,5 +1,5 @@
 // LAN 接続用の案内。ループバック以外へ漏れると、認証済み端末から他人へトークンを渡せてしまう。
-import { lanInfoFor, lanQrSvgFor, lanUrl, pickLanHost, qrSvg } from "../src/lan.js";
+import { lanInfoFor, lanQrSvgFor, lanUrl, pickLanHost, qrSvg, qrSvgOrNull } from "../src/lan.js";
 
 let ok = 0;
 let ng = 0;
@@ -63,6 +63,10 @@ t("LAN の IPv4 が無ければ QR は null", lanQrSvgFor("127.0.0.1", [], PORT,
 
 // 内容が変われば絵も変わる（同じ SVG を返し続けていないこと）
 t("内容ごとに別の絵になる", qrSvg("http://a") === qrSvg("http://b"), false);
+
+// QR に収まらない長さでも 500 にせず null に落ちる
+t("長すぎる内容は null", qrSvgOrNull("x".repeat(5000)), null);
+t("ふつうの長さは SVG", qrSvgOrNull("http://192.168.0.11:8766/?t=abc")?.startsWith("<?xml"), true);
 
 console.log(`\nlan: ${ok} OK / ${ng} NG`);
 if (ng > 0) process.exit(1);

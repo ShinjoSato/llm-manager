@@ -125,6 +125,7 @@ app.get("/api/feed", (c) => c.json(hub.recentFeed()));
 
 // 別端末を繋ぐための案内。ループバック以外には存在ごと伏せる（理由は lan.ts）。
 app.get("/api/lan", (c) => {
+  c.header("cache-control", "no-store");
   const info = lanInfoFor(c.env.incoming.socket.remoteAddress, lanHosts, boundPort, token);
   return info ? c.json(info) : c.json({ ok: false, error: "not found" }, 404);
 });
