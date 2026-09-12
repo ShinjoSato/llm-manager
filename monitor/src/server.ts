@@ -2,6 +2,7 @@
 //   GET  /api/health
 //   GET  /api/sessions   スナップショット
 //   GET  /api/feed       直近のライブフィード
+//   GET  /api/lan        LAN 接続用の案内 / GET /api/lan/qr.svg  その QR（どちらもループバック限定）
 //   POST /api/sessions/:id/message  そのセッションの受信箱へテキストを投稿
 //   POST /api/sessions/:id/open     そのセッションの作業場所を VSCode / Xcode で開く
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
@@ -16,6 +17,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SessionHub } from "./hub.js";
+import { lanInfoFor, lanQrSvgFor } from "./lan.js";
 import {
   isAllowedHost,
   isAllowedOrigin,
@@ -120,6 +122,23 @@ function unauthorized(c: Context): Response {
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
 app.get("/api/feed", (c) => c.json(hub.recentFeed()));
+
+// 別端末を繋ぐための案内。ループバック以外には存在ごと伏せる（理由は lan.ts）。
+app.get("/api/lan", (c) => {
+  c.header("cache-control", "no-store");
+  const info = lanInfoFor(c.env.incoming.socket.remoteAddress, lanHosts, boundPort, token);
+  return info ? c.json(info) : c.json({ ok: false, error: "not found" }, 404);
+});
+
+app.get("/api/lan/qr.svg", (c) => {
+  const svg = lanQrSvgFor(c.env.incoming.socket.remoteAddress, lanHosts, boundPort, token);
+  if (!svg) return c.json({ ok: false, error: "not found" }, 404);
+  return c.body(svg, 200, {
+    "content-type": "image/svg+xml; charset=utf-8",
+    // トークンが埋まった画像なのでキャッシュに残さない。
+    "cache-control": "no-store",
+  });
+});
 
 /** 送信テキストの上限。受信側は約 100 万文字で拒否するが、その手前で切る。 */
 const MAX_MESSAGE_CHARS = 100_000;
