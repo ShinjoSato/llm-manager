@@ -1,6 +1,7 @@
 import { useFrame } from "@react-three/fiber";
 import { memo, useEffect, useMemo, useRef } from "react";
 import {
+  BoxGeometry,
   AdditiveBlending,
   CanvasTexture,
   CircleGeometry,
@@ -45,8 +46,20 @@ const FIGURE_DEPTH = 3;
 // 隣り合う段で明るさを変えないと、遠くから見たとき 1 枚の斜面に潰れる。
 const stone = new MeshStandardMaterial({ color: "#aeb9cc", roughness: 0.85, metalness: 0.05 });
 const shade = new MeshStandardMaterial({ color: "#8b97ab", roughness: 0.9, metalness: 0.05 });
-const haloGeo = new CircleGeometry(FOOTPRINT_X * 0.55, 28);
-const shadowGeo = new CircleGeometry(FOOTPRINT_Z * 0.55, 24);
+// 段の形は不変なので基ごとに作らない。基数に比例してジオメトリが増える。
+const STEP_GEO = STEPS.map((step) => ({
+  body: new BoxGeometry(step.width, step.top - step.base - ZIGGURAT.cap, step.depth),
+  cap: new BoxGeometry(
+    step.width + ZIGGURAT.nosing * 2,
+    ZIGGURAT.cap,
+    step.depth + ZIGGURAT.nosing * 2,
+  ),
+}));
+
+// 影と光の輪は同じ基準で測る。片方だけ別の軸で取ると前後で輪が沈む。
+const GROUND_R = Math.max(FOOTPRINT_X, FOOTPRINT_Z) * 0.55;
+const haloGeo = new CircleGeometry(GROUND_R, 28);
+const shadowGeo = new CircleGeometry(GROUND_R * 0.72, 24);
 const shadowMat = new MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.35 });
 
 /** 中心から滲む光。一様な円板だと縁が輪として見え、影と区別が付かない。 */
@@ -117,11 +130,18 @@ function Ziggurat({ session: s }: { session: SessionSnapshot }) {
   }, [s.status, kidKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 2D のカードと同じ条件。ツールが変わるたび作り直さないよう、値で比べる。
-  const item = useMemo(() => {
-    const kit = s.status === "working" ? itemFor(s.currentTool, s.currentSkill) : null;
-    if (!kit) return null;
-    return { voxels: voxelize(kit.sprite, kit.palette), scale: ITEM_HEIGHT / kit.sprite.length };
-  }, [s.status, s.currentTool, s.currentSkill]);
+  const kit = useMemo(
+    () => (s.status === "working" ? itemFor(s.currentTool, s.currentSkill) : null),
+    [s.status, s.currentTool, s.currentSkill],
+  );
+  // 絵が同じなら組み直さない。Read / Grep / Glob はいずれも同じ本になる。
+  const item = useMemo(
+    () =>
+      kit
+        ? { voxels: voxelize(kit.sprite, kit.palette), scale: ITEM_HEIGHT / kit.sprite.length }
+        : null,
+    [kit?.sprite, kit?.palette], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   // 状態が変わると材質を作り直すので、前のものは明示的に捨てる。
   useEffect(() => () => [parts.cap, parts.halo].forEach((m) => m.dispose()), [parts]);
@@ -163,26 +183,21 @@ function Ziggurat({ session: s }: { session: SessionSnapshot }) {
       <mesh geometry={shadowGeo} material={shadowMat} rotation-x={-Math.PI / 2} position-y={0.01} />
       <mesh geometry={haloGeo} material={parts.halo} rotation-x={-Math.PI / 2} position-y={0.02} />
 
-      {STEPS.map((step) => {
-        const body = step.top - step.base - ZIGGURAT.cap;
-        return (
-          <group key={step.level}>
-            <mesh material={step.level % 2 ? stone : shade} position-y={step.base + body / 2}>
-              <boxGeometry args={[step.width, body, step.depth]} />
-            </mesh>
-            {/* 縁取り板は一回り大きくする。同じ大きさで重ねると段の境目が消える。 */}
-            <mesh material={parts.cap} position-y={step.top - ZIGGURAT.cap / 2}>
-              <boxGeometry
-                args={[
-                  step.width + ZIGGURAT.nosing * 2,
-                  ZIGGURAT.cap,
-                  step.depth + ZIGGURAT.nosing * 2,
-                ]}
-              />
-            </mesh>
-          </group>
-        );
-      })}
+      {STEPS.map((step) => (
+        <group key={step.level}>
+          <mesh
+            geometry={STEP_GEO[step.level]!.body}
+            material={step.level % 2 ? stone : shade}
+            position-y={(step.base + step.top - ZIGGURAT.cap) / 2}
+          />
+          {/* 縁取り板は一回り大きくする。同じ大きさで重ねると段の境目が消える。 */}
+          <mesh
+            geometry={STEP_GEO[step.level]!.cap}
+            material={parts.cap}
+            position-y={step.top - ZIGGURAT.cap / 2}
+          />
+        </group>
+      ))}
 
       <group ref={parentRef} position={[0, parentY, 0]} scale={figures.parentScale}>
         <Voxels voxels={figures.parent} depth={FIGURE_DEPTH} />
@@ -218,4 +233,14 @@ function Ziggurat({ session: s }: { session: SessionSnapshot }) {
   );
 }
 
-export default memo(Ziggurat);
+// session は毎秒作り直されるので、描画に効く値だけで比べる。
+export default memo(
+  Ziggurat,
+  (a, b) =>
+    a.session.sessionId === b.session.sessionId &&
+    a.session.status === b.session.status &&
+    a.session.currentTool === b.session.currentTool &&
+    a.session.currentSkill === b.session.currentSkill &&
+    a.session.agents.length === b.session.agents.length &&
+    a.session.agents.every((x, i) => x.id === b.session.agents[i]?.id),
+);

@@ -77,7 +77,6 @@ export interface Spot {
 
 export interface Layout {
   spots: Spot[];
-  rows: number;
   /** ピラミッドの中心が占める範囲（footprint を含まない）。 */
   spanX: number;
   spanZ: number;
@@ -90,7 +89,7 @@ export function gridLayout(
   spacingZ: number,
   maxCols: number,
 ): Layout {
-  if (count <= 0) return { spots: [], rows: 0, spanX: 0, spanZ: 0 };
+  if (count <= 0) return { spots: [], spanX: 0, spanZ: 0 };
   // 横に置ける限りは 1 行に並べる。奥に回すと手前の段に隠れる恐れが出る。
   const cols = Math.min(count, Math.max(1, Math.round(maxCols)));
   const rows = Math.ceil(count / cols);
@@ -100,10 +99,14 @@ export function gridLayout(
     const row = Math.floor(i / cols);
     // 端数の行も中央に揃える。行の実数で割らないと最後の行だけ左に寄る。
     const inRow = Math.min(cols, count - row * cols);
+    // 中央寄せの結果どの格子に乗るかは行の基数の偶奇で決まる。隣り合う行で必ず半間ずれるよう補う。
+    const lattice = inRow % 2 === 0 ? 0.5 : 0;
+    const stagger = spacingX * ((((row % 2) * 0.5 - lattice + 1) % 1));
     spots.push({
-      // 真後ろに置くと稜線が重なって段数が読めないので半間ずらす。
-      x: (col - (inRow - 1) / 2) * spacingX + (row % 2 ? spacingX / 2 : 0),
-      z: -(row - (rows - 1) / 2) * spacingZ,
+      // 真後ろに置くと稜線が重なって段数が読めないのでずらす。
+      x: (col - (inRow - 1) / 2) * spacingX + stagger,
+      // 1 行しか無ければ行間は使わない。隠れない間隔が無限大になることがある。
+      z: rows > 1 ? -(row - (rows - 1) / 2) * spacingZ : 0,
     });
   }
   // ずらしたぶん全体が偏るので、左右の端を見て中心に戻す。
@@ -112,7 +115,7 @@ export function gridLayout(
   const right = Math.max(...xs);
   const offset = (left + right) / 2;
   for (const spot of spots) spot.x -= offset;
-  return { spots, rows, spanX: right - left, spanZ: (rows - 1) * spacingZ };
+  return { spots, spanX: right - left, spanZ: (rows - 1) * spacingZ };
 }
 
 /** 画面の縦横比から、1 行に並べてよい基数を決める。横長なら奥へ回さずに済む。 */
@@ -190,7 +193,7 @@ export function cameraFit(
 /** 状態を表す光の色。キャラと同じ LOOK の色を使い、2 つの表示で食い違わせない。 */
 export function glowOf(status: SessionStatus): string {
   const palette = lookOf(status).palette;
-  return palette.G ?? palette.C ?? "#94a3b8";
+  return palette.G ?? "#94a3b8";
 }
 
 interface Beat {

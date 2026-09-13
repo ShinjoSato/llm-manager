@@ -216,5 +216,25 @@ t("位相は 0〜1 に収まる", ["", "a", "session-9", "0123456789abcdef"].eve
   t("多数の基でも位相が散る", new Set(ids.map(phaseOf)).size > 15, true);
 }
 
+// 端数の行が真後ろに重ならない（中央寄せで偶奇が揃うと半間ずらしが打ち消される）
+for (const [count, cols] of [[3, 2], [5, 2], [7, 3], [9, 4]] as const) {
+  const { spots } = gridLayout(count, 6, 8, cols);
+  const rows = new Map<number, number[]>();
+  for (const spot of spots) {
+    const key = Math.round(spot.z * 1000);
+    rows.set(key, [...(rows.get(key) ?? []), spot.x]);
+  }
+  const list = [...rows.values()];
+  let overlap = false;
+  for (let a = 0; a < list.length - 1; a++)
+    for (const x of list[a]!)
+      for (const y of list[a + 1]!) if (Math.abs(x - y) < 1e-6) overlap = true;
+  t(`${count} 基 ${cols} 列で真後ろに重ならない`, overlap, false);
+}
+
+// 1 行しか無ければ行間は使わない（隠れない間隔が無限大になることがある）
+t("1 行なら z は 0", gridLayout(2, 6, Infinity, 4).spots.every((s) => s.z === 0), true);
+t("1 行でも NaN にならない", gridLayout(2, 6, Infinity, 4).spots.every((s) => Number.isFinite(s.x)), true);
+
 console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗`);
 if (ng) process.exitCode = 1;
