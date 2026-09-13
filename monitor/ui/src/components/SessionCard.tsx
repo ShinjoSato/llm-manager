@@ -90,7 +90,7 @@ export function SessionCard({
       </div>
 
       {permissions.map((p) => (
-        <PermissionPrompt key={p.requestId} permission={p} />
+        <PermissionPrompt key={p.key} permission={p} />
       ))}
 
       <OpenButtons sessionId={s.sessionId} xcodeProject={s.xcodeProject} />

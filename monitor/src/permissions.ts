@@ -12,6 +12,10 @@ export type PermissionOutcome = PermissionDecision | "timeout" | "dropped";
 export const PENDING_TTL_MS = 90_000;
 /** 端末側で答えられたことに気づけない場合の保険。ここまで来たら諦めて消す。 */
 export const PENDING_MAX_AGE_MS = 30 * 60_000;
+/** 判断が出た後の取り置き。取り直しの谷間（待ち手が居ない瞬間）に押された分を渡すため。 */
+export const DECIDED_TTL_MS = 120_000;
+/** 暴走したチャネルで画面が埋まらないための上限。超えたら古いものから捨てる。 */
+export const MAX_PENDING = 50;
 
 /** 表示だけに使う文字列なので、画面と SSE を守れる長さで切る。 */
 const MAX_TOOL_NAME = 80;
@@ -66,6 +70,14 @@ function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/**
+ * 保留の鍵。request_id はセッション内でしか一意でないので、申請元の PID と対で持つ
+ * （別セッションの同じ ID に判断が配られるのを防ぐ）。
+ */
+export function pendingKey(input: Pick<PermissionRequestInput, "pid" | "requestId">): string {
+  return `${input.pid ?? "x"}-${input.requestId}`;
+}
+
 /** セッションを引くのに使う分だけ。 */
 export interface SessionRef {
   sessionId: string;
@@ -76,20 +88,15 @@ export interface SessionRef {
 
 /**
  * 申請元のセッション。チャネルは Claude Code の子プロセスなので親 PID で一意に引ける。
- * PID で引けない時だけ cwd を見るが、同じ cwd が複数あれば取り違えるので諦める。
+ * cwd では引かない（同じ場所の別セッションに付け替わると、見ていない確認を許可させる）。
  */
 export function matchSession(
-  input: Pick<PermissionRequestInput, "pid" | "cwd">,
+  input: Pick<PermissionRequestInput, "pid">,
   sessions: Iterable<SessionRef>,
 ): string | null {
-  const alive = [...sessions].filter((s) => s.alive);
-  if (input.pid !== null) {
-    const byPid = alive.find((s) => s.pid === input.pid);
-    if (byPid) return byPid.sessionId;
-  }
-  if (input.cwd !== null) {
-    const byCwd = alive.filter((s) => s.cwd === input.cwd);
-    if (byCwd.length === 1) return byCwd[0]!.sessionId;
+  if (input.pid === null) return null;
+  for (const s of sessions) {
+    if (s.alive && s.pid === input.pid) return s.sessionId;
   }
   return null;
 }
@@ -104,24 +111,37 @@ interface Entry {
 /** 保留中の権限確認。判断が決まるか、端末側で答えられるまで持つ。 */
 export class PermissionRegistry {
   private entries = new Map<string, Entry>();
+  private decided = new Map<string, { decision: PermissionDecision; at: number }>();
 
-  /** 申請を預かる（同じ ID の取り直しなら生存を延ばすだけ）。 */
+  /** すでに判断が出ている申請なら、それを渡して忘れる。無ければ null。 */
+  takeDecision(key: string, now = Date.now()): PermissionDecision | null {
+    const hit = this.decided.get(key);
+    if (!hit) return null;
+    this.decided.delete(key);
+    return now - hit.at < DECIDED_TTL_MS ? hit.decision : null;
+  }
+
+  /** 申請を預かる（同じ鍵の取り直しなら生存を延ばすだけ）。 */
   register(
     input: PermissionRequestInput,
     link: { sessionId: string | null; project: string | null },
     now = Date.now(),
-  ): { pending: PendingPermission; created: boolean } {
-    const existing = this.entries.get(input.requestId);
+  ): { pending: PendingPermission; created: boolean; changed: boolean } {
+    const key = pendingKey(input);
+    const existing = this.entries.get(key);
     if (existing) {
       existing.seenAt = now;
-      // セッションは後から在庫に載ることがあるので、引けた時だけ上書きする。
-      if (link.sessionId) {
-        existing.pending.sessionId = link.sessionId;
-        existing.pending.project = link.project;
-      }
-      return { pending: existing.pending, created: false };
+      // セッションは後から在庫に載ることがあるので、引けた分だけ上書きする。
+      const sessionId = link.sessionId ?? existing.pending.sessionId;
+      const project = link.project ?? existing.pending.project;
+      const changed =
+        sessionId !== existing.pending.sessionId || project !== existing.pending.project;
+      existing.pending.sessionId = sessionId;
+      existing.pending.project = project;
+      return { pending: existing.pending, created: false, changed };
     }
     const pending: PendingPermission = {
+      key,
       requestId: input.requestId,
       sessionId: link.sessionId,
       project: link.project,
@@ -130,13 +150,26 @@ export class PermissionRegistry {
       inputPreview: input.inputPreview,
       askedAt: now,
     };
-    this.entries.set(input.requestId, { pending, seenAt: now, waiters: [] });
-    return { pending, created: true };
+    this.entries.set(key, { pending, seenAt: now, waiters: [] });
+    this.evictOverflow();
+    return { pending, created: true, changed: true };
+  }
+
+  /** 上限を超えた分を古い順に捨てる。 */
+  private evictOverflow(): void {
+    if (this.entries.size <= MAX_PENDING) return;
+    const oldest = [...this.entries.entries()].sort(
+      (a, b) => a[1].pending.askedAt - b[1].pending.askedAt,
+    );
+    for (const [key, entry] of oldest.slice(0, this.entries.size - MAX_PENDING)) {
+      this.entries.delete(key);
+      for (const waiter of entry.waiters) waiter("dropped");
+    }
   }
 
   /** 判断が出るまで待つ。出なければ timeout を返してチャネルに取り直させる。 */
-  wait(requestId: string, timeoutMs: number): Promise<PermissionOutcome> {
-    const entry = this.entries.get(requestId);
+  wait(key: string, timeoutMs: number): Promise<PermissionOutcome> {
+    const entry = this.entries.get(key);
     if (!entry) return Promise.resolve("dropped");
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -151,11 +184,12 @@ export class PermissionRegistry {
     });
   }
 
-  /** 画面からの判断。知らない ID なら false（＝404）。 */
-  decide(requestId: string, decision: PermissionDecision): PendingPermission | null {
-    const entry = this.entries.get(requestId);
+  /** 画面からの判断。知らない鍵なら null（＝404）。 */
+  decide(key: string, decision: PermissionDecision, now = Date.now()): PendingPermission | null {
+    const entry = this.entries.get(key);
     if (!entry) return null;
-    this.entries.delete(requestId);
+    this.entries.delete(key);
+    this.decided.set(key, { decision, at: now });
     for (const waiter of entry.waiters) waiter(decision);
     return entry.pending;
   }
@@ -166,10 +200,10 @@ export class PermissionRegistry {
    */
   dropResolved(sessionId: string, lastActivityAt: number): PendingPermission[] {
     const dropped: PendingPermission[] = [];
-    for (const [id, entry] of this.entries) {
+    for (const [key, entry] of this.entries) {
       if (entry.pending.sessionId !== sessionId) continue;
       if (lastActivityAt <= entry.pending.askedAt) continue;
-      this.entries.delete(id);
+      this.entries.delete(key);
       for (const waiter of entry.waiters) waiter("dropped");
       dropped.push(entry.pending);
     }
@@ -179,13 +213,16 @@ export class PermissionRegistry {
   /** 取りに来なくなった分と、古すぎる分を捨てる。 */
   sweep(now = Date.now()): PendingPermission[] {
     const dropped: PendingPermission[] = [];
-    for (const [id, entry] of this.entries) {
+    for (const [key, entry] of this.entries) {
       if (now - entry.seenAt < PENDING_TTL_MS && now - entry.pending.askedAt < PENDING_MAX_AGE_MS) {
         continue;
       }
-      this.entries.delete(id);
+      this.entries.delete(key);
       for (const waiter of entry.waiters) waiter("dropped");
       dropped.push(entry.pending);
+    }
+    for (const [key, hit] of this.decided) {
+      if (now - hit.at >= DECIDED_TTL_MS) this.decided.delete(key);
     }
     return dropped;
   }

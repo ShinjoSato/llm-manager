@@ -209,7 +209,7 @@ export function App() {
                 セッション不明の権限確認
               </div>
               {orphans.map((p) => (
-                <PermissionPrompt key={p.requestId} permission={p} showProject />
+                <PermissionPrompt key={p.key} permission={p} showProject />
               ))}
             </div>
           )}

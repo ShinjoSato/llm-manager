@@ -48,7 +48,7 @@ export function PermissionPrompt({
     const abort = new AbortController();
     const timer = window.setTimeout(() => abort.abort(), DECIDE_TIMEOUT_MS);
     try {
-      const res = await fetch(`/api/permissions/${permission.requestId}`, {
+      const res = await fetch(`/api/permissions/${permission.key}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ decision }),

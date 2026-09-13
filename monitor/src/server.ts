@@ -126,7 +126,10 @@ function unauthorized(c: Context): Response {
 
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
-app.get("/api/feed", (c) => c.json(hub.recentFeed()));
+app.get("/api/feed", (c) => {
+  const local = isLocalActor(c.env.incoming.socket.remoteAddress);
+  return c.json(hub.recentFeed().filter((item) => local || !item.local));
+});
 
 // 別端末を繋ぐための案内。ループバック以外には存在ごと伏せる（理由は lan.ts）。
 app.get("/api/lan", (c) => {
@@ -174,7 +177,7 @@ app.get("/api/permissions", (c) => {
   return c.json(hub.pendingPermissions());
 });
 
-app.post("/api/permissions/:requestId", async (c) => {
+app.post("/api/permissions/:key", async (c) => {
   if (!isLocalActor(c.env.incoming.socket.remoteAddress)) return notFound(c);
   if (!c.req.header("content-type")?.startsWith("application/json")) {
     return c.json({ ok: false, error: "content-type must be application/json" }, 415);
@@ -189,7 +192,7 @@ app.post("/api/permissions/:requestId", async (c) => {
     return c.json({ ok: false, error: "decision は allow / deny です" }, 400);
   }
 
-  const pending = hub.decidePermission(c.req.param("requestId"), body.decision);
+  const pending = hub.decidePermission(c.req.param("key"), body.decision);
   // 端末側で先に答えられた後や期限切れの後は保留が無い。
   if (!pending) return c.json({ ok: false, error: "この確認はもう待っていません" }, 404);
   return c.json({ ok: true, decision: body.decision });
@@ -297,7 +300,7 @@ app.get("/events", (c) => {
       latest = s;
     };
     const onFeed = (item: FeedItem) => {
-      feedQueue.push(item);
+      if (local || !item.local) feedQueue.push(item);
     };
     const onPermissions = (list: PendingPermission[]) => {
       if (local) permissions = list;
@@ -318,7 +321,10 @@ app.get("/events", (c) => {
       hub.on("feed", onFeed);
       hub.on("permissions", onPermissions);
 
-      await stream.writeSSE({ event: "feed-batch", data: JSON.stringify(hub.recentFeed()) });
+      await stream.writeSSE({
+        event: "feed-batch",
+        data: JSON.stringify(hub.recentFeed().filter((item) => local || !item.local)),
+      });
 
       let lastSent = 0;
       while (!closed) {

@@ -216,6 +216,8 @@ Claude Code の **Channels**（research preview）を使う。チャネル本体
 claude --dangerously-load-development-channels server:monitor
 ```
 
+チャネルは `@modelcontextprotocol/sdk` を使うので、先に `cd monitor && npm install` を済ませておく。
+
 `node` で `.ts` をそのまま渡しているのは Node 24 の型除去に任せるため（`npx tsx` を挟むとプロセスが 1 段増え、
 セッションの特定に使う親 PID がずれる）。monitor が既定の :8766 以外なら `env` に `MONITOR_URL` を足す。
 
@@ -226,16 +228,21 @@ claude --dangerously-load-development-channels server:monitor
 - 中継されるのは**ツール使用の承認だけ**。`AskUserQuestion`・プロジェクト信頼・MCP サーバー同意は端末に出る。
 - 端末のダイアログと同時に生きていて**先に答えた方が採用される**。端末側で答えられた分は、そのセッションの
   ログが進んだ時点で画面から消える（Claude Code は取り消しを知らせてこないため、ログの進みで判断する）。
+  同じターンで別のツールが先に走ってログを進めると、まだ開いている確認も消えることがある（その時は端末で答える）。
 
 ### ループバック限定にしている理由
 
-**LAN からは答えられない**（`GET /api/permissions` も `POST /api/permissions/:requestId` も 404、SSE にも流れない）。
+**LAN からは答えられない**（`GET /api/permissions` も `POST /api/permissions/:key` も 404、SSE にも流れず、
+権限確認に関するライブフィードの行も配らない）。
 
 - LAN 公開は平文 HTTP なので、承認まで通すとトークンを持つ端末から任意のコマンド実行を許可できてしまう
 - ドキュメントの警告どおり「チャネル経由で返答できる者は誰でも、セッションのツール使用を許可・拒否できる」
 - スマホからの承認は `claude --remote-control` が担うので、monitor 側で LAN 承認を持つ必要がない
 
 判定は Host ヘッダーではなく**接続元アドレス**（詐称できない）。QR と同じ作りで、ループバック以外には存在ごと伏せる。
+
+⚠️ 開発サーバー（`ui` の Vite）を `--host` で LAN に出すと、proxy が 127.0.0.1 から monitor を叩くのでこの判定を
+通ってしまう。UI を触る時も `npm run dev` は既定の localhost のまま使う。
 
 ### チャネルと monitor の繋ぎ方
 
@@ -244,8 +251,13 @@ claude --dangerously-load-development-channels server:monitor
 
 - 1 巡 60 秒で切れ、判断が出ていなければチャネルが取り直す。monitor を再起動しても取り直しで保留が戻る
 - 90 秒取りに来なければ保留を捨てる（セッションが終わった・チャネルが落ちた）
-- 申請元のセッションは**チャネルの親 PID**で引く（チャネルは Claude Code の子プロセスなので `~/.claude/sessions/<pid>.json`
-  と一致する）。引けない場合は cwd で引き、それも駄目なら「セッション不明の権限確認」として一覧の頭に出す
+- 申請元のセッションは**チャネルの親 PID だけ**で引く（チャネルは Claude Code の子プロセスなので
+  `~/.claude/sessions/<pid>.json` と一致する）。cwd では引かない——同じ場所の別セッションに付け替わると、
+  見ていない確認を許可させてしまうため。引けなければ「セッション不明の権限確認」として一覧の頭に出し、
+  どのリポジトリかは申請元の cwd から併記する
+- 保留の鍵は**申請元 PID と `request_id` の対**（`request_id` はセッション内でしか一意でない）。判断は 2 分だけ
+  取り置き、取り直しの谷間（待ち手が居ない瞬間）に押された分も次の取り直しで渡す
+- monitor が 30 分戻らなければチャネルは中継を諦める（以降その確認は端末で答える）
 
 ## 伝言を送る
 

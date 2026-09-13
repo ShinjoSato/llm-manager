@@ -20,6 +20,7 @@ import {
 import { APP_NAMES, openWithApp, type OpenApp, type OpenResult } from "./open.js";
 import {
   matchSession,
+  pendingKey,
   PermissionRegistry,
   type PermissionDecision,
   type PermissionOutcome,
@@ -276,7 +277,13 @@ export class SessionHub extends EventEmitter {
       if (events.length && this.permissions.size() > 0) {
         const dropped = this.permissions.dropResolved(id, state.lastActivityAt ?? 0);
         for (const pending of dropped) {
-          this.push(id, "status", `権限の確認は端末側で答えられました: ${pending.toolName}`);
+          this.push(
+            id,
+            "status",
+            `権限の確認は端末側で答えられたようです: ${pending.toolName}`,
+            null,
+            true,
+          );
         }
         if (dropped.length) this.emitPermissions();
       }
@@ -418,7 +425,13 @@ export class SessionHub extends EventEmitter {
   }
 
   // ── 配信 ──────────────────────────────────────────
-  private push(sessionId: string, kind: FeedKind, text: string, tool: string | null = null): void {
+  private push(
+    sessionId: string,
+    kind: FeedKind,
+    text: string,
+    tool: string | null = null,
+    local = false,
+  ): void {
     const state = this.sessions.get(sessionId);
     const item: FeedItem = {
       id: ++this.feedSeq,
@@ -428,6 +441,7 @@ export class SessionHub extends EventEmitter {
       kind,
       text,
       tool,
+      ...(local ? { local: true } : {}),
     };
     this.feed.push(item);
     if (this.feed.length > FEED_LIMIT) this.feed = this.feed.slice(-FEED_LIMIT);
@@ -445,29 +459,36 @@ export class SessionHub extends EventEmitter {
   // ── 権限確認の中継 ────────────────────────────────
   /** チャネルから届いた確認を預かり、判断が出るまで待つ。timeout ならチャネルが取り直す。 */
   awaitPermission(input: PermissionRequestInput, waitMs: number): Promise<PermissionOutcome> {
+    const key = pendingKey(input);
+    // 取り直しの谷間に押された判断は取り置きにある。先に渡さないと確認が出直す。
+    const settled = this.permissions.takeDecision(key);
+    if (settled) return Promise.resolve(settled);
+
     const sessionId = matchSession(
       input,
       [...this.sessions.values()].map((s) => s.raw),
     );
     const state = sessionId ? this.sessions.get(sessionId) : undefined;
-    const { pending, created } = this.permissions.register(input, {
+    // セッションを引けなくても、どのリポジトリの確認かは申請元の cwd から出す。
+    const cwd = state ? state.raw.cwd : input.cwd;
+    const { pending, created, changed } = this.permissions.register(input, {
       sessionId,
-      project: state ? basename(state.raw.cwd) : null,
+      project: cwd ? basename(cwd) : null,
     });
     if (created && sessionId) {
-      this.push(sessionId, "status", `権限の確認が届きました: ${pending.toolName}`);
+      this.push(sessionId, "status", `権限の確認が届きました: ${pending.toolName}`, null, true);
     }
-    if (created) this.emitPermissions();
-    return this.permissions.wait(input.requestId, waitMs);
+    if (created || changed) this.emitPermissions();
+    return this.permissions.wait(key, waitMs);
   }
 
-  /** 画面からの判断。知らない ID なら null（＝404）。 */
-  decidePermission(requestId: string, decision: PermissionDecision): PendingPermission | null {
-    const pending = this.permissions.decide(requestId, decision);
+  /** 画面からの判断。知らない鍵なら null（＝404）。 */
+  decidePermission(key: string, decision: PermissionDecision): PendingPermission | null {
+    const pending = this.permissions.decide(key, decision);
     if (!pending) return null;
     if (pending.sessionId) {
       const verb = decision === "allow" ? "許可" : "拒否";
-      this.push(pending.sessionId, "status", `${verb}しました: ${pending.toolName}`);
+      this.push(pending.sessionId, "status", `${verb}しました: ${pending.toolName}`, null, true);
     }
     this.emitPermissions();
     return pending;

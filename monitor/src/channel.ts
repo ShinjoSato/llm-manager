@@ -10,6 +10,8 @@ const MONITOR_URL = (process.env.MONITOR_URL ?? "http://127.0.0.1:8766").replace
 const POLL_TIMEOUT_MS = 90_000;
 /** monitor が落ちている時の再試行間隔。端末のダイアログは開いたままなので急がない。 */
 const RETRY_DELAY_MS = 5_000;
+/** monitor が戻らないまま待ち続けない。ここを過ぎたら端末のダイアログに任せる。 */
+const GIVE_UP_MS = 30 * 60_000;
 
 const PermissionRequestSchema = z.object({
   method: z.literal("notifications/claude/channel/permission_request"),
@@ -51,6 +53,9 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
     cwd: process.cwd(),
   });
 
+  const startedAt = Date.now();
+  let unreachable = 0;
+
   // 判断が出るまで取り直し続ける。timeout は 1 巡の区切りで、保留は monitor 側に残っている。
   for (;;) {
     const outcome = await ask(body);
@@ -63,7 +68,19 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
     }
     // dropped = 端末側で答えられたか期限切れ。これ以上待たない。
     if (outcome === "dropped") return;
-    if (outcome === "unreachable") await sleep(RETRY_DELAY_MS);
+    if (outcome !== "unreachable") {
+      unreachable = 0;
+      continue;
+    }
+    // 繋がらない間のログは間引く（初回と、以後およそ 1 分ごと）。
+    if (++unreachable === 1 || unreachable % 12 === 0) {
+      log(`monitor に繋がりません（${MONITOR_URL}）。${RETRY_DELAY_MS / 1000} 秒後に取り直します`);
+    }
+    if (Date.now() - startedAt >= GIVE_UP_MS) {
+      log(`monitor が戻らないので中継を諦めます: ${params.tool_name}`);
+      return;
+    }
+    await sleep(RETRY_DELAY_MS);
   }
 });
 
@@ -88,7 +105,7 @@ async function ask(body: string): Promise<"allow" | "deny" | "timeout" | "droppe
     if (outcome === "allow" || outcome === "deny" || outcome === "dropped") return outcome;
     return "timeout";
   } catch {
-    log(`monitor に繋がりません（${MONITOR_URL}）。${RETRY_DELAY_MS / 1000} 秒後に取り直します`);
+    // 呼び出し側がログを間引くので、ここでは黙って返す。
     return "unreachable";
   } finally {
     clearTimeout(timer);
