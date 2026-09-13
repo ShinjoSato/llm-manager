@@ -18,6 +18,14 @@ import {
   type CloseState,
 } from "./close.js";
 import { APP_NAMES, openWithApp, type OpenApp, type OpenResult } from "./open.js";
+import {
+  matchSession,
+  pendingKey,
+  PermissionRegistry,
+  type PermissionDecision,
+  type PermissionOutcome,
+  type PermissionRequestInput,
+} from "./permissions.js";
 import { primeMeta, TranscriptReader } from "./transcript.js";
 import { findXcodeProject } from "./xcode.js";
 import type {
@@ -25,6 +33,7 @@ import type {
   FeedItem,
   FeedKind,
   HookPayload,
+  PendingPermission,
   RawSession,
   SessionSnapshot,
   SessionStatus,
@@ -89,6 +98,7 @@ type TurnState = "busy" | "settled";
 
 export class SessionHub extends EventEmitter {
   private sessions = new Map<string, SessionState>();
+  private permissions = new PermissionRegistry();
   private feed: FeedItem[] = [];
   private feedSeq = 0;
   private agentTypes = new Map<string, string>();
@@ -162,6 +172,9 @@ export class SessionHub extends EventEmitter {
         changed = true;
       }
     }
+
+    // チャネルが取りに来なくなった保留（セッション終了・monitor の取りこぼし）を捨てる。
+    if (this.permissions.sweep(now).length) this.emitPermissions();
 
     if (changed) this.emitUpdate();
   }
@@ -258,6 +271,21 @@ export class SessionHub extends EventEmitter {
           state.currentAction = null;
           this.push(id, "message", truncate(ev.text, 160));
         }
+      }
+
+      // 預かった後に書かれたログ行があれば、その確認は端末側で答えられている。
+      if (events.length && this.permissions.size() > 0) {
+        const dropped = this.permissions.dropResolved(id, state.lastActivityAt ?? 0);
+        for (const pending of dropped) {
+          this.push(
+            id,
+            "status",
+            `権限の確認は端末側で答えられたようです: ${pending.toolName}`,
+            null,
+            true,
+          );
+        }
+        if (dropped.length) this.emitPermissions();
       }
 
       if (now - state.agentsCheckedAt >= AGENT_SCAN_INTERVAL_MS) {
@@ -397,7 +425,13 @@ export class SessionHub extends EventEmitter {
   }
 
   // ── 配信 ──────────────────────────────────────────
-  private push(sessionId: string, kind: FeedKind, text: string, tool: string | null = null): void {
+  private push(
+    sessionId: string,
+    kind: FeedKind,
+    text: string,
+    tool: string | null = null,
+    local = false,
+  ): void {
     const state = this.sessions.get(sessionId);
     const item: FeedItem = {
       id: ++this.feedSeq,
@@ -407,6 +441,7 @@ export class SessionHub extends EventEmitter {
       kind,
       text,
       tool,
+      ...(local ? { local: true } : {}),
     };
     this.feed.push(item);
     if (this.feed.length > FEED_LIMIT) this.feed = this.feed.slice(-FEED_LIMIT);
@@ -415,6 +450,57 @@ export class SessionHub extends EventEmitter {
 
   private emitUpdate(): void {
     this.emit("sessions", this.snapshot());
+  }
+
+  private emitPermissions(): void {
+    this.emit("permissions", this.permissions.list());
+  }
+
+  // ── 権限確認の中継 ────────────────────────────────
+  /** チャネルから届いた確認を預かり、判断が出るまで待つ。timeout ならチャネルが取り直す。 */
+  awaitPermission(input: PermissionRequestInput, waitMs: number): Promise<PermissionOutcome> {
+    const key = pendingKey(input);
+    // 取り直しの谷間に押された判断は取り置きにある。先に渡さないと確認が出直す。
+    const settled = this.permissions.takeDecision(key, input);
+    if (settled) return Promise.resolve(settled);
+
+    const sessionId = matchSession(
+      input,
+      [...this.sessions.values()].map((s) => s.raw),
+    );
+    const state = sessionId ? this.sessions.get(sessionId) : undefined;
+    // セッションを引けなくても、どのリポジトリの確認かは申請元の cwd から出す。
+    const cwd = state ? state.raw.cwd : input.cwd;
+    const { pending, created, changed, linked, evicted } = this.permissions.register(input, {
+      sessionId,
+      project: cwd ? basename(cwd) : null,
+    });
+    if (linked && sessionId) {
+      this.push(sessionId, "status", `権限の確認が届きました: ${pending.toolName}`, null, true);
+    }
+    for (const gone of evicted) {
+      if (gone.sessionId) {
+        this.push(gone.sessionId, "status", `保留が多すぎるので捨てました: ${gone.toolName}`, null, true);
+      }
+    }
+    if (created || changed) this.emitPermissions();
+    return this.permissions.wait(key, waitMs);
+  }
+
+  /** 画面からの判断。知らない鍵なら null（＝404）。 */
+  decidePermission(key: string, decision: PermissionDecision): PendingPermission | null {
+    const pending = this.permissions.decide(key, decision);
+    if (!pending) return null;
+    if (pending.sessionId) {
+      const verb = decision === "allow" ? "許可" : "拒否";
+      this.push(pending.sessionId, "status", `${verb}しました: ${pending.toolName}`, null, true);
+    }
+    this.emitPermissions();
+    return pending;
+  }
+
+  pendingPermissions(): PendingPermission[] {
+    return this.permissions.list();
   }
 
   private statusOf(state: SessionState): { status: SessionStatus; source: StatusSource } {

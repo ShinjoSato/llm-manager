@@ -68,6 +68,25 @@ export interface FeedItem {
   kind: FeedKind;
   text: string;
   tool: string | null;
+  /** 手元の画面にだけ配る行。権限確認は答えられない相手に見せない。 */
+  local?: boolean;
+}
+
+/** 画面に出す保留中の権限確認 1 件。チャネル（`src/channel.ts`）が中継してくる。 */
+export interface PendingPermission {
+  /** 保留の鍵（申請元 PID と request_id の対）。判断を返す宛先になる。 */
+  key: string;
+  /** Claude Code が発行する 5 文字の ID。セッション内でしか一意ではない。 */
+  requestId: string;
+  /** 申請元のセッション。引き当てられなければ null。 */
+  sessionId: string | null;
+  project: string | null;
+  toolName: string;
+  /** 人間向けの説明。チャネル越しに来る文字列なので表示専用に扱う。 */
+  description: string;
+  /** 引数の中身。Bash ならコマンド本体。 */
+  inputPreview: string;
+  askedAt: number;
 }
 
 /** 在庫層が ~/.claude/sessions/<pid>.json から読む生の情報。 */
