@@ -8,7 +8,8 @@ import { itemFor, jobFor, jobPalette, skillLabel } from "./kit.js";
 import { FALLBACK_MARK, lookOf, markTop } from "./look.js";
 import { KID_STAND } from "./sprites.js";
 
-const MAX_KIDS = 4;
+/** 1 セッションで見せるサブエージェントの上限。空間の 2 段目もこの数に合わせる。 */
+export const MAX_KIDS = 4;
 // memo が効くよう毎レンダー作り直さない。
 const ITEM_GLOW: CSSProperties = { filter: "drop-shadow(0 0 7px rgba(52,211,153,.35))" };
 

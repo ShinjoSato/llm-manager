@@ -1,5 +1,16 @@
-import { Activity, AlertTriangle, Bell, BellOff, Box, Layers, Pause, Radio } from "lucide-react";
-import { lazy, Suspense, useMemo } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  Bell,
+  BellOff,
+  Box,
+  Landmark,
+  Layers,
+  Pause,
+  Radio,
+  Square,
+} from "lucide-react";
+import { lazy, Suspense, useMemo, type ReactNode } from "react";
 import { LanQrButton } from "./components/LanQr.js";
 import { LiveFeed } from "./components/LiveFeed.js";
 import { SessionCard } from "./components/SessionCard.js";
@@ -7,16 +18,17 @@ import { StatCard } from "./components/ui.js";
 import { styleOf } from "./status.js";
 import { useMonitor, useNow } from "./useMonitor.js";
 import { useNotify } from "./useNotify.js";
-import { useRender3D } from "./render3d.js";
+import { useRenderMode, type RenderMode } from "./render3d.js";
 
-// 描画面はキャラと同じ塊に入るので、立体表示にした時だけ読み込まれる。
+// 描画面は three.js と同じ塊に入るので、立体表示にした時だけ読み込まれる。
 const Stage3DCanvas = lazy(() => import("./three/Stage3DCanvas.js"));
 
 export function App() {
   const { sessions, feed, connected } = useMonitor();
   const now = useNow();
   const notify = useNotify(sessions);
-  const [solid, toggleSolid] = useRender3D();
+  const [mode, setMode] = useRenderMode();
+  const solid = mode === "solid";
 
   const sorted = useMemo(
     () =>
@@ -34,7 +46,7 @@ export function App() {
     <div className="mx-auto max-w-[1700px] p-5">
       {solid && (
         <Suspense fallback={null}>
-          <Stage3DCanvas />
+          <Stage3DCanvas mode="solid" />
         </Suspense>
       )}
       <header className="mb-5 flex flex-wrap items-center gap-3">
@@ -55,21 +67,34 @@ export function App() {
           伝言は「別セッションからのメッセージ」として届きます（指示や承認としては扱われません）
         </span>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
           <LanQrButton />
-          <button
-            onClick={toggleSolid}
-            title="キャラを立体で表示する（初回だけ読み込みに少し時間がかかります）"
-            aria-pressed={solid}
-            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition ${
-              solid
-                ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
-                : "border-white/10 bg-white/5 text-slate-500 hover:bg-white/10"
-            }`}
-          >
-            <Box size={10} />
-            立体
-          </button>
+          <div className="inline-flex items-center gap-0.5 rounded-full border border-white/10 bg-white/5 p-0.5">
+            <ModeButton
+              mode={mode}
+              value="off"
+              onSelect={setMode}
+              icon={<Square size={10} />}
+              label="平面"
+              hint="いつもの表示"
+            />
+            <ModeButton
+              mode={mode}
+              value="solid"
+              onSelect={setMode}
+              icon={<Box size={10} />}
+              label="立体"
+              hint="カードのキャラを立体で表示する（初回だけ読み込みに少し時間がかかります）"
+            />
+            <ModeButton
+              mode={mode}
+              value="world"
+              onSelect={setMode}
+              icon={<Landmark size={10} />}
+              label="空間"
+              hint="セッションごとに段々のピラミッドが建つ空間を出す（初回だけ読み込みに少し時間がかかります）"
+            />
+          </div>
           <NotifyToggle
             label="要対応"
             hint="許可待ち・入力待ち・エラーになった時に知らせる"
@@ -147,6 +172,23 @@ export function App() {
         />
       </div>
 
+      {mode === "world" && (
+        <div className="glass relative mb-4 h-[210px] overflow-hidden sm:h-[280px] lg:h-[340px]">
+          {sorted.length === 0 ? (
+            <WorldNote text="建つピラミッドがありません" />
+          ) : (
+            <Suspense fallback={<WorldNote text="空間を読み込み中…" />}>
+              <Stage3DCanvas mode="world" sessions={sorted} />
+            </Suspense>
+          )}
+          {sorted.length > 0 && (
+            <span className="pointer-events-none absolute bottom-2 left-3 hidden text-[10px] text-slate-500 sm:block">
+              ピラミッド = セッション ／ 最上段 = 親 ／ 1 つ下の段 = サブエージェント
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid content-start gap-3 sm:grid-cols-2 2xl:grid-cols-3">
           {sorted.length === 0 ? (
@@ -161,6 +203,45 @@ export function App() {
         </div>
         <LiveFeed items={feed} sessions={sorted} />
       </div>
+    </div>
+  );
+}
+
+function ModeButton({
+  mode,
+  value,
+  onSelect,
+  icon,
+  label,
+  hint,
+}: {
+  mode: RenderMode;
+  value: RenderMode;
+  onSelect: (mode: RenderMode) => void;
+  icon: ReactNode;
+  label: string;
+  hint: string;
+}) {
+  const on = mode === value;
+  return (
+    <button
+      onClick={() => onSelect(value)}
+      title={hint}
+      aria-pressed={on}
+      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] transition ${
+        on ? "bg-cyan-400/15 text-cyan-300" : "text-slate-500 hover:bg-white/10"
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function WorldNote({ text }: { text: string }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[12px] text-slate-500">
+      {text}
     </div>
   );
 }

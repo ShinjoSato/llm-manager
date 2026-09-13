@@ -202,7 +202,15 @@ ui/                  React + Vite + TypeScript + Tailwind v4（web/ と同じデ
   src/useMonitor.ts  SSE 購読フック
   src/status.ts      状態ごとの色・ラベル・並び順
   src/components/    SessionCard / LiveFeed / LanQr(接続用 QR) / ui(StatCard)
+  src/pixel/         ドット絵のキャラ（状態ごとの姿勢・色・持ち物）
+  src/three/         立体表示。Ziggurat(段々のピラミッド 1 基) / Voxels(キャラ) / World(空間) /
+                     blueprint(寸法・配置・光り方・跳ね) / motion(動きを減らす設定)
 ```
+
+表示は「平面 / 立体 / 空間」の 3 つをヘッダーで切り替える（`src/render3d.ts`・localStorage 保存）。
+平面が既定で、選ぶまで three.js は読み込まない。空間はセッション 1 つを段々のピラミッド 1 基と
+して建て、最上段に親エージェント・1 つ下の段にサブエージェントを立たせ、状態を段の踏み面と
+地面の光り方で表す。稼働中は持ち物を持たせ、キャラと持ち物は 2 コマで跳ねる（2D と同じ）。
 
 ## 制約
 
