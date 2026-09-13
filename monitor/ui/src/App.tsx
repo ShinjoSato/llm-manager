@@ -13,6 +13,7 @@ import {
 import { lazy, Suspense, useMemo, type ReactNode } from "react";
 import { LanQrButton } from "./components/LanQr.js";
 import { LiveFeed } from "./components/LiveFeed.js";
+import { PermissionPrompt } from "./components/PermissionPrompt.js";
 import { SessionCard } from "./components/SessionCard.js";
 import { StatCard } from "./components/ui.js";
 import { styleOf } from "./status.js";
@@ -24,7 +25,7 @@ import { useRenderMode, type RenderMode } from "./render3d.js";
 const Stage3DCanvas = lazy(() => import("./three/Stage3DCanvas.js"));
 
 export function App() {
-  const { sessions, feed, connected } = useMonitor();
+  const { sessions, feed, permissions, connected } = useMonitor();
   const now = useNow();
   const notify = useNotify(sessions);
   const [mode, setMode] = useRenderMode();
@@ -38,6 +39,17 @@ export function App() {
       ),
     [sessions],
   );
+
+  // セッションを引けた確認はそのカードへ、引けなかった分は一覧の頭にまとめて出す。
+  const bySession = useMemo(() => {
+    const map = new Map<string, typeof permissions>();
+    for (const p of permissions) {
+      if (!p.sessionId) continue;
+      map.set(p.sessionId, [...(map.get(p.sessionId) ?? []), p]);
+    }
+    return map;
+  }, [permissions]);
+  const orphans = useMemo(() => permissions.filter((p) => !p.sessionId), [permissions]);
 
   const count = (f: (s: (typeof sessions)[number]) => boolean) => sessions.filter(f).length;
   const attention = count((s) => ["permission", "waiting", "error"].includes(s.status));
@@ -191,13 +203,29 @@ export function App() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid content-start gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+          {orphans.length > 0 && (
+            <div className="glass col-span-full p-4">
+              <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                セッション不明の権限確認
+              </div>
+              {orphans.map((p) => (
+                <PermissionPrompt key={p.requestId} permission={p} showProject />
+              ))}
+            </div>
+          )}
           {sorted.length === 0 ? (
             <div className="glass col-span-full p-10 text-center text-[13px] text-slate-500">
               稼働中の Claude Code セッションがありません
             </div>
           ) : (
             sorted.map((s) => (
-              <SessionCard key={s.sessionId} s={s} now={now} solid={solid} />
+              <SessionCard
+                key={s.sessionId}
+                s={s}
+                now={now}
+                solid={solid}
+                permissions={bySession.get(s.sessionId)}
+              />
             ))
           )}
         </div>

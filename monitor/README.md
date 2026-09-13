@@ -14,9 +14,10 @@ npm start
 既定は **localhost 限定**（`127.0.0.1` にのみ bind・認証なし）。同じ Wi-Fi の別端末から見たい時だけ
 `MONITOR_LAN=1` で開ける（下記）。セッションへ書き込む口があるため、それ以外では外に出さない。
 
-セッションから読むのは記録だけで、こちらから行うのは「伝言を 1 通送る」ことだけ。
-届いたテキストは受信側で**別セッションからのメッセージ**として扱われ、指示や承認にはならない
-（権限の承認・設定変更・スラッシュコマンドの実行はいずれも不可）。
+セッションから読むのは記録だけ。こちらから行うのは「伝言を 1 通送る」ことと、
+Channels を載せたセッションの「権限確認に答える」ことの 2 つ。
+伝言は受信側で**別セッションからのメッセージ**として扱われ、指示や承認にはならない
+（設定変更・スラッシュコマンドの実行も不可）。権限確認は別の経路で、**手元（ループバック）からだけ**答えられる。
 
 ### 開発時（ホットリロード）
 
@@ -139,6 +140,9 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/lan` | LAN 接続用の案内 `{enabled, url}`（**ループバック以外は 404**） |
 | GET | `/api/lan/qr.svg` | その QR の SVG（**ループバック以外・LAN 非公開時は 404**） |
 | GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント |
+| GET | `/api/permissions` | 保留中の権限確認（**ループバック以外は 404**） |
+| POST | `/api/permissions/:requestId` | 許可・拒否（`{"decision":"allow"\|"deny"}`・**ループバック以外は 404**） |
+| POST | `/api/channel/permissions` | チャネルからの権限確認（**ループバック以外は 404**） |
 | POST | `/api/sessions/:id/message` | そのセッションの受信箱へ伝言を送る |
 | POST | `/api/sessions/:id/open` | そのセッションの作業場所を開く（`{"app":"vscode"\|"xcode"}`） |
 | POST | `/api/sessions/:id/close` | そのセッションのワークスペースを Xcode から閉じる（`{"app":"xcode"}`） |
@@ -189,6 +193,60 @@ Xcode プロジェクトを持つカードの「閉じる」から、**そのセ
 - VSCode は対象外。Claude Code が VSCode の中で動いていること、AppleScript の辞書が無く
   「このフォルダのウィンドウだけ閉じる」を指定できないことによる。
 
+## 権限確認に答える（Channels の permission relay）
+
+ツール使用の権限確認（`Bash` / `Write` / `Edit` など）を monitor の画面に出し、そこで許可・拒否できる。
+Claude Code の **Channels**（research preview）を使う。チャネル本体は `src/channel.ts`（stdio の MCP サーバー）。
+
+セッションを起こす側のリポジトリに `.mcp.json` を置き、**`--dangerously-load-development-channels`** を付けて起動する
+（自作チャネルは承認済み一覧に無いため必須）。
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "monitor": {
+      "command": "node",
+      "args": ["/Users/shinjo/project/ai-manager/monitor/src/channel.ts"]
+    }
+  }
+}
+```
+
+```bash
+claude --dangerously-load-development-channels server:monitor
+```
+
+`node` で `.ts` をそのまま渡しているのは Node 24 の型除去に任せるため（`npx tsx` を挟むとプロセスが 1 段増え、
+セッションの特定に使う親 PID がずれる）。monitor が既定の :8766 以外なら `env` に `MONITOR_URL` を足す。
+
+- 起動時に全画面の警告（`I am using this for local development`）と、`.mcp.json` の初回同意ダイアログが出る。
+- 画面には `tool_name` / `description` / `input_preview` が出る。**拒否は 1 押し、許可はもう一度たしかめる**
+  （一覧に複数並ぶ中で押し間違えても通さないため。確認は 6 秒で引っ込む）。
+- **`allow` / `deny` しか返せない。**「常に許可」「今回だけ」は Channels に無い（確認ごとに ID が変わる）。
+- 中継されるのは**ツール使用の承認だけ**。`AskUserQuestion`・プロジェクト信頼・MCP サーバー同意は端末に出る。
+- 端末のダイアログと同時に生きていて**先に答えた方が採用される**。端末側で答えられた分は、そのセッションの
+  ログが進んだ時点で画面から消える（Claude Code は取り消しを知らせてこないため、ログの進みで判断する）。
+
+### ループバック限定にしている理由
+
+**LAN からは答えられない**（`GET /api/permissions` も `POST /api/permissions/:requestId` も 404、SSE にも流れない）。
+
+- LAN 公開は平文 HTTP なので、承認まで通すとトークンを持つ端末から任意のコマンド実行を許可できてしまう
+- ドキュメントの警告どおり「チャネル経由で返答できる者は誰でも、セッションのツール使用を許可・拒否できる」
+- スマホからの承認は `claude --remote-control` が担うので、monitor 側で LAN 承認を持つ必要がない
+
+判定は Host ヘッダーではなく**接続元アドレス**（詐称できない）。QR と同じ作りで、ループバック以外には存在ごと伏せる。
+
+### チャネルと monitor の繋ぎ方
+
+チャネルは monitor の `POST /api/channel/permissions` に申請を預け、**その応答が返るまで待つ**（長ポーリング）。
+チャネル側は待ち受けポートを持たない（セッションごとにチャネルが起動するため、固定ポートでは 2 つ目が衝突する）。
+
+- 1 巡 60 秒で切れ、判断が出ていなければチャネルが取り直す。monitor を再起動しても取り直しで保留が戻る
+- 90 秒取りに来なければ保留を捨てる（セッションが終わった・チャネルが落ちた）
+- 申請元のセッションは**チャネルの親 PID**で引く（チャネルは Claude Code の子プロセスなので `~/.claude/sessions/<pid>.json`
+  と一致する）。引けない場合は cwd で引き、それも駄目なら「セッション不明の権限確認」として一覧の頭に出す
+
 ## 伝言を送る
 
 各カードの入力欄から、そのセッションの受信箱ソケットへ 1 通送れる。経路は公式に文書化された
@@ -209,6 +267,8 @@ src/                 バックエンド（Node 24 / tsx 実行）
   origin.ts          Host / Origin / 接続元アドレスの判定（LAN 公開時の許可ホストも）
   token.ts           LAN 公開時の共有トークン（生成・読み出し・固定時間比較）
   lan.ts             LAN 接続用の案内（URL の組み立てと QR の SVG 生成・ループバック限定）
+  permissions.ts     権限確認の保留と判断（申請の検証・セッションの引き当て・長ポーリングの待ち）
+  channel.ts         Claude Code のチャネル（stdio の MCP サーバー）。権限確認を monitor へ中継する
   inventory.ts       在庫層: セッションレジストリの走査と生存判定
   transcript.ts      実況層: jsonl の末尾差分読みとパース
   hub.ts             3 層の統合・状態判定・イベント発火
@@ -217,7 +277,7 @@ ui/                  React + Vite + TypeScript + Tailwind v4（web/ と同じデ
   src/App.tsx        レイアウトと KPI
   src/useMonitor.ts  SSE 購読フック
   src/status.ts      状態ごとの色・ラベル・並び順
-  src/components/    SessionCard / LiveFeed / LanQr(接続用 QR) / ui(StatCard)
+  src/components/    SessionCard / LiveFeed / LanQr(接続用 QR) / PermissionPrompt(権限確認) / ui(StatCard)
   src/pixel/         ドット絵のキャラ（状態ごとの姿勢・色・持ち物）
   src/three/         立体表示。Ziggurat(段々のピラミッド 1 基) / Voxels(キャラ) / World(空間) /
                      blueprint(寸法・配置・光り方・跳ね) / motion(動きを減らす設定)

@@ -1,10 +1,11 @@
 import { GitBranch } from "lucide-react";
 import { lazy, Suspense } from "react";
-import type { SessionSnapshot } from "../../../src/types.js";
+import type { PendingPermission, SessionSnapshot } from "../../../src/types.js";
 import { ago, dur, kilo } from "../format.js";
 import { AgentStage } from "../pixel/AgentStage.js";
 import { MessageInput } from "./MessageInput.js";
 import { OpenButtons } from "./OpenButtons.js";
+import { PermissionPrompt } from "./PermissionPrompt.js";
 import { itemForVerb, jobFor, skillLabel } from "../pixel/kit.js";
 import { styleOf } from "../status.js";
 
@@ -31,11 +32,14 @@ export function SessionCard({
   s,
   now,
   solid,
+  permissions = [],
 }: {
   s: SessionSnapshot;
   now: number;
   /** キャラを立体で描く。読み込み中は 2D のまま見せる。 */
   solid: boolean;
+  /** このセッションの保留中の権限確認。手元で開いた画面にだけ届く。 */
+  permissions?: PendingPermission[];
 }) {
   const st = styleOf(s.status);
   const action = actionLine(s);
@@ -84,6 +88,10 @@ export function SessionCard({
         {s.tokens && <span>キャッシュ {kilo(s.tokens.cacheRead)}</span>}
         <span className="ml-auto">{s.statusSource === "hook" ? "hook" : "log"}</span>
       </div>
+
+      {permissions.map((p) => (
+        <PermissionPrompt key={p.requestId} permission={p} />
+      ))}
 
       <OpenButtons sessionId={s.sessionId} xcodeProject={s.xcodeProject} />
 
