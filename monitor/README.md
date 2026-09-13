@@ -141,7 +141,7 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/lan/qr.svg` | その QR の SVG（**ループバック以外・LAN 非公開時は 404**） |
 | GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント |
 | GET | `/api/permissions` | 保留中の権限確認（**ループバック以外は 404**） |
-| POST | `/api/permissions/:requestId` | 許可・拒否（`{"decision":"allow"\|"deny"}`・**ループバック以外は 404**） |
+| POST | `/api/permissions/:key` | 許可・拒否（`{"decision":"allow"\|"deny"}`・**ループバック以外は 404**） |
 | POST | `/api/channel/permissions` | チャネルからの権限確認（**ループバック以外は 404**） |
 | POST | `/api/sessions/:id/message` | そのセッションの受信箱へ伝言を送る |
 | POST | `/api/sessions/:id/open` | そのセッションの作業場所を開く（`{"app":"vscode"\|"xcode"}`） |

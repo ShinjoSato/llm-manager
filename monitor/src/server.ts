@@ -6,7 +6,7 @@
 //   POST /api/sessions/:id/message  そのセッションの受信箱へテキストを投稿
 //   POST /api/sessions/:id/open     そのセッションの作業場所を VSCode / Xcode で開く
 //   POST /api/sessions/:id/close    そのセッションのワークスペースを Xcode から閉じる
-//   GET  /api/permissions            保留中の権限確認 / POST /api/permissions/:requestId  許可・拒否
+//   GET  /api/permissions            保留中の権限確認 / POST /api/permissions/:key  許可・拒否
 //   POST /api/channel/permissions    チャネルからの権限確認（判断が出るまで待たせる）
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
 //   GET  /events         SSE（sessions / feed / permissions）
@@ -51,7 +51,7 @@ if (lanEnabled && !token) {
 }
 
 const hub = new SessionHub();
-hub.setMaxListeners(0); // SSE 1 接続につき 3 リスナー。タブを開く数だけ増える。
+hub.setMaxListeners(0); // SSE 1 接続につき 4 リスナー。タブを開く数だけ増える。
 hub.start();
 
 const port = Number(process.env.PORT ?? 8766);
@@ -336,8 +336,10 @@ app.get("/events", (c) => {
           lastSent = now;
         }
         if (permissions) {
-          await stream.writeSSE({ event: "permissions", data: JSON.stringify(permissions) });
+          // 書き出しの間に届いた更新を捨てないよう、await の前に取り出す。
+          const list = permissions;
           permissions = null;
+          await stream.writeSSE({ event: "permissions", data: JSON.stringify(list) });
         }
         while (feedQueue.length) {
           await stream.writeSSE({ event: "feed", data: JSON.stringify(feedQueue.shift()) });

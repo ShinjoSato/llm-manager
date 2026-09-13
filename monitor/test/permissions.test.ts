@@ -155,11 +155,43 @@ t("残ったのは相手の分", twins.list()[0]?.sessionId, "sB");
 const gap = new PermissionRegistry();
 gap.register(input, { sessionId: "s1", project: "project" }, 1_000);
 t("待ち手が居なくても決められる", gap.decide(pendingKey(input), "deny", 1_000)?.toolName, "Bash");
-t("取り置きを取り出せる", gap.takeDecision(pendingKey(input), 1_100), "deny");
-t("取り置きは一度きり", gap.takeDecision(pendingKey(input), 1_100), null);
+t("取り置きを取り出せる", gap.takeDecision(pendingKey(input), input, 1_100), "deny");
+t("取り置きは一度きり", gap.takeDecision(pendingKey(input), input, 1_100), null);
 gap.register(input, { sessionId: "s1", project: "project" }, 2_000);
 gap.decide(pendingKey(input), "allow", 2_000);
-t("古い取り置きは渡さない", gap.takeDecision(pendingKey(input), 2_000 + DECIDED_TTL_MS), null);
+t("古い取り置きは渡さない", gap.takeDecision(pendingKey(input), input, 2_000 + DECIDED_TTL_MS), null);
+
+// 鍵が同じでも中身が違えば別の確認。取り置きを流用させない。
+const reused = new PermissionRegistry();
+reused.register(input, { sessionId: "s1", project: "project" }, 1_000);
+reused.decide(pendingKey(input), "allow", 1_000);
+t(
+  "中身が違えば取り置きは渡さない",
+  reused.takeDecision(pendingKey(input), { ...input, inputPreview: '{"command":"rm -rf /"}' }, 1_100),
+  null,
+);
+
+// 待ち手に配れた分は取り置かない（次に来た別の確認へ流用しないため）。
+const delivered = new PermissionRegistry();
+delivered.register(input, { sessionId: "s1", project: "project" }, 1_000);
+const listening = delivered.wait(pendingKey(input), 50);
+delivered.decide(pendingKey(input), "allow", 1_000);
+t("配れた判断は返る", await listening, "allow");
+t("配れた分は取り置かない", delivered.takeDecision(pendingKey(input), input, 1_100), null);
+
+// ── 取り直しで中身が変わったら差し替える ──
+const swapped = new PermissionRegistry();
+swapped.register(input, { sessionId: "s1", project: "project" }, 1_000);
+const again = swapped.register({ ...input, toolName: "Write", inputPreview: "z" }, { sessionId: "s1", project: "project" }, 2_000);
+t("中身が変われば changed", again.changed, true);
+t("表示も差し替わる", swapped.list()[0]?.toolName, "Write");
+t("預かり直した時刻になる", swapped.list()[0]?.askedAt, 2_000);
+
+// ── セッションに紐付いた瞬間を知らせる ──
+const late2 = new PermissionRegistry();
+t("引けなければ linked ではない", late2.register(input, { sessionId: null, project: "p" }, 1_000).linked, false);
+t("後から引けたら linked", late2.register(input, { sessionId: "s1", project: "p" }, 2_000).linked, true);
+t("二度目は linked ではない", late2.register(input, { sessionId: "s1", project: "p" }, 3_000).linked, false);
 
 // ── 保留の上限 ──
 const flood = new PermissionRegistry();
@@ -168,6 +200,12 @@ for (let i = 0; i < MAX_PENDING + 5; i++) {
 }
 t("上限を超えない", flood.size(), MAX_PENDING);
 t("捨てるのは古いほうから", flood.list()[0]?.requestId, "r5");
+t(
+  "捨てた分は呼び出し元に返る",
+  flood.register({ ...input, requestId: "over" }, { sessionId: null, project: null }, 9_999)
+    .evicted[0]?.requestId,
+  "r5",
+);
 
 // ── 端末側で先に答えられた分は落とす ──
 t("預かる前の活動では落ちない", reg.dropResolved("s1", 3_000).length, 0);

@@ -461,7 +461,7 @@ export class SessionHub extends EventEmitter {
   awaitPermission(input: PermissionRequestInput, waitMs: number): Promise<PermissionOutcome> {
     const key = pendingKey(input);
     // 取り直しの谷間に押された判断は取り置きにある。先に渡さないと確認が出直す。
-    const settled = this.permissions.takeDecision(key);
+    const settled = this.permissions.takeDecision(key, input);
     if (settled) return Promise.resolve(settled);
 
     const sessionId = matchSession(
@@ -471,12 +471,17 @@ export class SessionHub extends EventEmitter {
     const state = sessionId ? this.sessions.get(sessionId) : undefined;
     // セッションを引けなくても、どのリポジトリの確認かは申請元の cwd から出す。
     const cwd = state ? state.raw.cwd : input.cwd;
-    const { pending, created, changed } = this.permissions.register(input, {
+    const { pending, created, changed, linked, evicted } = this.permissions.register(input, {
       sessionId,
       project: cwd ? basename(cwd) : null,
     });
-    if (created && sessionId) {
+    if (linked && sessionId) {
       this.push(sessionId, "status", `権限の確認が届きました: ${pending.toolName}`, null, true);
+    }
+    for (const gone of evicted) {
+      if (gone.sessionId) {
+        this.push(gone.sessionId, "status", `保留が多すぎるので捨てました: ${gone.toolName}`, null, true);
+      }
     }
     if (created || changed) this.emitPermissions();
     return this.permissions.wait(key, waitMs);

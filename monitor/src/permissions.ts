@@ -109,15 +109,30 @@ interface Entry {
 }
 
 /** 保留中の権限確認。判断が決まるか、端末側で答えられるまで持つ。 */
+interface Decided {
+  decision: PermissionDecision;
+  at: number;
+  toolName: string;
+  inputPreview: string;
+}
+
 export class PermissionRegistry {
   private entries = new Map<string, Entry>();
-  private decided = new Map<string, { decision: PermissionDecision; at: number }>();
+  private decided = new Map<string, Decided>();
 
-  /** すでに判断が出ている申請なら、それを渡して忘れる。無ければ null。 */
-  takeDecision(key: string, now = Date.now()): PermissionDecision | null {
+  /**
+   * すでに判断が出ている申請なら、それを渡して忘れる。無ければ null。
+   * 同じ鍵でも中身が違えば別の確認なので渡さない（無確認で通してしまわないため）。
+   */
+  takeDecision(
+    key: string,
+    input: Pick<PermissionRequestInput, "toolName" | "inputPreview">,
+    now = Date.now(),
+  ): PermissionDecision | null {
     const hit = this.decided.get(key);
     if (!hit) return null;
     this.decided.delete(key);
+    if (hit.toolName !== input.toolName || hit.inputPreview !== input.inputPreview) return null;
     return now - hit.at < DECIDED_TTL_MS ? hit.decision : null;
   }
 
@@ -126,7 +141,15 @@ export class PermissionRegistry {
     input: PermissionRequestInput,
     link: { sessionId: string | null; project: string | null },
     now = Date.now(),
-  ): { pending: PendingPermission; created: boolean; changed: boolean } {
+  ): {
+    pending: PendingPermission;
+    created: boolean;
+    changed: boolean;
+    /** 今回はじめてセッションに紐付いた。 */
+    linked: boolean;
+    /** 上限を超えて捨てた分。 */
+    evicted: PendingPermission[];
+  } {
     const key = pendingKey(input);
     const existing = this.entries.get(key);
     if (existing) {
@@ -134,11 +157,23 @@ export class PermissionRegistry {
       // セッションは後から在庫に載ることがあるので、引けた分だけ上書きする。
       const sessionId = link.sessionId ?? existing.pending.sessionId;
       const project = link.project ?? existing.pending.project;
-      const changed =
+      const linked = !existing.pending.sessionId && !!sessionId;
+      let changed =
         sessionId !== existing.pending.sessionId || project !== existing.pending.project;
       existing.pending.sessionId = sessionId;
       existing.pending.project = project;
-      return { pending: existing.pending, created: false, changed };
+      // 鍵が同じでも中身が違えば別の確認。古い表示のまま答えさせない。
+      if (
+        existing.pending.toolName !== input.toolName ||
+        existing.pending.inputPreview !== input.inputPreview
+      ) {
+        existing.pending.toolName = input.toolName;
+        existing.pending.description = input.description;
+        existing.pending.inputPreview = input.inputPreview;
+        existing.pending.askedAt = now;
+        changed = true;
+      }
+      return { pending: existing.pending, created: false, changed, linked, evicted: [] };
     }
     const pending: PendingPermission = {
       key,
@@ -151,20 +186,28 @@ export class PermissionRegistry {
       askedAt: now,
     };
     this.entries.set(key, { pending, seenAt: now, waiters: [] });
-    this.evictOverflow();
-    return { pending, created: true, changed: true };
+    return {
+      pending,
+      created: true,
+      changed: true,
+      linked: !!link.sessionId,
+      evicted: this.evictOverflow(),
+    };
   }
 
   /** 上限を超えた分を古い順に捨てる。 */
-  private evictOverflow(): void {
-    if (this.entries.size <= MAX_PENDING) return;
+  private evictOverflow(): PendingPermission[] {
+    if (this.entries.size <= MAX_PENDING) return [];
     const oldest = [...this.entries.entries()].sort(
       (a, b) => a[1].pending.askedAt - b[1].pending.askedAt,
     );
+    const evicted: PendingPermission[] = [];
     for (const [key, entry] of oldest.slice(0, this.entries.size - MAX_PENDING)) {
       this.entries.delete(key);
       for (const waiter of entry.waiters) waiter("dropped");
+      evicted.push(entry.pending);
     }
+    return evicted;
   }
 
   /** 判断が出るまで待つ。出なければ timeout を返してチャネルに取り直させる。 */
@@ -189,7 +232,11 @@ export class PermissionRegistry {
     const entry = this.entries.get(key);
     if (!entry) return null;
     this.entries.delete(key);
-    this.decided.set(key, { decision, at: now });
+    // 待ち手が居ない時だけ取り置く。配れた分まで残すと、次に来た別の確認に適用されかねない。
+    if (entry.waiters.length === 0) {
+      const { toolName, inputPreview } = entry.pending;
+      this.decided.set(key, { decision, at: now, toolName, inputPreview });
+    }
     for (const waiter of entry.waiters) waiter(decision);
     return entry.pending;
   }
