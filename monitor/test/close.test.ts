@@ -1,5 +1,6 @@
 // Xcode を閉じる操作。パスを AppleScript に埋め込むと `"` や `\` を含むパスで壊れるので、argv 渡しを押さえる。
 import { closeArgs, isCloseApp, parseCloseState } from "../src/close.js";
+import { failureReason } from "../src/open.js";
 
 let ok = 0;
 let ng = 0;
@@ -55,6 +56,17 @@ t("not_open", parseCloseState("not_open\n"), "not_open");
 t("not_running", parseCloseState(" not_running "), "not_running");
 t("知らない応答は null", parseCloseState("something else"), null);
 t("空の応答は null", parseCloseState(""), null);
+
+// 打ち切られた時にコマンド全文を画面へ出さない（スクリプトが丸ごと赤字で出ていた）
+{
+  const killed = Object.assign(new Error("Command failed: /usr/bin/osascript -e on run argv"), { killed: true });
+  t("打ち切りは言い換える", failureReason(killed, ""), "応答がありません（確認ダイアログが出ているかもしれません）");
+  const signaled = Object.assign(new Error("Command failed"), { signal: "SIGTERM" });
+  t("シグナルでも言い換える", failureReason(signaled, ""), "応答がありません（確認ダイアログが出ているかもしれません）");
+  const plain = Object.assign(new Error("boom"), {});
+  t("ふつうの失敗は stderr を出す", failureReason(plain, "  やられた  "), "やられた");
+  t("stderr が空なら message", failureReason(plain, ""), "boom");
+}
 
 console.log(`close: ${ok} OK / ${ng} NG`);
 if (ng > 0) process.exit(1);

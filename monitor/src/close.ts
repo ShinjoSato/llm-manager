@@ -1,6 +1,7 @@
 // Xcode から 1 つのワークスペースだけを閉じる。アプリごと終了はしない。
 import { execFile } from "node:child_process";
 import { isAbsolute } from "node:path";
+import { failureReason } from "./open.js";
 
 export const CLOSE_APPS = ["xcode"] as const;
 export type CloseApp = (typeof CLOSE_APPS)[number];
@@ -64,7 +65,7 @@ export function closeXcodeWorkspace(target: string): Promise<CloseResult> {
       closeArgs(target),
       { timeout: TIMEOUT_MS },
       (err, stdout, stderr) => {
-        if (err) return resolve({ ok: false, error: stderr.trim() || err.message, code: "failed" });
+        if (err) return resolve({ ok: false, error: failureReason(err, stderr), code: "failed" });
         const state = parseCloseState(stdout);
         if (!state) return resolve({ ok: false, error: "応答を読めません", code: "failed" });
         resolve({ ok: true, state });

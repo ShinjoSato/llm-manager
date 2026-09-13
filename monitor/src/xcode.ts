@@ -1,5 +1,5 @@
 // セッションの作業場所から Xcode で開く対象を探す。規則は claude-deck の findXcodeProject と揃える。
-import { readdirSync } from "node:fs";
+import { readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 const MAX_DEPTH = 3;
@@ -42,7 +42,16 @@ export function findXcodeProject(dir: string): string | null {
       if (depth < MAX_DEPTH) queue.push([path, depth + 1]);
     }
   }
-  return best?.path ?? null;
+  // Xcode が返すのは実パスなので、symlink 配下だと未解決のままでは比較が外れる。
+  return best ? resolved(best.path) : null;
+}
+
+function resolved(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 function better(best: Candidate | null, depth: number, workspace: boolean): boolean {
