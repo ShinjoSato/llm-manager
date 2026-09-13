@@ -141,11 +141,12 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント |
 | POST | `/api/sessions/:id/message` | そのセッションの受信箱へ伝言を送る |
 | POST | `/api/sessions/:id/open` | そのセッションの作業場所を開く（`{"app":"vscode"\|"xcode"}`） |
+| POST | `/api/sessions/:id/close` | そのセッションのワークスペースを Xcode から閉じる（`{"app":"xcode"}`） |
 | POST | `/hook` | フックの JSON をそのまま受け取る |
 
 CORS は付けていない（UI は同一オリジン配信、開発時は Vite の proxy 経由）。付けると、
 ブラウザで開いた任意のサイトから cwd や作業内容を読まれるうえ、**セッションへ伝言を送られる**。
-同じ理由で `/api/sessions/:id/message` と `/api/sessions/:id/open` は `content-type: application/json`
+同じ理由で `/api/sessions/:id/message` と `/api/sessions/:id/open` `/api/sessions/:id/close` は `content-type: application/json`
 を必須にしている（プリフライトを回避した cross-origin POST を弾くため）。
 
 あわせて全エンドポイント（`/events` の SSE と静的配信を含む）で `Host` / `Origin` を検証している。
@@ -172,6 +173,21 @@ IPv4 も許可に加える。cookie は**ホスト名**に紐づくので、攻�
   見つからないセッションでは Xcode ボタンを出さない。
 - **探索はセッションを見つけた時に 1 回だけ**行う。後から Xcode プロジェクトを作った場合、
   そのセッションでは Xcode ボタンが出ない（Claude Code を開き直すか monitor を再起動する）。
+
+### Xcode から閉じる
+
+Xcode プロジェクトを持つカードの「閉じる」から、**そのセッションのワークスペースだけ**を閉じる。
+誤クリックを防ぐため、押すと「閉じますか？ はい / やめる」の確認を挟む（6 秒で自動的に引っ込む）。
+
+- 閉じる先も `sessionId` から引く。`osascript` にはパスを埋め込まず `on run argv` の引数で渡す
+  （`"` や `\` を含むパスでスクリプトが壊れるため）。
+- `tell application "Xcode"` は起動していない Xcode を立ち上げてしまうので、先に `running` を見る。
+- Xcode が起動していない／そのワークスペースが開いていない場合も成功として返す（冪等）。
+  応答の `state` は `closed` / `not_open` / `not_running`。
+- アプリごと終了（`quit`）はしない。未保存の変更があれば Xcode が確認ダイアログを出し、
+  ワークスペースは閉じずに残る。UI は「閉じた」と断定せず「閉じるよう伝えました」と出す。
+- VSCode は対象外。Claude Code が VSCode の中で動いていること、AppleScript の辞書が無く
+  「このフォルダのウィンドウだけ閉じる」を指定できないことによる。
 
 ## 伝言を送る
 
