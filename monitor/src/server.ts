@@ -5,6 +5,7 @@
 //   GET  /api/lan        LAN 接続用の案内 / GET /api/lan/qr.svg  その QR（どちらもループバック限定）
 //   POST /api/sessions/:id/message  そのセッションの受信箱へテキストを投稿
 //   POST /api/sessions/:id/open     そのセッションの作業場所を VSCode / Xcode で開く
+//   POST /api/sessions/:id/close    そのセッションのワークスペースを Xcode から閉じる
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
 //   GET  /events         SSE（sessions / feed）
 // 既定はループバック限定。MONITOR_LAN=1 のときだけ LAN へ出し、トークンを持つ端末だけ通す。
@@ -25,6 +26,7 @@ import {
   isPrivateIPv4,
   localIPv4Addresses,
 } from "./origin.js";
+import { isCloseApp } from "./close.js";
 import { isOpenApp } from "./open.js";
 import { loadOrCreateToken, MIN_TOKEN_LENGTH, TOKEN_FILE, tokenEquals } from "./token.js";
 import type { FeedItem, HookPayload, SessionSnapshot } from "./types.js";
@@ -180,6 +182,25 @@ app.post("/api/sessions/:sessionId/open", async (c) => {
   if (!isOpenApp(body.app)) return c.json({ ok: false, error: "app は vscode / xcode です" }, 400);
 
   const result = await hub.openInApp(c.req.param("sessionId"), body.app);
+  if (result.ok) return c.json(result);
+  const status = result.code === "not_found" ? 404 : 409;
+  return c.json(result, status);
+});
+
+// 閉じる先もパスで受け取らない。開いているワークスペースは sessionId から引く。
+app.post("/api/sessions/:sessionId/close", async (c) => {
+  if (!c.req.header("content-type")?.startsWith("application/json")) {
+    return c.json({ ok: false, error: "content-type must be application/json" }, 415);
+  }
+  let body: { app?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "invalid json" }, 400);
+  }
+  if (!isCloseApp(body.app)) return c.json({ ok: false, error: "app は xcode です" }, 400);
+
+  const result = await hub.closeInApp(c.req.param("sessionId"), body.app);
   if (result.ok) return c.json(result);
   const status = result.code === "not_found" ? 404 : 409;
   return c.json(result, status);

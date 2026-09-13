@@ -11,6 +11,12 @@ import {
   sendToSession,
   type SendResult,
 } from "./messaging.js";
+import {
+  closeXcodeWorkspace,
+  type CloseApp,
+  type CloseResult,
+  type CloseState,
+} from "./close.js";
 import { APP_NAMES, openWithApp, type OpenApp, type OpenResult } from "./open.js";
 import { primeMeta, TranscriptReader } from "./transcript.js";
 import { findXcodeProject } from "./xcode.js";
@@ -40,6 +46,13 @@ const TRANSCRIPT_INTERVAL_MS = 250;
 /** サブエージェント数の走査は syscall が多いので実況ポーリングより粗くする。 */
 const AGENT_SCAN_INTERVAL_MS = 2_000;
 const FEED_LIMIT = 300;
+
+/** 閉じる操作のフィードに出す文言。 */
+const CLOSE_NOTES: Record<CloseState, string> = {
+  closed: "ワークスペースを閉じました",
+  not_open: "ワークスペースは開かれていませんでした",
+  not_running: "起動していませんでした",
+};
 
 interface SessionState {
   raw: RawSession;
@@ -500,6 +513,24 @@ export class SessionHub extends EventEmitter {
       result.ok
         ? `${APP_NAMES[app]} で開きました`
         : `${APP_NAMES[app]} を開けません: ${truncate(result.error ?? "", 120)}`,
+    );
+    return result;
+  }
+
+  /** そのセッションのワークスペースだけを閉じる。閉じる先はリクエストではなく cwd から引く。 */
+  async closeInApp(sessionId: string, app: CloseApp): Promise<CloseResult> {
+    const state = this.sessions.get(sessionId);
+    if (!state) return { ok: false, error: "セッションが見つかりません", code: "not_found" };
+    if (!state.xcodeProject)
+      return { ok: false, error: "Xcode プロジェクトが見つかりません", code: "no_project" };
+
+    const result = await closeXcodeWorkspace(state.xcodeProject);
+    this.push(
+      sessionId,
+      "status",
+      result.ok
+        ? `${APP_NAMES[app]}: ${CLOSE_NOTES[result.state ?? "not_open"]}`
+        : `${APP_NAMES[app]} を閉じられません: ${truncate(result.error ?? "", 120)}`,
     );
     return result;
   }

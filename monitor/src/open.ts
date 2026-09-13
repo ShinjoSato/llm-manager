@@ -25,6 +25,12 @@ export function isOpenApp(value: unknown): value is OpenApp {
   return typeof value === "string" && (OPEN_APPS as readonly string[]).includes(value);
 }
 
+/** 実行に失敗した理由。打ち切りは err.message にコマンド全文が入るので出さない。 */
+export function failureReason(err: Error & { killed?: boolean; signal?: string }, stderr: string): string {
+  if (err.killed || err.signal) return "応答がありません（確認ダイアログが出ているかもしれません）";
+  return stderr.trim() || err.message;
+}
+
 /** シェルを経由せず引数配列で渡す。空白入りのパス（`App Store Checker.xcodeproj`）もそのまま通る。 */
 export function openWithApp(app: OpenApp, target: string): Promise<OpenResult> {
   // 先頭が `-` のパスは open のオプションとして解釈される。
@@ -38,7 +44,7 @@ export function openWithApp(app: OpenApp, target: string): Promise<OpenResult> {
       { timeout: TIMEOUT_MS },
       (err, _stdout, stderr) => {
         if (!err) return resolve({ ok: true });
-        resolve({ ok: false, error: stderr.trim() || err.message, code: "failed" });
+        resolve({ ok: false, error: failureReason(err, stderr), code: "failed" });
       },
     );
   });

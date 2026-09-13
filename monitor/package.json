@@ -8,7 +8,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "npm --prefix ui install && npm --prefix ui run build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/origin.test.ts && tsx test/token.test.ts && tsx test/lan.test.ts"
+    "test": "tsx test/origin.test.ts && tsx test/token.test.ts && tsx test/lan.test.ts && tsx test/close.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
