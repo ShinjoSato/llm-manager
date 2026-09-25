@@ -1,16 +1,19 @@
 #!/bin/sh
 # Claude Code の statusLine から呼ばれる。標準入力の JSON を表示し、使用量を data/claude-usage.json に残す。
-# 高頻度で呼ばれるので、重い処理・外部通信は入れない。書き込みに失敗しても表示は必ず出す。
+# 高頻度で呼ばれるので、重い処理・外部通信は入れない。
 input=$(cat)
 
 five_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty' 2>/dev/null)
 five_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null)
 week_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty' 2>/dev/null)
 
+# 整数以外を算術展開に渡すとエラーで表示が壊れるので、ここで捨てる。
+case $five_reset in '' | *[!0-9]*) five_reset="" ;; esac
+
 parts=""
 
 if [ -n "$five_pct" ]; then
-  five_pct_int=$(printf '%.0f' "$five_pct")
+  five_pct_int=$(LC_ALL=C printf '%.0f' "$five_pct")
   if [ -n "$five_reset" ]; then
     now=$(date +%s)
     diff=$((five_reset - now))
@@ -32,7 +35,7 @@ if [ -n "$five_pct" ]; then
 fi
 
 if [ -n "$week_pct" ]; then
-  week_pct_int=$(printf '%.0f' "$week_pct")
+  week_pct_int=$(LC_ALL=C printf '%.0f' "$week_pct")
   week_part="週間: ${week_pct_int}%"
   if [ -n "$parts" ]; then
     parts="${parts} | ${week_part}"
@@ -41,7 +44,7 @@ if [ -n "$week_pct" ]; then
   fi
 fi
 
-# 先に表示を出し切る。以降で何が起きてもステータスラインは従来どおり出る。
+# 書き込みより先に出す。記録に失敗しても表示内容は変わらない。
 if [ -n "$parts" ]; then
   printf "%s" "$parts"
 fi
@@ -57,7 +60,7 @@ out="${out_dir}/claude-usage.json"
 
 usage=$(echo "$input" | jq -c --argjson now "$(date +%s)000" '
   def win: if . == null or .used_percentage == null then null
-    else { usedPercentage: .used_percentage, resetsAt: (if .resets_at then .resets_at * 1000 else null end) } end;
+    else { usedPercentage: .used_percentage, resetsAt: (if (.resets_at | type) == "number" then .resets_at * 1000 else null end) } end;
   { fetchedAt: $now, fiveHour: (.rate_limits.five_hour | win), sevenDay: (.rate_limits.seven_day | win) }
 ' 2>/dev/null) || exit 0
 [ -n "$usage" ] || exit 0
@@ -65,6 +68,7 @@ usage=$(echo "$input" | jq -c --argjson now "$(date +%s)000" '
 # 同じディレクトリ内の mv は原子的。読み手が半端な JSON を掴まない。
 mkdir -p "$out_dir" 2>/dev/null || exit 0
 tmp="${out}.$$"
+trap 'rm -f "$tmp"' EXIT INT TERM
 if printf '%s\n' "$usage" > "$tmp" 2>/dev/null; then
   mv -f "$tmp" "$out" 2>/dev/null || rm -f "$tmp" 2>/dev/null
 else

@@ -1,7 +1,8 @@
 // 残量カードの表示。古い値をそれと分からず見せないことが主眼。
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { UsageCard, USAGE_STALE_MS } from "../src/components/UsageCard.js";
+import { UsageCard } from "../src/components/UsageCard.js";
+import { USAGE_STALE_MS } from "../src/format.js";
 import type { UsageWindow } from "../../src/types.js";
 
 const NOW = 1_800_000_000_000;
@@ -51,6 +52,10 @@ t("古い理由を title で補う", stale.includes("稼働中のセッション
 const none = html(null, null);
 t("値が無ければ —", none.includes("—"));
 t("設定を促す", none.includes("statusLine 未設定"));
+
+const half = html(null, NOW);
+t("片方のウィンドウだけ欠けたら未取得", half.includes("未取得"));
+t("その時は設定を促さない", !half.includes("statusLine 未設定"));
 
 console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗`);
 if (ng) process.exitCode = 1;

@@ -2,8 +2,7 @@ import { readFileSync } from "node:fs";
 import { USAGE_JSON } from "./paths.js";
 import type { UsageData, UsageWindow } from "../../../shared/types.js";
 
-// Claude Code の 5時間 / 7日間ウィンドウの使用量。monitor/scripts/statusline.sh が書いたファイルを読むだけ。
-// statusLine が未設定ならファイルが無いので、カレンダー未設定時と同じく null で no-op になる。
+// monitor/scripts/statusline.sh が書いたファイルを読むだけ。未設定ならファイルが無く null になる。
 
 export function collectUsage(path: string = USAGE_JSON): UsageData | null {
   try {

@@ -33,6 +33,9 @@ export function until(ts: number | null, now: number): string {
   return h > 0 ? `${h}時間${m}分後` : `${m}分後`;
 }
 
+// statusline は Claude Code が動いている間しか呼ばれない。これを超えたら古い値として扱う。
+export const USAGE_STALE_MS = 10 * 60_000;
+
 /** 上限ウィンドウの残り%。使用率は 0〜100 に収める。 */
 export function remainingPct(used: number): number {
   return Math.max(0, Math.min(100, 100 - used));

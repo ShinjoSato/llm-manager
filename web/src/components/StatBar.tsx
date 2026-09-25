@@ -18,7 +18,7 @@ export function StatBar({ dash, highlights }: { dash: Dashboard; highlights: Hig
     ...new Set(apps.map((p) => p.appstore!.versions?.[0]?.stateLabel).filter(Boolean)),
   ].join(" / ");
 
-  // statusLine 未設定ならファイルが無く usage は null。その時は残量カードを出さない。
+  // statusLine 未設定ならファイルが無く usage は null。
   const usage = dash.usage ?? null;
 
   return (

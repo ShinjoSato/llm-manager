@@ -1,11 +1,8 @@
 import type { ReactNode } from "react";
 import type { UsageWindow } from "../../../src/types.js";
-import { ago, remainingPct, until } from "../format.js";
+import { ago, remainingPct, until, USAGE_STALE_MS } from "../format.js";
 import { USAGE_THRESHOLD } from "../useNotify.js";
 import { StatCard } from "./ui.js";
-
-// statusline は Claude Code が動いている間しか呼ばれない。これを超えたら古い値として見せる。
-export const USAGE_STALE_MS = 10 * 60_000;
 
 /** 上限ウィンドウの残り。取得時刻も添えて、セッション停止中の古い値と区別できるようにする。 */
 export function UsageCard({
@@ -21,14 +18,14 @@ export function UsageCard({
   fetchedAt: number | null;
   now: number;
 }) {
-  if (!w || fetchedAt === null) {
+  if (fetchedAt === null || !w) {
     return (
       <StatCard
         icon={icon}
         accent="text-slate-500"
         label={label}
         value="—"
-        sub="statusLine 未設定"
+        sub={fetchedAt === null ? "statusLine 未設定" : "未取得"}
       />
     );
   }

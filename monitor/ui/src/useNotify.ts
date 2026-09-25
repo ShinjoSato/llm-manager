@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionSnapshot, SessionStatus, UsageSnapshot } from "../../src/types.js";
-import { remainingPct } from "./format.js";
+import { remainingPct, USAGE_STALE_MS } from "./format.js";
 
 const STORAGE_KEY = "monitor.notify";
 /**
@@ -46,13 +46,21 @@ export function collectUsageAlerts(
   usage: UsageSnapshot | null,
   state: UsageAlertState,
   on: boolean,
+  now: number,
   threshold: number = USAGE_THRESHOLD,
 ): { kind: UsageWindowKind; remaining: number }[] {
   if (!on || !usage) return [];
+  // 稼働中のセッションが無い間は値が止まる。古い記録で鳴らし直さない。
+  if (now - usage.fetchedAt > USAGE_STALE_MS) return [];
   const out: { kind: UsageWindowKind; remaining: number }[] = [];
   for (const kind of USAGE_WINDOWS) {
     const w = usage[kind];
     if (!w) continue;
+    // 期限が過ぎた値は次の記録を待つ。リセット後の残量はまだ分からない。
+    if (w.resetsAt !== null && w.resetsAt <= now) {
+      state[kind] = null;
+      continue;
+    }
     const remaining = remainingPct(w.usedPercentage);
     if (remaining >= threshold) {
       state[kind] = null; // ウィンドウが替わって回復した。次に割ったらまた鳴らす
@@ -105,7 +113,7 @@ export function loadSetting(): NotifySetting {
   try {
     const o = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
     if (!o || typeof o !== "object") return DEFAULT;
-    // 後から足した項目は、保存済みの設定に無ければ既定に倒す。
+    // 保存済み設定に無い項目は既定に倒す。
     return {
       idle: Boolean(o.idle),
       attention: Boolean(o.attention),
@@ -164,7 +172,12 @@ export function useNotify(sessions: SessionSnapshot[], usage: UsageSnapshot | nu
   }, [sessions, setting]);
 
   useEffect(() => {
-    for (const { kind, remaining } of collectUsageAlerts(usage, usageAlerts.current, setting.usage)) {
+    for (const { kind, remaining } of collectUsageAlerts(
+      usage,
+      usageAlerts.current,
+      setting.usage,
+      Date.now(),
+    )) {
       const sent = showUsage(kind, remaining);
       setLastAttempt(
         `${USAGE_LABELS[kind]} 残り ${Math.round(remaining)}% ${sent ? "通知した" : "出せず(許可なし)"}`,
