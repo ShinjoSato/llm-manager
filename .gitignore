@@ -6,6 +6,7 @@ secrets/*
 # 生成物（collect / appstore が書き出す）
 data/dashboard.json
 data/appstore.json
+data/claude-usage.json
 
 # Node / ビルド成果物
 node_modules/

@@ -2,12 +2,13 @@
 //   GET  /api/health
 //   GET  /api/sessions   スナップショット
 //   GET  /api/feed       直近のライブフィード
+//   GET  /api/usage      5時間 / 7日間ウィンドウの使用量（statusline スクリプトが残した値）
 //   GET  /api/lan        LAN 接続用の案内 / GET /api/lan/qr.svg  その QR（どちらもループバック限定）
 //   POST /api/sessions/:id/message  そのセッションの受信箱へテキストを投稿
 //   POST /api/sessions/:id/open     そのセッションの作業場所を VSCode / Xcode で開く
 //   POST /api/sessions/:id/close    そのセッションのワークスペースを Xcode から閉じる
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
-//   GET  /events         SSE（sessions / feed）
+//   GET  /events         SSE（sessions / feed / usage）
 // 既定はループバック限定。MONITOR_LAN=1 のときだけ LAN へ出し、トークンを持つ端末だけ通す。
 import { serve, type HttpBindings } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -29,7 +30,7 @@ import {
 import { isCloseApp } from "./close.js";
 import { isOpenApp } from "./open.js";
 import { loadOrCreateToken, MIN_TOKEN_LENGTH, TOKEN_FILE, tokenEquals } from "./token.js";
-import type { FeedItem, HookPayload, SessionSnapshot } from "./types.js";
+import type { FeedItem, HookPayload, SessionSnapshot, UsageSnapshot } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const UI_DIST = join(HERE, "..", "ui", "dist");
@@ -124,6 +125,7 @@ function unauthorized(c: Context): Response {
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
 app.get("/api/feed", (c) => c.json(hub.recentFeed()));
+app.get("/api/usage", (c) => c.json(hub.usageSnapshot()));
 
 // 別端末を繋ぐための案内。ループバック以外には存在ごと伏せる（理由は lan.ts）。
 app.get("/api/lan", (c) => {
@@ -227,10 +229,16 @@ app.get("/events", (c) =>
     let latest: SessionSnapshot[] | null = hub.snapshot();
     let dirty = true;
     const feedQueue: FeedItem[] = [];
+    let usage: UsageSnapshot | null = hub.usageSnapshot();
+    let usageDirty = true;
 
     const onSessions = (s: SessionSnapshot[]) => {
       latest = s;
       dirty = true;
+    };
+    const onUsage = (u: UsageSnapshot | null) => {
+      usage = u;
+      usageDirty = true;
     };
     const onTick = (s: SessionSnapshot[]) => {
       latest = s;
@@ -243,6 +251,7 @@ app.get("/events", (c) =>
       hub.off("sessions", onSessions);
       hub.off("tick", onTick);
       hub.off("feed", onFeed);
+      hub.off("usage", onUsage);
     };
     stream.onAbort(cleanup);
 
@@ -251,6 +260,7 @@ app.get("/events", (c) =>
       hub.on("sessions", onSessions);
       hub.on("tick", onTick);
       hub.on("feed", onFeed);
+      hub.on("usage", onUsage);
 
       await stream.writeSSE({ event: "feed-batch", data: JSON.stringify(hub.recentFeed()) });
 
@@ -262,6 +272,10 @@ app.get("/events", (c) =>
           await stream.writeSSE({ event: "sessions", data: JSON.stringify(latest) });
           dirty = false;
           lastSent = now;
+        }
+        if (usageDirty) {
+          await stream.writeSSE({ event: "usage", data: JSON.stringify(usage) });
+          usageDirty = false;
         }
         while (feedQueue.length) {
           await stream.writeSSE({ event: "feed", data: JSON.stringify(feedQueue.shift()) });

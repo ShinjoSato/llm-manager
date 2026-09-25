@@ -74,6 +74,7 @@ Claude Code がローカルに残す記録を 3 層で集約する。
 | 在庫 | `~/.claude/sessions/<pid>.json` + `kill(pid,0)` | 稼働中セッション一覧・cwd・起動時刻 | 3 秒 |
 | 実況 | `~/.claude/projects/<slug>/<sessionId>.jsonl` の末尾差分 | 実行中ツール・ブランチ・作業内容・トークン量 | 250ms |
 | 状態 | フックからの `POST /hook` | 入力待ち・権限待ち・API エラー・完了 | 即時 |
+| 残量 | `data/claude-usage.json`（statusLine が書く） | 5時間 / 7日間ウィンドウの使用率・リセット時刻 | 3 秒 |
 
 **在庫層と実況層は設定不要**で、monitor を起動するだけで全セッションが並ぶ。
 フック層は任意だが、**「なぜ止まっているか」はログに残らない**ため、これを入れると精度が上がる（下記）。
@@ -129,6 +130,38 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 既に `Notification` / `Stop` にフックがある場合は、同じ `hooks` 配列に要素として足す（マッチしたフックは並列実行される）。
 未知の `notification_type` はライブフィードに「通知: <種別>」として出るので、届いているのに扱えていない種別に気づける。
 
+## 上限の残量（任意・statusLine 設定が要る）
+
+ヘッダーの「5h 残り」「週 残り」に、Claude Code の 5 時間ウィンドウ / 7 日間ウィンドウの
+**残り%（= 100 − 使用率）** を出す。`/usage` と同じ公式の値で、トークンからの推定ではない。
+
+値は Claude Code が `statusLine` の command に渡す JSON（`rate_limits`）にしか入っていないので、
+**ステータスライン用のスクリプトを monitor 側のものに差し替える**と取れるようになる。
+`~/.claude/settings.json`（ユーザーレベル）を次のようにする。
+
+```jsonc
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/Users/<you>/project/ai-manager/monitor/scripts/statusline.sh"
+  }
+}
+```
+
+- 既に自前のステータスラインを使っている場合は、`monitor/scripts/statusline.sh` に自分の表示を足す
+  （出力先のパスはスクリプトの位置から引いているので、ai-manager の外へコピーすると書き込み先が変わる）
+- スクリプトは受け取った値を `data/claude-usage.json` に**原子的に**書く（同じディレクトリに
+  tmp を作って `mv`）。monitor と server はそれを読むだけで、プロセス間に直接の結合は無い
+- **表示を先に出し切ってから書く。** 書き込みに失敗してもステータスラインは従来どおり出る
+- `jq` が要る（元から使っている）。全セッションから並行して呼ばれるが、書く内容はアカウント単位で
+  同じなので競合しても問題にならない
+- monitor は 3 秒ごとに読み直し、SSE の `usage` イベントで画面へ配る
+- **statusLine は Claude Code が動いている間しか呼ばれない。** 全セッションが終わっている間は値が
+  古いままになるので、カードには必ず取得からの経過を添え、10 分を超えたら色を変えて古いと分かるようにする
+- 残りが **20%** を割ると（ヘッダーの「残量」トグルが ON の時）ブラウザ通知を出す。
+  5h / 週それぞれ 1 回だけで、ウィンドウがリセットされたらまた鳴る
+- 未設定ならファイルが無いだけで、カードは「statusLine 未設定」と出て他の機能には影響しない
+
 ## API
 
 | メソッド | パス | 用途 |
@@ -136,9 +169,10 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/health` | 疎通確認 |
 | GET | `/api/sessions` | 全セッションのスナップショット |
 | GET | `/api/feed` | 直近のライブフィード |
+| GET | `/api/usage` | 5時間 / 7日間ウィンドウの使用量（未取得なら `null`） |
 | GET | `/api/lan` | LAN 接続用の案内 `{enabled, url}`（**ループバック以外は 404**） |
 | GET | `/api/lan/qr.svg` | その QR の SVG（**ループバック以外・LAN 非公開時は 404**） |
-| GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント |
+| GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` / `usage` イベント |
 | POST | `/api/sessions/:id/message` | そのセッションの受信箱へ伝言を送る |
 | POST | `/api/sessions/:id/open` | そのセッションの作業場所を開く（`{"app":"vscode"\|"xcode"}`） |
 | POST | `/api/sessions/:id/close` | そのセッションのワークスペースを Xcode から閉じる（`{"app":"xcode"}`） |

@@ -124,12 +124,25 @@ export interface CalendarData {
   error?: string;
 }
 
+// ── Claude Code の利用上限（monitor/scripts/statusline.sh が書き出す）────
+export interface UsageWindow {
+  usedPercentage: number;
+  resetsAt: number | null;  // Unix ミリ秒。取れないウィンドウもある
+}
+
+export interface UsageData {
+  fetchedAt: number;        // Unix ミリ秒
+  fiveHour: UsageWindow | null;
+  sevenDay: UsageWindow | null;
+}
+
 export interface Dashboard {
   generatedAt: string;
   projects: Project[];
   calendar?: CalendarData | null;
   ranking?: RankingData | null;
   trends?: TrendsData | null;
+  usage?: UsageData | null;
 }
 
 // ── 手動レイヤー（Claude が編集）────────────────────────

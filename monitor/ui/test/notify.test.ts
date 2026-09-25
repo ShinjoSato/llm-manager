@@ -1,10 +1,10 @@
 // 通知の発火判定。鳴らしすぎ・鳴らなすぎのどちらも困るので境界を押さえる。
 import { loadSetting, shouldNotify, type NotifySetting } from "../src/useNotify.js";
 
-const BOTH: NotifySetting = { idle: true, attention: true };
-const ONLY_ATTENTION: NotifySetting = { idle: false, attention: true };
-const ONLY_IDLE: NotifySetting = { idle: true, attention: false };
-const OFF: NotifySetting = { idle: false, attention: false };
+const BOTH: NotifySetting = { idle: true, attention: true, usage: false };
+const ONLY_ATTENTION: NotifySetting = { idle: false, attention: true, usage: false };
+const ONLY_IDLE: NotifySetting = { idle: true, attention: false, usage: false };
+const OFF: NotifySetting = { idle: false, attention: false, usage: false };
 
 let ok = 0;
 let ng = 0;
@@ -112,6 +112,50 @@ function feed(
   collectPending([{ sessionId: "a", project: "x", status: "idle" }], prev, last, BOTH, 1);
   collectPending([{ sessionId: "b", project: "y", status: "idle" }], prev, last, BOTH, 2);
   t("消えたセッションの記録は捨てられる", prev.has("a") === false && prev.has("b"), true);
+}
+
+// ── 上限の残量アラート ──
+import { collectUsageAlerts, emptyUsageAlertState, USAGE_THRESHOLD } from "../src/useNotify.js";
+import type { UsageSnapshot } from "../../src/types.js";
+
+const snap = (five: number | null, seven: number | null, resetsAt: number | null = 111): UsageSnapshot => ({
+  fetchedAt: 1,
+  fiveHour: five === null ? null : { usedPercentage: five, resetsAt },
+  sevenDay: seven === null ? null : { usedPercentage: seven, resetsAt: null },
+});
+
+{
+  const state = emptyUsageAlertState();
+  t("しきい値を割っていなければ鳴らない", collectUsageAlerts(snap(50, 50), state, true).length === 0, true);
+  t("残りちょうど 20% では鳴らない", collectUsageAlerts(snap(80, 50), state, true).length === 0, true);
+  const hit = collectUsageAlerts(snap(81, 50), state, true);
+  t("残り 19% で 5h だけ鳴る", hit.length === 1 && hit[0]?.kind === "fiveHour", true);
+  t("同じウィンドウでは鳴り続けない", collectUsageAlerts(snap(85, 50), state, true).length === 0, true);
+  const reset = collectUsageAlerts(snap(90, 50, 222), state, true);
+  t("ウィンドウが替われば再び鳴る", reset.length === 1 && reset[0]?.kind === "fiveHour", true);
+}
+
+{
+  const state = emptyUsageAlertState();
+  t("週も割れば鳴る", collectUsageAlerts(snap(10, 95), state, true).map((a) => a.kind).join() === "sevenDay", true);
+  t("週も 1 回だけ", collectUsageAlerts(snap(10, 96), state, true).length === 0, true);
+  // 週はリセット時刻が無いので、残りが戻ったことでウィンドウの切り替わりを見る
+  collectUsageAlerts(snap(10, 5), state, true);
+  t("残りが戻った後は再び鳴る", collectUsageAlerts(snap(10, 97), state, true).length === 1, true);
+}
+
+{
+  const state = emptyUsageAlertState();
+  t("オフなら鳴らない", collectUsageAlerts(snap(99, 99), state, false).length === 0, true);
+  t("オンにしたら鳴る", collectUsageAlerts(snap(99, 99), state, true).length === 2, true);
+}
+
+{
+  const state = emptyUsageAlertState();
+  t("値が無ければ鳴らない", collectUsageAlerts(null, state, true).length === 0, true);
+  t("ウィンドウが欠けていても落ちない", collectUsageAlerts(snap(null, null), state, true).length === 0, true);
+  t("しきい値は既定 20%", USAGE_THRESHOLD === 20, true);
+  t("しきい値は呼び出し側で変えられる", collectUsageAlerts(snap(60, 10), state, true, 50).length === 1, true);
 }
 
 console.log(`\n  ${ng === 0 ? "PASS" : "FAIL"}: ${ok} 件成功 / ${ng} 件失敗（合計）`);

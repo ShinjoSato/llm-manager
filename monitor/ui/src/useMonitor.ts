@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { FeedItem, SessionSnapshot } from "../../src/types.js";
+import type { FeedItem, SessionSnapshot, UsageSnapshot } from "../../src/types.js";
 
 // 絞り込みは表示段で行うため、非表示セッションもこの上限を消費する。少し余裕を持たせる。
 const FEED_LIMIT = 400;
@@ -8,6 +8,7 @@ const FEED_LIMIT = 400;
 export function useMonitor() {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
   const [feed, setFeed] = useState<FeedItem[]>([]);
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -19,6 +20,7 @@ export function useMonitor() {
       const item = JSON.parse((e as MessageEvent).data) as FeedItem;
       setFeed((prev) => [item, ...prev].slice(0, FEED_LIMIT));
     });
+    es.addEventListener("usage", (e) => setUsage(JSON.parse((e as MessageEvent).data)));
     es.addEventListener("feed-batch", (e) => {
       const items = JSON.parse((e as MessageEvent).data) as FeedItem[];
       setFeed(items.slice().reverse().slice(0, FEED_LIMIT));
@@ -26,7 +28,7 @@ export function useMonitor() {
     return () => es.close();
   }, []);
 
-  return { sessions, feed, connected };
+  return { sessions, feed, usage, connected };
 }
 
 /** 経過時間の表示を進めるための時計。DOM は React が差分だけ更新する。 */

@@ -19,6 +19,7 @@ import {
 } from "./close.js";
 import { APP_NAMES, openWithApp, type OpenApp, type OpenResult } from "./open.js";
 import { primeMeta, TranscriptReader } from "./transcript.js";
+import { readUsage } from "./usage.js";
 import { findXcodeProject } from "./xcode.js";
 import type {
   AgentInfo,
@@ -30,6 +31,7 @@ import type {
   SessionStatus,
   StatusSource,
   TokenUsage,
+  UsageSnapshot,
 } from "./types.js";
 
 /**
@@ -92,14 +94,17 @@ export class SessionHub extends EventEmitter {
   private feed: FeedItem[] = [];
   private feedSeq = 0;
   private agentTypes = new Map<string, string>();
+  private usage: UsageSnapshot | null = null;
   private timers: NodeJS.Timeout[] = [];
 
   start(): void {
     this.guard(() => this.scanInventory());
     this.guard(() => this.pollTranscripts());
+    this.guard(() => this.pollUsage());
     this.timers.push(
       setInterval(() => this.guard(() => this.scanInventory()), INVENTORY_INTERVAL_MS),
     );
+    this.timers.push(setInterval(() => this.guard(() => this.pollUsage()), INVENTORY_INTERVAL_MS));
     this.timers.push(
       setInterval(() => this.guard(() => this.pollTranscripts()), TRANSCRIPT_INTERVAL_MS),
     );
@@ -319,6 +324,19 @@ export class SessionHub extends EventEmitter {
     // 見つからない場合も覚える。空文字は「読んだが無かった」の意味。
     this.agentTypes.set(metaPath, type ?? "");
     return type;
+  }
+
+  // ── 使用量層 ──────────────────────────────────────
+  /** statusline スクリプトが書いたファイルを読み直す。内容が変わった時だけ配る。 */
+  private pollUsage(): void {
+    const next = readUsage();
+    if (JSON.stringify(next) === JSON.stringify(this.usage)) return;
+    this.usage = next;
+    this.emit("usage", next);
+  }
+
+  usageSnapshot(): UsageSnapshot | null {
+    return this.usage;
   }
 
   // ── フック層 ──────────────────────────────────────

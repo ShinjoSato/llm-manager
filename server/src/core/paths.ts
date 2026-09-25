@@ -11,3 +11,4 @@ export const APPS_TSV = join(ROOT, "projects", "appstore.tsv");
 export const CRED_JSON = join(ROOT, "secrets", "appstore-credentials.json");
 export const DASHBOARD_JSON = join(ROOT, "data", "dashboard.json");
 export const STATE_JSON = join(ROOT, "data", "manager-state.json");
+export const USAGE_JSON = join(ROOT, "data", "claude-usage.json");

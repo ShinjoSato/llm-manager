@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { SessionSnapshot, SessionStatus } from "../../src/types.js";
+import type { SessionSnapshot, SessionStatus, UsageSnapshot } from "../../src/types.js";
+import { remainingPct } from "./format.js";
 
 const STORAGE_KEY = "monitor.notify";
 /**
@@ -13,11 +14,58 @@ export interface NotifySetting {
   idle: boolean;
   /** 許可や返答を求めて止まった時。フック設定が要る。 */
   attention: boolean;
+  /** 上限の残りがしきい値を割った時。statusline スクリプトの設定が要る。 */
+  usage: boolean;
 }
 
-const DEFAULT: NotifySetting = { idle: false, attention: true };
+const DEFAULT: NotifySetting = { idle: false, attention: true, usage: true };
 
 const ATTENTION: SessionStatus[] = ["permission", "waiting", "error"];
+
+/** 残りがこれを割ったら知らせる。 */
+export const USAGE_THRESHOLD = 20;
+
+export type UsageWindowKind = "fiveHour" | "sevenDay";
+
+const USAGE_WINDOWS: UsageWindowKind[] = ["fiveHour", "sevenDay"];
+
+const USAGE_LABELS: Record<UsageWindowKind, string> = {
+  fiveHour: "5時間ウィンドウ",
+  sevenDay: "7日間ウィンドウ",
+};
+
+/** 最後に鳴らしたウィンドウの識別子。同じウィンドウで鳴らし続けないための記憶。 */
+export type UsageAlertState = Record<UsageWindowKind, string | null>;
+
+export function emptyUsageAlertState(): UsageAlertState {
+  return { fiveHour: null, sevenDay: null };
+}
+
+/** しきい値を割ったウィンドウを返す。state はここで更新する。 */
+export function collectUsageAlerts(
+  usage: UsageSnapshot | null,
+  state: UsageAlertState,
+  on: boolean,
+  threshold: number = USAGE_THRESHOLD,
+): { kind: UsageWindowKind; remaining: number }[] {
+  if (!on || !usage) return [];
+  const out: { kind: UsageWindowKind; remaining: number }[] = [];
+  for (const kind of USAGE_WINDOWS) {
+    const w = usage[kind];
+    if (!w) continue;
+    const remaining = remainingPct(w.usedPercentage);
+    if (remaining >= threshold) {
+      state[kind] = null; // ウィンドウが替わって回復した。次に割ったらまた鳴らす
+      continue;
+    }
+    // リセット時刻がウィンドウの識別子になる。取れないウィンドウは回復を待って鳴らし直す。
+    const key = w.resetsAt === null ? "low" : String(w.resetsAt);
+    if (state[kind] === key) continue;
+    state[kind] = key;
+    out.push({ kind, remaining });
+  }
+  return out;
+}
 
 /** 1 回分の走査で通知すべきセッション。prev と lastNotified はここで更新する。 */
 export function collectPending<T extends { sessionId: string; status: SessionStatus }>(
@@ -57,7 +105,12 @@ export function loadSetting(): NotifySetting {
   try {
     const o = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
     if (!o || typeof o !== "object") return DEFAULT;
-    return { idle: Boolean(o.idle), attention: Boolean(o.attention) };
+    // 後から足した項目は、保存済みの設定に無ければ既定に倒す。
+    return {
+      idle: Boolean(o.idle),
+      attention: Boolean(o.attention),
+      usage: o.usage === undefined ? DEFAULT.usage : Boolean(o.usage),
+    };
   } catch {
     return DEFAULT;
   }
@@ -90,13 +143,14 @@ function labelFor(status: SessionStatus, detail: string | null): string {
  * 状態が変わった瞬間だけ画面通知を出す。
  * 通知の許可はユーザー操作を起点に求める必要があるので、設定を有効にした時に要求する。
  */
-export function useNotify(sessions: SessionSnapshot[]) {
+export function useNotify(sessions: SessionSnapshot[], usage: UsageSnapshot | null = null) {
   const [setting, setSetting] = useState<NotifySetting>(loadSetting);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(() =>
     typeof Notification === "undefined" ? "unsupported" : Notification.permission,
   );
   const prev = useRef(new Map<string, SessionStatus>());
   const lastNotified = useRef(new Map<string, number>());
+  const usageAlerts = useRef<UsageAlertState>(emptyUsageAlertState());
   const [lastAttempt, setLastAttempt] = useState<string | null>(null);
 
   useEffect(() => saveSetting(setting), [setting]);
@@ -108,6 +162,15 @@ export function useNotify(sessions: SessionSnapshot[]) {
       setLastAttempt(`${session.project} ${was} → ${session.status} ${sent ? "通知した" : "出せず(許可なし)"}`);
     }
   }, [sessions, setting]);
+
+  useEffect(() => {
+    for (const { kind, remaining } of collectUsageAlerts(usage, usageAlerts.current, setting.usage)) {
+      const sent = showUsage(kind, remaining);
+      setLastAttempt(
+        `${USAGE_LABELS[kind]} 残り ${Math.round(remaining)}% ${sent ? "通知した" : "出せず(許可なし)"}`,
+      );
+    }
+  }, [usage, setting]);
 
   /** 通知の許可を求める。ユーザー操作からのみ呼べる。 */
   async function requestPermission() {
@@ -126,7 +189,7 @@ export function useNotify(sessions: SessionSnapshot[]) {
   async function update(next: NotifySetting) {
     // 直前の値ではなく更新関数で反映する（許可ダイアログ中に別のトグルを押しても消えない）。
     setSetting(() => next);
-    const wantsAny = next.idle || next.attention;
+    const wantsAny = next.idle || next.attention || next.usage;
     if (wantsAny && typeof Notification !== "undefined" && Notification.permission === "default") {
       await requestPermission();
     }
@@ -144,9 +207,27 @@ export function useNotify(sessions: SessionSnapshot[]) {
   }
 
   /** 通知を出したいのに許可がまだ取れていない。 */
-  const needsPermission = (setting.idle || setting.attention) && permission === "default";
+  const needsPermission =
+    (setting.idle || setting.attention || setting.usage) && permission === "default";
 
   return { setting, permission, needsPermission, requestPermission, update, test, lastAttempt };
+}
+
+function showUsage(kind: UsageWindowKind, remaining: number): boolean {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
+  try {
+    const n = new Notification("Claude Code の上限が近づいています", {
+      body: `${USAGE_LABELS[kind]} の残りが ${Math.round(remaining)}% です`,
+      tag: `usage:${kind}`, // 同じウィンドウの通知は積み上げず置き換える
+    });
+    n.onclick = () => {
+      window.focus();
+      n.close();
+    };
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function show(s: SessionSnapshot): boolean {

@@ -4,6 +4,8 @@ import {
   Bell,
   BellOff,
   Box,
+  CalendarClock,
+  Gauge,
   Landmark,
   Layers,
   Pause,
@@ -14,19 +16,20 @@ import { lazy, Suspense, useMemo, type ReactNode } from "react";
 import { LanQrButton } from "./components/LanQr.js";
 import { LiveFeed } from "./components/LiveFeed.js";
 import { SessionCard } from "./components/SessionCard.js";
+import { UsageCard } from "./components/UsageCard.js";
 import { StatCard } from "./components/ui.js";
 import { styleOf } from "./status.js";
 import { useMonitor, useNow } from "./useMonitor.js";
-import { useNotify } from "./useNotify.js";
+import { useNotify, USAGE_THRESHOLD } from "./useNotify.js";
 import { useRenderMode, type RenderMode } from "./render3d.js";
 
 // 描画面は three.js と同じ塊に入るので、立体表示にした時だけ読み込まれる。
 const Stage3DCanvas = lazy(() => import("./three/Stage3DCanvas.js"));
 
 export function App() {
-  const { sessions, feed, connected } = useMonitor();
+  const { sessions, feed, usage, connected } = useMonitor();
   const now = useNow();
-  const notify = useNotify(sessions);
+  const notify = useNotify(sessions, usage);
   const [mode, setMode] = useRenderMode();
   const solid = mode === "solid";
 
@@ -109,6 +112,12 @@ export function App() {
             on={notify.setting.idle}
             onClick={() => void notify.update({ ...notify.setting, idle: !notify.setting.idle })}
           />
+          <NotifyToggle
+            label="残量"
+            hint={`5時間 / 7日間ウィンドウの残りが ${USAGE_THRESHOLD}% を割った時に知らせる`}
+            on={notify.setting.usage}
+            onClick={() => void notify.update({ ...notify.setting, usage: !notify.setting.usage })}
+          />
           {notify.needsPermission && (
             <button
               onClick={() => void notify.requestPermission()}
@@ -142,7 +151,7 @@ export function App() {
         </div>
       </header>
 
-      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
         <StatCard
           icon={<Activity size={18} />}
           accent="text-emerald-300"
@@ -169,6 +178,20 @@ export function App() {
           label="セッション"
           value={count((s) => s.alive)}
           sub="稼働中プロセス"
+        />
+        <UsageCard
+          icon={<Gauge size={18} />}
+          label="5h 残り"
+          window={usage?.fiveHour ?? null}
+          fetchedAt={usage?.fetchedAt ?? null}
+          now={now}
+        />
+        <UsageCard
+          icon={<CalendarClock size={18} />}
+          label="週 残り"
+          window={usage?.sevenDay ?? null}
+          fetchedAt={usage?.fetchedAt ?? null}
+          now={now}
         />
       </div>
 

@@ -23,6 +23,21 @@ export function dur(ts: number | null, now: number): string {
   return h > 0 ? `${h}時間${m}分` : `${m}分`;
 }
 
+/** 未来の時刻までの残り。dur の向き違い。 */
+export function until(ts: number | null, now: number): string {
+  if (!ts) return "—";
+  const s = Math.max(0, Math.floor((ts - now) / 1000));
+  if (s < 60) return "まもなく";
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}時間${m}分後` : `${m}分後`;
+}
+
+/** 上限ウィンドウの残り%。使用率は 0〜100 に収める。 */
+export function remainingPct(used: number): number {
+  return Math.max(0, Math.min(100, 100 - used));
+}
+
 export function kilo(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
