@@ -33,7 +33,7 @@ enum ProjectRegistry {
             return URL(fileURLWithPath: env)
         }
 
-        // CWD から親方向へ projects/registry.tsv を探索（desktop/ から実行された場合に効く）
+        // CWD から親方向へ projects/registry.tsv を探索（mac/ から実行された場合に効く）
         var dir = URL(fileURLWithPath: fm.currentDirectoryPath)
         for _ in 0..<6 {
             let candidate = dir.appendingPathComponent("projects/registry.tsv")

@@ -14,9 +14,10 @@ npm start
 既定は **localhost 限定**（`127.0.0.1` にのみ bind・認証なし）。同じ Wi-Fi の別端末から見たい時だけ
 `MONITOR_LAN=1` で開ける（下記）。セッションへ書き込む口があるため、それ以外では外に出さない。
 
-セッションから読むのは記録だけで、こちらから行うのは「伝言を 1 通送る」ことだけ。
-届いたテキストは受信側で**別セッションからのメッセージ**として扱われ、指示や承認にはならない
-（権限の承認・設定変更・スラッシュコマンドの実行はいずれも不可）。
+セッションから読むのは記録だけ。こちらから行うのは「伝言を 1 通送る」ことと、
+Channels を載せたセッションの「権限確認に答える」ことの 2 つ。
+伝言は受信側で**別セッションからのメッセージ**として扱われ、指示や承認にはならない
+（設定変更・スラッシュコマンドの実行も不可）。権限確認は別の経路で、**手元（ループバック）からだけ**答えられる。
 
 ### 開発時（ホットリロード）
 
@@ -171,10 +172,14 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/health` | 疎通確認 |
 | GET | `/api/sessions` | 全セッションのスナップショット |
 | GET | `/api/feed` | 直近のライブフィード |
+| GET | `/api/sessions/:id/transcript` | そのセッションの会話履歴（`?after=<id>` で差分。下記） |
 | GET | `/api/usage` | 5時間 / 7日間ウィンドウの使用量（未取得なら `null`） |
 | GET | `/api/lan` | LAN 接続用の案内 `{enabled, url}`（**ループバック以外は 404**） |
 | GET | `/api/lan/qr.svg` | その QR の SVG（**ループバック以外・LAN 非公開時は 404**） |
-| GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` / `usage` イベント |
+| GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` / `usage` / `permissions` イベント（`?transcripts=` で `transcript` も） |
+| GET | `/api/permissions` | 保留中の権限確認（**ループバック以外は 404**） |
+| POST | `/api/permissions/:key` | 許可・拒否（`{"decision":"allow"\|"deny"}`・**ループバック以外は 404**） |
+| POST | `/api/channel/permissions` | チャネルからの権限確認（**ループバック以外は 404**） |
 | POST | `/api/sessions/:id/message` | そのセッションの受信箱へ伝言を送る |
 | POST | `/api/sessions/:id/open` | そのセッションの作業場所を開く（`{"app":"vscode"\|"xcode"}`） |
 | POST | `/api/sessions/:id/close` | そのセッションのワークスペースを Xcode から閉じる（`{"app":"xcode"}`） |
@@ -197,6 +202,54 @@ IPv4 も許可に加える。cookie は**ホスト名**に紐づくので、攻�
 
 開発サーバーを `vite --host` で LAN に出すと、proxy がループバック経由で monitor に繋ぐため
 トークンを要求されない踏み台になる。`MONITOR_LAN=1` を使う間は `--host` を付けないこと。
+
+## 会話履歴（チャット表示用）
+
+mac アプリのトークルームが使う。jsonl を先頭から読み、チャットの単位に整形して返す（読み取り専用）。
+Host / Origin 検証・LAN トークンは他の API と同じく全体のミドルウェアで掛かる。
+
+```
+GET /api/sessions/<sessionId>/transcript            → 全件
+GET /api/sessions/<sessionId>/transcript?after=<id> → その id より後だけ
+```
+
+```jsonc
+{
+  "sessionId": "9c5a73ea-…",
+  "reset": false,          // after の id が見つからず全件を返した時 true（手元の履歴を置き換える）
+  "items": [
+    { "id": "bac3…:0", "kind": "user",      "at": 1790773952000, "text": "…", "tool": null, "parentId": null },
+    { "id": "40d6…:0", "kind": "assistant", "at": 1790773954648, "text": "…", "tool": null, "parentId": null },
+    { "id": "9c52…:0", "kind": "tool",      "at": 1790773956269, "text": null,
+      "tool": { "name": "Bash", "description": "…", "target": "ls monitor" }, "parentId": "40d6…:0" }
+  ]
+}
+```
+
+- `kind`: `user`（ユーザーのプロンプト。tool_result・仕組み側の注入・isMeta は除く。スラッシュコマンドは `/name args` の形）/
+  `assistant`（テキスト応答。thinking は除く）/ `tool`（ツール呼び出し）
+- `id`: `<行の uuid>:<ブロック番号>`。ログは追記のみなので同じ要素は常に同じ id になる
+- `at`: epoch ミリ秒（無ければ null）。全フィールドが常に存在し、値が無い時は null（Swift の Codable で Optional にすればそのまま読める）
+- `tool`: `target` は対象の要約（file_path / コマンド 1 行目 / パターン / URL / スキル名 / サブエージェント種別の順で 1 つ・300 文字まで）。入力の全文は返さない
+- `parentId`: tool がぶら下がる直前の発話（user / assistant）の id
+- ログが見つからなければ 404、sessionId の形が不正なら 400。終了済みのセッションも jsonl が残っていれば読める
+
+**追記は SSE で届く。** `/events?transcripts=<id>[,<id>…]`（全セッションなら `*`）で接続すると、
+`event: transcript` / `data: {"sessionId": "…", "items": [ … ]}` が流れる。購読した時点までの内容は流さないので、
+取りこぼさない順序は「SSE を張る → GET（全件 or `?after=` 手元の最後）→ 以降は SSE」。重なった分は id で捨てる。
+クエリを付けない接続（一覧画面）には流さない。
+
+## 埋め込み表示（ステージだけ）
+
+```
+/?embed=stage&session=<sessionId>&mode=2d|3d&bg=transparent|<16 進色>
+```
+
+- 指定したセッションのステージだけを描く。ヘッダー・カード枠・他のセッションは出さない
+- `mode`: `2d`（既定。ドット絵をウィンドウに収まる倍率で拡大縮小）/ `3d`（段々のピラミッド 1 基）
+- `bg`: 既定は透過。`101826` や `%23101826` のように 16 進色だけ受ける。WKWebView で透過させるなら
+  Swift 側で `webView.setValue(false, forKey: "drawsBackground")` を設定する
+- 親（WKWebView）のサイズに追従する。セッションが一覧から消えると（終了から 5 分後）「見つかりません」になる
 
 ## エディタで開く
 
@@ -225,6 +278,72 @@ Xcode プロジェクトを持つカードの「閉じる」から、**そのセ
 - VSCode は対象外。Claude Code が VSCode の中で動いていること、AppleScript の辞書が無く
   「このフォルダのウィンドウだけ閉じる」を指定できないことによる。
 
+## 権限確認に答える（Channels の permission relay）
+
+ツール使用の権限確認（`Bash` / `Write` / `Edit` など）を monitor の画面に出し、そこで許可・拒否できる。
+Claude Code の **Channels**（research preview）を使う。チャネル本体は `src/channel.ts`（stdio の MCP サーバー）。
+
+セッションを起こす側のリポジトリに `.mcp.json` を置き、**`--dangerously-load-development-channels`** を付けて起動する
+（自作チャネルは承認済み一覧に無いため必須）。
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "monitor": {
+      "command": "node",
+      "args": ["/Users/shinjo/project/ai-manager/monitor/src/channel.ts"]
+    }
+  }
+}
+```
+
+```bash
+claude --dangerously-load-development-channels server:monitor
+```
+
+チャネルは `@modelcontextprotocol/sdk` を使うので、先に `cd monitor && npm install` を済ませておく。
+
+`node` で `.ts` をそのまま渡しているのは Node 24 の型除去に任せるため（`npx tsx` を挟むとプロセスが 1 段増え、
+セッションの特定に使う親 PID がずれる）。monitor が既定の :8766 以外なら `env` に `MONITOR_URL` を足す。
+
+- 起動時に全画面の警告（`I am using this for local development`）と、`.mcp.json` の初回同意ダイアログが出る。
+- 画面には `tool_name` / `description` / `input_preview` が出る。**拒否は 1 押し、許可はもう一度たしかめる**
+  （一覧に複数並ぶ中で押し間違えても通さないため。確認は 6 秒で引っ込む）。
+- **`allow` / `deny` しか返せない。**「常に許可」「今回だけ」は Channels に無い（確認ごとに ID が変わる）。
+- 中継されるのは**ツール使用の承認だけ**。`AskUserQuestion`・プロジェクト信頼・MCP サーバー同意は端末に出る。
+- 端末のダイアログと同時に生きていて**先に答えた方が採用される**。端末側で答えられた分は、そのセッションの
+  ログが進んだ時点で画面から消える（Claude Code は取り消しを知らせてこないため、ログの進みで判断する）。
+  同じターンで別のツールが先に走ってログを進めると、まだ開いている確認も消えることがある（その時は端末で答える）。
+
+### ループバック限定にしている理由
+
+**LAN からは答えられない**（`GET /api/permissions` も `POST /api/permissions/:key` も 404、SSE にも流れず、
+権限確認に関するライブフィードの行も配らない）。
+
+- LAN 公開は平文 HTTP なので、承認まで通すとトークンを持つ端末から任意のコマンド実行を許可できてしまう
+- ドキュメントの警告どおり「チャネル経由で返答できる者は誰でも、セッションのツール使用を許可・拒否できる」
+- スマホからの承認は `claude --remote-control` が担うので、monitor 側で LAN 承認を持つ必要がない
+
+判定は Host ヘッダーではなく**接続元アドレス**（詐称できない）。QR と同じ作りで、ループバック以外には存在ごと伏せる。
+
+⚠️ 開発サーバー（`ui` の Vite）を `--host` で LAN に出すと、proxy が 127.0.0.1 から monitor を叩くのでこの判定を
+通ってしまう。UI を触る時も `npm run dev` は既定の localhost のまま使う。
+
+### チャネルと monitor の繋ぎ方
+
+チャネルは monitor の `POST /api/channel/permissions` に申請を預け、**その応答が返るまで待つ**（長ポーリング）。
+チャネル側は待ち受けポートを持たない（セッションごとにチャネルが起動するため、固定ポートでは 2 つ目が衝突する）。
+
+- 1 巡 60 秒で切れ、判断が出ていなければチャネルが取り直す。monitor を再起動しても取り直しで保留が戻る
+- 90 秒取りに来なければ保留を捨てる（セッションが終わった・チャネルが落ちた）
+- 申請元のセッションは**チャネルの親 PID だけ**で引く（チャネルは Claude Code の子プロセスなので
+  `~/.claude/sessions/<pid>.json` と一致する）。cwd では引かない——同じ場所の別セッションに付け替わると、
+  見ていない確認を許可させてしまうため。引けなければ「セッション不明の権限確認」として一覧の頭に出し、
+  どのリポジトリかは申請元の cwd から併記する
+- 保留の鍵は**申請元 PID と `request_id` の対**（`request_id` はセッション内でしか一意でない）。判断は 2 分だけ
+  取り置き、取り直しの谷間（待ち手が居ない瞬間）に押された分も次の取り直しで渡す
+- monitor が 30 分戻らなければチャネルは中継を諦める（以降その確認は端末で答える）
+
 ## 伝言を送る
 
 各カードの入力欄から、そのセッションの受信箱ソケットへ 1 通送れる。経路は公式に文書化された
@@ -245,15 +364,19 @@ src/                 バックエンド（Node 24 / tsx 実行）
   origin.ts          Host / Origin / 接続元アドレスの判定（LAN 公開時の許可ホストも）
   token.ts           LAN 公開時の共有トークン（生成・読み出し・固定時間比較）
   lan.ts             LAN 接続用の案内（URL の組み立てと QR の SVG 生成・ループバック限定）
+  permissions.ts     権限確認の保留と判断（申請の検証・セッションの引き当て・長ポーリングの待ち）
+  channel.ts         Claude Code のチャネル（stdio の MCP サーバー）。権限確認を monitor へ中継する
   inventory.ts       在庫層: セッションレジストリの走査と生存判定
   transcript.ts      実況層: jsonl の末尾差分読みとパース
+  transcriptApi.ts   会話履歴 API（jsonl を先頭から読みチャット単位に整形 / SSE の transcript 配信）
   hub.ts             3 層の統合・状態判定・イベント発火
   server.ts          Hono。SSE 配信 / API / フック受け口 / ui/dist 配信
 ui/                  React + Vite + TypeScript + Tailwind v4（web/ と同じデザイントークン）
   src/App.tsx        レイアウトと KPI
   src/useMonitor.ts  SSE 購読フック
   src/status.ts      状態ごとの色・ラベル・並び順
-  src/components/    SessionCard / LiveFeed / LanQr(接続用 QR) / ui(StatCard)
+  src/components/    SessionCard / LiveFeed / LanQr(接続用 QR) / PermissionPrompt(権限確認) / ui(StatCard)
+  src/embed/         埋め込み表示（?embed=stage。1 セッション分のステージだけ）
   src/pixel/         ドット絵のキャラ（状態ごとの姿勢・色・持ち物）
   src/three/         立体表示。Ziggurat(段々のピラミッド 1 基) / Voxels(キャラ) / World(空間) /
                      blueprint(寸法・配置・光り方・跳ね) / motion(動きを減らす設定)

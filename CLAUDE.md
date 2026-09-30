@@ -24,7 +24,7 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 | App Store 連携 | 稼働（要 API キー設定） | `server/src/core/appstore.ts` |
 | Google カレンダー連携 | 稼働（要 OAuth 設定）／会話は claude.ai MCP | `server/src/core/calendar.ts` |
 | スプレッドシート勉強管理 | 未着手 | - |
-| claude-deck（Claude Code 司令塔アプリ） | PoC（Swift/macOS・ビルド可） | `desktop/` |
+| claude-deck（Claude Code 司令塔アプリ） | PoC（Swift/macOS・ビルド可） | `mac/` |
 | Claude Code セッション監視（リアルタイム） | 稼働（TypeScript・独立プロセス） | `monitor/` |
 
 ## 他プロジェクト管理
@@ -149,16 +149,16 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 
 ## claude-deck（Claude Code 司令塔アプリ）
 
-`desktop/` にある Swift/macOS ネイティブアプリ。プロジェクトごとに `claude`（Claude Code）を端末として同時起動する。SwiftTerm（VT100 エミュレータ + PTY ホスト）使用。詳細は `desktop/README.md`。
+`mac/` にある Swift/macOS ネイティブアプリ。プロジェクトごとに `claude`（Claude Code）を端末として同時起動する。SwiftTerm（VT100 エミュレータ + PTY ホスト）使用。詳細は `mac/README.md`。
 
-- **配置**: ai-manager 内 `desktop/`（SPM 実行ファイル `claude-deck`）。`registry.tsv` に管理対象として登録済み。
+- **配置**: ai-manager 内 `mac/`（SPM 実行ファイル `claude-deck`）。`registry.tsv` に管理対象として登録済み。
 - **プロジェクト一覧（左欄）**: 各行は名称 + フルパス表示。ユーザーが自由に追加（「+」でフォルダ選択）・削除（「−」/Delete/右クリック）でき、`~/Library/Application Support/claude-deck/projects.json` に永続化。起動はダブルクリック/Enter。初回のみ `registry.tsv` から取り込む（取り込みボタンでマージ可）。
 - **メイン領域**: 開いたセッションをタブではなく**タイル状グリッドで同時表示**。各ペインに見出し + ✕（個別クローズ）。同一プロジェクトはフォーカスのみで重複起動しない。
 - **ペイン内 Claude Code / GitHub 切替**: `github-projects.tsv` にマッピングがあるプロジェクトは、ペイン見出しのセグメントで GitHub Project 画面に切替可能（無いものは切替を出さない）。GitHub 画面は Issue をステータス別（Todo/In Progress/Debug/Review/Done）にグループ表示し、行クリックで GitHub を開く。取得は `gh project item-list --format json`（gh 認証 + project スコープ前提）。`gh` 出力形状は実機検証済み。
 - **ペイン内「Xcodeで開く」ボタン**: プロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリ含む）に `.xcworkspace`/`.xcodeproj` があるペインだけ、見出しに🔨ボタンを出す（`TerminalPaneViewController.findXcodeProject`）。押すと `NSWorkspace.open` で Xcode の GUI が開く（実行＝Cmd+R はユーザー操作）。iOS/Mac アプリの動作確認用。`.xcworkspace` 優先・最も浅い階層を選択。SPM のみ（claude-deck 自身等）は非表示。ワンクリックでのシミュレータ自動実行（`xcodebuild`/`simctl`）は将来。
 - **設計の絶対方針（料金事故ゼロ）**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路を作らないため、Max 枠の上限に達しても課金は発生しない（待つだけ）。**headless（`claude -p` / Agent SDK）の起動口は設けない方針**。
 - **上限到達で強制終了**: PTY 出力を監視し「上限到達」文言を検知したらセッションを `terminate()`。検知文言は要・実機検証（`ClaudeTerminalView.swift` の `limitPhrases`）。正確な残量 API は無いため事後トリガー方式。
-- **ビルド/実行**: `cd desktop && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み。`.app` 署名・配布は未対応（PoC）。
+- **ビルド/実行**: `cd mac && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み。`.app` 署名・配布は未対応（PoC）。
 
 ## Claude Code セッション監視（monitor）
 
@@ -169,6 +169,10 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - **フック層**（任意）: `POST /hook`。**「なぜ止まっているか」（権限待ち・入力待ち・APIエラー）はログに一切残らない**ので、これはフックでしか取れない。設定は `monitor/README.md` のスニペットを `~/.claude/settings.json` に入れる（**`async: true` 必須**。付けないと全プロジェクトの応答をブロックする）。
 - **上限の残量**（任意）: `monitor/scripts/statusline.sh` を `~/.claude/settings.json` の `statusLine` に指定すると、Claude Code が渡す `rate_limits` を `data/claude-usage.json` に残す（表示は従来どおり出したうえで原子的に書く）。monitor と web ダッシュボードがそれを読み、5時間 / 7日間ウィンドウの**残り%**をヘッダーに出す。残り 20% 割れでブラウザ通知（ウィンドウごとに1回）。セッションが全て止まると値が古くなるので取得時刻を併記する。
 - UI は `monitor/ui/`（React + Vite + Tailwind v4。`web/` と同じデザイントークンを使うので見た目が揃う）。SSE を EventSource で購読し、差分描画は React に任せる。
+- **権限確認に答える**: Claude Code の **Channels**（permission relay）で、ツール使用の許可・拒否を画面から出せる。
+  チャネルは `monitor/src/channel.ts`（stdio の MCP サーバー）で、対象リポジトリの `.mcp.json` に登録して
+  `claude --dangerously-load-development-channels server:<name>` で起動する。**答えられるのは手元（ループバック）だけ**
+  （LAN は平文 HTTP。スマホからの承認は `claude --remote-control` が担う）。返せるのは `allow` / `deny` のみ。
 - **同じ Wi-Fi の別端末から見る**: `MONITOR_LAN=1 npm start` の時だけ `0.0.0.0` で待ち受け、トークン（`secrets/monitor-token`・無ければ生成）を持つ端末だけ通す。`?t=<token>` で一度開くと HttpOnly cookie が付き、以降は cookie で通る（`EventSource` がヘッダーを付けられないため SSE には cookie が必須）。起動時に案内 URL と QR をターミナルに出す。ループバックは従来どおりトークン不要。HTTPS ではないので平文で流れる（家庭内 Wi-Fi 前提）。
 - 制約: macOS ローカルのセッションのみ（クラウドセッションは映らない）。ログの粒度はターン／ツール単位で、生成中テキストは流れない。
 
