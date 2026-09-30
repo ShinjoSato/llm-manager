@@ -81,6 +81,12 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         startStatusMonitoring()
     }
 
+    /// 起動した claude の pid。`exec claude` で zsh を置き換えるので PTY の子 pid がそのまま claude になる。
+    var claudePid: pid_t? {
+        guard let pid = process?.shellPid, pid > 0 else { return nil }
+        return pid
+    }
+
     deinit { statusTimer?.invalidate() }
 
     // MARK: - ステータス監視

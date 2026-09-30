@@ -17,8 +17,26 @@ let package = Package(
         .executableTarget(
             name: "ClaudeDeck",
             dependencies: [
-                .product(name: "SwiftTerm", package: "SwiftTerm")
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+                "MonitorKit"
             ]
+        ),
+        // monitor（:8766）のクライアント。UI を持たないのでテストできるよう library に切り出す。
+        .target(
+            name: "MonitorKit",
+            swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
+        ),
+        // monitor への接続を GUI 無しで確かめるデバッグ用エントリ（`swift run monitor-probe`）。
+        .executableTarget(
+            name: "monitor-probe",
+            dependencies: ["MonitorKit"],
+            path: "Sources/MonitorProbe",
+            swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
+        ),
+        .testTarget(
+            name: "ClaudeDeckTests",
+            dependencies: ["MonitorKit"],
+            swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         )
     ]
 )
