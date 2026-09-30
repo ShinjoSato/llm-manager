@@ -7,7 +7,8 @@
 //   POST /api/sessions/:id/open     そのセッションの作業場所を VSCode / Xcode で開く
 //   POST /api/sessions/:id/close    そのセッションのワークスペースを Xcode から閉じる
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
-//   GET  /events         SSE（sessions / feed）
+//   GET  /api/sessions/:id/transcript  会話履歴（transcriptApi.ts）
+//   GET  /events         SSE（sessions / feed。?transcripts= で transcript も）
 // 既定はループバック限定。MONITOR_LAN=1 のときだけ LAN へ出し、トークンを持つ端末だけ通す。
 import { serve, type HttpBindings } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -29,7 +30,8 @@ import {
 import { isCloseApp } from "./close.js";
 import { isOpenApp } from "./open.js";
 import { loadOrCreateToken, MIN_TOKEN_LENGTH, TOKEN_FILE, tokenEquals } from "./token.js";
-import type { FeedItem, HookPayload, SessionSnapshot } from "./types.js";
+import { registerTranscriptRoutes, TranscriptStore } from "./transcriptApi.js";
+import type { FeedItem, HookPayload, SessionSnapshot, TranscriptEvent } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const UI_DIST = join(HERE, "..", "ui", "dist");
@@ -50,6 +52,7 @@ if (lanEnabled && !token) {
 const hub = new SessionHub();
 hub.setMaxListeners(0); // SSE 1 接続につき 3 リスナー。タブを開く数だけ増える。
 hub.start();
+const transcripts = new TranscriptStore(() => hub.snapshot());
 
 const port = Number(process.env.PORT ?? 8766);
 // PORT=0 だと OS が別のポートを割り当てるので、実際に待ち受けた値で判定する。
@@ -124,6 +127,7 @@ function unauthorized(c: Context): Response {
 app.get("/api/health", (c) => c.json({ ok: true, sessions: hub.snapshot().length }));
 app.get("/api/sessions", (c) => c.json(hub.snapshot()));
 app.get("/api/feed", (c) => c.json(hub.recentFeed()));
+registerTranscriptRoutes(app, transcripts);
 
 // 別端末を繋ぐための案内。ループバック以外には存在ごと伏せる（理由は lan.ts）。
 app.get("/api/lan", (c) => {
@@ -227,6 +231,8 @@ app.get("/events", (c) =>
     let latest: SessionSnapshot[] | null = hub.snapshot();
     let dirty = true;
     const feedQueue: FeedItem[] = [];
+    const transcriptQueue: TranscriptEvent[] = [];
+    let unsubscribeTranscripts = () => {};
 
     const onSessions = (s: SessionSnapshot[]) => {
       latest = s;
@@ -243,6 +249,7 @@ app.get("/events", (c) =>
       hub.off("sessions", onSessions);
       hub.off("tick", onTick);
       hub.off("feed", onFeed);
+      unsubscribeTranscripts();
     };
     stream.onAbort(cleanup);
 
@@ -251,6 +258,8 @@ app.get("/events", (c) =>
       hub.on("sessions", onSessions);
       hub.on("tick", onTick);
       hub.on("feed", onFeed);
+      // 会話の追記は求めた接続にだけ流す（本文が大きく、一覧画面には要らない）。
+      unsubscribeTranscripts = transcripts.subscribe(c.req.query("transcripts"), (ev) => transcriptQueue.push(ev));
 
       await stream.writeSSE({ event: "feed-batch", data: JSON.stringify(hub.recentFeed()) });
 
@@ -265,6 +274,9 @@ app.get("/events", (c) =>
         }
         while (feedQueue.length) {
           await stream.writeSSE({ event: "feed", data: JSON.stringify(feedQueue.shift()) });
+        }
+        while (transcriptQueue.length) {
+          await stream.writeSSE({ event: "transcript", data: JSON.stringify(transcriptQueue.shift()) });
         }
         await stream.sleep(120);
       }
@@ -309,6 +321,7 @@ serve({ fetch: app.fetch, port, hostname: lanEnabled ? "0.0.0.0" : "127.0.0.1" }
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     hub.stop();
+    transcripts.stop();
     process.exit(0);
   });
 }

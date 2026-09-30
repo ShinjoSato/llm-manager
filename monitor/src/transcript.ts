@@ -48,7 +48,7 @@ const USER_TAGS = new Set(["command-name", "command-message"]);
  * user 行が仕組み側の注入か。task-notification / ide_opened_file / system-reminder など、
  * 種別は増えるので列挙せず「タグで始まるか」で見る。
  */
-function isInjected(content: unknown): boolean {
+export function isInjected(content: unknown): boolean {
   const text =
     typeof content === "string"
       ? content
