@@ -57,6 +57,20 @@ export interface SessionSnapshot {
   xcodeProject: string | null;
 }
 
+/** 上限ウィンドウ 1 つ分の使用量。値は Claude Code の statusLine JSON がそのまま出どころ。 */
+export interface UsageWindow {
+  usedPercentage: number;
+  /** リセット時刻（Unix ミリ秒）。取れないウィンドウもある。 */
+  resetsAt: number | null;
+}
+
+/** statusline スクリプトが最後に書き残した使用量。 */
+export interface UsageSnapshot {
+  fetchedAt: number;
+  fiveHour: UsageWindow | null;
+  sevenDay: UsageWindow | null;
+}
+
 export type FeedKind = "tool" | "prompt" | "message" | "status" | "session" | "agent";
 
 /** ライブフィードの 1 行。 */

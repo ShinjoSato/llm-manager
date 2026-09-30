@@ -8,6 +8,7 @@ import { collectAppStore } from "./appstore.js";
 import { collectCalendar } from "./calendar.js";
 import { collectRanking } from "./ranking.js";
 import { collectTrends } from "./trends.js";
+import { collectUsage } from "./usage.js";
 import type { Dashboard, Project } from "../../../shared/types.js";
 
 interface BoardCfg { owner: string; number: string; repo: string; url: string; }
@@ -22,6 +23,7 @@ export async function collect(): Promise<Dashboard> {
   const calendar = await collectCalendar();
   const ranking = await collectRanking().catch(() => null);
   const trends = await collectTrends().catch(() => null);
+  const usage = collectUsage();
 
   const projects: Project[] = [];
   for (const row of readTsv(REGISTRY)) {
@@ -53,7 +55,7 @@ export async function collect(): Promise<Dashboard> {
     projects.push(project);
   }
 
-  return { generatedAt: new Date().toISOString(), projects, calendar, ranking, trends };
+  return { generatedAt: new Date().toISOString(), projects, calendar, ranking, trends, usage };
 }
 
 /** 収集して data/dashboard.json に保存。 */

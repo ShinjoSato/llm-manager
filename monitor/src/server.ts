@@ -2,6 +2,7 @@
 //   GET  /api/health
 //   GET  /api/sessions   スナップショット
 //   GET  /api/feed       直近のライブフィード
+//   GET  /api/usage      5時間 / 7日間ウィンドウの使用量（statusline スクリプトが残した値）
 //   GET  /api/lan        LAN 接続用の案内 / GET /api/lan/qr.svg  その QR（どちらもループバック限定）
 //   POST /api/sessions/:id/message  そのセッションの受信箱へテキストを投稿
 //   POST /api/sessions/:id/open     そのセッションの作業場所を VSCode / Xcode で開く
@@ -10,7 +11,7 @@
 //   POST /api/channel/permissions    チャネルからの権限確認（判断が出るまで待たせる）
 //   POST /hook           Claude Code のフックから状態遷移を受け取る
 //   GET  /api/sessions/:id/transcript  会話履歴（transcriptApi.ts）
-//   GET  /events         SSE（sessions / feed / permissions。?transcripts= で transcript も）
+//   GET  /events         SSE（sessions / feed / permissions / usage。?transcripts= で transcript も）
 // 既定はループバック限定。MONITOR_LAN=1 のときだけ LAN へ出し、トークンを持つ端末だけ通す。
 import { serve, type HttpBindings } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -34,7 +35,7 @@ import { isOpenApp } from "./open.js";
 import { isDecision, isLocalActor, parseRequest } from "./permissions.js";
 import { loadOrCreateToken, MIN_TOKEN_LENGTH, TOKEN_FILE, tokenEquals } from "./token.js";
 import { registerTranscriptRoutes, TranscriptStore } from "./transcriptApi.js";
-import type { FeedItem, HookPayload, PendingPermission, SessionSnapshot, TranscriptEvent } from "./types.js";
+import type { FeedItem, HookPayload, PendingPermission, SessionSnapshot, TranscriptEvent, UsageSnapshot } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const UI_DIST = join(HERE, "..", "ui", "dist");
@@ -53,7 +54,7 @@ if (lanEnabled && !token) {
 }
 
 const hub = new SessionHub();
-hub.setMaxListeners(0); // SSE 1 接続につき 4 リスナー。タブを開く数だけ増える。
+hub.setMaxListeners(0); // SSE 1 接続につき 5 リスナー。タブを開く数だけ増える。
 hub.start();
 const transcripts = new TranscriptStore(() => hub.snapshot());
 
@@ -134,6 +135,7 @@ app.get("/api/feed", (c) => {
   return c.json(hub.recentFeed().filter((item) => local || !item.local));
 });
 registerTranscriptRoutes(app, transcripts);
+app.get("/api/usage", (c) => c.json(hub.usageSnapshot()));
 
 // 別端末を繋ぐための案内。ループバック以外には存在ごと伏せる（理由は lan.ts）。
 app.get("/api/lan", (c) => {
@@ -294,6 +296,8 @@ app.get("/events", (c) => {
     let latest: SessionSnapshot[] | null = hub.snapshot();
     let dirty = true;
     const feedQueue: FeedItem[] = [];
+    let usage: UsageSnapshot | null = hub.usageSnapshot();
+    let usageDirty = true;
     const transcriptQueue: TranscriptEvent[] = [];
     let unsubscribeTranscripts = () => {};
     let permissions: PendingPermission[] | null = local ? hub.pendingPermissions() : null;
@@ -301,6 +305,10 @@ app.get("/events", (c) => {
     const onSessions = (s: SessionSnapshot[]) => {
       latest = s;
       dirty = true;
+    };
+    const onUsage = (u: UsageSnapshot | null) => {
+      usage = u;
+      usageDirty = true;
     };
     const onTick = (s: SessionSnapshot[]) => {
       latest = s;
@@ -316,6 +324,7 @@ app.get("/events", (c) => {
       hub.off("sessions", onSessions);
       hub.off("tick", onTick);
       hub.off("feed", onFeed);
+      hub.off("usage", onUsage);
       unsubscribeTranscripts();
       hub.off("permissions", onPermissions);
     };
@@ -326,6 +335,7 @@ app.get("/events", (c) => {
       hub.on("sessions", onSessions);
       hub.on("tick", onTick);
       hub.on("feed", onFeed);
+      hub.on("usage", onUsage);
       // 会話の追記は求めた接続にだけ流す（本文が大きく、一覧画面には要らない）。
       unsubscribeTranscripts = transcripts.subscribe(c.req.query("transcripts"), (ev) => transcriptQueue.push(ev));
       hub.on("permissions", onPermissions);
@@ -343,6 +353,10 @@ app.get("/events", (c) => {
           await stream.writeSSE({ event: "sessions", data: JSON.stringify(latest) });
           dirty = false;
           lastSent = now;
+        }
+        if (usageDirty) {
+          await stream.writeSSE({ event: "usage", data: JSON.stringify(usage) });
+          usageDirty = false;
         }
         if (permissions) {
           // 書き出しの間に届いた更新を捨てないよう、await の前に取り出す。

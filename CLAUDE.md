@@ -167,6 +167,7 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - **在庫層**（3秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)` で稼働セッション一覧を復元。
 - **実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl` の末尾差分から実行中ツール・ブランチ・作業内容・トークン量を取る。`ai-title` は先頭寄りにしか出ないため初回だけ広く遡る（`primeMeta`）。
 - **フック層**（任意）: `POST /hook`。**「なぜ止まっているか」（権限待ち・入力待ち・APIエラー）はログに一切残らない**ので、これはフックでしか取れない。設定は `monitor/README.md` のスニペットを `~/.claude/settings.json` に入れる（**`async: true` 必須**。付けないと全プロジェクトの応答をブロックする）。
+- **上限の残量**（任意）: `monitor/scripts/statusline.sh` を `~/.claude/settings.json` の `statusLine` に指定すると、Claude Code が渡す `rate_limits` を `data/claude-usage.json` に残す（表示は従来どおり出したうえで原子的に書く）。monitor と web ダッシュボードがそれを読み、5時間 / 7日間ウィンドウの**残り%**をヘッダーに出す。残り 20% 割れでブラウザ通知（ウィンドウごとに1回）。セッションが全て止まると値が古くなるので取得時刻を併記する。
 - UI は `monitor/ui/`（React + Vite + Tailwind v4。`web/` と同じデザイントークンを使うので見た目が揃う）。SSE を EventSource で購読し、差分描画は React に任せる。
 - **権限確認に答える**: Claude Code の **Channels**（permission relay）で、ツール使用の許可・拒否を画面から出せる。
   チャネルは `monitor/src/channel.ts`（stdio の MCP サーバー）で、対象リポジトリの `.mcp.json` に登録して
