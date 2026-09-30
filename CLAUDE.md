@@ -158,7 +158,9 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - **ペイン内「Xcodeで開く」ボタン**: プロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリ含む）に `.xcworkspace`/`.xcodeproj` があるペインだけ、見出しに🔨ボタンを出す（`TerminalPaneViewController.findXcodeProject`）。押すと `NSWorkspace.open` で Xcode の GUI が開く（実行＝Cmd+R はユーザー操作）。iOS/Mac アプリの動作確認用。`.xcworkspace` 優先・最も浅い階層を選択。SPM のみ（claude-deck 自身等）は非表示。ワンクリックでのシミュレータ自動実行（`xcodebuild`/`simctl`）は将来。
 - **設計の絶対方針（料金事故ゼロ）**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路を作らないため、Max 枠の上限に達しても課金は発生しない（待つだけ）。**headless（`claude -p` / Agent SDK）の起動口は設けない方針**。
 - **上限到達で強制終了**: PTY 出力を監視し「上限到達」文言を検知したらセッションを `terminate()`。検知文言は要・実機検証（`ClaudeTerminalView.swift` の `limitPhrases`）。正確な残量 API は無いため事後トリガー方式。
-- **ビルド/実行**: `cd mac && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み。`.app` 署名・配布は未対応（PoC）。
+- **ビルド/実行**: `cd mac && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み。
+- **`.app` 化**: `mac/scripts/bundle.sh` → `mac/dist/claude-deck.app`（ad-hoc 署名・バンドル ID `com.shinjosato.claude-deck`）→ `open mac/dist/claude-deck.app`。Metal Toolchain が無い環境では通常ビルドが SwiftTerm のシェーダーで失敗するため、自動で `--build-system native` に切り替える。Developer ID 署名・公証・配布・自動更新はしない。
+- **ai-manager ルートの解決**: `.app` 起動は cwd が `/` なので、TSV 等は `AIManagerRoot`（`mac/Sources/ClaudeDeck/AIManagerRoot.swift`）経由で引く。順序は 環境変数 `AI_MANAGER_ROOT` → `defaults write com.shinjosato.claude-deck aiManagerRoot <path>` → 実行ファイル位置/cwd から親へ遡る → `/Users/shinjo/project/ai-manager`。確認は `claude-deck --print-ai-manager-root`。
 
 ## Claude Code セッション監視（monitor）
 

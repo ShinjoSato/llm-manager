@@ -24,26 +24,9 @@ struct ManagedProject: Equatable, Codable {
 /// `projects/registry.tsv` を読み込む。
 enum ProjectRegistry {
     /// registry.tsv の場所を解決する。
-    /// 優先順位: 環境変数 CLAUDE_DECK_REGISTRY → CWD から上方探索 → 既定の絶対パス。
+    /// 優先順位: 環境変数 CLAUDE_DECK_REGISTRY → AIManagerRoot 配下。
     static func registryURL() -> URL? {
-        let fm = FileManager.default
-
-        if let env = ProcessInfo.processInfo.environment["CLAUDE_DECK_REGISTRY"],
-           fm.fileExists(atPath: env) {
-            return URL(fileURLWithPath: env)
-        }
-
-        // CWD から親方向へ projects/registry.tsv を探索（mac/ から実行された場合に効く）
-        var dir = URL(fileURLWithPath: fm.currentDirectoryPath)
-        for _ in 0..<6 {
-            let candidate = dir.appendingPathComponent("projects/registry.tsv")
-            if fm.fileExists(atPath: candidate.path) { return candidate }
-            dir.deleteLastPathComponent()
-        }
-
-        // 既定（このアプリは ai-manager 配下に置かれる前提）
-        let fallback = "/Users/shinjo/project/ai-manager/projects/registry.tsv"
-        return fm.fileExists(atPath: fallback) ? URL(fileURLWithPath: fallback) : nil
+        AIManagerRoot.file("projects/registry.tsv", envOverride: "CLAUDE_DECK_REGISTRY")
     }
 
     /// TSV を読み込み、プロジェクト一覧を返す。`#` 始まりと空行は無視。

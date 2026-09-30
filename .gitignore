@@ -12,6 +12,8 @@ data/claude-usage.json*
 node_modules/
 web/dist/
 monitor/ui/dist/
+mac/.build/
+mac/dist/
 *.tsbuildinfo
 
 # OS / エディタ

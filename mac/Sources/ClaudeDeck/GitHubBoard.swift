@@ -30,19 +30,7 @@ enum GitHubBoard {
     // MARK: - マッピング表
 
     private static func mappingURL() -> URL? {
-        let fm = FileManager.default
-        if let env = ProcessInfo.processInfo.environment["CLAUDE_DECK_GH_PROJECTS"],
-           fm.fileExists(atPath: env) {
-            return URL(fileURLWithPath: env)
-        }
-        var dir = URL(fileURLWithPath: fm.currentDirectoryPath)
-        for _ in 0..<6 {
-            let candidate = dir.appendingPathComponent("projects/github-projects.tsv")
-            if fm.fileExists(atPath: candidate.path) { return candidate }
-            dir.deleteLastPathComponent()
-        }
-        let fallback = "/Users/shinjo/project/ai-manager/projects/github-projects.tsv"
-        return fm.fileExists(atPath: fallback) ? URL(fileURLWithPath: fallback) : nil
+        AIManagerRoot.file("projects/github-projects.tsv", envOverride: "CLAUDE_DECK_GH_PROJECTS")
     }
 
     static func loadMappings() -> [BoardMapping] {
