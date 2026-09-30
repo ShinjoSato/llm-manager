@@ -15,7 +15,7 @@ SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Termina
 ## 構成
 
 ```
-desktop/
+mac/
   Package.swift                 SPM。SwiftTerm を依存に持つ実行ファイル "claude-deck"
   Sources/ClaudeDeck/
     main.swift                  NSApplication 起動
@@ -83,7 +83,7 @@ GitHub Project のマッピングがあるプロジェクトは、ペイン見�
 ## ビルド / 実行
 
 ```sh
-cd /Users/shinjo/project/ai-manager/desktop
+cd /Users/shinjo/project/ai-manager/mac
 swift build          # ビルド
 swift run            # 起動（ウィンドウが開く）
 ```
