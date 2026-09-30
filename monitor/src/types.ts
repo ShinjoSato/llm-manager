@@ -118,3 +118,44 @@ export interface HookPayload {
   user_prompt?: string;
   last_assistant_message?: string;
 }
+
+/** 会話履歴の 1 要素の種類。user=ユーザーのプロンプト / assistant=テキスト応答 / tool=ツール呼び出し。 */
+export type TranscriptItemKind = "user" | "assistant" | "tool";
+
+/** ツール呼び出しの要約。入力の全文は返さない（巨大な差分やファイル内容が乗るため）。 */
+export interface TranscriptTool {
+  name: string;
+  /** 入力の description（Bash / Agent 等）。無ければ null。 */
+  description: string | null;
+  /** 対象の要約（ファイルパス・コマンド・パターン・URL・スキル名など）。無ければ null。 */
+  target: string | null;
+}
+
+/** 会話履歴の 1 要素。全フィールドが常に存在する（値が無い時は null）。 */
+export interface TranscriptItem {
+  /** 安定 ID。`<行の uuid>:<ブロック番号>`（uuid の無い行は `line<行番号>:<ブロック番号>`）。 */
+  id: string;
+  kind: TranscriptItemKind;
+  /** epoch ミリ秒。記録に時刻が無ければ null。 */
+  at: number | null;
+  /** user / assistant の本文。tool では null。 */
+  text: string | null;
+  /** tool のときだけ入る。 */
+  tool: TranscriptTool | null;
+  /** tool がぶら下がる直前の発話（user / assistant）の id。それ以外は null。 */
+  parentId: string | null;
+}
+
+/** `GET /api/sessions/:id/transcript` の応答。 */
+export interface TranscriptResponse {
+  sessionId: string;
+  items: TranscriptItem[];
+  /** `after` の id が見つからず全件を返した時 true。受け手は手元の履歴を置き換える。 */
+  reset: boolean;
+}
+
+/** SSE `transcript` イベントの本体。 */
+export interface TranscriptEvent {
+  sessionId: string;
+  items: TranscriptItem[];
+}

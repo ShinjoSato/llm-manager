@@ -137,9 +137,10 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/health` | 疎通確認 |
 | GET | `/api/sessions` | 全セッションのスナップショット |
 | GET | `/api/feed` | 直近のライブフィード |
+| GET | `/api/sessions/:id/transcript` | そのセッションの会話履歴（`?after=<id>` で差分。下記） |
 | GET | `/api/lan` | LAN 接続用の案内 `{enabled, url}`（**ループバック以外は 404**） |
 | GET | `/api/lan/qr.svg` | その QR の SVG（**ループバック以外・LAN 非公開時は 404**） |
-| GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント |
+| GET | `/events` | SSE。`sessions` / `feed` / `feed-batch` イベント（`?transcripts=` で `transcript` も） |
 | GET | `/api/permissions` | 保留中の権限確認（**ループバック以外は 404**） |
 | POST | `/api/permissions/:key` | 許可・拒否（`{"decision":"allow"\|"deny"}`・**ループバック以外は 404**） |
 | POST | `/api/channel/permissions` | チャネルからの権限確認（**ループバック以外は 404**） |
@@ -165,6 +166,54 @@ IPv4 も許可に加える。cookie は**ホスト名**に紐づくので、攻�
 
 開発サーバーを `vite --host` で LAN に出すと、proxy がループバック経由で monitor に繋ぐため
 トークンを要求されない踏み台になる。`MONITOR_LAN=1` を使う間は `--host` を付けないこと。
+
+## 会話履歴（チャット表示用）
+
+mac アプリのトークルームが使う。jsonl を先頭から読み、チャットの単位に整形して返す（読み取り専用）。
+Host / Origin 検証・LAN トークンは他の API と同じく全体のミドルウェアで掛かる。
+
+```
+GET /api/sessions/<sessionId>/transcript            → 全件
+GET /api/sessions/<sessionId>/transcript?after=<id> → その id より後だけ
+```
+
+```jsonc
+{
+  "sessionId": "9c5a73ea-…",
+  "reset": false,          // after の id が見つからず全件を返した時 true（手元の履歴を置き換える）
+  "items": [
+    { "id": "bac3…:0", "kind": "user",      "at": 1790773952000, "text": "…", "tool": null, "parentId": null },
+    { "id": "40d6…:0", "kind": "assistant", "at": 1790773954648, "text": "…", "tool": null, "parentId": null },
+    { "id": "9c52…:0", "kind": "tool",      "at": 1790773956269, "text": null,
+      "tool": { "name": "Bash", "description": "…", "target": "ls monitor" }, "parentId": "40d6…:0" }
+  ]
+}
+```
+
+- `kind`: `user`（ユーザーのプロンプト。tool_result・仕組み側の注入・isMeta は除く。スラッシュコマンドは `/name args` の形）/
+  `assistant`（テキスト応答。thinking は除く）/ `tool`（ツール呼び出し）
+- `id`: `<行の uuid>:<ブロック番号>`。ログは追記のみなので同じ要素は常に同じ id になる
+- `at`: epoch ミリ秒（無ければ null）。全フィールドが常に存在し、値が無い時は null（Swift の Codable で Optional にすればそのまま読める）
+- `tool`: `target` は対象の要約（file_path / コマンド 1 行目 / パターン / URL / スキル名 / サブエージェント種別の順で 1 つ・300 文字まで）。入力の全文は返さない
+- `parentId`: tool がぶら下がる直前の発話（user / assistant）の id
+- ログが見つからなければ 404、sessionId の形が不正なら 400。終了済みのセッションも jsonl が残っていれば読める
+
+**追記は SSE で届く。** `/events?transcripts=<id>[,<id>…]`（全セッションなら `*`）で接続すると、
+`event: transcript` / `data: {"sessionId": "…", "items": [ … ]}` が流れる。購読した時点までの内容は流さないので、
+取りこぼさない順序は「SSE を張る → GET（全件 or `?after=` 手元の最後）→ 以降は SSE」。重なった分は id で捨てる。
+クエリを付けない接続（一覧画面）には流さない。
+
+## 埋め込み表示（ステージだけ）
+
+```
+/?embed=stage&session=<sessionId>&mode=2d|3d&bg=transparent|<16 進色>
+```
+
+- 指定したセッションのステージだけを描く。ヘッダー・カード枠・他のセッションは出さない
+- `mode`: `2d`（既定。ドット絵をウィンドウに収まる倍率で拡大縮小）/ `3d`（段々のピラミッド 1 基）
+- `bg`: 既定は透過。`101826` や `%23101826` のように 16 進色だけ受ける。WKWebView で透過させるなら
+  Swift 側で `webView.setValue(false, forKey: "drawsBackground")` を設定する
+- 親（WKWebView）のサイズに追従する。セッションが一覧から消えると（終了から 5 分後）「見つかりません」になる
 
 ## エディタで開く
 
@@ -283,6 +332,7 @@ src/                 バックエンド（Node 24 / tsx 実行）
   channel.ts         Claude Code のチャネル（stdio の MCP サーバー）。権限確認を monitor へ中継する
   inventory.ts       在庫層: セッションレジストリの走査と生存判定
   transcript.ts      実況層: jsonl の末尾差分読みとパース
+  transcriptApi.ts   会話履歴 API（jsonl を先頭から読みチャット単位に整形 / SSE の transcript 配信）
   hub.ts             3 層の統合・状態判定・イベント発火
   server.ts          Hono。SSE 配信 / API / フック受け口 / ui/dist 配信
 ui/                  React + Vite + TypeScript + Tailwind v4（web/ と同じデザイントークン）
@@ -290,6 +340,7 @@ ui/                  React + Vite + TypeScript + Tailwind v4（web/ と同じデ
   src/useMonitor.ts  SSE 購読フック
   src/status.ts      状態ごとの色・ラベル・並び順
   src/components/    SessionCard / LiveFeed / LanQr(接続用 QR) / PermissionPrompt(権限確認) / ui(StatCard)
+  src/embed/         埋め込み表示（?embed=stage。1 セッション分のステージだけ）
   src/pixel/         ドット絵のキャラ（状態ごとの姿勢・色・持ち物）
   src/three/         立体表示。Ziggurat(段々のピラミッド 1 基) / Voxels(キャラ) / World(空間) /
                      blueprint(寸法・配置・光り方・跳ね) / motion(動きを減らす設定)
