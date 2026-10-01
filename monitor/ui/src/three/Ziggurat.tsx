@@ -13,12 +13,13 @@ import {
 import type { SessionSnapshot } from "../../../src/types.js";
 import { MAX_KIDS } from "../pixel/AgentStage.js";
 import { itemFor, jobFor, jobPalette } from "../pixel/kit.js";
-import { lookOf } from "../pixel/look.js";
+import { FALLBACK_MARK, lookOf } from "../pixel/look.js";
 import { KID_STAND } from "../pixel/sprites.js";
 import { voxelize } from "../pixel/voxelize.js";
 import { prefersStill } from "./motion.js";
 import { Voxels } from "./Voxels.js";
 import {
+  beckons,
   FOOTPRINT_X,
   FOOTPRINT_Z,
   glowOf,
@@ -32,6 +33,10 @@ import {
   KID_HEIGHT,
   KID_Y,
   KID_Z,
+  MARK_BOTTOM,
+  MARK_ROWS,
+  MARK_VOXEL,
+  MARK_X,
   PARENT_HEIGHT,
   phaseOf,
   pulse,
@@ -90,10 +95,15 @@ const itemGlowMat = new SpriteMaterial({
 });
 /** 光の広がり。持ち物より大きくしないと、絵の裏に隠れて見えない。 */
 const ITEM_GLOW_SIZE = ITEM_HEIGHT * 2.1;
+/** 頭上マークの光。記号より一回り大きくして、暗い空間の中で遠目にも浮かせる。 */
+const MARK_GLOW_SIZE = MARK_ROWS * MARK_VOXEL * 2.4;
+/** マークの跳ねの周期（秒）。親の跳ねと揃えると 1 つの動きに溶けるのでずらす。 */
+const MARK_PERIOD = 0.9;
 
 /** 段々のピラミッド 1 基。親が最上段、サブエージェントが 1 つ下の段に並ぶ。 */
 function Ziggurat({ session: s }: { session: SessionSnapshot }) {
   const glow = glowOf(s.status);
+  const calling = beckons(s.status);
 
   const parts = useMemo(
     () => ({
@@ -104,8 +114,18 @@ function Ziggurat({ session: s }: { session: SessionSnapshot }) {
         metalness: 0.1,
       }),
       halo: new MeshBasicMaterial({ color: glow, transparent: true, opacity: 0.1 }),
+      // 要対応の時だけ作る。光の絵は canvas から起こすので、出さない基のぶんまで持たない。
+      markGlow: calling
+        ? new SpriteMaterial({
+            map: glowTexture(glow),
+            transparent: true,
+            blending: AdditiveBlending,
+            depthWrite: false,
+            fog: false,
+          })
+        : null,
     }),
-    [glow],
+    [glow, calling],
   );
 
   const kidKey = s.agents
@@ -120,8 +140,14 @@ function Ziggurat({ session: s }: { session: SessionSnapshot }) {
       .slice(0, MAX_KIDS)
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((a) => ({ id: a.id, voxels: voxelize(KID_STAND, jobPalette(jobFor(a.type))) }));
+    // 2D の頭上マークのうち、こちらを呼んでいるものだけを立てる。待機の寝息まで立てると見分けが付かない。
+    const mark =
+      beckons(s.status) && look.mark
+        ? voxelize(look.mark, look.markPalette ?? FALLBACK_MARK)
+        : null;
     return {
       parent: voxelize(look.sprite, look.palette),
+      mark,
       parentScale: PARENT_HEIGHT / look.sprite.length,
       kids,
       kidScale: KID_HEIGHT / KID_STAND.length,
@@ -144,24 +170,39 @@ function Ziggurat({ session: s }: { session: SessionSnapshot }) {
   );
 
   // 状態が変わると材質を作り直すので、前のものは明示的に捨てる。
-  useEffect(() => () => [parts.cap, parts.halo].forEach((m) => m.dispose()), [parts]);
+  useEffect(
+    () => () => {
+      [parts.cap, parts.halo].forEach((m) => m.dispose());
+      parts.markGlow?.map?.dispose();
+      parts.markGlow?.dispose();
+    },
+    [parts],
+  );
 
   const phase = useMemo(() => phaseOf(s.sessionId), [s.sessionId]);
 
   const parentRef = useRef<Group>(null);
   const itemRef = useRef<Group>(null);
+  const markRef = useRef<Group>(null);
   const kidRefs = useRef<(Group | null)[]>([]);
 
   const parentY = TOP_Y + figures.parentScale / 2;
   const itemY = TOP_Y + ITEM_LIFT + (item?.scale ?? 0) / 2;
   const kidY = KID_Y + figures.kidScale / 2;
+  const markY = MARK_BOTTOM + MARK_VOXEL / 2;
 
   useFrame(({ clock }) => {
     const still = prefersStill();
     const t = clock.elapsedTime;
     const level = pulse(s.status, still ? 0 : t + phase * Math.PI * 2);
     parts.cap.emissiveIntensity = level * 0.9;
-    parts.halo.opacity = 0.05 + level * 0.09;
+    // 要対応の基は足元の光を倍ほどに強め、並んだ基の中から目で拾えるようにする。
+    parts.halo.opacity = calling ? 0.12 + level * 0.16 : 0.05 + level * 0.09;
+    if (parts.markGlow) parts.markGlow.opacity = 0.45 + level * 0.3;
+    if (markRef.current) {
+      markRef.current.position.y =
+        markY + (still ? 0 : hop(t + phase * MARK_PERIOD, MARK_PERIOD, HOP.rise)) * MARK_VOXEL;
+    }
 
     // 親は 2D と同じく稼働中だけ跳ねる。持ち物は手にあるので同じ位相で動かす。
     const beat = still ? 0 : hop(t + phase * HOP.period, HOP.period, HOP.rise);
@@ -202,6 +243,19 @@ function Ziggurat({ session: s }: { session: SessionSnapshot }) {
       <group ref={parentRef} position={[0, parentY, 0]} scale={figures.parentScale}>
         <Voxels voxels={figures.parent} depth={FIGURE_DEPTH} />
       </group>
+
+      {figures.mark && parts.markGlow && (
+        <group ref={markRef} position={[MARK_X, markY, 0]}>
+          <sprite
+            material={parts.markGlow}
+            position={[0, ((MARK_ROWS - 1) / 2) * MARK_VOXEL, 0]}
+            scale={[MARK_GLOW_SIZE, MARK_GLOW_SIZE, 1]}
+          />
+          <group scale={MARK_VOXEL}>
+            <Voxels voxels={figures.mark} depth={FIGURE_DEPTH} />
+          </group>
+        </group>
+      )}
 
       {item && (
         <group ref={itemRef} position={[ITEM_X, itemY, ITEM_Z]}>

@@ -1,7 +1,8 @@
 // 空間の寸法と配置。段が読めなくなったりキャラが画角から溢れると意味を失うので、計算を押さえる。
-import { cameraFit, clearSpacingZ, columnsFor, glowOf, gridLayout, hop, phaseOf, pulse, steps, FOOTPRINT_X, FOOTPRINT_Z, HOP, ITEM_HEIGHT, ITEM_LIFT, ITEM_X, ITEM_Z, KID_GAP, KID_HEIGHT, KID_Y, KID_Z, PARENT_HEIGHT, SKYLINE, STEPS, TOP_Y, VOXEL, ZIGGURAT } from "../src/three/blueprint.js";
-import { AGENT_STAND, ITEM_BOOK, ITEM_CANVAS, ITEM_HAMMER, ITEM_NOTE, ITEM_QUESTION, ITEM_SCOPE, ITEM_SCROLL, ITEM_TERMINAL, KID_STAND } from "../src/pixel/sprites.js";
+import { beckons, cameraFit, clearSpacingZ, columnsFor, glowOf, gridLayout, hop, phaseOf, pulse, steps, FOOTPRINT_X, FOOTPRINT_Z, HEADROOM, HOP, ITEM_HEIGHT, ITEM_LIFT, ITEM_X, ITEM_Z, KID_GAP, KID_HEIGHT, KID_Y, KID_Z, MARK_BOTTOM, MARK_ROWS, MARK_TOP, MARK_VOXEL, MARK_X, PARENT_HEIGHT, SKYLINE, STEPS, TOP_Y, VOXEL, ZIGGURAT } from "../src/three/blueprint.js";
+import { AGENT_STAND, MARK_BANG, MARK_QUESTION, ITEM_BOOK, ITEM_CANVAS, ITEM_HAMMER, ITEM_NOTE, ITEM_QUESTION, ITEM_SCOPE, ITEM_SCROLL, ITEM_TERMINAL, KID_STAND } from "../src/pixel/sprites.js";
 import { itemFor } from "../src/pixel/kit.js";
+import { lookOf } from "../src/pixel/look.js";
 import { MAX_KIDS } from "../src/pixel/AgentStage.js";
 
 let ok = 0;
@@ -174,6 +175,24 @@ t("稼働中のツールには持ち物がある", itemFor("Bash") !== null, tru
 t("スキル実行中は巻物を持つ", itemFor("Bash", "developer-plugin:dev-done")!.sprite, ITEM_SCROLL);
 t("ツールが無ければ持ち物も無い", itemFor(null), null);
 t("子が出るツールは持ち物にしない", itemFor("Agent"), null);
+
+// ── 頭上マーク ──
+t("権限待ちの基は呼ぶ", beckons("permission"), true);
+t("入力待ちの基は呼ぶ", beckons("waiting"), true);
+t("エラーの基は呼ぶ", beckons("error"), true);
+t("稼働中・待機・終了の基は呼ばない", ["working", "idle", "stopped"].some((x) => beckons(x as "idle")), false);
+t("要対応にはどれも 2D の頭上マークがある", ["permission", "waiting", "error"].every((x) => lookOf(x as "error").mark), true);
+t("マークの絵は想定の段数", [MARK_BANG, MARK_QUESTION].every((m) => m.length === MARK_ROWS), true);
+t("マークの高さは段数ぶん", Math.abs(MARK_TOP - MARK_BOTTOM - MARK_ROWS * MARK_VOXEL) < 1e-9, true);
+{
+  const half = artWidth(AGENT_STAND, PARENT_HEIGHT) / 2;
+  const markHalf = Math.max(artWidth(MARK_BANG, MARK_ROWS * MARK_VOXEL), artWidth(MARK_QUESTION, MARK_ROWS * MARK_VOXEL)) / 2;
+  t("マークは親に重ならない", MARK_X - markHalf > half, true);
+  t("マークは最上段からはみ出さない", MARK_X + markHalf < STEPS[STEPS.length - 1]!.width / 2, true);
+}
+t("マークは頭の高さにかかる", MARK_BOTTOM < SKYLINE && MARK_TOP > SKYLINE, true);
+t("画角は跳ねたマークの先まで入れる", HEADROOM >= MARK_TOP + HOP.rise * MARK_VOXEL - 1e-9, true);
+t("マークのぶんで全高を大きく伸ばさない", HEADROOM / SKYLINE < 1.1, true);
 
 // ── 跳ね ──
 t("跳ねは 2 コマだけ", [0, 0.2, 0.4, 0.6, 0.8, 1, 1.3].every((x) => [0, HOP.rise].includes(hop(x, HOP.period, HOP.rise))), true);

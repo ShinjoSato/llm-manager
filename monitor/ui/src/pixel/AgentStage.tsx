@@ -13,6 +13,18 @@ export const MAX_KIDS = 4;
 // memo が効くよう毎レンダー作り直さない。
 const ITEM_GLOW: CSSProperties = { filter: "drop-shadow(0 0 7px rgba(52,211,153,.35))" };
 
+// 色ごとに 1 つだけ作る。毎レンダー作り直すと memo が効かない。
+const MARK_GLOW = new Map<string, CSSProperties>();
+/** 返答待ちの頭上マークに添える光。止まっている他のキャラの記号と見分けやすくする。 */
+function markGlow(color = "#94a3b8"): CSSProperties {
+  let style = MARK_GLOW.get(color);
+  if (!style) {
+    style = { filter: `drop-shadow(0 0 5px ${color})` };
+    MARK_GLOW.set(color, style);
+  }
+  return style;
+}
+
 /**
  * カード内のキャラ表示。絵の描き方（art）だけを差し替えられる。
  * 情報の並びとツールチップを 1 箇所に持たせ、2D と 3D で食い違わないようにする。
@@ -32,7 +44,8 @@ export function AgentStage({
   const kids = s.agents.slice(0, MAX_KIDS).sort((a, b) => a.id.localeCompare(b.id));
   const rest = s.agents.length - kids.length;
 
-  const statusLabel = styleOf(s.status).label;
+  const st = styleOf(s.status);
+  const statusLabel = st.label;
   const parentRows: TooltipRow[] = [
     { label: "状態", value: `${statusLabel} — ${look.note}` },
     { label: "ブランチ", value: s.branch ?? "—", mono: true },
@@ -53,7 +66,8 @@ export function AgentStage({
               sprite={look.mark}
               palette={look.markPalette ?? FALLBACK_MARK}
               scale={3}
-              className={`absolute -right-1 ${markTop(s.status)}`}
+              className={`absolute -right-1 ${markTop(s.status)} ${st.attention ? "beckon" : ""}`}
+              style={st.attention ? markGlow(look.markPalette?.A) : undefined}
             />
           )}
           <Art
