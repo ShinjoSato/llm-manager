@@ -32,6 +32,9 @@ mac/
       Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行）
       AppKitHosts.swift           既存の端末ビュー / GitHub ボード / App Store 表示を SwiftUI に差し込む
       ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
+    Stage/                      右側のステージパネル（画面案B の右 360px）
+      StagePanel.swift            見出し（2D / 3D・開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
+      StageWebView.swift          monitor の埋め込み表示を出す WKWebView（直近 3 枚を保持して切替）とウィンドウ幅の監視
     ProjectStore.swift              プロジェクト一覧の永続化（Application Support の JSON）
     GitHubProjectPrompt.swift       プロジェクトに GitHub Project（owner/number）を紐づける入力ダイアログ
     SidebarViewController.swift     旧: プロジェクト一覧（メインウィンドウからは外した）
@@ -62,6 +65,8 @@ mac/
       RoomGrouping.swift          要対応 / 稼働中 / 待機 のグループ化・並び順・検索・未読数・アイコン色
       ChatMarkdown.swift          吹き出しの最低限の Markdown（太字・コード・改行・コードブロック）
       PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの読み取り
+    Stage/
+      StageLogic.swift            ステージパネルの文言（いまの動き・職業名・フィード）・埋め込み URL・プレースホルダー・開閉の判定
   Sources/MonitorProbe/         GUI 無しで接続を確かめるデバッグ用エントリ（swift run monitor-probe）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）
   Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
@@ -134,7 +139,7 @@ MONITOR_TEST_URL=http://127.0.0.1:8799 swift test
 ## メイン画面: チャット（画面案B の左と中央）
 
 Claude Code のセッションを**チャットアプリの操作感**で扱う。セッション 1 つ = トークルーム 1 つ。
-右側（ステージパネル・#69）は `ChatRootView` の `trailing` に差し込む（`ChatRootView(model:) { StagePanel() }`）。
+右側はステージパネル（`MainViewController` で `ChatRootView(model:) { StagePanel(model:) }` として差し込む）。
 
 ### ルーム一覧（左 312px）
 
@@ -146,6 +151,30 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 - 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。
   一覧の追加・削除・取り込み・GitHub の紐づけもここ）。右クリック → 「ルームを閉じる（claude を終了）」。
 - 下部: 5 時間 / 7 日間の残り% と取得からの経過（statusLine 未設定なら未取得と出す）。monitor 未接続ならその旨を出す。
+
+### ステージパネル（右 360px）
+
+選択中のルームのセッションを、monitor のステージ（アニメーション）と monitor クライアントのデータで見せる。
+文言・URL・判定は `Sources/MonitorKit/Stage/StageLogic.swift`（テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
+
+- **見出し**: 「ステージ」・**2D / 3D 切替**（UserDefaults `stagePanel.mode`）・畳むボタン。
+- **ステージ**: WKWebView で monitor の埋め込み表示 `/?embed=stage&session=<id>&mode=2d|3d&bg=transparent` を読む。
+  接続先は `MonitorConfiguration`（`CLAUDE_DECK_MONITOR_URL` / `CLAUDE_DECK_MONITOR_PORT`）。ルームを切り替えると URL を差し替える。
+  埋め込み表示は URL を読み込み時にしか見ないので切替は読み直しになるが、直近 3 枚の WKWebView を生かしておき、行き来した時は読み直さない。
+  monitor に繋ぎ直した（`connectionEpoch` が増えた）時は保持分を捨てて読み直す。読み込みに失敗したら 2 秒後にやり直す。
+  - 背景は透過（`drawsBackground = false`）。monitor 側の `html { color-scheme: dark }` があっても地は塗られない（WKWebView のスナップショットで透過を確認）。
+    透けない環境が出たら `StageTheme.embedBackground` に `0x0b111d` を入れると monitor が同色で塗る。
+  - http のループバックは ATS で弾かれない（`swift run` と `.app` の両方で読み込みを確認。Info.plist の変更は不要）。
+  - 埋め込み表示の外へのナビゲーション（別オリジン）は止める。
+- **プレースホルダー**: monitor 未接続（自動起動の準備中は `launcher.phase` に応じて「npm install」「UI をビルド中」「起動しています」、失敗時はその旨）・
+  ルーム未選択・ホスト中で sessionId 未解決（「セッションを確認しています…」）・monitor がまだそのセッションを見つけていない、の各状態で文言を出す。
+- **いまの動き**: monitor UI の `SessionCard` の `actionLine` と同じ順（スキル『…』> `currentAction` > ツールの動作「端末を叩いている」等）。
+  作業中でなければ `statusDetail` か状態名。下に「最終活動 N秒前 · 稼働 N分」（1 秒ごとに更新）と作業タイトル。
+- **随伴するサブエージェント**: `agents` を id 順で、職業名（`pixel/kit.ts` の JOBS と同じ。例: Explore → 斥候）・種別・状態
+  （ログ更新が 15 秒以内なら「作業中」、それ以外は最終更新からの経過）。
+- **ライブフィード**: そのセッションの feed の直近 60 件を新しい順（新着が先頭に入る）。時刻・種別（ツール / 指示 / 応答 / 状態 / セッション / 随伴）・内容を mono で。
+- **開閉**: 見出しのボタンで畳む（幅 36px の帯になり、帯のボタンで開く。UserDefaults `stagePanel.open`）。
+  ウィンドウ幅が 1100px 未満なら自動で畳む。狭いまま開いた時はそれに従い（パネルは最小 240px まで縮む）、広げれば通常に戻る。
 
 ### 会話（中央）
 
@@ -273,4 +302,5 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - 権限プロンプト・選択メニューの読み取りは端末画面の文言（`Do you want to …?` と `1. Yes`、`❯ n.` の選択肢、`Enter to confirm` 等の操作案内）に依る。
   **Claude Code の TUI の更新で判定を見直す必要がある**: `PTYInput.swift` の `InputBlock` / `ChoiceMenu` / `PermissionPrompt` / `InputBox`
   （v2.1.286 の trust 確認・AskUserQuestion・plan 承認・入力欄の例文と NBSP で確認）。文言・配置（罫線と ❯ の位置関係、操作案内の有無）に依存している。
-- ステージパネル（#69）・外部セッションへの伝言 / 引き継ぎ（#70）は別 Issue。
+- 外部セッションへの伝言 / 引き継ぎ（#70）は別 Issue。
+- ステージの 3D（WebGL）表示とキャラの動きは、WKWebView 内での描画を目視では未確認（canvas と WebGL2 の生成までは確認）。
