@@ -97,9 +97,9 @@ public enum ChoiceMenu {
 
     public static func isShowing(screen: [String]) -> Bool {
         var lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(tailLines)).map { $0.trimmingCharacters(in: .whitespaces) }
-        // 下部に入力欄があれば、それより上は会話の履歴なので見ない。
-        if let box = InputBox.promptIndex(lines) {
-            lines = Array(lines[(box + 1)...])
+        // 下部に入力欄があれば、それより上は会話の履歴、欄の中は入力中の文なので見ない。
+        if let start = InputBox.zoneStart(lines) {
+            lines = Array(lines[start...])
         }
         let footerZone = lines.filter { !$0.isEmpty }.suffix(8)
         if footerZone.contains(where: { line in footerPrefixes.contains { line.lowercased().hasPrefix($0) } }) { return true }
@@ -148,14 +148,30 @@ public enum ChoiceMenu {
 
 /// 端末下部の入力欄（罫線の直下の ❯ 行から次の罫線まで）。
 public enum InputBox {
-    /// 入力欄の ❯ 行の位置。選択肢の形（❯ n. …）の行はメニューのカーソルなので入力欄と見なさない。
+    /// 入力欄の ❯ 行の位置。選択肢の形（❯ n. …）の行は、下を罫線で閉じている時だけ入力欄とみなす（番号付きの文を入力中）。
+    /// 選択メニューは ❯ の下を罫線で閉じない（v2.1.286: 入力欄は上下に罫線、plan 承認は上だけ、
+    /// AskUserQuestion の区切り線は「Chat about this」の上で、その下は操作案内）。
     static func promptIndex(_ lines: [String]) -> Int? {
         lines.indices.last { index in
             guard index > 0 else { return false }
             let line = lines[index].trimmingCharacters(in: .whitespaces)
-            return line.hasPrefix("❯") && PermissionPrompt.isSeparator(lines[index - 1])
-                && ChoiceMenu.choiceNumber(line, cursor: true) == nil
+            guard line.hasPrefix("❯"), PermissionPrompt.isSeparator(lines[index - 1]) else { return false }
+            return ChoiceMenu.choiceNumber(line, cursor: true) == nil || closingRule(lines, after: index) != nil
         }
+    }
+
+    /// 入力欄の下の罫線の位置。間か後ろにメニューの操作案内があれば入力欄ではないので nil。
+    static func closingRule(_ lines: [String], after index: Int) -> Int? {
+        guard let rule = lines[(index + 1)...].firstIndex(where: { PermissionPrompt.isSeparator($0) || ChoiceMenu.isFooter($0) }),
+              PermissionPrompt.isSeparator(lines[rule]),
+              !lines[(rule + 1)...].contains(where: ChoiceMenu.isFooter) else { return nil }
+        return rule
+    }
+
+    /// 入力欄より下（メニューを探してよい範囲）の先頭。入力欄が無ければ nil。
+    static func zoneStart(_ lines: [String]) -> Int? {
+        guard let prompt = promptIndex(lines) else { return nil }
+        return (closingRule(lines, after: prompt) ?? prompt) + 1
     }
 
     /// 入力欄に入っている文字（空なら ""）。入力欄が見つからなければ nil。空欄の時の薄字の例文（Try "…"）は空とみなす。

@@ -285,9 +285,9 @@ extension ChoiceMenu {
         let trimmed = TerminalScreen.droppingTrailingBlankLines(screen)
         var offset = max(0, trimmed.count - tailLines)
         var lines = Array(trimmed[offset...])
-        if let box = InputBox.promptIndex(lines) {
-            lines = Array(lines[(box + 1)...])
-            offset += box + 1
+        if let start = InputBox.zoneStart(lines) {
+            lines = Array(lines[start...])
+            offset += start
         }
         return (lines, offset)
     }

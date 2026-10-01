@@ -396,8 +396,10 @@ final class ChoiceMenuTests: XCTestCase {
         XCTAssertEqual(ChoiceMenu.choiceNumber("❯\u{00A0}1.\u{00A0}Yes", cursor: true), 1)
         XCTAssertEqual(ChoiceMenu.choiceNumber("❯ 2. No", cursor: true), 2)
         XCTAssertNil(ChoiceMenu.choiceNumber("❯ 1.5 million", cursor: true))
-        let screen = [rule, "❯\u{00A0}1.\u{00A0}Yes", "  2.\u{00A0}No", rule]
+        let screen = [rule, "❯\u{00A0}1.\u{00A0}Yes", "  2.\u{00A0}No", "", "Esc to cancel"]
         XCTAssertNil(InputBox.promptIndex(screen))
+        // 下を罫線で閉じた番号付きの ❯ 行は、入力欄に入れた番号付きの文。
+        XCTAssertEqual(InputBox.promptIndex([rule, "❯\u{00A0}1.\u{00A0}Yes", "  2.\u{00A0}No", rule]), 1)
     }
 
     /// 新しいフォルダで初回起動した時の trust 確認（番号の無いメニュー。v2.1.286 の実画面）。

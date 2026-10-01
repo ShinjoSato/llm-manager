@@ -166,7 +166,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
     }
 
-    /// アプリが今いじっている実画面の全行（上から順・右端の空白は除く）。
+    /// アプリが今いじっている実画面の全行（上から順・右端の空白は除く）。右に縦線で区切った別の欄（差分パネル等）は除く。
     /// ターミナル表示で上にスクロールしていても、表示位置（yDisp）ではなく末尾の `rows` 行を読む。
     /// SwiftTerm は `lines.count == yBase + rows` を保つが yBase を公開していないので、行数を探って求める。
     func screenLines() -> [String] {
@@ -176,7 +176,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let top = term.buffer.totalLinesTrimmed
         let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
         let base = max(0, count - rows)
-        return (base..<count).compactMap { term.getScrollInvariantLine(row: top + $0).map(Self.text(of:)) }
+        return TerminalScreen.mainPane((base..<count).compactMap { term.getScrollInvariantLine(row: top + $0).map(Self.text(of:)) })
     }
 
     /// 実画面の行（`screenLines` の添字）の各文字に背景色（か反転）が付いているか。タブ行の今のタブを読むのに使う。
