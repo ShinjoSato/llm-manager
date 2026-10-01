@@ -61,11 +61,16 @@ enum GitHubBoard {
     /// プロジェクトに対応するボードを返す。
     /// 解決順: そのエントリに保存された GitHub 参照（owner/number）→ github-projects.tsv（名前一致）。
     static func mapping(forProject p: ManagedProject) -> BoardMapping? {
+        mapping(forProject: p, in: nil)
+    }
+
+    /// `mappings` に読み込み済みの TSV を渡すと読み直さない（一覧で何件も引く時用）。
+    static func mapping(forProject p: ManagedProject, in mappings: [BoardMapping]?) -> BoardMapping? {
         if let owner = p.ghOwner, let number = p.ghNumber,
            !owner.isEmpty, !number.isEmpty {
             return BoardMapping(name: p.name, owner: owner, number: number, repo: "", url: "")
         }
-        return mapping(forProjectNamed: p.name)
+        return (mappings ?? loadMappings()).first { $0.name == p.name }
     }
 
     // MARK: - 入力解析 / git remote
