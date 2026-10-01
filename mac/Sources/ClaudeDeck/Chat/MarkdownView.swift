@@ -17,12 +17,14 @@ enum MarkdownCache {
     private static let blockCache: NSCache<NSString, BlocksBox> = {
         let cache = NSCache<NSString, BlocksBox>()
         cache.countLimit = 1000
+        cache.totalCostLimit = 32 << 20
         return cache
     }()
 
     private static let inlineCache: NSCache<NSString, InlineBox> = {
         let cache = NSCache<NSString, InlineBox>()
         cache.countLimit = 8000
+        cache.totalCostLimit = 32 << 20
         return cache
     }()
 
@@ -30,7 +32,7 @@ enum MarkdownCache {
         let key = text as NSString
         if let hit = blockCache.object(forKey: key) { return hit.blocks }
         let blocks = ChatMarkdown.blocks(text)
-        blockCache.setObject(BlocksBox(blocks), forKey: key)
+        blockCache.setObject(BlocksBox(blocks), forKey: key, cost: text.utf16.count)
         return blocks
     }
 
@@ -38,7 +40,7 @@ enum MarkdownCache {
         let key = text as NSString
         if let hit = inlineCache.object(forKey: key) { return hit.value }
         let value = ChatMarkdown.inline(text)
-        inlineCache.setObject(InlineBox(value), forKey: key)
+        inlineCache.setObject(InlineBox(value), forKey: key, cost: text.utf16.count)
         return value
     }
 }

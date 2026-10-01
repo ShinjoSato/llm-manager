@@ -40,7 +40,7 @@ public enum ChatMarkdown {
 
     public static func blocks(_ source: String) -> [Block] {
         let normalized = source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map { expandTabs(String($0)) }
+        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         return parse(lines, depth: 0)
     }
 
@@ -49,6 +49,12 @@ public enum ChatMarkdown {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace,
                                                               failurePolicy: .returnPartiallyParsedIfPossible)
         return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+
+    /// 吹き出しのリンクで開いてよいか。本文は外部由来なので、ローカルファイルや他アプリを起こすスキームは開かない。
+    public static func isOpenableLink(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
     }
 
     // MARK: - ブロック
@@ -135,20 +141,50 @@ public enum ChatMarkdown {
 
     // MARK: - 行の判定
 
-    private static func expandTabs(_ line: String) -> String {
-        line.contains("\t") ? line.replacingOccurrences(of: "\t", with: "    ") : line
+    /// タブは字下げの桁数を数える時だけ 4 桁区切りで展開する。行そのものは書き換えない（コードブロックのタブを保つため）。
+    private static let tabWidth = 4
+
+    private static func isSpace(_ c: Character) -> Bool {
+        c == " " || c == "\t"
     }
 
     private static func isBlank(_ line: String) -> Bool {
-        line.allSatisfy { $0 == " " }
+        line.allSatisfy(isSpace)
     }
 
-    private static func indent(_ line: String) -> Int {
-        line.prefix { $0 == " " }.count
+    private static func stripLeading(_ text: some StringProtocol) -> Substring {
+        Substring(text).drop(while: isSpace)
     }
 
+    /// 先頭の空白の桁数。
+    private static func indent(_ line: some StringProtocol, from start: Int = 0) -> Int {
+        var col = start
+        for c in line {
+            if c == " " { col += 1 } else if c == "\t" { col += tabWidth - col % tabWidth } else { break }
+        }
+        return col - start
+    }
+
+    /// 先頭から `count` 桁ぶんの空白を落とす。タブの途中で止まる時は残りの桁だけ空白で補い、以降は元のまま返す。
     private static func dropIndent(_ line: String, _ count: Int) -> String {
-        String(line.dropFirst(min(count, indent(line))))
+        var col = 0
+        var idx = line.startIndex
+        while idx < line.endIndex, col < count {
+            let c = line[idx]
+            if c == " " {
+                col += 1
+            } else if c == "\t" {
+                let next = col + tabWidth - col % tabWidth
+                if next > count {
+                    return String(repeating: " ", count: next - count) + line[line.index(after: idx)...]
+                }
+                col = next
+            } else {
+                break
+            }
+            idx = line.index(after: idx)
+        }
+        return String(line[idx...])
     }
 
     private struct Fence {
@@ -160,13 +196,13 @@ public enum ChatMarkdown {
     private static func fenceOpening(_ line: String) -> Fence? {
         let ind = indent(line)
         guard ind <= 3 else { return nil }
-        let rest = line.dropFirst(ind)
+        let rest = stripLeading(line)
         guard let first = rest.first, first == "`" || first == "~" else { return nil }
         let marker = rest.prefix { $0 == first }
         guard marker.count >= 3 else { return nil }
         let info = rest.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
         if first == "`", info.contains("`") { return nil }
-        let language = info.split(separator: " ").first.map(String.init)
+        let language = info.split(whereSeparator: isSpace).first.map(String.init)
         return Fence(marker: String(marker), indent: ind, language: language)
     }
 
@@ -179,11 +215,11 @@ public enum ChatMarkdown {
 
     private static func heading(_ line: String) -> Block? {
         guard indent(line) <= 3 else { return nil }
-        let rest = line.drop { $0 == " " }
+        let rest = stripLeading(line)
         let hashes = rest.prefix { $0 == "#" }.count
         guard (1...6).contains(hashes) else { return nil }
         let after = rest.dropFirst(hashes)
-        guard after.isEmpty || after.first == " " else { return nil }
+        guard after.isEmpty || after.first.map(isSpace) == true else { return nil }
         var text = after.trimmingCharacters(in: .whitespaces)
         // 末尾の閉じ #（"## 見出し ##"）は飾りなので落とす。
         if let range = text.range(of: #"(^|\s)#+$"#, options: .regularExpression) {
@@ -194,18 +230,18 @@ public enum ChatMarkdown {
 
     private static func isRule(_ line: String) -> Bool {
         guard indent(line) <= 3 else { return false }
-        let chars = line.filter { $0 != " " }
+        let chars = line.filter { !isSpace($0) }
         guard chars.count >= 3, let first = chars.first, "-*_".contains(first) else { return false }
         return chars.allSatisfy { $0 == first }
     }
 
     private static func isQuote(_ line: String) -> Bool {
-        indent(line) <= 3 && line.drop { $0 == " " }.first == ">"
+        indent(line) <= 3 && stripLeading(line).first == ">"
     }
 
     private static func stripQuote(_ line: String) -> String {
-        var rest = line.drop { $0 == " " }.dropFirst()
-        if rest.first == " " { rest = rest.dropFirst() }
+        var rest = stripLeading(line).dropFirst()
+        if let c = rest.first, isSpace(c) { rest = rest.dropFirst() }
         return String(rest)
     }
 
@@ -220,7 +256,7 @@ public enum ChatMarkdown {
 
     static func listMarker(_ line: String) -> Marker? {
         let ind = indent(line)
-        let rest = line.dropFirst(ind)
+        let rest = stripLeading(line)
         guard let first = rest.first else { return nil }
         var markerLength: Int
         var ordered = false
@@ -242,9 +278,9 @@ public enum ChatMarkdown {
         if after.isEmpty {
             return Marker(indent: ind, ordered: ordered, number: number, bullet: bullet, contentIndent: ind + markerLength + 1, text: "")
         }
-        guard after.first == " " else { return nil }
-        let spaces = min(after.prefix { $0 == " " }.count, 4)
-        let text = after.drop { $0 == " " }
+        guard let c = after.first, isSpace(c) else { return nil }
+        let spaces = min(indent(after, from: ind + markerLength), 4)
+        let text = stripLeading(after)
         return Marker(indent: ind, ordered: ordered, number: number, bullet: bullet,
                       contentIndent: ind + markerLength + spaces, text: String(text))
     }
@@ -252,7 +288,10 @@ public enum ChatMarkdown {
     // MARK: - リスト
 
     private static func parseList(_ lines: [String], _ i: inout Int, depth: Int) -> Block {
-        guard let first = listMarker(lines[i]) else { return .paragraph(lines[i]) }
+        guard let first = listMarker(lines[i]) else {
+            i += 1  // 呼び出し側のループを必ず進める
+            return .paragraph(lines[i - 1])
+        }
         let base = first.indent
         var items: [ListItem] = []
 

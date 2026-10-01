@@ -136,6 +136,31 @@ final class ChatMarkdownTests: XCTestCase {
         XCTAssertEqual(blocks, [.paragraph("前置き"), .code(language: "swift", "let a = 1\n\nlet b = 2"), .paragraph("後書き")])
     }
 
+    func testFencedCodeKeepsTabs() {
+        XCTAssertEqual(ChatMarkdown.blocks("```go\nfunc f() {\n\treturn\t1\n}\n```"),
+                       [.code(language: "go", "func f() {\n\treturn\t1\n}")])
+        XCTAssertEqual(ChatMarkdown.blocks("- a\n  ```\n  \tx\ty\n  ```"),
+                       [.list(ordered: false, start: 0, items: [.init([.paragraph("a"), .code(language: nil, "\tx\ty")])])])
+    }
+
+    func testTabsCountAsIndent() {
+        XCTAssertEqual(ChatMarkdown.blocks("- a\n\t- b"), [
+            .list(ordered: false, start: 0, items: [
+                .init([.paragraph("a"), .list(ordered: false, start: 0, items: [.init([.paragraph("b")])])]),
+            ]),
+        ])
+        XCTAssertEqual(ChatMarkdown.blocks("-\tx"), [.list(ordered: false, start: 0, items: [.init([.paragraph("x")])])])
+    }
+
+    func testOnlyWebLinksOpen() {
+        for s in ["http://example.com", "https://example.com/a?b=c", "HTTPS://EXAMPLE.COM"] {
+            XCTAssertTrue(ChatMarkdown.isOpenableLink(URL(string: s)!), s)
+        }
+        for s in ["file:///etc/passwd", "vscode://file/x", "javascript:alert(1)", "mailto:a@example.com", "relative/path"] {
+            XCTAssertFalse(ChatMarkdown.isOpenableLink(URL(string: s)!), s)
+        }
+    }
+
     func testUnclosedFenceRunsToEnd() {
         XCTAssertEqual(ChatMarkdown.blocks("a\n```\nx"), [.paragraph("a"), .code(language: nil, "x")])
     }

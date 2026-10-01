@@ -36,6 +36,10 @@ struct ConversationView: View {
                 }
             }
         }
+        // 吹き出しの本文は外部由来なので、http / https 以外のリンクは開かない。
+        .environment(\.openURL, OpenURLAction { url in
+            ChatMarkdown.isOpenableLink(url) ? .systemAction : .discarded
+        })
     }
 
     private func placeholder(_ text: String) -> some View {
