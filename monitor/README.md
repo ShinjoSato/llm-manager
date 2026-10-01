@@ -1,7 +1,7 @@
 # monitor — Claude Code セッションのリアルタイム集約
 
 複数リポジトリで同時に走っている Claude Code の状況を 1 画面で見るためのダッシュボード。
-ai-manager の他の機能（`server` :8765 / `web`）とは**独立したプロセス**で、`:8766` で動く。
+読み取り専用の**独立したプロセス**で、`:8766` で動く（mac アプリ claude-deck もこれに接続する）。
 
 ```bash
 cd monitor
@@ -152,7 +152,7 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 - 既に自前のステータスラインを使っている場合は、`monitor/scripts/statusline.sh` に自分の表示を足す
   （出力先のパスはスクリプトの位置から引いているので、ai-manager の外へコピーすると書き込み先が変わる）
 - スクリプトは受け取った値を `data/claude-usage.json` に**原子的に**書く（同じディレクトリに
-  tmp を作って `mv`）。monitor と server はそれを読むだけで、プロセス間に直接の結合は無い
+  tmp を作って `mv`）。monitor はそれを読むだけで、プロセス間に直接の結合は無い
 - **表示を先に出し切ってから書く。** 書き込みに失敗してもステータスラインは従来どおり出る
 - `jq` が要る（元から使っている）。全セッションから並行して呼ばれるが、書く内容はアカウント単位で
   同じなので競合しても問題にならない
@@ -371,7 +371,7 @@ src/                 バックエンド（Node 24 / tsx 実行）
   transcriptApi.ts   会話履歴 API（jsonl を先頭から読みチャット単位に整形 / SSE の transcript 配信）
   hub.ts             3 層の統合・状態判定・イベント発火
   server.ts          Hono。SSE 配信 / API / フック受け口 / ui/dist 配信
-ui/                  React + Vite + TypeScript + Tailwind v4（web/ と同じデザイントークン）
+ui/                  React + Vite + TypeScript + Tailwind v4（ダークコマンドセンターのデザイントークン）
   src/App.tsx        レイアウトと KPI
   src/useMonitor.ts  SSE 購読フック
   src/status.ts      状態ごとの色・ラベル・並び順

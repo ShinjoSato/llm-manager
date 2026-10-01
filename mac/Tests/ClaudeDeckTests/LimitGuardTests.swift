@@ -139,7 +139,7 @@ final class LimitGuardScreenTests: XCTestCase {
     func testToolOutputWithLimitPhraseDoesNotTrigger() {
         let body = ["❯ 上限の表示を試して", "⏺ Bash(echo \"Usage limit reached · wrapping up\")", "  ⎿  Usage limit reached · wrapping up"]
         XCTAssertNil(LimitGuard.screenLimitLine(screen(body: body)))
-        let mcp = ["⏺ ai-manager - get_dashboard (MCP)(name: \"x\")", "  ⎿  You've hit your session limit · resets 3pm"]
+        let mcp = ["⏺ example - get_status (MCP)(name: \"x\")", "  ⎿  You've hit your session limit · resets 3pm"]
         XCTAssertNil(LimitGuard.screenLimitLine(screen(body: mcp)))
     }
 

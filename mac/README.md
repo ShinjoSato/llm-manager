@@ -40,11 +40,9 @@ mac/
     GitHubProjectPrompt.swift       プロジェクトに GitHub Project（owner/number）を紐づける入力ダイアログ
     SidebarViewController.swift     旧: プロジェクト一覧（メインウィンドウからは外した）
     TileContainerViewController.swift 旧: タイル状グリッド（メインウィンドウからは外した）
-    TerminalPaneViewController.swift 旧: 1ペイン = Claude Code / GitHub / App Store を切替（`findXcodeProject` はチャット画面も使う）
+    TerminalPaneViewController.swift 旧: 1ペイン = Claude Code / GitHub を切替（`findXcodeProject` はチャット画面も使う）
     GitHubBoard.swift               github-projects.tsv 読込 + gh によるボード取得
     GitHubBoardView.swift           Issue をステータス別にグループ表示（クリックで GitHub を開く）
-    AppStoreClient.swift            appstore.tsv 読込 + server HTTP API（/api/appstore）の取得
-    AppStoreView.swift              審査/提出/ビルド/評価サマリ表示（Web の AppStoreCard 相当）
     ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面末尾の上限表示の監視
     LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
     ProjectRegistry.swift       projects/registry.tsv のパーサ
@@ -365,10 +363,10 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
     安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。
 
-### GitHub / App Store 表示（旧ペインのみ）
+### GitHub 表示（旧ペインのみ）
 
-会話画面からは外した。`GitHubBoardView`（`gh project item-list` で Issue をステータス別に表示）と `AppStoreView`（server の
-`GET /api/appstore/:name` のサマリ）は、使われていない旧ペイン（`TerminalPaneViewController`）にだけ残っている。
+会話画面からは外した。`GitHubBoardView`（`gh project item-list` で Issue をステータス別に表示）は、使われていない旧ペイン
+（`TerminalPaneViewController`）にだけ残っている。
 「+」の「GitHub Project を設定…」で保存した owner/number は、一覧の 2 行目（`GH #番号`）に出る。
 
 **永続化先**: `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。試験用に別の一覧を使うときは環境変数 `CLAUDE_DECK_PROJECTS`（JSON のパス）で差し替える。
