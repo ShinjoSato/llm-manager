@@ -60,6 +60,7 @@ mac/
     MonitorStore.swift          @Observable ストア（接続状態・セッション・フィード・残量・権限確認・pid 対応付け）
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
     LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
+    EditorActions.swift         見出しの「VS Code / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       TranscriptBuffer.swift      会話履歴の GET と SSE の統合（id で重複除去・reset で置換）
       ChatTimeline.swift          発話の下にツールを畳む・実行中ツールの判定・送った伝言の差し込み
@@ -182,7 +183,12 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・VS Code / Xcode で開く・**チャット / ターミナル / GitHub / App Store** 切替。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「Xcode」「閉じる」・**チャット / ターミナル / GitHub / App Store** 切替。
+  「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`findXcodeProject`）。「閉じる」は確認ダイアログの後、
+  monitor の `close.ts` と同じ AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
+  （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。monitor 未接続でも、ホスト中のルームでも使える。
+  結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。
+  初回は macOS が「claude-deck が Xcode を操作する」許可（オートメーション）を求める。拒否するとエラー（-1743）になる。
   ターミナルは既存の端末ビュー、GitHub は既存のボード表示、App Store は既存の `AppStoreView`（`appstore.tsv` に登録のあるプロジェクトだけ出す）。
   切り替えても、ルームを移っても、各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
 - 会話は monitor の会話履歴 API（`/api/sessions/:id/transcript` + SSE `transcript`）から組み立てる。
