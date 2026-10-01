@@ -31,6 +31,7 @@ mac/
     AppStoreView.swift              審査/提出/ビルド/評価サマリ表示（Web の AppStoreCard 相当）
     ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 上限文言監視
     ProjectRegistry.swift       projects/registry.tsv のパーサ
+    AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも TSV / monitor を引ける）
     MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（SSE 接続は 1 本）
   Sources/MonitorKit/           monitor（:8766）クライアント。UI 無し・テスト可能な library
     MonitorModels.swift         monitor/src/types.ts に対応する Codable 型
@@ -42,6 +43,8 @@ mac/
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
   Sources/MonitorProbe/         GUI 無しで接続を確かめるデバッグ用エントリ（swift run monitor-probe）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）
+  Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
+  scripts/bundle.sh             claude-deck.app を組み立てて ad-hoc 署名する
 ```
 
 ## monitor 連携（MonitorKit）
@@ -92,7 +95,7 @@ GitHub Project のマッピングがあるプロジェクトは、ペイン見�
 - **GitHub**: そのプロジェクトの Issue を**ステータス別（Todo / In Progress / Debug / Review / Done / その他）にグループ化**して表示。各行は `[repo] #番号 タイトル @担当`、**クリックで GitHub を開く**。右上の 🔄 で再取得。
 - マッピング元: `projects/github-projects.tsv`（name / owner / number / repo / url）。**マッピングが無いプロジェクトでは切替を出さず Claude Code のみ**。
 - 取得は `gh project item-list <number> --owner <owner> --format json` をログインシェル経由で実行（**`gh` の認証 + `project` スコープが前提**）。
-- 解決順（github-projects.tsv）: 環境変数 `CLAUDE_DECK_GH_PROJECTS` → 上方探索 → 既定 `/Users/shinjo/project/ai-manager/projects/github-projects.tsv`。
+- 解決順（github-projects.tsv）: 環境変数 `CLAUDE_DECK_GH_PROJECTS` → ai-manager ルート配下（後述「ai-manager ルートの解決」）。
 
 ### ペイン内: App Store 切替
 
@@ -102,7 +105,7 @@ GitHub Project のマッピングがあるプロジェクトは、ペイン見�
 - ロジックは **server に一本化**。claude-deck は ASC API を直接叩かず、既存 HTTP API `GET /api/appstore/:name` を fetch するだけ（二重実装しない）。
 - 前提: **server（`:8765`）が起動していること**（`./scripts/dev.sh` 等）。**server 未起動・API エラー・認証未設定時は、その旨をペイン内に文言表示してフォールバック**（アプリは落とさない）。
 - 対象判定元: `projects/appstore.tsv`（name / bundleId）。**登録が無いプロジェクトでは App Store トグルを出さない**。
-- 解決順（appstore.tsv）: 環境変数 `CLAUDE_DECK_APPSTORE_TSV` → 上方探索 → 既定 `/Users/shinjo/project/ai-manager/projects/appstore.tsv`。API ベース URL は `CLAUDE_DECK_API_BASE`（既定 `http://localhost:8765`）で差し替え可能。
+- 解決順（appstore.tsv）: 環境変数 `CLAUDE_DECK_APPSTORE_TSV` → ai-manager ルート配下（後述「ai-manager ルートの解決」）。API ベース URL は `CLAUDE_DECK_API_BASE`（既定 `http://localhost:8765`）で差し替え可能。
 
 **永続化先**: `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。
 **初回のみ** `registry.tsv` から取り込んで空にしない（以降は完全にユーザー管理）。
@@ -110,8 +113,19 @@ GitHub Project のマッピングがあるプロジェクトは、ペイン見�
 ### registry.tsv の解決順（初回取り込み / 取り込みボタン）
 
 1. 環境変数 `CLAUDE_DECK_REGISTRY`（絶対パス）
-2. カレントディレクトリから上方探索で `projects/registry.tsv`
-3. 既定 `/Users/shinjo/project/ai-manager/projects/registry.tsv`
+2. ai-manager ルート配下の `projects/registry.tsv`（下記）
+
+### ai-manager ルートの解決（`AIManagerRoot.swift`）
+
+`.app` から起動すると cwd が `/` になるため、ai-manager ルート（`projects/registry.tsv` を持つディレクトリ）の解決を `AIManagerRoot` に集約している。TSV や `monitor/` はこのルートからの相対で引く。
+
+1. 環境変数 `AI_MANAGER_ROOT`
+2. UserDefaults `aiManagerRoot`（`defaults write com.shinjosato.claude-deck aiManagerRoot /path/to/ai-manager`）
+3. 実行ファイルの位置 → カレントディレクトリの順に親へ遡り、`projects/registry.tsv` を持つディレクトリ
+4. 既定 `/Users/shinjo/project/ai-manager`
+
+各候補は `projects/registry.tsv` が実在するときだけ採用する。API は `AIManagerRoot.url`（ルート URL）と `AIManagerRoot.file("相対パス", envOverride: "環境変数名")`。
+解決結果は `claude-deck --print-ai-manager-root` で GUI を出さずに確認できる（`.app` なら `claude-deck.app/Contents/MacOS/claude-deck --print-ai-manager-root`）。
 
 ## ビルド / 実行
 
@@ -121,12 +135,36 @@ swift build          # ビルド
 swift run            # 起動（ウィンドウが開く）
 ```
 
+### `.app` として起動する
+
+```sh
+cd /Users/shinjo/project/ai-manager/mac
+./scripts/bundle.sh            # → mac/dist/claude-deck.app（ad-hoc 署名済み）
+open dist/claude-deck.app      # Finder からのダブルクリックでも可
+```
+
+- オプション: `--build-system auto|default|native`（既定 auto）/ `--debug` / `--out <dir>`。
+- `auto` は通常の `swift build` を試し、失敗したら `--build-system native` で再ビルドする。Metal Toolchain が無い環境では通常ビルドが SwiftTerm の `Shaders.metal` のコンパイルで失敗するため（`xcodebuild -downloadComponent MetalToolchain` で入れれば通常ビルドが通る）。
+- 依存のリソースバンドル（`SwiftTerm_SwiftTerm.bundle`）は `Contents/Resources/` に同梱する。claude-deck は SwiftTerm の Metal レンダラーを有効にしていないため、現状このバンドルは参照されない（有効化する場合は SPM の `Bundle.module` が `.app` 直下を探す点に注意）。
+- 署名は ad-hoc（`codesign -s -`）のみ。Developer ID 署名・公証・配布・自動アップデートはしない。別の Mac へコピーすると Gatekeeper に止められる前提（右クリック → 開く）。
+- `/Applications` へ置く場合は `--out /Applications` またはコピー。その場合は実行ファイル位置から ai-manager を辿れないので、上記の `AI_MANAGER_ROOT` / UserDefaults / 既定パスで解決される（Finder 起動には環境変数が渡らないので、実質 UserDefaults か既定パス）。
+- 生成物 `mac/dist/` と `mac/.build/` は git 管理外。
+- アイコン（任意）: `mac/Resources/AppIcon.icns` を置くと同梱される。1024px の PNG から作る例:
+  ```sh
+  mkdir AppIcon.iconset
+  for s in 16 32 128 256 512; do
+    sips -z $s $s icon.png --out AppIcon.iconset/icon_${s}x${s}.png
+    sips -z $((s*2)) $((s*2)) icon.png --out AppIcon.iconset/icon_${s}x${s}@2x.png
+  done
+  iconutil -c icns AppIcon.iconset -o mac/Resources/AppIcon.icns
+  ```
+
 > 端末から起動すると PATH（`~/.local/bin` の `claude` など）を確実に継承できる。
 > アプリ内でも各セッションをログインシェル経由で起動するため、GUI 起動でも `claude` は解決される想定。
 
 ## 現状の制約 / TODO
 
-- `.app` バンドル化・コード署名は未対応（`swift run` 起動の PoC 段階）。配布時は Developer ID 署名を検討。
+- `.app` は ad-hoc 署名のローカル起動のみ。配布時は Developer ID 署名・公証を検討。
 - 上限検知の文言は要・実機検証（上記）。
 - 削除しても、開いているタブは閉じない（タブ側は手動で対応）。サイドバーとタブの連動は将来拡張。
 - 追加時の表示名はフォルダ名固定（リネーム UI は未実装）。
