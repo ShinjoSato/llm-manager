@@ -1,7 +1,7 @@
 # ai-manager
 
 Claude Code を「マネージャー」として運用するためのプロジェクト。
-他プロジェクトの管理・Google カレンダー連携・スプレッドシートでの勉強管理を担う。
+他プロジェクトの管理と、Claude Code セッションの司令塔（mac アプリ claude-deck + セッション監視 monitor）を担う。
 
 ## 役割
 
@@ -11,28 +11,26 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 ## 運用ルール（重要）
 
 - **言語**: 日本語でやり取り・応答する。ドキュメント・コメントも日本語を基本とする。
-- **「開発状況を確認して」= GitHub Project ボードを見る**: ユーザーが「開発状況を確認」「○○の状況」と言ったら、まず GitHub Project（ボード）を確認する。ローカル git status や PR 一覧は主役にしない（補足としてなら可）。`./scripts/board.sh <name>` を使う。
+- **「開発状況を確認して」= GitHub Project ボードを見る**: ユーザーが「開発状況を確認」「○○の状況」と言ったら、まず GitHub Project（ボード）を確認する。ローカル git status や PR 一覧は主役にしない（補足としてなら可）。手順は下の「GitHub Project（ボード）連携」。
 - **記録はこのプロジェクト内に残す**: マネジメントに関わるルール・方針・知見は永続メモリではなく ai-manager 内（CLAUDE.md や `docs/` 等）に記載する。それがこのプロジェクトの目的。
 
 ## 機能と現状
 
 | 機能 | 状態 | 場所 |
 |------|------|------|
-| 他プロジェクト管理 | 着手中（手動運用） | `projects/`, `scripts/status.sh` |
-| データ中核 + API（HTTP/MCP） | 稼働（TypeScript） | `server/` |
-| 統合ダッシュボード（React） | 稼働 | `web/` |
-| App Store 連携 | 稼働（要 API キー設定） | `server/src/core/appstore.ts` |
-| Google カレンダー連携 | 稼働（要 OAuth 設定）／会話は claude.ai MCP | `server/src/core/calendar.ts` |
-| スプレッドシート勉強管理 | 未着手 | - |
+| 他プロジェクト管理 | 手動運用 | `projects/`（mac アプリの「+」も参照） |
 | claude-deck（Claude Code 司令塔アプリ） | PoC（Swift/macOS・ビルド可） | `mac/` |
 | Claude Code セッション監視（リアルタイム） | 稼働（TypeScript・独立プロセス） | `monitor/` |
+| スプレッドシート勉強管理 | 未着手 | - |
+
+構成は `mac/`（claude-deck）と `monitor/`（:8766）の 2 つだけ。claude-deck は monitor に接続し、無ければ自動で起動する。
+`projects/*.tsv` は mac アプリが読み、`data/claude-usage.json`（未追跡）は statusLine が書いて monitor が読む。
 
 ## 他プロジェクト管理
 
-- 管理対象は `projects/registry.tsv`（TSV）に登録する。1行1プロジェクト。
-- 状況確認は `./scripts/status.sh`（`--all` で paused/archived も、`<name>` で個別）。
+- 管理対象は `projects/registry.tsv`（TSV）に登録する。1行1プロジェクト。mac アプリの「+」の一覧は初回にここから取り込む。
 - **管理対象の追加依頼を受けたら**: `projects/registry.tsv` に行を追記する。パスは絶対パスで、status は active/paused/archived のいずれか。
-- 兄弟プロジェクトは `/Users/shinjo/project/` 配下にある。
+- 兄弟プロジェクトは `/Users/shinjo/project/` 配下にある。ローカルの様子を補足で見る時は `git -C <path> status -sb` 等を直接使う。
 
 ### 管理対象（2026-06-04 時点）
 - **mirio** — 中心プロダクト（develop）。
@@ -42,110 +40,16 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 - infra / blog は mirio に関連する作業を含むため、mirio の動きと連動して見ると良い。
 
 ### GitHub Project（ボード）連携
-- 管理対象とボードの紐づけは `projects/github-projects.tsv`。
-- ボード状況は `./scripts/board.sh`（`<name>` で個別、`--done` で完了分も表示）。
+- 管理対象とボードの紐づけは `projects/github-projects.tsv`（name / owner / number / repo / url）。mac アプリもこれを読む。
+- ボード状況は `gh` で直接取る。`projects/github-projects.tsv` で number を引き、
+  `gh project item-list <number> --owner ShinjoSato --format json --limit 200` を実行する（既定の件数は 30 なので `--limit` を付ける）。
+  - 未完了だけ: `... --jq '.items[] | select(.status != "Done") | [.status, .title, (.content.number // "-")] | @tsv'`
 - 前提: `gh` CLI 認証済み（`ShinjoSato`、`project` スコープ）。ステータスは Todo / In Progress / Debug / Done。
-- 紐づき: sandora→Project #3 (random_talk) / mirio→Project #4 (ailovei) / overview→Project #5（横断・複数リポジトリ包括）。
+- 紐づき: sandora→Project #3 (random_talk) / mirio→Project #4 (ailovei) / overview→Project #5（横断・複数リポジトリ包括）/ ai-manager→Project #8 (llm-manager)。
 - **infra は専用ボード未作成**。横断作業は overview(#5) で追う。専用ボードを作ったら `github-projects.tsv` に追記する。
-- overview はステータスが Todo / In Progress / **Review** / Done（Debug ではない）。board.sh は未知ステータスにも対応済み。
-
-## アーキテクチャ（TypeScript フルスタック）
-
-データ取得を「**1つのデータ中核**」にまとめ、**HTTP（React 用）と MCP（Claude Code 用）の二口**で公開する構成。型は `shared/types.ts` を server/web で共有。
-
-```
-shared/types.ts          ドメイン型（server と web で共有）
-server/                  TypeScript バックエンド（Node 24 / tsx 実行）
-  src/core/              取得ロジック。gh/git/App Store Connect。フレームワーク非依存
-    paths/proc/tsv/git/boards/appstore/state/collect
-  src/http/server.ts     HTTP/JSON API（Hono）。web/dist も配信
-  src/mcp/server.ts      MCP サーバー（stdio）。Claude がツールとして直接呼ぶ
-  src/cli.ts             収集して data/dashboard.json に保存（`npm run collect`）
-web/                     React + Vite + TypeScript + Tailwind v4（ダークコマンドセンター）
-  src/components/        ui(共通: Card/Badge/StatCard/ProgressRing) / StatBar(KPI) /
-                         Highlights / ProjectSummary / AppStoreCard / PullRequests / FocusNotes / LocalChanges
-  src/styles.css         Tailwind v4（@theme トークン + @layer components）。アイコンは lucide-react
-scripts/                 補助シェル（dev.sh で API+Web 同時起動 / board.sh / status.sh）
-```
-
-データ実体（`projects/*.tsv`・`data/*.json`・`secrets/`）は言語非依存でそのまま流用。`data/dashboard.json` が生成物、`data/manager-state.json` が手動レイヤー（要注目・今日の重点に反映）。
-
-### 起動コマンド
-- **開発（API + Web を同時起動・推奨）**: `./scripts/dev.sh`
-  - API(:8765) と Vite(:5173) を1コマンドで起動。`/api` は :8765 にプロキシ。ホットリロード有効。
-  - Ctrl-C で両方まとめて停止（`kill 0`）。依存未インストールなら自動で `npm install`。
-  - ブラウザで http://localhost:5173 を開く。
-- **本番配信（サーバー1つで完結）**: `cd web && npm run build` → `cd ../server && npm run http` → http://localhost:8765
-  - `web/dist` があれば HTTP サーバーが React も同一ポートで配信する。
-- **データだけ再生成**: `cd server && npm run collect`
-- **セッション監視（monitor・独立プロセス）**: `cd monitor && npm install && npm run build && npm start` → http://localhost:8766
-- 依存は各ディレクトリで `npm install`（server / web）。Node 24 系。
-- **server は localhost 限定**。`127.0.0.1` でのみ待ち受け、CORS は付けず、全エンドポイントで `Host` / `Origin`
-  を検証する（ループバック名以外は 403）。書き込み系（`POST /api/state` / `POST /api/refresh`）は
-  `content-type: application/json` 必須（415）。認証が無く手動レイヤーへの書き込み口もあるため外部に出さない。
-  他端末から見たい場合も穴を開けず、SSH ポートフォワード等で繋ぐ。判定は `server/src/http/origin.ts`
-  （monitor と同じ実装。別 npm プロジェクトなので複製で持つ）、テストは `cd server && npm test`。
-
-### Claude Code 連携（MCP）— ここが要
-- `.mcp.json` で MCP サーバーを登録済み（`ai-manager`）。Claude Code はツールとして直接呼べる:
-  - `get_dashboard` / `refresh_dashboard` / `get_app_status` / `list_projects`
-  - `get_state` / `set_focus_notes` / `add_pin`（手動レイヤーの読み書き）
-  - `list_calendar_events` / `create_calendar_event`（Google カレンダー）
-- 「今日の重点」は MCP の `set_focus_notes`、`data/manager-state.json` 直接編集、Web 上の編集のいずれでも更新できる（全て同じ JSON に反映）。
-
-### HTTP API
-- `GET /api/health` / `GET /api/dashboard` / `POST /api/refresh`
-- `GET /api/state` / `POST /api/state` / `GET /api/appstore/:name?`
-
-### 運用方針 / 既知の制約
-- 現状は**手動運用**。ユーザーが話しかけたときに動く。定期実行などの自動化は未導入（将来検討）。
-- 停滞検知（In Progress のN日放置）は gh の item-list に更新日時が無いため未実装。GraphQLで `updatedAt` を取れば追加可能（将来）。
-
-## App Store 連携
-
-mirio / sandora など iOS アプリの状況を App Store Connect API から取得する。実装は `server/src/core/appstore.ts`（Node 標準のみ。JWT は `crypto.sign(..., {dsaEncoding:'ieee-p1363'})` で raw 署名、API は `fetch`）。
-
-- 対象アプリ: `projects/appstore.tsv`（name <TAB> bundleId。本番 bundleId を書く）。
-  - mirio = `indiv.ailovei`（staging の `indiv.ailovei.staging` ではない）/ sandora = `indiv.random-talk`。
-- 取得: `collectAppStore(only?)`。`collect()` が呼んで各プロジェクトに `appstore` を付与。MCP の `get_app_status` でも単体取得可。
-- ダッシュボード表示: Web の `AppStoreCard` に「📱 App Store」カード。REJECT / UNRESOLVED / FAILED 系は赤バッジ、配信中/完了/利用可は緑。
-
-### 取得しているデータ（`appRecord`）
-| 種類 | キー | エンドポイント | 備考 |
-|------|------|----------------|------|
-| 審査ステータス | `versions` | `appStoreVersions` | バージョンの `appStoreState` |
-| 審査提出フロー | `reviewSubmissions` | `reviewSubmissions` | 提出単位の state（履歴も。`appStoreState` の新概念） |
-| カスタマーレビュー/評価 | `reviews` | `customerReviews` | 直近数件＋総数＋取得分の平均★。**文章付きレビューのみ**返る（★だけは含まれない） |
-| TestFlight ビルド | `builds` | `builds` | 最新ビルドの processingState（**sort 非対応**→クライアント側で並べ替え） |
-| パフォーマンス/電力指標 | `metrics` | `perfPowerMetrics` | **Accept: `application/vnd.apple.xcode-metrics+json`** 必須。未リリース/小規模だと空が普通 |
-
-- 各セクションは `safe()` で保護。1つが失敗（権限不足等）しても他は取得継続。
-- **取れないもの**: リジェクト文面（Guideline の具体指摘）は Resolution Center 側で API では基本取れない。売上/Analytics は非同期レポート（未実装）。
-
-### セットアップ（要 API キー）— 設定済み（個人キー）
-1. App Store Connect → Users and Access → Integrations で API キー発行。`.p8`・Key ID（Issuer ID は個人キーでは無し）を入手。
-2. 認証情報を設定（どちらか。環境変数が優先）:
-   - `secrets/appstore-credentials.json`（`secrets/*.example.json` をコピー。`keyPath` はプロジェクト相対も可）
-   - 環境変数 `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_KEY_PATH`
-3. `cd server && npm run collect` で疎通確認（または MCP `get_app_status`）。
-
-**キーの種類に注意**: チームキー(Team Key)と個人キー(Individual Key)で必要項目が違う。
-- チームキー → Key ID + Issuer ID + .p8。JWT は `iss` を使う。Issuer ID は Team Keys 画面上部に表示。
-- 個人キー → Key ID + .p8 のみ（**Issuer ID は存在しない**）。JWT は `iss` の代わりに `sub:"user"`。
-- コードは issuerId の有無で自動分岐するので、個人キーなら issuerId を空にする。
-
-## Google カレンダー連携
-
-2つの入口がある。
-
-1. **会話の中**（設定不要）: claude.ai の Google Calendar MCP。ユーザーが `/mcp` → 「claude.ai Google Calendar」で認証すれば、会話内で予定の取得・作成が可能。claude.ai 認証依存なのでヘッドレスのサーバーからは使えない。
-2. **ダッシュボード常設**（自前連携）: `server/src/core/calendar.ts`。OAuth refresh token でアクセストークンを取得し Calendar API を叩く。`collect()` が今後7日分の予定を取り `dashboard.json` の `calendar` に載せる → Web の `CalendarCard`。MCP の `list_calendar_events` / `create_calendar_event` も提供。
-
-### セットアップ（②常設の有効化・要 OAuth）
-1. Google Cloud Console で **Calendar API 有効化** → **OAuth クライアント(デスクトップ)** 作成。
-2. scope `https://www.googleapis.com/auth/calendar` で同意し **refresh token** を取得（OAuth Playground 等）。
-3. `secrets/google-credentials.json`（`*.example.json` をコピー）に clientId/clientSecret/refreshToken/calendarId を記入。または環境変数 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` / `GOOGLE_CALENDAR_ID`。
-4. `cd server && npm run collect` で予定が `calendar` に入る。未設定なら `calendar: null`（カードは非表示）で安全に no-op。
+- overview はステータスが Todo / In Progress / **Review** / Done（Debug ではない）。
+- 停滞検知（In Progress のN日放置）は item-list に更新日時が無いため未実装。GraphQL で `updatedAt` を取れば追加可能（将来）。
+- 現状は**手動運用**。ユーザーが話しかけたときに動く。定期実行などの自動化は未導入。
 
 ## claude-deck（Claude Code 司令塔アプリ）
 
@@ -162,7 +66,7 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
   - **アプリに引き継ぐ**: 確認ダイアログ → pid が今も同じ sessionId の claude か（uid・argv[0]/実行ファイル・`~/.claude/sessions/<pid>.json` の sessionId・`procStart` と起動時刻）を確かめてから SIGINT → 5 秒 → 同じプロセスのままなら SIGTERM → 終了を確認でき、同じ sessionId の生存 pid が他に無い時だけ同じ cwd で `claude --resume=<sessionId>`（UUID 形式のみ。API キー除去は維持）を PTY で起動し、通常のルームに切り替わる。終了を確認できなければ再開しない。上限到達中は引き継がない。引き継げるのはターミナル起動（`entrypoint: cli`）の対話セッションだけで、VS Code 拡張等は理由を出してボタンを出さない。npm 版（node）の claude は確かめられないので引き継げない。判定は `mac/Sources/MonitorKit/Chat/SessionHandover.swift`（テストあり）。
   - **ステージパネル（右 360px）**: 選択ルームのセッションを WKWebView で monitor の埋め込み表示（`/?embed=stage&session=<id>&mode=3d&bg=transparent`。3D 固定）に出し、ルーム切替で URL を差し替える（直近 3 枚は保持）。下に「いまの動き」（スキル > 説明 > ツールの動作。monitor UI の言い回しと同じ）・随伴するサブエージェント（職業名・状態）・ライブフィード（新しい順）。開閉は UserDefaults に保存し、ウィンドウ幅 1100px 未満では自動で畳む。monitor 未接続・起動中・未解決はプレースホルダー。背景透過と http ループバック（ATS）は `swift run` / `.app` とも確認済み。ロジックは `mac/Sources/MonitorKit/Stage/StageLogic.swift`、画面は `mac/Sources/ClaudeDeck/Stage/`。
   - **プロジェクト一覧（「+」の中）**: ユーザーが自由に追加（「フォルダを追加…」）・削除（各行の「…」/右クリック →「一覧から削除」）でき、`~/Library/Application Support/claude-deck/projects.json` に永続化（試験時は `CLAUDE_DECK_PROJECTS` で差し替え）。初回のみ `registry.tsv` から取り込み、以降は「registry.tsv を取り込む」でマージ。各行の「…」→「GitHub Project を設定…」で owner/number を紐づけられる。
-- **GitHub / App Store 表示**: 会話画面からは外した（使われていない旧ペイン `TerminalPaneViewController` にだけ残る）。
+- **GitHub 表示**: 会話画面からは外した（使われていない旧ペイン `TerminalPaneViewController` にだけ残る）。
 - **「Xcode」「閉じる」ボタン**: プロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリ含む）に `.xcworkspace`/`.xcodeproj` があるルームだけ、見出しにラベル付きの「Xcode」「閉じる」を出す（「VS Code」は常に出す）（`TerminalPaneViewController.findXcodeProject`）。「Xcode」は `NSWorkspace.open` で Xcode の GUI を開く（実行＝Cmd+R はユーザー操作）。「閉じる」は確認ダイアログの後、monitor の `close.ts` と同じ AppleScript をアプリから `osascript` で実行してそのワークスペースだけを閉じる（Xcode 本体は終了しない・未起動なら立ち上げない。monitor 未接続でも使えるようアプリ側で実行）。結果は見出しに数秒出す。判定と文言は `mac/Sources/MonitorKit/EditorActions.swift`（テストあり）。初回は macOS のオートメーション許可が要る。`.xcworkspace` 優先・最も浅い階層を選択。SPM のみ（claude-deck 自身等）は非表示。ワンクリックでのシミュレータ自動実行（`xcodebuild`/`simctl`）は将来。
 - **設計の絶対方針（料金事故ゼロ）**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する（Claude Code の中から起動された時の `CLAUDE_CODE_*` 等の子セッション印も除く）。API 課金経路を作らないため、Max 枠の上限に達しても課金は発生しない（待つだけ）。**headless（`claude -p` / Agent SDK）の起動口は設けない方針**。
 - **上限到達で強制終了**: 公式の残量（monitor 経由の `MonitorStore.usage`。5 時間 / 7 日間が 100% 以上かつ取得 10 分以内）を主、端末の実画面の末尾に出た上限表示（Claude Code v2.1.286 のバイナリで確認した文言のみ・会話本文は見ない）を補助として、ホスト中の全セッションを `terminate()`。到達はリセット時刻まで覚え、その間の新規起動も止める。判定は `mac/Sources/MonitorKit/LimitGuard.swift`（テストあり）、購読は `LimitWatch.swift`。残量経路は statusLine（`monitor/scripts/statusline.sh`）と monitor の起動が前提。
@@ -173,13 +77,13 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 
 ## Claude Code セッション監視（monitor）
 
-複数リポジトリで同時に走っている Claude Code の状況を 1 画面でリアルタイムに見る（`monitor/`・:8766）。server(:8765) / web とは独立プロセスで、読み取り専用。詳細は `monitor/README.md`。
+複数リポジトリで同時に走っている Claude Code の状況を 1 画面でリアルタイムに見る（`monitor/`・:8766）。独立プロセスで、読み取り専用。claude-deck はこれに接続する。詳細は `monitor/README.md`。
 
 - **在庫層**（3秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)` で稼働セッション一覧を復元。
 - **実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl` の末尾差分から実行中ツール・ブランチ・作業内容・トークン量を取る。`ai-title` は先頭寄りにしか出ないため初回だけ広く遡る（`primeMeta`）。
 - **フック層**（任意）: `POST /hook`。**「なぜ止まっているか」（権限待ち・入力待ち・APIエラー）はログに一切残らない**ので、これはフックでしか取れない。設定は `monitor/README.md` のスニペットを `~/.claude/settings.json` に入れる（**`async: true` 必須**。付けないと全プロジェクトの応答をブロックする）。
-- **上限の残量**（任意）: `monitor/scripts/statusline.sh` を `~/.claude/settings.json` の `statusLine` に指定すると、Claude Code が渡す `rate_limits` を `data/claude-usage.json` に残す（表示は従来どおり出したうえで原子的に書く）。monitor と web ダッシュボードがそれを読み、5時間 / 7日間ウィンドウの**残り%**をヘッダーに出す。残り 20% 割れでブラウザ通知（ウィンドウごとに1回）。セッションが全て止まると値が古くなるので取得時刻を併記する。
-- UI は `monitor/ui/`（React + Vite + Tailwind v4。`web/` と同じデザイントークンを使うので見た目が揃う）。SSE を EventSource で購読し、差分描画は React に任せる。
+- **上限の残量**（任意）: `monitor/scripts/statusline.sh` を `~/.claude/settings.json` の `statusLine` に指定すると、Claude Code が渡す `rate_limits` を `data/claude-usage.json` に残す（表示は従来どおり出したうえで原子的に書く）。monitor がそれを読み、5時間 / 7日間ウィンドウの**残り%**をヘッダーに出す。残り 20% 割れでブラウザ通知（ウィンドウごとに1回）。セッションが全て止まると値が古くなるので取得時刻を併記する。
+- UI は `monitor/ui/`（React + Vite + Tailwind v4。ダークコマンドセンターのデザイントークン）。SSE を EventSource で購読し、差分描画は React に任せる。
 - **権限確認に答える**: Claude Code の **Channels**（permission relay）で、ツール使用の許可・拒否を画面から出せる。
   チャネルは `monitor/src/channel.ts`（stdio の MCP サーバー）で、対象リポジトリの `.mcp.json` に登録して
   `claude --dangerously-load-development-channels server:<name>` で起動する。**答えられるのは手元（ループバック）だけ**
@@ -192,6 +96,6 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - 未着手。着手時に方針をここに追記する。
 
 ## メモ
-- このディレクトリ自体はまだ git 管理されていない。`.gitignore` は用意済み（`secrets/*`・`node_modules/`・`web/dist/`・生成 JSON を除外）。
-- 秘密情報は `secrets/`（`.p8` 鍵・`appstore-credentials.json`）。中身は git 追跡外（README とテンプレのみ追跡）。
-- 旧 Python 実装（collect.py / appstore.py 等）は TS 版へ全面移行済みで削除済み。実装は `server/` (TS) 側に一本化。
+- GitHub リポジトリは `ShinjoSato/llm-manager`（ベースブランチは develop）。`.gitignore` で `secrets/*`・`node_modules/`・ビルド成果物・`data/claude-usage.json*` を除外。
+- 秘密情報は `secrets/`（monitor の `monitor-token`）。中身は git 追跡外（README のみ追跡）。
+- 旧ダッシュボード（データ中核 server・Web・MCP・App Store / Google カレンダー連携・補助シェル）は使われていなかったため削除済み。App Store の確認は appstore-plugin の skill、カレンダーは claude.ai の Google Calendar MCP を使う。

@@ -1,5 +1,4 @@
 // monitor のドメイン型。Claude Code のローカル記録（~/.claude）から組み立てる。
-// server/web とは独立したプロセスなので shared/types.ts は参照しない。
 
 /** セッションの状態。hook 由来（正確）と transcript 由来（推定）の両方から決まる。 */
 export type SessionStatus =
