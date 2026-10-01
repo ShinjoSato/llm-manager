@@ -53,7 +53,7 @@ struct ConversationHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            PixelAvatar(status: room.status, size: 38)
+            PixelAvatar(status: room.status, size: 38, hidesFromAccessibility: true)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(room.name)

@@ -12,18 +12,21 @@ struct RoomListView: View {
             search
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    let groups = model.groupedRooms
-                    if groups.isEmpty { emptyState }
-                    ForEach(groups) { group in
-                        Text("\(group.phase.title)  \(group.rooms.count)")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(ChatTheme.tertiary)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 14)
-                            .padding(.bottom, 4)
-                        ForEach(group.rooms) { room in
+                    let items = model.listItems
+                    if items.isEmpty { emptyState }
+                    ForEach(items) { item in
+                        switch item.kind {
+                        case .header(let phase, let count):
+                            Text("\(phase.title)  \(count)")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(ChatTheme.tertiary)
+                                .padding(.horizontal, 12)
+                                .padding(.top, 14)
+                                .padding(.bottom, 4)
+                        case .row(let room):
                             Button { model.select(room.id) } label: {
                                 RoomRow(room: room, selected: model.selection == room.id)
+                                    .equatable()
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -110,14 +113,21 @@ struct RoomListView: View {
     }
 }
 
-/// ルーム 1 行。
-struct RoomRow: View {
+/// ルーム 1 行。描いている値だけで比べ、状態が変われば必ず描き直す。
+struct RoomRow: View, Equatable {
     let room: Room
     let selected: Bool
 
+    static func == (lhs: RoomRow, rhs: RoomRow) -> Bool {
+        lhs.selected == rhs.selected && lhs.room.id == rhs.room.id && lhs.room.name == rhs.room.name
+            && lhs.room.branch == rhs.room.branch && lhs.room.status == rhs.room.status && lhs.room.line == rhs.room.line
+            && lhs.room.activityAt == rhs.room.activityAt && lhs.room.unread == rhs.room.unread
+            && lhs.room.isExternal == rhs.room.isExternal
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            PixelAvatar(status: room.status, size: 36)
+            PixelAvatar(status: room.status, size: 36, hidesFromAccessibility: true)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(room.name)

@@ -1,6 +1,6 @@
 import Foundation
 
-// 絵と配色は monitor UI の `pixel/sprites.ts`・`look.ts`・`kit.ts`（SKIN）と同じものを持つ（変えるときは両方そろえる）。
+// 絵と配色は monitor UI の `pixel/sprites.ts`・`look.ts`・`kit.ts`（SKIN）と同じものを持つ（変えるときは両方そろえる）。マークの大きさ・位置・跳ね幅は小さいアイコンで読めるよう monitor の 2D とは変えている。
 
 /// 文字列で持つドット絵。"." は透明で、他の 1 文字がパレットのキーになる。
 public struct PixelSprite: Sendable, Equatable {
@@ -157,7 +157,16 @@ public enum PixelCharacter {
     static let bodyOrigin = (x: 0, y: 1)
     static let markOrigin = (x: 11, y: 0)
 
+    /// 行ごとに毎コマ作り直さないよう、状態ごとの見た目は一度だけ作る。
+    private static let looks: [SessionStatus: PixelLook] = Dictionary(
+        uniqueKeysWithValues: [SessionStatus.working, .waiting, .permission, .idle, .error, .stopped, .unknown]
+            .map { ($0, makeLook(for: $0)) })
+
     public static func look(for status: SessionStatus) -> PixelLook {
+        looks[status] ?? makeLook(for: status)
+    }
+
+    private static func makeLook(for status: SessionStatus) -> PixelLook {
         switch status {
         case .working:
             return PixelLook(sprite: PixelSprites.agentStand,
