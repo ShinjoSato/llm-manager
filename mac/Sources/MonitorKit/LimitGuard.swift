@@ -70,7 +70,10 @@ public enum LimitGuard {
     public static func screenLimitLine(_ screen: [String]) -> String? {
         let lines = droppingTrailingBlank(screen)
         guard let boxTop = inputBoxTop(lines) else {
-            return menuLine(lines.suffix(menuLines))
+            // 本文の番号付きリストで落とさないよう、メニュー固有の操作案内が出ている時だけ見る。
+            let tail = lines.suffix(menuLines)
+            guard tail.contains(where: isMenuHint) else { return nil }
+            return menuLine(tail)
         }
         let boxBottom = lines[(boxTop + 2)...].firstIndex(where: isRule)
         if let boxBottom {
@@ -81,15 +84,37 @@ public enum LimitGuard {
             if let hit = menuLine(footer) { return hit }
         }
         // 入力欄の直上から遡り、最初に当たった表示の塊（⎿ / ⏺ / ❯ で始まる行）が上限エラーの時だけ到達とする。
-        let above = lines[..<boxTop].filter { !$0.trimmed.isEmpty }.suffix(aboveBoxLines)
-        for line in above.reversed() {
+        let above = lines.indices[..<boxTop].filter { !lines[$0].trimmed.isEmpty }.suffix(aboveBoxLines)
+        for index in above.reversed() {
+            let line = lines[index]
             var t = Substring(line.trimmed)
             if t.hasPrefix("⏺") || t.hasPrefix("❯") { return nil }
             guard t.hasPrefix("⎿") else { continue }
             t = t.dropFirst().drop(while: { $0.isWhitespace })
-            return hasLimitPrefix(String(t)) ? line.trimmed : nil
+            guard hasLimitPrefix(String(t)) else { return nil }
+            // ツールの出力（echo 等）に同じ文言が出ただけで落とさない。
+            if let header = lines[..<index].last(where: { $0.trimmed.hasPrefix("⏺") || $0.trimmed.hasPrefix("❯") }),
+               isToolCallHeader(header) {
+                return nil
+            }
+            return line.trimmed
         }
         return nil
+    }
+
+    /// `⏺ Bash(…)` や `⏺ server - tool (MCP)(…)` のようなツール呼び出しの見出し。
+    static func isToolCallHeader(_ line: String) -> Bool {
+        let t = line.trimmed
+        guard t.hasPrefix("⏺") else { return false }
+        let rest = t.dropFirst().drop(while: { $0.isWhitespace })
+        guard let paren = rest.firstIndex(of: "(") else { return false }
+        let name = rest[..<paren]
+        return (!name.isEmpty && !name.contains(where: { $0.isWhitespace })) || rest.contains("(MCP)")
+    }
+
+    static func isMenuHint(_ line: String) -> Bool {
+        let t = line.trimmed
+        return t.contains("Enter to confirm") || t.contains("Enter to select") || t.contains("Esc to cancel")
     }
 
     static func hasLimitPrefix(_ text: String) -> Bool {

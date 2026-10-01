@@ -136,6 +136,18 @@ final class LimitGuardScreenTests: XCTestCase {
         XCTAssertEqual(LimitGuard.screenLimitLine(menu), "❯ 1. Stop and wait for limit to reset")
     }
 
+    func testToolOutputWithLimitPhraseDoesNotTrigger() {
+        let body = ["❯ 上限の表示を試して", "⏺ Bash(echo \"Usage limit reached · wrapping up\")", "  ⎿  Usage limit reached · wrapping up"]
+        XCTAssertNil(LimitGuard.screenLimitLine(screen(body: body)))
+        let mcp = ["⏺ ai-manager - get_dashboard (MCP)(name: \"x\")", "  ⎿  You've hit your session limit · resets 3pm"]
+        XCTAssertNil(LimitGuard.screenLimitLine(screen(body: mcp)))
+    }
+
+    func testNumberedListWithoutInputBoxOrMenuHintDoesNotTrigger() {
+        let lines = ["⏺ 選択肢:", "  1. Upgrade your plan", "  2. Stop and wait for limit to reset", "", ""]
+        XCTAssertNil(LimitGuard.screenLimitLine(lines))
+    }
+
     func testMenuOptionQuotedInBodyDoesNotTrigger() {
         let body = ["⏺ メニューには次が出ます:", "  1. Stop and wait for limit to reset", "  2. Upgrade your plan"]
         XCTAssertNil(LimitGuard.screenLimitLine(screen(body: body)))
