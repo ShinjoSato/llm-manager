@@ -88,6 +88,10 @@ final class ChatModel {
     /// 送信中の権限確認（monitor の key か "pty:<ルーム>"）。二度押しさせない。
     private(set) var busyPermissionKeys: Set<String> = []
     var alertMessage: String?
+    /// ルーム → 見出しの「VS Code / Xcode / 閉じる」の結果。数秒で消す。
+    private(set) var editorNotes: [RoomID: EditorNote] = [:]
+    /// Xcode に閉じるよう頼んでいる最中のルーム。二度押しさせない。
+    private(set) var closingXcode: Set<RoomID> = []
 
     @ObservationIgnored private var boards: [String: GitHubBoardView] = [:]
     @ObservationIgnored private var appStoreViews: [String: AppStoreView] = [:]
@@ -587,14 +591,56 @@ final class ChatModel {
     func openInVSCode(_ room: Room) {
         let folder = URL(fileURLWithPath: room.cwd, isDirectory: true)
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.microsoft.VSCode") else {
-            alertMessage = "Visual Studio Code が見つかりません。"
+            showEditorNote(.failed("Visual Studio Code が見つかりません"), for: room.id)
             return
         }
-        NSWorkspace.shared.open([folder], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        open(folder, with: app, for: room.id)
     }
 
     func openInXcode(_ room: Room) {
         guard let url = xcodeProject(for: room) else { return }
-        NSWorkspace.shared.open(url)
+        guard let app = NSWorkspace.shared.urlForApplication(toOpen: url) else {
+            showEditorNote(.failed("Xcode が見つかりません"), for: room.id)
+            return
+        }
+        open(url, with: app, for: room.id)
     }
+
+    /// Xcode 本体は終了させず、このルームのワークスペースだけを閉じる。
+    func closeInXcode(_ room: Room) {
+        guard let url = xcodeProject(for: room), !closingXcode.contains(room.id) else { return }
+        let roomId = room.id
+        closingXcode.insert(roomId)
+        editorNotes[roomId] = nil
+        Task { @MainActor [weak self] in
+            let outcome = await XcodeClose.close(path: url.path)
+            guard let self else { return }
+            self.closingXcode.remove(roomId)
+            self.showEditorNote(outcome, for: roomId)
+        }
+    }
+
+    private func open(_ url: URL, with app: URL, for roomId: RoomID) {
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+            let outcome: EditorOutcome = error.map { .failed("開けませんでした: \($0.localizedDescription)") } ?? .opened
+            Task { @MainActor [weak self] in self?.showEditorNote(outcome, for: roomId) }
+        }
+    }
+
+    private func showEditorNote(_ outcome: EditorOutcome, for roomId: RoomID) {
+        let note = EditorNote(outcome: outcome)
+        editorNotes[roomId] = note
+        // 失敗は読み切れるよう長めに残す。
+        let delay: Duration = outcome.isFailure ? .seconds(8) : .seconds(4)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            // 後から出した結果を古いタイマーで消さない。
+            if self?.editorNotes[roomId]?.id == note.id { self?.editorNotes[roomId] = nil }
+        }
+    }
+}
+
+struct EditorNote: Equatable {
+    let id = UUID()
+    let outcome: EditorOutcome
 }
