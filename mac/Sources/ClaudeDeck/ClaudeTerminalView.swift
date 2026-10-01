@@ -183,8 +183,9 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         if mayHaveLeftover {
             // 入力欄が読めない時は残りを確かめられないが、くっつく害は小さいので送る（印は残す）。
             if let boxText = InputBox.text(screen: screen) {
-                guard boxText.isEmpty else { return .leftover }
                 mayHaveLeftover = false
+                // 警告は 1 回だけ。未知の薄字表示を本文と誤認しても、もう一度送れば送れるようにする。
+                guard boxText.isEmpty else { return .leftover }
             }
         }
         guard let body = PTYInput.messageBody(text, bracketedPaste: getTerminal().bracketedPasteMode) else { return .empty }

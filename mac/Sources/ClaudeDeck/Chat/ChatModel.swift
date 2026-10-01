@@ -237,12 +237,13 @@ final class ChatModel {
             // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
             self?.alertMessage = "送信の途中で\(Self.blockName(block))が出たため、Enter を押さずに取りやめました。"
                 + "端末側の入力欄に本文が残っています（ターミナル表示で確認）。確認に答えた後、ターミナルで Enter を押すか本文を消してください。"
-                + "残っている間はここから送れません。"
+                + "消さずにここから送ると、残っている本文とつながって送られます。"
         }
         switch result {
         case .sent: return true
         case .leftover:
-            alertMessage = "端末側の入力欄に前回の本文が残っています。ターミナル表示で消してから送ってください。"
+            alertMessage = "端末側の入力欄に前回の本文が残っているようです。ターミナル表示で消してから送ってください。"
+                + "このままもう一度送ると、残っている本文の後ろにつながって送られます。"
             return false
         case .blocked(.permission):
             alertMessage = "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"

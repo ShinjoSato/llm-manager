@@ -231,6 +231,15 @@ final class PTYSanitizeTests: XCTestCase {
 final class ChoiceMenuTests: XCTestCase {
     private let rule = String(repeating: "─", count: 40)
 
+    /// 番号の後ろが NBSP でも選択肢として読む（入力欄と取り違えて上を捨てないため）。
+    func testChoiceNumberAcceptsNonBreakingSpace() {
+        XCTAssertEqual(ChoiceMenu.choiceNumber("❯\u{00A0}1.\u{00A0}Yes", cursor: true), 1)
+        XCTAssertEqual(ChoiceMenu.choiceNumber("❯ 2. No", cursor: true), 2)
+        XCTAssertNil(ChoiceMenu.choiceNumber("❯ 1.5 million", cursor: true))
+        let screen = [rule, "❯\u{00A0}1.\u{00A0}Yes", "  2.\u{00A0}No", rule]
+        XCTAssertNil(InputBox.promptIndex(screen))
+    }
+
     /// 新しいフォルダで初回起動した時の trust 確認（番号の無いメニュー。v2.1.286 の実画面）。
     func testTrustDialogWithoutNumbersIsMenu() {
         let screen = [

@@ -285,7 +285,8 @@ struct ProjectLauncher: View {
     /// 一覧（GitHub の紐づけ含む）を書き換えた時。
     let onChanged: () -> Void
     let onPick: (ManagedProject) -> Void
-    @State private var listing = Listing.load()
+    // 初期値の式は親の再描画のたびに評価されるので、読み込みは表示時に 1 回だけ行う。
+    @State private var listing = Listing(projects: [], subtitles: [:])
     @State private var filter = ""
 
     /// 一覧と各行の 2 行目。描画のたびに TSV を読まないよう、一覧を読んだ時にまとめて作る。
@@ -378,6 +379,7 @@ struct ProjectLauncher: View {
         .padding(12)
         .frame(width: 360)
         .background(ChatTheme.sidebar)
+        .onAppear { listing = Listing.load() }
     }
 
     @ViewBuilder

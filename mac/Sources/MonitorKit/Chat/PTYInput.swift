@@ -110,7 +110,7 @@ public enum ChoiceMenu {
         let digits = rest.prefix(while: \.isASCII).prefix(while: \.isNumber)
         guard !digits.isEmpty, digits.count <= 2 else { return nil }
         let after = rest.dropFirst(digits.count)
-        guard after.hasPrefix(". ") else { return nil }
+        guard after.first == ".", after.dropFirst().first?.isWhitespace == true else { return nil }
         return Int(digits)
     }
 }
