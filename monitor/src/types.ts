@@ -40,6 +40,8 @@ export interface SessionSnapshot {
   status: SessionStatus;
   statusSource: StatusSource;
   statusDetail: string | null;
+  /** 要対応（権限待ち・入力待ち・エラー）になった時刻（Unix ミリ秒）。それ以外の状態では null。 */
+  attentionSince: number | null;
   entrypoint: string | null;
   version: string | null;
   startedAt: number;

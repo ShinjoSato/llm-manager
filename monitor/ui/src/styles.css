@@ -75,3 +75,18 @@ body::before {
 }
 
 * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
+
+/* 「要対応」から移った先のカード。縁取りだけでは他の要対応と見分けられないので一瞬光らせる。 */
+@keyframes flash {
+  0%, 60% { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.75), 0 0 32px -4px rgba(255, 255, 255, 0.5); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+}
+.flash { animation: flash 1.4s ease-out 1; }
+
+/* 返答待ちの頭上マーク。止まっているキャラの中で、こちらを呼んでいるものだけを動かす。 */
+@keyframes beckon { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.beckon { animation: beckon 0.9s steps(2, end) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flash, .beckon { animation: none; }
+}

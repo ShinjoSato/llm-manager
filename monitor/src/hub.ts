@@ -2,6 +2,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { needsAttention, nextAttentionSince, permissionDetail } from "./attention.js";
 import { scanSessions } from "./inventory.js";
 import { resolveTranscript, subagentDir } from "./paths.js";
 import {
@@ -80,6 +81,11 @@ interface SessionState {
   hookStatus: SessionStatus | null;
   hookDetail: string | null;
   hookAt: number;
+  /** 権限待ちで届いた素の値。ログの読み取りが追い付いてから説明を添えるため、組み立ては配信時に行う。 */
+  hookTool: string | null;
+  hookMessage: string | null;
+  /** 要対応になった時刻。要対応どうしの移り変わりでは引き継ぐ。 */
+  attentionSince: number | null;
   agents: AgentInfo[];
   agentsCheckedAt: number;
   /** サブエージェントのログが最後に動いた時刻。親が Agent 実行中は親ログが無音になるため。 */
@@ -202,6 +208,9 @@ export class SessionHub extends EventEmitter {
       hookStatus: null,
       hookDetail: null,
       hookAt: 0,
+      hookTool: null,
+      hookMessage: null,
+      attentionSince: null,
       agents: [],
       agentsCheckedAt: 0,
       lastAgentActivityAt: null,
@@ -263,6 +272,9 @@ export class SessionHub extends EventEmitter {
           if (!ev.at || ev.at > state.hookAt) {
             state.hookStatus = null;
             state.hookDetail = null;
+            state.hookTool = null;
+            state.hookMessage = null;
+            state.attentionSince = null;
           }
         } else if (ev.type === "user") {
           // tool_result が返った = ツールは終わっている
@@ -384,6 +396,8 @@ export class SessionHub extends EventEmitter {
     const now = Date.now();
     let status: SessionStatus | null = null;
     let detail: string | null = null;
+    let tool: string | null = null;
+    let message: string | null = null;
     let feed: { kind: FeedKind; text: string } | null = null;
 
     switch (event) {
@@ -399,7 +413,9 @@ export class SessionHub extends EventEmitter {
         const type = payload.notification_type ?? "";
         if (type === "permission_prompt") {
           status = "permission";
-          detail = payload.tool_name ?? payload.notification_message ?? null;
+          tool = payload.tool_name ?? null;
+          message = payload.notification_message ?? null;
+          detail = permissionDetail(tool, message, state.currentTool, state.currentAction);
           feed = { kind: "status", text: `権限の確認待ち${detail ? `: ${detail}` : ""}` };
         } else if (type === "idle_prompt" || type === "agent_needs_input") {
           status = "waiting";
@@ -432,8 +448,11 @@ export class SessionHub extends EventEmitter {
     }
 
     if (status) {
+      state.attentionSince = nextAttentionSince(state.hookStatus, state.attentionSince, status, now);
       state.hookStatus = status;
       state.hookDetail = detail;
+      state.hookTool = tool;
+      state.hookMessage = message;
       state.hookAt = now;
       if (status === "working") state.lastActivityAt = now;
     }
@@ -555,7 +574,11 @@ export class SessionHub extends EventEmitter {
         lastPrompt: state.lastPrompt,
         status,
         statusSource: source,
-        statusDetail: state.hookDetail,
+        statusDetail:
+          status === "permission" && state.hookStatus === "permission"
+            ? permissionDetail(state.hookTool, state.hookMessage, state.currentTool, state.currentAction)
+            : state.hookDetail,
+        attentionSince: needsAttention(status) ? (state.attentionSince ?? state.hookAt) : null,
         entrypoint: state.raw.entrypoint ?? null,
         version: state.raw.version ?? null,
         startedAt: state.raw.startedAt,

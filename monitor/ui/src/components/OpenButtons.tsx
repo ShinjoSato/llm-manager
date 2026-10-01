@@ -1,4 +1,4 @@
-import { CodeXml, Hammer, X } from "lucide-react";
+import { CodeXml, Hammer, MessageCircleReply, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { readResult } from "../api.js";
 
@@ -22,10 +22,13 @@ const CLOSE_NOTES: Record<CloseState, string> = {
 export function OpenButtons({
   sessionId,
   xcodeProject,
+  answer = null,
 }: {
   sessionId: string;
   /** 無いセッションでは Xcode のボタンを出さない。 */
   xcodeProject: string | null;
+  /** 返答待ちのカード。VSCode を開くボタンを、何をすればいいか分かる文言で大きく出す。 */
+  answer?: { label: string; tone: string } | null;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [pending, setPending] = useState<OpenApp | null>(null);
@@ -130,60 +133,78 @@ export function OpenButtons({
     }`;
 
   return (
-    <div className="mt-2 flex items-center gap-1.5 border-t border-white/8 pt-2">
-      <button onClick={() => void open("vscode")} disabled={busy} className={cls("vscode")}>
-        <CodeXml size={11} className="shrink-0 text-slate-500" />
-        VSCode
-      </button>
-      {xcodeProject && (
+    <div className="mt-2 border-t border-white/8 pt-2">
+      {answer && (
         <button
-          onClick={() => void open("xcode")}
+          onClick={() => void open("vscode")}
           disabled={busy}
-          title={xcodeProject}
-          className={cls("xcode")}
+          title="この画面からは答えられません。VSCode を前面に出すので、そちらの Claude Code で答えてください"
+          className={`mb-2 flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold transition disabled:cursor-wait ${answer.tone} ${
+            phase === "opening" && pending === "vscode" ? "opacity-50" : ""
+          }`}
         >
-          <Hammer size={11} className="shrink-0 text-slate-500" />
-          Xcode
+          <MessageCircleReply size={14} className="shrink-0" />
+          {answer.label}
+          <span className="text-[10.5px] font-normal opacity-70">（VSCode を開く）</span>
         </button>
       )}
-      {xcodeProject &&
-        (confirming ? (
-          <>
-            <span className="text-[11px] text-slate-400">閉じますか？</span>
-            <button
-              onClick={() => void closeXcode()}
-              disabled={busy}
-              className="chip inline-flex items-center gap-1 border-rose-400/30 bg-rose-500/10 text-rose-200 transition hover:bg-rose-500/20"
-            >
-              はい
-            </button>
-            <button
-              onClick={cancelConfirm}
-              className="chip inline-flex items-center gap-1 transition hover:bg-white/10"
-            >
-              やめる
-            </button>
-          </>
-        ) : (
-          <button
-            onClick={askConfirm}
-            disabled={busy}
-            title={`Xcode から閉じる: ${xcodeProject}`}
-            className={`chip inline-flex items-center gap-1 transition hover:bg-white/10 ${
-              phase === "closing" ? "opacity-50" : ""
-            }`}
-          >
-            <X size={11} className="shrink-0 text-slate-500" />
-            閉じる
+      <div className="flex items-center gap-1.5">
+        {!answer && (
+          <button onClick={() => void open("vscode")} disabled={busy} className={cls("vscode")}>
+            <CodeXml size={11} className="shrink-0 text-slate-500" />
+            VSCode
           </button>
-        ))}
-      {phase === "error" && error && (
-        <span className="min-w-0 truncate text-[11px] text-rose-300">{error}</span>
-      )}
-      {phase === "opened" && <span className="text-[11px] text-emerald-300">開きました</span>}
-      {phase === "closed" && note && (
-        <span className="min-w-0 truncate text-[11px] text-emerald-300">{note}</span>
-      )}
+        )}
+        {xcodeProject && (
+          <button
+            onClick={() => void open("xcode")}
+            disabled={busy}
+            title={xcodeProject}
+            className={cls("xcode")}
+          >
+            <Hammer size={11} className="shrink-0 text-slate-500" />
+            Xcode
+          </button>
+        )}
+        {xcodeProject &&
+          (confirming ? (
+            <>
+              <span className="text-[11px] text-slate-400">閉じますか？</span>
+              <button
+                onClick={() => void closeXcode()}
+                disabled={busy}
+                className="chip inline-flex items-center gap-1 border-rose-400/30 bg-rose-500/10 text-rose-200 transition hover:bg-rose-500/20"
+              >
+                はい
+              </button>
+              <button
+                onClick={cancelConfirm}
+                className="chip inline-flex items-center gap-1 transition hover:bg-white/10"
+              >
+                やめる
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={askConfirm}
+              disabled={busy}
+              title={`Xcode から閉じる: ${xcodeProject}`}
+              className={`chip inline-flex items-center gap-1 transition hover:bg-white/10 ${
+                phase === "closing" ? "opacity-50" : ""
+              }`}
+            >
+              <X size={11} className="shrink-0 text-slate-500" />
+              閉じる
+            </button>
+          ))}
+        {phase === "error" && error && (
+          <span className="min-w-0 truncate text-[11px] text-rose-300">{error}</span>
+        )}
+        {phase === "opened" && <span className="text-[11px] text-emerald-300">開きました</span>}
+        {phase === "closed" && note && (
+          <span className="min-w-0 truncate text-[11px] text-emerald-300">{note}</span>
+        )}
+      </div>
     </div>
   );
 }

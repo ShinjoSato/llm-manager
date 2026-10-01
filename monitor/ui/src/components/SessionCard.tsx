@@ -1,7 +1,7 @@
-import { GitBranch } from "lucide-react";
+import { GitBranch, Hourglass } from "lucide-react";
 import { lazy, Suspense } from "react";
 import type { PendingPermission, SessionSnapshot } from "../../../src/types.js";
-import { ago, dur, kilo } from "../format.js";
+import { ago, dur, kilo, waited } from "../format.js";
 import { AgentStage } from "../pixel/AgentStage.js";
 import { MessageInput } from "./MessageInput.js";
 import { OpenButtons } from "./OpenButtons.js";
@@ -18,6 +18,11 @@ function actionLine(s: SessionSnapshot): string | null {
   if (s.currentSkill) return `巻物『${skillLabel(s.currentSkill)}』を広げている`;
   if (s.currentAction) return s.currentAction;
   return itemForVerb(s.currentTool);
+}
+
+/** カードの DOM id。ヘッダーの「要対応」から飛ぶ先になる。 */
+export function cardId(sessionId: string): string {
+  return `session-${sessionId}`;
 }
 
 function escortLine(s: SessionSnapshot): string | null {
@@ -44,10 +49,20 @@ export function SessionCard({
   const st = styleOf(s.status);
   const action = actionLine(s);
   const escort = escortLine(s);
+  // エラーは返答を待っているわけではないので、止まっている事実として出す。
+  const wait = st.attention
+    ? waited(s.attentionSince, now, s.status === "error" ? "止まっています" : "待っています")
+    : null;
 
   return (
-    <div className="glass relative overflow-hidden p-4">
-      <div className={`absolute inset-y-0 left-0 w-[3px] ${st.bar}`} />
+    <div
+      id={cardId(s.sessionId)}
+      data-attention={st.attention || undefined}
+      className={`glass relative scroll-mt-4 overflow-hidden p-4 ${st.frame}`}
+    >
+      <div
+        className={`absolute inset-y-0 left-0 ${st.attention ? "w-[5px]" : "w-[3px]"} ${st.bar}`}
+      />
 
       <div className="mb-1 flex items-center gap-2">
         <span className="truncate text-[14px] font-semibold text-slate-100">{s.project}</span>
@@ -71,9 +86,24 @@ export function SessionCard({
         <AgentStage session={s} now={now} />
       )}
 
+      {st.attention && (
+        <div className={`mb-2 rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 ${st.ink}`}>
+          <div className="flex items-center gap-1.5 text-[12px] font-semibold tabular-nums">
+            <Hourglass size={12} className="shrink-0" />
+            {wait ?? `${st.label}で止まっています`}
+          </div>
+          {/* 何を聞かれているかを切ると、結局どのウィンドウか開いて確かめることになる。 */}
+          {s.statusDetail && (
+            <div className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-slate-100">
+              {s.statusDetail}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mb-2 min-h-[36px] px-1 text-center">
         {action && <div className="truncate text-[12px] text-emerald-300">{action}</div>}
-        {s.statusDetail && s.status !== "working" && (
+        {s.statusDetail && s.status !== "working" && !st.attention && (
           <div className="truncate text-[12px] text-amber-300">{s.statusDetail}</div>
         )}
         {escort && <div className="truncate text-[11px] text-violet-300">{escort}</div>}
@@ -93,7 +123,11 @@ export function SessionCard({
         <PermissionPrompt key={p.key} permission={p} />
       ))}
 
-      <OpenButtons sessionId={s.sessionId} xcodeProject={s.xcodeProject} />
+      <OpenButtons
+        sessionId={s.sessionId}
+        xcodeProject={s.xcodeProject}
+        answer={s.alive ? st.answer : null}
+      />
 
       <MessageInput sessionId={s.sessionId} disabled={!s.canReceive} />
     </div>
