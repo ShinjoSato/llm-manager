@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        MonitorBridge.store.start()
 
         let split = MainSplitViewController()
         window = NSWindow(
