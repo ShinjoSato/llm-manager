@@ -80,6 +80,11 @@ final class ChatModel {
     private var lastSeen: [String: Double] = [:]
     @ObservationIgnored private let launchedAt = Date().timeIntervalSince1970 * 1000
 
+    /// sessionId → アプリから送った伝言。transcript には出ないので手元で持つ。
+    private(set) var relayNotes: [String: [RelayNote]] = [:]
+    /// 引き継ぎ中の sessionId（終了待ち〜再開まで）。
+    private(set) var handingOver: Set<String> = []
+
     /// 送信中の権限確認（monitor の key か "pty:<ルーム>"）。二度押しさせない。
     private(set) var busyPermissionKeys: Set<String> = []
     var alertMessage: String?
@@ -255,7 +260,17 @@ final class ChatModel {
         }
     }
 
-    /// 入力欄を無効にする理由（送信時の判定と同じ条件）。nil なら送れる。
+    /// 入力欄を無効にする理由（送信時の判定と同じ条件）。nil なら送れる。外部ルームは伝言を送れるか。
+    func inputDisabledReason(for room: Room) -> String? {
+        guard room.hosted != nil else {
+            if let sessionId = room.sessionId, handingOver.contains(sessionId) { return "引き継ぎ中…" }
+            if !store.connection.isConnected { return "monitor に未接続のため伝言を送れません" }
+            if room.snapshot?.alive == false || room.status == .stopped { return "このセッションは終了しています" }
+            return nil
+        }
+        return Self.inputDisabledReason(for: room)
+    }
+
     static func inputDisabledReason(for room: Room) -> String? {
         guard let session = room.hosted else { return "外部セッションにはここから送れません" }
         switch session.end {
@@ -270,6 +285,126 @@ final class ChatModel {
             case nil: return nil
             }
         }
+    }
+
+    // MARK: - 伝言（外部セッション）
+
+    func notes(for sessionId: String?) -> [RelayNote] {
+        guard let sessionId else { return [] }
+        return relayNotes[sessionId] ?? []
+    }
+
+    /// 外部セッションへ伝言を送る。受け手には「別セッションからのメッセージ」として届き、本人の入力にはならない。
+    func sendRelay(_ text: String, to room: Room) -> Bool {
+        guard room.hosted == nil, let sessionId = room.sessionId, inputDisabledReason(for: room) == nil else { return false }
+        let body = RelayNotes.normalized(text)
+        guard !body.isEmpty else { return false }
+        let note = RelayNote(text: body, sentAt: Date().timeIntervalSince1970 * 1000)
+        relayNotes[sessionId, default: []].append(note)
+        Task {
+            do {
+                try await store.sendMessage(to: sessionId, text: body)
+                updateNote(note.id, in: sessionId, state: .sent)
+            } catch {
+                let reason = RelayNotes.failureReason(error)
+                updateNote(note.id, in: sessionId, state: .failed(reason))
+                alertMessage = "伝言を送れませんでした: \(reason)"
+            }
+        }
+        return true
+    }
+
+    private func updateNote(_ id: String, in sessionId: String, state: RelayNote.State) {
+        guard let index = relayNotes[sessionId]?.firstIndex(where: { $0.id == id }) else { return }
+        relayNotes[sessionId]?[index].state = state
+    }
+
+    // MARK: - アプリに引き継ぐ
+
+    /// 起動元（VS Code 拡張等）のせいで引き継げない理由。nil ならターミナルの対話セッション。
+    func handoverSourceReason(for room: Room) -> String? {
+        guard let snapshot = room.snapshot else { return "このルームは引き継げません" }
+        let record = ClaudeSessionRegistry().record(forPid: snapshot.pid).flatMap { $0.sessionId == snapshot.sessionId ? $0 : nil }
+        return SessionHandover.unsupportedSourceReason(entrypoint: record?.entrypoint ?? snapshot.entrypoint, kind: record?.kind)
+    }
+
+    /// 引き継げない理由。nil なら引き継げる。
+    func handoverDisabledReason(for room: Room) -> String? {
+        guard room.hosted == nil, let snapshot = room.snapshot, let sessionId = room.sessionId else {
+            return "このルームは引き継げません"
+        }
+        if handingOver.contains(sessionId) { return "引き継ぎ中…" }
+        if !snapshot.alive || room.status == .stopped { return "このセッションは終了しています" }
+        if !SessionHandover.isValidSessionId(sessionId) { return "sessionId の形式が想定外のため引き継げません" }
+        if let reason = handoverSourceReason(for: room) { return reason }
+        if LimitWatch.shared.isLimitReached { return "Max 枠の上限に達しているため引き継げません（リセット後に試してください）" }
+        return nil
+    }
+
+    /// 確認ダイアログを出し、了承されたら外部の claude を止めてこのアプリで再開する。キャンセルなら何もしない。
+    func requestHandover(_ room: Room) {
+        if let reason = handoverDisabledReason(for: room) {
+            alertMessage = reason
+            return
+        }
+        guard let snapshot = room.snapshot, let sessionId = room.sessionId else { return }
+        let alert = NSAlert()
+        alert.messageText = "「\(room.name)」をアプリに引き継ぎますか？"
+        alert.informativeText = """
+            1. ターミナルで動いている claude（pid \(snapshot.pid)）を終了します（Ctrl-C と同じ SIGINT。数秒で終わらなければ SIGTERM）。作業中なら中断されます。
+            2. 終了を確認できたら、同じフォルダでこのアプリから claude --resume を起動し、同じ会話を続きから再開します。
+
+            元のターミナルのウィンドウは閉じません。終了を確認できなかった場合は再開しません。
+            フォルダ: \(room.cwd)
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "引き継ぐ")
+        alert.addButton(withTitle: "キャンセル")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        handOver(room: room, pid: snapshot.pid, sessionId: sessionId)
+    }
+
+    private func handOver(room: Room, pid: Int32, sessionId: String) {
+        guard !handingOver.contains(sessionId) else { return }
+        // 確認ダイアログを出している間に上限到達・終了などが起きうるので、止める前に判定し直す。
+        if let reason = handoverDisabledReason(for: room) {
+            alertMessage = "引き継ぎを中止しました（何も終了していません）: \(reason)"
+            return
+        }
+        handingOver.insert(sessionId)
+        let project = ProjectStore.load().first(where: { $0.path == room.cwd })
+            ?? ManagedProject(name: room.name, path: room.cwd, status: "active", note: "")
+        let roomId = room.id
+        Task {
+            let outcome = await SessionTerminator().terminate(pid: pid, sessionId: sessionId)
+            defer { handingOver.remove(sessionId) }
+            switch outcome {
+            case .exited:
+                // 待っている間に上限へ達したら起動しない（起動してもすぐ止められる）。
+                if LimitWatch.shared.isLimitReached {
+                    alertMessage = "ターミナルの claude は終了しましたが、Max 枠の上限に達しているため再開しませんでした。"
+                    return
+                }
+                resume(project: project, sessionId: sessionId, from: roomId)
+            case .refused(let reason):
+                alertMessage = "引き継ぎを中止しました（何も終了していません）: \(reason)"
+            case .runningElsewhere(let other):
+                alertMessage = "同じ会話が別の claude（pid \(other)）で動いているため、再開していません（二重起動を避けるため）。"
+            case .stillRunning:
+                alertMessage = "ターミナルの claude が終了しなかったため、再開していません（同じ会話の二重起動を避けるため）。"
+                    + "ターミナルで終了してからもう一度お試しください。"
+            }
+        }
+    }
+
+    private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
+        let session = HostedSession(project: project, resumeSessionId: sessionId)
+        session.onLimitReached = { [weak self] session in self?.showLimitAlert(for: session) }
+        hosted.append(session)
+        session.start()
+        if let draft = drafts.removeValue(forKey: roomId) { drafts[.hosted(session.id)] = draft }
+        modes[roomId] = nil
+        select(.hosted(session.id))
     }
 
     private static func blockName(_ block: InputBlock) -> String {

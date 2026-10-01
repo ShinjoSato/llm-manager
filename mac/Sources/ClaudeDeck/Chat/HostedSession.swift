@@ -32,9 +32,14 @@ final class HostedSession: Identifiable {
     private(set) var lastChangeAt = Date()
 
     @ObservationIgnored var onLimitReached: ((HostedSession) -> Void)?
+    /// 外部から引き継いだ時の再開対象。
+    let resumeSessionId: String?
 
-    init(project: ManagedProject) {
+    init(project: ManagedProject, resumeSessionId: String? = nil) {
         self.project = project
+        self.resumeSessionId = resumeSessionId
+        // pid と対応付くまでの間も同じ会話を出し、外部ルームとして二重に並ばないようにする。
+        self.lastSessionId = resumeSessionId
         // 起動時点の桁数で TUI が組まれるので、0 幅ではなく現実的な大きさで作る。
         self.terminal = ClaudeTerminalView(frame: NSRect(x: 0, y: 0, width: 960, height: 640))
         terminal.processDelegate = observer
@@ -52,8 +57,7 @@ final class HostedSession: Identifiable {
 
     func start() {
         guard pid == nil, end == nil else { return }
-        terminal.launchClaude(in: project.path)
-        guard let pid = terminal.claudePid else {
+        guard terminal.launchClaude(in: project.path, resumeSessionId: resumeSessionId), let pid = terminal.claudePid else {
             terminal.stopStatusMonitoring()
             end = .launchFailed
             return
