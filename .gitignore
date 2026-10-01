@@ -12,9 +12,20 @@ data/claude-usage.json*
 node_modules/
 web/dist/
 monitor/ui/dist/
-mac/.build/
 mac/dist/
 *.tsbuildinfo
+
+# Swift Package Manager（どの階層でも）
+.build/
+.swiftpm/
+
+# Claude Code の個人設定と作業用（agent の隔離 worktree）
+.claude/settings.local.json
+.claude/worktrees/
+
+# Xcode のユーザー別データ
+xcuserdata/
+DerivedData/
 
 # OS / エディタ
 .DS_Store
