@@ -1,6 +1,6 @@
 # claude-deck
 
-プロジェクトごとに **Claude Code を同時起動**する macOS ネイティブ司令塔アプリ（PoC）。
+プロジェクトごとに **Claude Code を同時起動**し、セッションを**チャット（トークルーム）**として扱う macOS ネイティブ司令塔アプリ（PoC）。
 ai-manager の管理対象プロジェクト一覧と連携し、各プロジェクトのディレクトリで `claude` を端末として起動する。
 
 SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Terminal.app 同等の操作感を持たせている。
@@ -20,11 +20,20 @@ mac/
   Sources/ClaudeDeck/
     main.swift                  NSApplication 起動
     AppDelegate.swift           ウィンドウ + メニュー
-    MainSplitViewController.swift   サイドバー + メイン領域の2ペイン
-    SidebarViewController.swift     プロジェクト一覧（名称 + パス表示・追加/削除）
-    ProjectStore.swift              一覧の永続化（Application Support の JSON）
-    TileContainerViewController.swift 開いたセッションをタイル状に同時表示・グリッド配置
-    TerminalPaneViewController.swift 1ペイン = Claude Code / GitHub / App Store を切替（見出し + ✕）
+    MainViewController.swift    メインウィンドウ = チャット画面（SwiftUI を NSHostingView で載せる）
+    Chat/                       チャット画面（ルーム一覧・会話・入力欄・権限カード）
+      ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
+      ChatModel.swift             ルーム（monitor のセッション + ホスト中のセッション）・会話履歴・権限確認の状態
+      HostedSession.swift         アプリが PTY でホストする claude 1 つ（ルームを切り替えても端末とプロセスを保持）
+      RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム）・残量
+      ConversationView.swift      見出し・吹き出し・ツール行・権限カード・チャット / ターミナル / GitHub 切替
+      Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行）
+      AppKitHosts.swift           既存の端末ビュー / GitHub ボードを SwiftUI に差し込む
+      ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
+    ProjectStore.swift              プロジェクト一覧の永続化（Application Support の JSON）
+    SidebarViewController.swift     旧: プロジェクト一覧（メインウィンドウからは外した）
+    TileContainerViewController.swift 旧: タイル状グリッド（メインウィンドウからは外した）
+    TerminalPaneViewController.swift 旧: 1ペイン = Claude Code / GitHub / App Store を切替（`findXcodeProject` はチャット画面も使う）
     GitHubBoard.swift               github-projects.tsv 読込 + gh によるボード取得
     GitHubBoardView.swift           Issue をステータス別にグループ表示（クリックで GitHub を開く）
     AppStoreClient.swift            appstore.tsv 読込 + server HTTP API（/api/appstore）の取得
@@ -41,6 +50,12 @@ mac/
     MonitorClient.swift         SSE 購読（自動再接続）+ REST / 書き込み系ラッパー
     MonitorStore.swift          @Observable ストア（接続状態・セッション・フィード・残量・権限確認・pid 対応付け）
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
+    Chat/                       チャット画面の UI に依らないロジック（テスト対象）
+      TranscriptBuffer.swift      会話履歴の GET と SSE の統合（id で重複除去・reset で置換）
+      ChatTimeline.swift          発話の下にツールを畳む・実行中ツールの判定
+      RoomGrouping.swift          要対応 / 稼働中 / 待機 のグループ化・並び順・検索・未読数・アイコン色
+      ChatMarkdown.swift          吹き出しの最低限の Markdown（太字・コード・改行・コードブロック）
+      PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc）と画面からの権限プロンプト読み取り
   Sources/MonitorProbe/         GUI 無しで接続を確かめるデバッグ用エントリ（swift run monitor-probe）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）
   Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
@@ -71,33 +86,64 @@ MONITOR_TEST_URL=http://127.0.0.1:8799 swift test
 
 ## プロジェクト一覧（ユーザー管理 + 永続化）
 
-サイドバーの一覧は**ユーザーが自由に追加・削除でき、永続化される**。
+チャット画面の「+」で選ぶプロジェクトの一覧。**ユーザーが自由に追加でき、永続化される**。
 
-- 表示: 各行は **名称（上）+ フルパス（下・中央省略、ホバーで全文）**。
-- 追加: 下部の **「+」** → フォルダ選択（複数可）。選んだディレクトリで `claude` を起動するエントリになる。
-- 削除: **「−」** / **Delete キー** / 行を**右クリック → 削除**。
-- 起動: 行を**ダブルクリック / Enter**（単純選択では起動しない＝削除操作の邪魔をしない）。
-- 取り込み: **取り込みボタン**で `registry.tsv` の内容を一覧へマージ（重複パスは無視）。
+- 追加: 「+」→「フォルダを追加…」（複数可）。選んだディレクトリで `claude` を起動するエントリになる。
+- 永続化先・初回の取り込みは下記（削除・取り込みボタンは旧サイドバーにあり、チャット画面には未移植）。
 
-### メイン領域: 複数セッションの同時表示
+## メイン画面: チャット（画面案B の左と中央）
 
-開いたセッションは**タイル状のグリッドに並べて同時表示**する（タブ切替ではない）。
+Claude Code のセッションを**チャットアプリの操作感**で扱う。セッション 1 つ = トークルーム 1 つ。
+右側（ステージパネル・#69）は `ChatRootView` の `trailing` に差し込む（`ChatRootView(model:) { StagePanel() }`）。
 
-- プロジェクトを開くたびにペインが増え、`ceil(√n)` 列の均等グリッドに自動配置。
-- 各ペインに見出し（名称）と **✕** があり、個別に閉じられる。
-- 同じプロジェクトを再度開くとフォーカスのみ（重複起動しない）。
+### ルーム一覧（左 312px）
 
-### ペイン内: Claude Code / GitHub 切替
+- monitor が見つけたセッション + アプリでホスト中のセッションを **要対応（権限待ち・入力待ち）/ 稼働中 / 待機** に分けて並べる。
+  各グループ内は最後に動いた順。状態は monitor の `SessionSnapshot.status`。monitor 未接続のときは、ホスト中のセッションだけ
+  端末画面からのローカル判定（作業中 / 権限プロンプト / 待機）で代わりに出す。
+- 各行: 頭文字アイコン（色はプロジェクト名から決まる）・状態ドット・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
+  （開いていない間に届いた応答の数）。アプリの外で動いているセッションには「外部」タグ（入力欄は無効。伝言・引き継ぎは #70）。
+- 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。
+  「フォルダを追加…」で一覧にも足せる）。右クリック → 「ルームを閉じる（claude を終了）」。
+- 下部: 5 時間 / 7 日間の残り% と取得からの経過（statusLine 未設定なら未取得と出す）。monitor 未接続ならその旨を出す。
 
-GitHub Project のマッピングがあるプロジェクトは、ペイン見出しに **「Claude Code / GitHub」** のセグメント切替が出る。
+### 会話（中央）
 
-- **Claude Code**: 端末（既定）。GitHub に切り替えても `claude` プロセスは裏で動き続ける。
-- **GitHub**: そのプロジェクトの Issue を**ステータス別（Todo / In Progress / Debug / Review / Done / その他）にグループ化**して表示。各行は `[repo] #番号 タイトル @担当`、**クリックで GitHub を開く**。右上の 🔄 で再取得。
-- マッピング元: `projects/github-projects.tsv`（name / owner / number / repo / url）。**マッピングが無いプロジェクトでは切替を出さず Claude Code のみ**。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・VS Code / Xcode で開く・**チャット / ターミナル / GitHub** 切替。
+  ターミナルは既存の端末ビュー、GitHub は既存のボード表示。切り替えても、ルームを移っても、各ルームの PTY と claude は生きたまま。
+- 会話は monitor の会話履歴 API（`/api/sessions/:id/transcript` + SSE `transcript`）から組み立てる。
+  SSE は起動時に `?transcripts=*` で張り（ルームを選ぶたびに張り直さない）、ルームを開いた時に GET、以降は SSE を id で重複除去して足す。
+  再接続（`connectionEpoch` の増加）で `?after=<手元の最後>` を取り直し、`reset: true` なら置き換える。
+- 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し（太字・インラインコード・改行・コードブロック）。
+  ツール呼び出しは直前の発話の下に「ツール N件 ▸」の 1 行に畳み、開くとツール名と対象を並べる。実行中のものは緑で強調。
+  新着で末尾へ自動スクロールし、上に遡っている間は止める（macOS 15 以降）。
+- 作業中に送った指示は Claude Code 側でキューに入り、ログに「ユーザーの発話」として残らないため吹き出しには出ない（応答には反映される）。
+
+### 入力欄と PTY への送信
+
+- **⏎ 送信 / ⇧⏎（⌥⏎）改行**。日本語の変換中の ⏎ は確定に使われる。
+- ホスト中のセッションには PTY に書き込む（本人のキー入力と同じ扱い）。本文は **bracketed paste**（`ESC[200~ … ESC[201~`）で
+  入力欄に貼り付け、0.3 秒空けて Enter を送る（同時に送ると Enter が貼り付けに飲まれる）。改行を含む本文もそのまま 1 通で届く。
+  作業中でも送れる（Claude Code がキューに積む）。
+- **権限プロンプトが出ている間は送らない**（Enter がプロンプトの「1. Yes」として効いてしまうため。入力欄を無効にし、
+  貼り付けから Enter までの間に出た場合も Enter を送らずに取りやめる）。
+
+### 権限カード
+
+- 権限待ちは会話の末尾に amber の枠のカードで出す（ツール名・見出し・コマンド等のプレビュー・許可 / 拒否）。
+- monitor の `permissions`（Channels 経由）があれば `store.decide` で返す。無ければホスト中のセッションの端末画面から
+  プロンプトを読み取り、**許可 = `1`（1. Yes）/ 拒否 = `Esc`** を PTY に送る（選択肢の数で「No」の番号が変わるため拒否は Esc）。
+  キーは Claude Code v2.1.251 / v2.1.286 の実際の TUI で確認した。画面にプロンプトが無ければ何も送らない。
+- 押してから結果が出るまでは、そのカードのボタンを無効にして二度押しを防ぐ。
+
+### GitHub 切替
+
+- そのプロジェクトの Issue を**ステータス別（Todo / In Progress / Debug / Review / Done / その他）にグループ化**して表示。各行は `[repo] #番号 タイトル @担当`、**クリックで GitHub を開く**。右上の 🔄 で再取得。ルームを行き来しても取り直さない。
+- マッピング元: プロジェクトに保存した GitHub 参照（owner/number）→ `projects/github-projects.tsv`（name / owner / number / repo / url）の名前一致。外部セッションは cwd が一覧のプロジェクトと一致すればそれを使う。**マッピングが無いルームでは GitHub を選べない**。
 - 取得は `gh project item-list <number> --owner <owner> --format json` をログインシェル経由で実行（**`gh` の認証 + `project` スコープが前提**）。
 - 解決順（github-projects.tsv）: 環境変数 `CLAUDE_DECK_GH_PROJECTS` → ai-manager ルート配下（後述「ai-manager ルートの解決」）。
 
-### ペイン内: App Store 切替
+### 旧ペイン: App Store 切替（チャット画面には未移植）
 
 `projects/appstore.tsv` に登録があるプロジェクト（mirio / sandora 等）は、ペイン見出しに **App Store** トグル（🅰️ `app.badge`）が追加で出る。
 
@@ -107,7 +153,7 @@ GitHub Project のマッピングがあるプロジェクトは、ペイン見�
 - 対象判定元: `projects/appstore.tsv`（name / bundleId）。**登録が無いプロジェクトでは App Store トグルを出さない**。
 - 解決順（appstore.tsv）: 環境変数 `CLAUDE_DECK_APPSTORE_TSV` → ai-manager ルート配下（後述「ai-manager ルートの解決」）。API ベース URL は `CLAUDE_DECK_API_BASE`（既定 `http://localhost:8765`）で差し替え可能。
 
-**永続化先**: `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。
+**永続化先**: `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。試験用に別の一覧を使うときは環境変数 `CLAUDE_DECK_PROJECTS`（JSON のパス）で差し替える。
 **初回のみ** `registry.tsv` から取り込んで空にしない（以降は完全にユーザー管理）。
 
 ### registry.tsv の解決順（初回取り込み / 取り込みボタン）
@@ -165,7 +211,8 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 ## 現状の制約 / TODO
 
 - `.app` は ad-hoc 署名のローカル起動のみ。配布時は Developer ID 署名・公証を検討。
-- 上限検知の文言は要・実機検証（上記）。
-- 削除しても、開いているタブは閉じない（タブ側は手動で対応）。サイドバーとタブの連動は将来拡張。
-- 追加時の表示名はフォルダ名固定（リネーム UI は未実装）。
-- タブのウィンドウ分割・レイアウト保存・GitHub ステータスバッジ等は将来拡張。
+- 上限検知の文言は要・実機検証（上記）。⚠️ 現行の TUI（v2.1.251 以降）は語の間の空白を書かずカーソル移動（`ESC[nG`）で桁を飛ばすため、生の出力から ANSI を消すだけの今の照合では複数語の文言が一致しない可能性が高い（未対応。直す場合は、会話本文に同じ文言が出ただけで落ちない判定にすること）。
+- 追加時の表示名はフォルダ名固定（リネーム UI は未実装）。プロジェクトの削除・registry 取り込みはチャット画面に未移植。
+- ホスト中のルームはアプリを終了すると claude ごと終わる（ルームの保存・復元は未実装）。
+- 権限プロンプトの読み取りは端末画面の文言（`Do you want to …?` と `1. Yes`）に依る。Claude Code の TUI が変わったら `PermissionPrompt.parse` を見直す。
+- ステージパネル（#69）・外部セッションへの伝言 / 引き継ぎ（#70）は別 Issue。

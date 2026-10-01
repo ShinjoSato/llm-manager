@@ -1,5 +1,6 @@
 import AppKit
 import SwiftTerm
+import MonitorKit
 
 /// Claude Code の作業状態（ペイン見出しのバッジ表示に使う）。
 enum ClaudeStatus: Equatable {
@@ -24,13 +25,18 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 作業ステータスが変化したときに呼ばれる（メインスレッド）。
     var onStatusChanged: ((ClaudeStatus) -> Void)?
 
+    /// 画面に出ている権限プロンプトが変わったときに呼ばれる（メインスレッド）。
+    var onPermissionPromptChanged: ((PermissionPrompt?) -> Void)?
+
+    private(set) var permissionPrompt: PermissionPrompt?
+
     private var scanBuffer = ""
     private var limitHandled = false
 
     // MARK: - ステータス検知（ハイブリッド: 活動量 + プロンプト文言）
     private var statusTimer: Timer?
     private var lastDataTime = Date()
-    private var currentStatus: ClaudeStatus = .idle
+    private(set) var currentStatus: ClaudeStatus = .idle
 
     /// 「最後の出力からこの秒数以内」なら出力が流れている＝作業中とみなす（活動量ベース）。
     private static let busyThreshold: TimeInterval = 1.0
@@ -114,17 +120,64 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     private func evaluateStatus() {
         let tail = visibleTailText(lines: 8)
         let quiet = Date().timeIntervalSince(lastDataTime)
+        // 権限プロンプト表示中も点滅表示で出力が流れ続けるので、プロンプトを活動量より先に見る。
+        let prompt = PermissionPrompt.parse(screen: visibleLines())
         let newStatus: ClaudeStatus
-        if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
+        if prompt != nil {
+            newStatus = .waitingInput
+        } else if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
             newStatus = .working
         } else if Self.waitingPhrases.contains(where: { tail.contains($0) }) {
             newStatus = .waitingInput
         } else {
             newStatus = .idle
         }
+        if prompt != permissionPrompt {
+            permissionPrompt = prompt
+            onPermissionPromptChanged?(prompt)
+        }
         guard newStatus != currentStatus else { return }
         currentStatus = newStatus
         onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
+    }
+
+    /// 現在表示中の画面の全行（上から順・右端の空白は除く）。
+    func visibleLines() -> [String] {
+        let term = getTerminal()
+        return (0..<term.rows).compactMap { term.getLine(row: $0).map(Self.text(of:)) }
+    }
+
+    // MARK: - 入力（本人のキー入力として PTY に書く）
+
+    enum SendResult: Equatable {
+        case sent
+        case empty
+        /// 権限プロンプト表示中。Enter がプロンプトの「Yes」になってしまうので送らない。
+        case blockedByPermissionPrompt
+    }
+
+    /// チャット欄の本文を入力欄に貼り付けてから Enter で送る。作業中でも Claude Code 側でキューに積まれる。
+    /// `onAborted` は貼り付けから Enter までの間に権限プロンプトが出て、Enter を押さずにやめた時に呼ばれる。
+    func sendMessage(_ text: String, onAborted: (() -> Void)? = nil) -> SendResult {
+        guard PermissionPrompt.parse(screen: visibleLines()) == nil else { return .blockedByPermissionPrompt }
+        guard let body = PTYInput.messageBody(text, bracketedPaste: getTerminal().bracketedPasteMode) else { return .empty }
+        send(txt: body)
+        DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.submitDelay) { [weak self] in
+            guard let self else { return }
+            guard PermissionPrompt.parse(screen: self.visibleLines()) == nil else {
+                onAborted?()
+                return
+            }
+            self.send(txt: PTYInput.submitKey)
+        }
+        return .sent
+    }
+
+    /// 権限プロンプトに答える。画面にプロンプトが無ければ、入力欄へ文字が入るのを避けて何もしない。
+    func answerPermission(allow: Bool) -> Bool {
+        guard PermissionPrompt.parse(screen: visibleLines()) != nil else { return false }
+        send(txt: allow ? PTYInput.allowKey : PTYInput.denyKey)
+        return true
     }
 
     /// 現在表示中の画面の下から `lines` 行を、小文字化して連結した文字列で返す。
@@ -135,11 +188,16 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         var text = ""
         for r in max(0, rows - lines)..<rows {
             if let line = term.getLine(row: r) {
-                text += line.translateToString(trimRight: true)
+                text += Self.text(of: line)
                 text += "\n"
             }
         }
         return text.lowercased()
+    }
+
+    /// 1 行の文字列。TUI は空白を書かずにカーソル移動で桁を飛ばすので、未記入のセル（NUL）を空白に戻す（全角の後半セルは除く）。
+    private static func text(of line: BufferLine) -> String {
+        line.translateToString(trimRight: true, skipNullCellsFollowingWide: true).replacingOccurrences(of: "\u{0}", with: " ")
     }
 
     /// 親プロセスの環境を引き継ぎつつ、課金経路となる API キーを除去した環境を作る。
@@ -147,6 +205,11 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         var dict = ProcessInfo.processInfo.environment
         dict.removeValue(forKey: "ANTHROPIC_API_KEY")
         dict.removeValue(forKey: "ANTHROPIC_AUTH_TOKEN")
+        // Claude Code の中から起動された時の子セッション印（transcript 保存オフ・SDK 扱い等）を持ち込まないため。
+        for key in dict.keys where key.hasPrefix("CLAUDE_CODE_") || key.hasPrefix("CLAUDE_AGENT_SDK")
+            || ["CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT"].contains(key) {
+            dict.removeValue(forKey: key)
+        }
         dict["TERM"] = "xterm-256color"
         dict["COLORTERM"] = "truecolor"
         return dict.map { "\($0.key)=\($0.value)" }

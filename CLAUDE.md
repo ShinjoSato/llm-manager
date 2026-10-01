@@ -149,14 +149,19 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 
 ## claude-deck（Claude Code 司令塔アプリ）
 
-`mac/` にある Swift/macOS ネイティブアプリ。プロジェクトごとに `claude`（Claude Code）を端末として同時起動する。SwiftTerm（VT100 エミュレータ + PTY ホスト）使用。詳細は `mac/README.md`。
+`mac/` にある Swift/macOS ネイティブアプリ。プロジェクトごとに `claude`（Claude Code）を PTY でホストし、セッションをチャットアプリの操作感（トークルーム）で扱う。SwiftTerm（VT100 エミュレータ + PTY ホスト）使用。詳細は `mac/README.md`。
 
 - **配置**: ai-manager 内 `mac/`（SPM 実行ファイル `claude-deck`）。`registry.tsv` に管理対象として登録済み。
-- **プロジェクト一覧（左欄）**: 各行は名称 + フルパス表示。ユーザーが自由に追加（「+」でフォルダ選択）・削除（「−」/Delete/右クリック）でき、`~/Library/Application Support/claude-deck/projects.json` に永続化。起動はダブルクリック/Enter。初回のみ `registry.tsv` から取り込む（取り込みボタンでマージ可）。
-- **メイン領域**: 開いたセッションをタブではなく**タイル状グリッドで同時表示**。各ペインに見出し + ✕（個別クローズ）。同一プロジェクトはフォーカスのみで重複起動しない。
-- **ペイン内 Claude Code / GitHub 切替**: `github-projects.tsv` にマッピングがあるプロジェクトは、ペイン見出しのセグメントで GitHub Project 画面に切替可能（無いものは切替を出さない）。GitHub 画面は Issue をステータス別（Todo/In Progress/Debug/Review/Done）にグループ表示し、行クリックで GitHub を開く。取得は `gh project item-list --format json`（gh 認証 + project スコープ前提）。`gh` 出力形状は実機検証済み。
-- **ペイン内「Xcodeで開く」ボタン**: プロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリ含む）に `.xcworkspace`/`.xcodeproj` があるペインだけ、見出しに🔨ボタンを出す（`TerminalPaneViewController.findXcodeProject`）。押すと `NSWorkspace.open` で Xcode の GUI が開く（実行＝Cmd+R はユーザー操作）。iOS/Mac アプリの動作確認用。`.xcworkspace` 優先・最も浅い階層を選択。SPM のみ（claude-deck 自身等）は非表示。ワンクリックでのシミュレータ自動実行（`xcodebuild`/`simctl`）は将来。
-- **設計の絶対方針（料金事故ゼロ）**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路を作らないため、Max 枠の上限に達しても課金は発生しない（待つだけ）。**headless（`claude -p` / Agent SDK）の起動口は設けない方針**。
+- **メイン画面 = チャット（画面案B）**: セッション 1 つ = トークルーム 1 つ。SwiftUI（`mac/Sources/ClaudeDeck/Chat/`）を NSHostingView で載せる。旧タイル状グリッド・旧サイドバーはメインウィンドウから外した（コードは残置）。
+  - **ルーム一覧（左 312px）**: monitor のセッション + アプリでホスト中のセッションを「要対応（権限待ち・入力待ち）/ 稼働中 / 待機」に分けて表示。行は頭文字アイコン・状態ドット・ブランチ・状態 + 直近の一行・時刻・未読数。外部セッションは「外部」タグ（入力欄無効）。検索・「+」（プロジェクト一覧から選んで `claude` 起動）・下部に 5時間 / 7日間の残り%。
+  - **会話（中央）**: monitor の transcript API を購読（SSE は `?transcripts=*` を起動時に 1 本、ルームを開いた時に GET、再接続で `?after=` を取り直す）。ユーザー発話は右の青、Claude は左の暗色の吹き出し、ツールは「ツール N件 ▸」に畳む。見出しで **チャット / ターミナル / GitHub** を切替（端末と PTY はルーム・タブを移っても保持）。
+  - **入力欄**: ⏎ 送信・⇧⏎ 改行。ホスト中のセッションの PTY に bracketed paste で本文を入れ、0.3 秒後に Enter（作業中は Claude Code がキューに積む）。**権限プロンプト表示中は送らない**（Enter が「1. Yes」になるため）。
+  - **権限カード**: 会話末尾に amber のカード。monitor の permissions（Channels）があれば `store.decide`、無ければ端末画面のプロンプトを読んで PTY に **許可 `1` / 拒否 `Esc`**（TUI v2.1.251 / v2.1.286 で確認）。送信中は二度押し不可。
+  - 右側のステージパネル（#69）は `ChatRootView` の `trailing` に差し込む。
+  - プロジェクト一覧の永続化は従来どおり `~/Library/Application Support/claude-deck/projects.json`（試験時は `CLAUDE_DECK_PROJECTS` で差し替え）。
+- **GitHub 切替**: `github-projects.tsv` かプロジェクトに保存した owner/number があるルームだけ GitHub を選べる。Issue をステータス別（Todo/In Progress/Debug/Review/Done）にグループ表示し、行クリックで GitHub を開く。取得は `gh project item-list --format json`（gh 認証 + project スコープ前提）。`gh` 出力形状は実機検証済み。
+- **「Xcode で開く」ボタン**: プロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリ含む）に `.xcworkspace`/`.xcodeproj` があるルームだけ、見出しに🔨ボタンを出す（VS Code で開くボタンは常に出す）（`TerminalPaneViewController.findXcodeProject`）。押すと `NSWorkspace.open` で Xcode の GUI が開く（実行＝Cmd+R はユーザー操作）。iOS/Mac アプリの動作確認用。`.xcworkspace` 優先・最も浅い階層を選択。SPM のみ（claude-deck 自身等）は非表示。ワンクリックでのシミュレータ自動実行（`xcodebuild`/`simctl`）は将来。
+- **設計の絶対方針（料金事故ゼロ）**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する（Claude Code の中から起動された時の `CLAUDE_CODE_*` 等の子セッション印も除く）。API 課金経路を作らないため、Max 枠の上限に達しても課金は発生しない（待つだけ）。**headless（`claude -p` / Agent SDK）の起動口は設けない方針**。
 - **上限到達で強制終了**: PTY 出力を監視し「上限到達」文言を検知したらセッションを `terminate()`。検知文言は要・実機検証（`ClaudeTerminalView.swift` の `limitPhrases`）。正確な残量 API は無いため事後トリガー方式。
 - **ビルド/実行**: `cd mac && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み。
 - **`.app` 化**: `mac/scripts/bundle.sh` → `mac/dist/claude-deck.app`（ad-hoc 署名・バンドル ID `com.shinjosato.claude-deck`）→ `open mac/dist/claude-deck.app`。Metal Toolchain が無い環境では通常ビルドが SwiftTerm のシェーダーで失敗するため、自動で `--build-system native` に切り替える。Developer ID 署名・公証・配布・自動更新はしない。
