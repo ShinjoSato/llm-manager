@@ -97,9 +97,9 @@ final class HostedSession: Identifiable {
         release()
     }
 
-    func send(_ text: String, onAborted: ((InputBlock) -> Void)? = nil) -> ClaudeTerminalView.SendResult? {
+    func send(_ text: String, attachments: [Attachment] = [], onAborted: ((InputBlock) -> Void)? = nil) -> ClaudeTerminalView.SendResult? {
         guard isRunning else { return nil }
-        return terminal.sendMessage(text, onAborted: onAborted)
+        return terminal.sendMessage(text, attachments: attachments, onAborted: onAborted)
     }
 
     func answerPermission(_ expected: PermissionPrompt, allow: Bool) -> ClaudeTerminalView.AnswerResult {

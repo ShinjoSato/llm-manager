@@ -1,0 +1,234 @@
+import AppKit
+import Foundation
+import ImageIO
+import UniformTypeIdentifiers
+
+/// 入力欄に添えた画像・ファイル 1 つ。
+public struct Attachment: Sendable, Equatable, Identifiable {
+    public enum Kind: Sendable, Equatable {
+        /// Claude Code に画像として取り込ませるもの（一時保存先のコピー）。
+        case image
+        /// パスを本文に書いて Claude に読ませるもの（元の場所のまま）。
+        case file
+    }
+
+    public let id: UUID
+    public let kind: Kind
+    /// 送るパス（絶対パス）。
+    public let path: String
+    /// チップに出す名前。
+    public let name: String
+    /// 元のファイル（クリップボードの画像なら nil）。同じものを二重に添えないために使う。
+    public let sourcePath: String?
+
+    public init(id: UUID = UUID(), kind: Kind, path: String, name: String, sourcePath: String?) {
+        self.id = id
+        self.kind = kind
+        self.path = path
+        self.name = name
+        self.sourcePath = sourcePath
+    }
+}
+
+/// 添付の入手元（ファイル選択・ペースト・ドロップ）。
+public enum AttachmentSource: Sendable, Equatable {
+    case file(URL)
+    /// クリップボード等の画像（PNG）。
+    case imageData(Data, name: String)
+}
+
+/// 送る形への組み立て。値は Claude Code v2.1.286 の貼り付け処理（`[Image #N]` への変換）で確認。
+public enum AttachmentFormat {
+    /// 貼り付けたパスを画像として取り込む拡張子（TUI の判定 `/\.(png|jpe?g|gif|webp)$/i`）。
+    public static let pasteableImageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp"]
+    /// PNG に変換してから画像として渡す拡張子。
+    public static let convertibleImageExtensions: Set<String> = ["heic", "heif", "tif", "tiff", "bmp"]
+    /// 本文の末尾に添えるパスの見出し。
+    public static let listHeader = "添付:"
+    /// 画像の取り込み（TUI がファイルを読んで `[Image #N]` を入れる）は非同期で、その間の Enter は捨てられるので、印が出るまで待つ。
+    public static let imageIngestTimeout: TimeInterval = 5
+    public static let imageIngestPollInterval: TimeInterval = 0.1
+
+    /// 送る中身。`imagePaste` は本文とは別の 1 回の貼り付けで送る（同じ貼り付けに画像パスがあると TUI が本文を行に割るため）。
+    public struct Outgoing: Sendable, Equatable {
+        /// 画像のパスを空白で区切ったもの（貼り付け用・括弧なし）。無ければ nil。
+        public var imagePaste: String?
+        public var imageCount: Int
+        /// 本文（ファイルのパスの一覧を含む）。空なら送らない。
+        public var body: String
+
+        public var isEmpty: Bool { imagePaste == nil && body.isEmpty }
+    }
+
+    /// `pasteImages` が false（貼り付けモードでない端末・伝言）なら画像もパスの一覧に入れる。
+    public static func outgoing(text: String, attachments: [Attachment], pasteImages: Bool) -> Outgoing {
+        var tokens: [String] = []
+        var listed: [String] = []
+        for attachment in attachments {
+            if pasteImages, attachment.kind == .image, let token = pasteToken(attachment.path) {
+                tokens.append(token)
+            } else {
+                listed.append(attachment.path)
+            }
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts: [String] = []
+        if !trimmed.isEmpty { parts.append(trimmed) }
+        if !listed.isEmpty { parts.append(([listHeader] + listed.map(quoted)).joined(separator: "\n")) }
+        return Outgoing(imagePaste: tokens.isEmpty ? nil : tokens.joined(separator: " "),
+                        imageCount: tokens.count,
+                        body: parts.joined(separator: "\n\n"))
+    }
+
+    /// 貼り付けで画像として取り込まれる形のパス。取り込めない形なら nil。
+    /// TUI は貼り付けを「空白 + /」と改行で区切り、各片の前後の引用符を外し `\x` を `x` に戻してから拡張子を見る。
+    static func pasteToken(_ path: String) -> String? {
+        guard path.hasPrefix("/"), !path.contains(" /"), !path.contains("\\"),
+              path == path.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        guard !path.unicodeScalars.contains(where: { $0.properties.generalCategory == .control || $0 == "\n" }) else { return nil }
+        guard pasteableImageExtensions.contains((path as NSString).pathExtension.lowercased()) else { return nil }
+        var token = ""
+        for character in path {
+            if character == "\"" || character == "'" || character.isWhitespace { token.append("\\") }
+            token.append(character)
+        }
+        return token
+    }
+
+    /// 本文に書くパス。空白や引用符を含む時だけ引用符で囲む。
+    static func quoted(_ path: String) -> String {
+        guard path.contains(where: { $0.isWhitespace || $0 == "\"" || $0 == "'" }) else { return path }
+        return "\"" + path.replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
+    /// 端末の入力欄に出ている画像の印（`[Image #N]`）の数。取り込みが済んだかを見るのに使う。
+    public static func imageTokenCount(in text: String) -> Int {
+        text.components(separatedBy: "[Image #").count - 1
+    }
+}
+
+/// ペースト・ドロップの中身から添付を拾う。
+public enum AttachmentPasteboard {
+    /// `sources` が空でないか（画像の変換をせずに型だけで見る。ドラッグ中に何度も呼ばれるため）。
+    public static func canAttach(_ pasteboard: NSPasteboard) -> Bool {
+        if pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) { return true }
+        if pasteboard.availableType(from: [.string]) != nil { return false }
+        return pasteboard.availableType(from: [.png, .tiff]) != nil
+    }
+
+    /// ファイル URL があればそれを、文字列が無く画像だけならその画像（PNG）を返す。添付にしないなら空。
+    /// 文字列を含むコピー（アプリによっては本文の画像表現も載る）は従来どおり文字として貼るため、画像より文字を優先する。
+    public static func sources(in pasteboard: NSPasteboard, imageName: String = "貼り付けた画像.png") -> [AttachmentSource] {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        if !urls.isEmpty { return urls.map { .file($0) } }
+        if pasteboard.availableType(from: [.string]) != nil { return [] }
+        if let png = pasteboard.data(forType: .png) { return [.imageData(png, name: imageName)] }
+        if let tiff = pasteboard.data(forType: .tiff), let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            return [.imageData(png, name: imageName)]
+        }
+        return []
+    }
+}
+
+/// 添付の一時保存先（`~/Library/Caches/claude-deck/attachments/`）。ディレクトリ 0700・ファイル 0600。
+public struct AttachmentStore: Sendable {
+    public let directory: URL
+    /// これより古い一時ファイルは起動時に消す。
+    public static let maxAge: TimeInterval = 7 * 24 * 3600
+
+    public init(directory: URL = AttachmentStore.defaultDirectory) {
+        self.directory = directory
+    }
+
+    public static var defaultDirectory: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches")
+        return caches.appendingPathComponent("claude-deck/attachments", isDirectory: true)
+    }
+
+    public enum StoreError: LocalizedError {
+        case unreadable(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .unreadable(let name): return "「\(name)」を読み込めませんでした"
+            }
+        }
+    }
+
+    public func prepare() throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    }
+
+    /// 画像は一時保存先へ写す（元が消える・パスに空白がある・TUI が読めない形式でも取り込めるように）。それ以外は元のパスのまま。
+    public func ingest(_ source: AttachmentSource) throws -> Attachment {
+        switch source {
+        case .imageData(let data, let name):
+            let url = try write(data, extension: "png")
+            return Attachment(kind: .image, path: url.path, name: name, sourcePath: nil)
+        case .file(let original):
+            let url = original.standardizedFileURL
+            let name = url.lastPathComponent
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { throw StoreError.unreadable(name) }
+            let ext = url.pathExtension.lowercased()
+            if !isDirectory.boolValue, AttachmentFormat.pasteableImageExtensions.contains(ext) {
+                guard let data = try? Data(contentsOf: url) else { throw StoreError.unreadable(name) }
+                let copy = try write(data, extension: ext == "jpeg" ? "jpg" : ext)
+                return Attachment(kind: .image, path: copy.path, name: name, sourcePath: url.path)
+            }
+            if !isDirectory.boolValue, AttachmentFormat.convertibleImageExtensions.contains(ext), let png = Self.pngData(contentsOf: url) {
+                let copy = try write(png, extension: "png")
+                return Attachment(kind: .image, path: copy.path, name: name, sourcePath: url.path)
+            }
+            return Attachment(kind: .file, path: url.path, name: name, sourcePath: url.path)
+        }
+    }
+
+    /// 外した添付の一時ファイルを消す。一時保存先の外（元のファイル）には触らない。
+    public func discard(_ attachment: Attachment) {
+        guard contains(attachment.path) else { return }
+        try? FileManager.default.removeItem(atPath: attachment.path)
+    }
+
+    func contains(_ path: String) -> Bool {
+        let file = URL(fileURLWithPath: path).standardizedFileURL
+        return file.deletingLastPathComponent().path == directory.standardizedFileURL.path
+    }
+
+    /// `maxAge` より古い一時ファイルを消し、消した数を返す。
+    @discardableResult
+    public func sweep(now: Date = Date(), maxAge: TimeInterval = AttachmentStore.maxAge) -> Int {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
+        guard let files = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return 0 }
+        var removed = 0
+        for file in files {
+            guard let values = try? file.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
+                  let modified = values.contentModificationDate, now.timeIntervalSince(modified) > maxAge else { continue }
+            if (try? fm.removeItem(at: file)) != nil { removed += 1 }
+        }
+        return removed
+    }
+
+    private func write(_ data: Data, extension ext: String) throws -> URL {
+        try prepare()
+        let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        guard FileManager.default.createFile(atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+        }
+        return url
+    }
+
+    static func pngData(contentsOf url: URL) -> Data? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
+}

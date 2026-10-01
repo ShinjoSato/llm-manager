@@ -251,7 +251,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// チャット欄の本文を入力欄に貼り付けてから Enter で送る。作業中でも Claude Code 側でキューに積まれる。
     /// 貼り付けの前に必ず判定するので、止める時は入力欄に何も入れない。
     /// `onAborted` は貼り付けから Enter までの間に止めるべき状態になり、Enter を押さずにやめた時に呼ばれる（本文は入力欄に残る）。
-    func sendMessage(_ text: String, onAborted: ((InputBlock) -> Void)? = nil) -> SendResult {
+    func sendMessage(_ text: String, attachments: [Attachment] = [], onAborted: ((InputBlock) -> Void)? = nil) -> SendResult {
         let screen = screenLines()
         if let block = InputBlock.detect(screen: screen) { return .blocked(block) }
         if mayHaveLeftover {
@@ -262,7 +262,37 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
                 guard boxText.isEmpty else { return .leftover }
             }
         }
-        guard let body = PTYInput.messageBody(text, bracketedPaste: getTerminal().bracketedPasteMode) else { return .empty }
+        let bracketed = getTerminal().bracketedPasteMode
+        let message = AttachmentFormat.outgoing(text: text, attachments: attachments, pasteImages: bracketed)
+        let body = PTYInput.messageBody(message.body, bracketedPaste: bracketed)
+        guard let imagePaste = message.imagePaste.flatMap({ PTYInput.messageBody($0, bracketedPaste: true) }) else {
+            guard let body else { return .empty }
+            pasteAndSubmit(body, onAborted: onAborted)
+            return .sent
+        }
+        // 画像のパスだけを先に 1 回で貼る（本文と同じ貼り付けだと TUI が本文を空白 + / や改行で割って繋ぎ直すため）。
+        let before = InputBox.text(screen: screen).map(AttachmentFormat.imageTokenCount)
+        send(txt: imagePaste)
+        waitForImages(expected: before.map { $0 + message.imageCount },
+                      deadline: Date().addingTimeInterval(AttachmentFormat.imageIngestTimeout)) { [weak self] ingested in
+            guard let self else { return }
+            if let block = self.currentInputBlock() {
+                self.mayHaveLeftover = true
+                onAborted?(block)
+                return
+            }
+            // 取り込みを確かめられなかった時は Enter が捨てられているかもしれないので、次の送信で入力欄の残りを確かめる。
+            if !ingested { self.mayHaveLeftover = true }
+            if let body {
+                self.pasteAndSubmit(body, onAborted: onAborted)
+            } else {
+                self.send(txt: PTYInput.submitKey)
+            }
+        }
+        return .sent
+    }
+
+    private func pasteAndSubmit(_ body: String, onAborted: ((InputBlock) -> Void)?) {
         send(txt: body)
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.submitDelay) { [weak self] in
             guard let self else { return }
@@ -273,7 +303,21 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             }
             self.send(txt: PTYInput.submitKey)
         }
-        return .sent
+    }
+
+    /// 入力欄の `[Image #N]` が `expected` 個になるか期限まで待つ。入力欄を読めなければ期限まで待って false。
+    private func waitForImages(expected: Int?, deadline: Date, completion: @escaping (Bool) -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + AttachmentFormat.imageIngestPollInterval) { [weak self] in
+            guard let self else { return }
+            if let expected, let box = InputBox.text(screen: self.screenLines()),
+               AttachmentFormat.imageTokenCount(in: box) >= expected {
+                // 印が出た直後は貼り付け処理の後始末が残るので、本文の貼り付けを少しだけ遅らせる。
+                DispatchQueue.main.asyncAfter(deadline: .now() + AttachmentFormat.imageIngestPollInterval) { completion(true) }
+                return
+            }
+            guard Date() < deadline else { return completion(false) }
+            self.waitForImages(expected: expected, deadline: deadline, completion: completion)
+        }
     }
 
     enum AnswerResult: Equatable {

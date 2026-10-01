@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import Observation
 import MonitorKit
 
@@ -53,6 +54,13 @@ final class ChatModel {
     var query = ""
     /// ルームごとの書きかけ。ルームを行き来しても残す。
     var drafts: [RoomID: String] = [:]
+    /// ルームごとの送る前の添付。下書きと同じくルームを行き来しても残す。
+    private(set) var attachments: [RoomID: [Attachment]] = [:]
+    /// 添付 id → チップのサムネイル（添えた時に縮小して作る）。
+    @ObservationIgnored private(set) var thumbnails: [UUID: NSImage] = [:]
+    @ObservationIgnored private let attachmentStore = AttachmentStore()
+    /// 1 通に添えられる数。
+    static let maxAttachments = 20
 
     private(set) var transcripts: [String: TranscriptBuffer] = [:]
     private(set) var loadingTranscripts: Set<String> = []
@@ -91,6 +99,8 @@ final class ChatModel {
         self.store = store
         store.onTranscript = { [weak self] event in self?.receive(event) }
         refreshRooms()
+        let attachmentStore = attachmentStore
+        Task.detached(priority: .utility) { attachmentStore.sweep() }
     }
 
     // MARK: - ルーム
@@ -235,14 +245,16 @@ final class ChatModel {
 
     func send(_ text: String, to room: Room) -> Bool {
         guard let session = room.hosted else { return false }
-        let result = session.send(text) { [weak self] block in
+        let result = session.send(text, attachments: attachments[room.id] ?? []) { [weak self] block in
             // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
             let answer = block == .permission ? "権限の確認に答えた後に" : "上の選択肢に答えた後に"
             self?.alertMessage = "送信の途中で\(Self.blockName(block))が出たため、Enter を押さずに取りやめました。"
                 + "端末側の入力欄に本文が残っています。\(answer)ここから送ると、残っている本文とつながって送られます。"
         }
         switch result {
-        case .sent: return true
+        case .sent:
+            clearAttachments(of: room.id)
+            return true
         case .leftover:
             alertMessage = "端末側の入力欄に前回の本文が残っているようです。"
                 + "このままもう一度送ると、残っている本文の後ろにつながって送られます。"
@@ -284,6 +296,58 @@ final class ChatModel {
         }
     }
 
+    // MARK: - 添付
+
+    func pendingAttachments(for roomId: RoomID) -> [Attachment] { attachments[roomId] ?? [] }
+
+    func attach(_ sources: [AttachmentSource], to roomId: RoomID) {
+        var list = attachments[roomId] ?? []
+        var failures: [String] = []
+        var overflow = false
+        for source in sources {
+            if case .file(let url) = source, list.contains(where: { $0.sourcePath == url.standardizedFileURL.path }) { continue }
+            guard list.count < Self.maxAttachments else {
+                overflow = true
+                break
+            }
+            do {
+                let attachment = try attachmentStore.ingest(source)
+                if attachment.kind == .image { thumbnails[attachment.id] = Self.thumbnail(of: attachment.path) }
+                list.append(attachment)
+            } catch {
+                failures.append((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+        }
+        attachments[roomId] = list.isEmpty ? nil : list
+        var messages = failures
+        if overflow { messages.append("1 通に添えられるのは \(Self.maxAttachments) 個までです") }
+        if !messages.isEmpty { alertMessage = "添付できなかったものがあります。\n" + messages.joined(separator: "\n") }
+    }
+
+    func removeAttachment(_ attachment: Attachment, from roomId: RoomID) {
+        attachments[roomId]?.removeAll { $0.id == attachment.id }
+        if attachments[roomId]?.isEmpty == true { attachments[roomId] = nil }
+        thumbnails[attachment.id] = nil
+        attachmentStore.discard(attachment)
+    }
+
+    /// 送った後に外す。一時ファイルは受け手が後から読むことがあるので消さない（起動時の掃除に任せる）。
+    private func clearAttachments(of roomId: RoomID) {
+        for attachment in attachments[roomId] ?? [] { thumbnails[attachment.id] = nil }
+        attachments[roomId] = nil
+    }
+
+    private static func thumbnail(of path: String) -> NSImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 128,
+        ]
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
+
     // MARK: - 伝言（外部セッション）
 
     func notes(for sessionId: String?) -> [RelayNote] {
@@ -294,10 +358,13 @@ final class ChatModel {
     /// 外部セッションへ伝言を送る。受け手には「別セッションからのメッセージ」として届き、本人の入力にはならない。
     func sendRelay(_ text: String, to room: Room) -> Bool {
         guard room.hosted == nil, let sessionId = room.sessionId, inputDisabledReason(for: room) == nil else { return false }
-        let body = RelayNotes.normalized(text)
+        // 受け手は伝言を本文として読むだけなので、画像もパスで添える（Read で開ける）。
+        let message = AttachmentFormat.outgoing(text: text, attachments: attachments[room.id] ?? [], pasteImages: false)
+        let body = RelayNotes.normalized(message.body)
         guard !body.isEmpty else { return false }
         let note = RelayNote(text: body, sentAt: Date().timeIntervalSince1970 * 1000)
         relayNotes[sessionId, default: []].append(note)
+        clearAttachments(of: room.id)
         Task {
             do {
                 try await store.sendMessage(to: sessionId, text: body)
@@ -400,6 +467,7 @@ final class ChatModel {
         hosted.append(session)
         session.start()
         if let draft = drafts.removeValue(forKey: roomId) { drafts[.hosted(session.id)] = draft }
+        if let pending = attachments.removeValue(forKey: roomId) { attachments[.hosted(session.id)] = pending }
         select(.hosted(session.id))
     }
 

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import MonitorKit
 
 /// 入力欄。⏎ 送信・⇧⏎ 改行。`disabledReason` があれば送れない理由を出して無効にする。
@@ -8,9 +9,15 @@ struct Composer: View {
     let disabledReason: String?
     /// 外部セッション向けの「伝言」モード。本人の入力ではなく別セッションからのメッセージとして届く。
     var relay = false
+    /// 送る前の添付（入力欄の上にチップで出す）。
+    var attachments: [Attachment] = []
+    var thumbnail: (Attachment) -> NSImage? = { _ in nil }
+    var onAttach: ([AttachmentSource]) -> Void = { _ in }
+    var onRemoveAttachment: (Attachment) -> Void = { _ in }
     /// 送れたら true（入力欄を空にする）。
     let onSend: (String) -> Bool
     @State private var height: CGFloat = 20
+    @State private var dropTargeted = false
 
     var body: some View {
         let enabled = disabledReason == nil
@@ -40,15 +47,57 @@ struct Composer: View {
     }
 
     private func field(enabled: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !attachments.isEmpty {
+                AttachmentStrip(attachments: attachments, thumbnail: thumbnail, onRemove: onRemoveAttachment)
+                    .padding(.top, 4)
+                    .padding(.trailing, 6)
+            }
+            inputRow(enabled: enabled)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 14).fill(ChatTheme.inputSurface))
+        .overlay(RoundedRectangle(cornerRadius: 14)
+            .stroke(dropTargeted ? ChatTheme.accent : (relay ? ChatTheme.permission.opacity(0.6) : ChatTheme.inputBorder),
+                    style: StrokeStyle(lineWidth: dropTargeted ? 2 : 1, dash: relay && !dropTargeted ? [5, 4] : [])))
+        .opacity(enabled ? 1 : 0.7)
+        .overlay(alignment: .topLeading) {
+            // 書きかけがあると欄内の案内が隠れるので、無効の理由を欄の上にも出す（伝言モードは見出し行に出す）。
+            if !relay, let disabledReason, hasContent {
+                Text(disabledReason)
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.permission)
+                    .offset(x: 4, y: -18)
+            }
+        }
+        .onDrop(of: AttachmentDrop.types, isTargeted: $dropTargeted) { providers in
+            guard enabled else { return false }
+            return AttachmentDrop.load(providers) { onAttach($0) }
+        }
+    }
+
+    private func inputRow(enabled: Bool) -> some View {
         HStack(alignment: .bottom, spacing: 10) {
+            Button(action: chooseFiles) {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(ChatTheme.secondary)
+                    .frame(width: 26, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!enabled)
+            .help("画像・ファイルを添付（⌘V で画像の貼り付け・ドラッグ＆ドロップも可）")
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text(disabledReason ?? (relay ? "伝言を送信（⏎ 送信 / ⇧⏎ 改行）" : "メッセージを送信（⏎ 送信 / ⇧⏎ 改行）"))
+                    Text(disabledReason ?? placeholder)
                         .font(ChatTheme.body)
                         .foregroundStyle(ChatTheme.tertiary)
                         .allowsHitTesting(false)
                 }
-                ComposerTextView(text: $text, height: $height, isEnabled: enabled, onSubmit: submit)
+                ComposerTextView(text: $text, height: $height, isEnabled: enabled, onSubmit: submit, onAttach: onAttach)
                     .frame(height: height)
             }
             .padding(.vertical, 6)
@@ -64,27 +113,16 @@ struct Composer: View {
             .opacity(canSend ? 1 : 0.4)
             .help("送信（⏎）")
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 14).fill(ChatTheme.inputSurface))
-        .overlay(RoundedRectangle(cornerRadius: 14)
-            .stroke(relay ? ChatTheme.permission.opacity(0.6) : ChatTheme.inputBorder,
-                    style: StrokeStyle(lineWidth: 1, dash: relay ? [5, 4] : [])))
-        .opacity(enabled ? 1 : 0.7)
-        .overlay(alignment: .topLeading) {
-            // 書きかけがあると欄内の案内が隠れるので、無効の理由を欄の上にも出す（伝言モードは見出し行に出す）。
-            if !relay, let disabledReason, !text.isEmpty {
-                Text(disabledReason)
-                    .font(ChatTheme.caption)
-                    .foregroundStyle(ChatTheme.permission)
-                    .offset(x: 4, y: -18)
-            }
-        }
     }
 
+    private var placeholder: String {
+        relay ? "伝言を送信（⏎ 送信 / ⇧⏎ 改行）" : "メッセージを送信（⏎ 送信 / ⇧⏎ 改行）"
+    }
+
+    private var hasContent: Bool { !text.isEmpty || !attachments.isEmpty }
+
     private var canSend: Bool {
-        disabledReason == nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        disabledReason == nil && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
     private func submit() {
@@ -92,6 +130,120 @@ struct Composer: View {
         if let field = NSApp.keyWindow?.firstResponder as? SubmitTextView, field.hasMarkedText() { return }
         guard canSend else { return }
         if onSend(text) { text = "" }
+    }
+
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "添付"
+        panel.message = "添付する画像・ファイルを選んでください"
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        onAttach(panel.urls.map { .file($0) })
+    }
+}
+
+/// 入力欄の上に並べる添付のチップ。
+struct AttachmentStrip: View {
+    let attachments: [Attachment]
+    let thumbnail: (Attachment) -> NSImage?
+    let onRemove: (Attachment) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { attachment in
+                    chip(attachment)
+                }
+            }
+        }
+    }
+
+    private func chip(_ attachment: Attachment) -> some View {
+        HStack(spacing: 6) {
+            Group {
+                if let image = thumbnail(attachment) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Image(systemName: attachment.kind == .image ? "photo" : "doc")
+                        .font(.system(size: 14))
+                        .foregroundStyle(ChatTheme.secondary)
+                }
+            }
+            .frame(width: 32, height: 32)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            Text(attachment.name)
+                .font(ChatTheme.caption)
+                .foregroundStyle(ChatTheme.text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 150, alignment: .leading)
+            Button { onRemove(attachment) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(ChatTheme.secondary)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(ChatTheme.selectedRow))
+            }
+            .buttonStyle(.plain)
+            .help("添付を外す")
+        }
+        .padding(4)
+        .padding(.trailing, 2)
+        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.background.opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+        .help(attachment.path)
+    }
+}
+
+/// SwiftUI のドロップ（入力欄の枠全体）から添付を拾う。
+enum AttachmentDrop {
+    static let types: [UTType] = [.fileURL, .png, .tiff]
+
+    /// 読み込みは非同期なので、揃ったらメインで `completion` に渡す。受け取れるものが無ければ false。
+    static func load(_ providers: [NSItemProvider], completion: @escaping @MainActor ([AttachmentSource]) -> Void) -> Bool {
+        let usable = providers.filter { provider in types.contains { provider.hasItemConformingToTypeIdentifier($0.identifier) } }
+        guard !usable.isEmpty else { return false }
+        let collector = DropCollector(count: usable.count)
+        for (index, provider) in usable.enumerated() {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    collector.set(index, url.map { .file($0) }, completion: completion)
+                }
+            } else {
+                let type = provider.hasItemConformingToTypeIdentifier(UTType.png.identifier) ? UTType.png : UTType.tiff
+                provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
+                    let png = data.flatMap { type == .png ? $0 : NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }
+                    collector.set(index, png.map { .imageData($0, name: "ドロップした画像.png") }, completion: completion)
+                }
+            }
+        }
+        return true
+    }
+}
+
+/// ドロップの各項目の読み込み結果を並び順のまま集める。
+private final class DropCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var results: [AttachmentSource?]
+    private var remaining: Int
+
+    init(count: Int) {
+        results = Array(repeating: nil, count: count)
+        remaining = count
+    }
+
+    func set(_ index: Int, _ source: AttachmentSource?, completion: @escaping @MainActor ([AttachmentSource]) -> Void) {
+        lock.lock()
+        results[index] = source
+        remaining -= 1
+        let done = remaining == 0 ? results.compactMap { $0 } : nil
+        lock.unlock()
+        guard let done, !done.isEmpty else { return }
+        DispatchQueue.main.async { MainActor.assumeIsolated { completion(done) } }
     }
 }
 
@@ -101,6 +253,7 @@ struct ComposerTextView: NSViewRepresentable {
     @Binding var height: CGFloat
     let isEnabled: Bool
     let onSubmit: () -> Void
+    var onAttach: ([AttachmentSource]) -> Void = { _ in }
 
     static let maxHeight: CGFloat = 160
 
@@ -136,6 +289,7 @@ struct ComposerTextView: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.onSubmit = { context.coordinator.parent.onSubmit() }
+        textView.onAttach = { context.coordinator.parent.onAttach($0) }
         scroll.documentView = textView
         return scroll
     }
@@ -193,6 +347,40 @@ final class FocusingScrollView: NSScrollView {
 
 final class SubmitTextView: NSTextView {
     var onSubmit: (() -> Void)?
+    var onAttach: (([AttachmentSource]) -> Void)?
+
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        super.acceptableDragTypes + [.fileURL, .png, .tiff]
+    }
+
+    /// ⌘V: ファイルや画像だけのクリップボードは添付にし、文字を含むものは従来どおり文字として貼る。
+    override func paste(_ sender: Any?) {
+        if isEditable, attach(from: .general) { return }
+        super.paste(sender)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if isEditable, AttachmentPasteboard.canAttach(sender.draggingPasteboard) { return .copy }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if isEditable, AttachmentPasteboard.canAttach(sender.draggingPasteboard) { return .copy }
+        return super.draggingUpdated(sender)
+    }
+
+    /// 文字欄に落としたファイルもパスの文字ではなく添付にする。
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if isEditable, attach(from: sender.draggingPasteboard) { return true }
+        return super.performDragOperation(sender)
+    }
+
+    private func attach(from pasteboard: NSPasteboard) -> Bool {
+        let sources = AttachmentPasteboard.sources(in: pasteboard)
+        guard !sources.isEmpty, let onAttach else { return false }
+        onAttach(sources)
+        return true
+    }
 
     override func keyDown(with event: NSEvent) {
         let isReturn = event.keyCode == 36 || event.keyCode == 76
