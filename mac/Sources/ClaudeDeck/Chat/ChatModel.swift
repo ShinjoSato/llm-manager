@@ -365,6 +365,7 @@ final class ChatModel {
     }
 
     private func handOver(room: Room, pid: Int32, sessionId: String) {
+        guard !handingOver.contains(sessionId) else { return }
         // 確認ダイアログを出している間に上限到達・終了などが起きうるので、止める前に判定し直す。
         if let reason = handoverDisabledReason(for: room) {
             alertMessage = "引き継ぎを中止しました（何も終了していません）: \(reason)"

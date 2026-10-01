@@ -269,6 +269,17 @@ final class SessionTerminatorTests: XCTestCase {
         XCTAssertEqual(process.read { $0.signals }, [])
     }
 
+    func testDoesNotInterruptWhenTheConversationAlreadyRunsElsewhere() async {
+        let process = makeProcess()
+        let otherStart = Date(timeIntervalSince1970: 1_790_850_000)
+        process.others[200] = (ClaudeSessionRecord(pid: 200, sessionId: sid, procStart: "Thu Oct  1 10:20:00 2026",
+                                                   entrypoint: "cli", kind: "interactive"),
+                               ProcessFacts(uid: 501, startedAt: otherStart, executablePath: "/x/claude", argv0: "claude", isZombie: false))
+        let outcome = await terminator(process).terminate(pid: 100, sessionId: sid)
+        XCTAssertEqual(outcome, .runningElsewhere(200))
+        XCTAssertEqual(process.read { $0.signals }, [], "止める前に重複を見つけたらシグナルを送らない")
+    }
+
     func testStaleRecordsDoNotBlockResume() async {
         let process = makeProcess()
         process.exitsOn = [SIGINT]

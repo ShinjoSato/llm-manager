@@ -97,9 +97,9 @@ public enum SessionHandover {
     }
 
     /// 同じ sessionId を今も動かしている pid（記録と起動時刻が合うものだけ。残骸や再利用された pid は数えない）。
-    public static func liveDuplicate(sessionId: String, records: [ClaudeSessionRecord],
+    public static func liveDuplicate(sessionId: String, records: [ClaudeSessionRecord], excluding: Int32? = nil,
                                      inspect: (Int32) -> ProcessFacts?) -> Int32? {
-        for record in records where record.sessionId == sessionId && record.pid > 1 {
+        for record in records where record.sessionId == sessionId && record.pid > 1 && record.pid != excluding {
             guard let facts = inspect(record.pid), !facts.isZombie, startMatches(record: record, facts: facts) else { continue }
             return record.pid
         }
@@ -213,6 +213,10 @@ public struct SessionTerminator: Sendable {
         case .ok: break
         }
         guard let original = facts else { return exited(sessionId: sessionId) }
+        // 同じ会話が他でも動いているなら再開しないので、止めること自体をやめる（無用に中断しない）。
+        if let other = SessionHandover.liveDuplicate(sessionId: sessionId, records: records(), excluding: pid, inspect: inspect) {
+            return .runningElsewhere(other)
+        }
 
         signal(pid, SIGINT)
         if await waitForExit(pid: pid, original: original, within: interruptGrace) { return exited(sessionId: sessionId) }
