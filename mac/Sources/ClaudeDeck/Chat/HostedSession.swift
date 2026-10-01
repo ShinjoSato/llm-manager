@@ -29,6 +29,8 @@ final class HostedSession: Identifiable {
     private(set) var menuPrompt: MenuPrompt?
     /// 選択メニューは出ているが中身を読めない時の写し。
     private(set) var unreadableMenu: UnreadableMenu?
+    /// チャット欄からの送信の途中（画像の取り込み待ち〜Enter）。
+    private(set) var isSending = false
     private(set) var end: End?
     /// 最後に解決できた sessionId。終了して monitor の対応表から消えた後も会話を出すために持ち続ける。
     @ObservationIgnored var lastSessionId: String?
@@ -61,6 +63,7 @@ final class HostedSession: Identifiable {
         terminal.onInputBlockChanged = { [weak self] in self?.inputBlock = $0 }
         terminal.onMenuPromptChanged = { [weak self] in self?.menuPrompt = $0 }
         terminal.onUnreadableMenuChanged = { [weak self] in self?.unreadableMenu = $0 }
+        terminal.onSendingChanged = { [weak self] in self?.isSending = $0 }
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
     }
@@ -97,9 +100,10 @@ final class HostedSession: Identifiable {
         release()
     }
 
-    func send(_ text: String, onAborted: ((InputBlock) -> Void)? = nil) -> ClaudeTerminalView.SendResult? {
+    func send(_ text: String, attachments: [Attachment] = [],
+              completion: @escaping (SendCompletion) -> Void) -> ClaudeTerminalView.SendResult? {
         guard isRunning else { return nil }
-        return terminal.sendMessage(text, onAborted: onAborted)
+        return terminal.sendMessage(text, attachments: attachments, completion: completion)
     }
 
     func answerPermission(_ expected: PermissionPrompt, allow: Bool) -> ClaudeTerminalView.AnswerResult {
