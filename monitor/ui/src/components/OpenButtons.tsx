@@ -23,12 +23,15 @@ export function OpenButtons({
   sessionId,
   xcodeProject,
   answer = null,
+  decidable = false,
 }: {
   sessionId: string;
   /** 無いセッションでは Xcode のボタンを出さない。 */
   xcodeProject: string | null;
   /** 返答待ちのカード。VSCode を開くボタンを、何をすればいいか分かる文言で大きく出す。 */
   answer?: { label: string; tone: string } | null;
+  /** 同じカードに Channels の許可 / 拒否が出ている。 */
+  decidable?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [pending, setPending] = useState<OpenApp | null>(null);
@@ -138,7 +141,11 @@ export function OpenButtons({
         <button
           onClick={() => void open("vscode")}
           disabled={busy}
-          title="この画面からは答えられません。VSCode を前面に出すので、そちらの Claude Code で答えてください"
+          title={
+            decidable
+              ? "許可 / 拒否は上のボタンでこの画面から出せます。それ以外の答えは VSCode を前面に出すので、そちらの Claude Code で答えてください"
+              : "この画面からは答えられません。VSCode を前面に出すので、そちらの Claude Code で答えてください"
+          }
           className={`mb-2 flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold transition disabled:cursor-wait ${answer.tone} ${
             phase === "opening" && pending === "vscode" ? "opacity-50" : ""
           }`}

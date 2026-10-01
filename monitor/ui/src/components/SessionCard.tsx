@@ -127,6 +127,7 @@ export function SessionCard({
         sessionId={s.sessionId}
         xcodeProject={s.xcodeProject}
         answer={s.alive ? st.answer : null}
+        decidable={permissions.length > 0}
       />
 
       <MessageInput sessionId={s.sessionId} disabled={!s.canReceive} />

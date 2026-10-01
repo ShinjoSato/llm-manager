@@ -2,7 +2,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { needsAttention, nextAttentionSince, permissionDetail } from "./attention.js";
+import { heldStatus, needsAttention, nextAttentionSince, permissionDetail } from "./attention.js";
 import { scanSessions } from "./inventory.js";
 import { resolveTranscript, subagentDir } from "./paths.js";
 import {
@@ -448,7 +448,8 @@ export class SessionHub extends EventEmitter {
     }
 
     if (status) {
-      state.attentionSince = nextAttentionSince(state.hookStatus, state.attentionSince, status, now);
+      const prev = heldStatus(state.hookStatus, state.hookAt, lastActivity(state));
+      state.attentionSince = nextAttentionSince(prev, state.attentionSince, status, now);
       state.hookStatus = status;
       state.hookDetail = detail;
       state.hookTool = tool;
