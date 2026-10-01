@@ -200,7 +200,7 @@ final class ChatModel {
     static func status(from local: ClaudeStatus) -> SessionStatus {
         switch local {
         case .working: return .working
-        // 権限プロンプト・選択メニューは inputBlock で先に見ているので、ここに来るのは文言だけで決めた入力待ち。
+        // 権限プロンプト・選択メニューは inputBlock で先に見ているので、ここに来るのは文言だけで決めた入力待ち（バッジ用）。
         case .waitingInput: return .waiting
         case .idle: return .idle
         }
@@ -237,9 +237,13 @@ final class ChatModel {
             // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
             self?.alertMessage = "送信の途中で\(Self.blockName(block))が出たため、Enter を押さずに取りやめました。"
                 + "端末側の入力欄に本文が残っています（ターミナル表示で確認）。確認に答えた後、ターミナルで Enter を押すか本文を消してください。"
+                + "残っている間はここから送れません。"
         }
         switch result {
         case .sent: return true
+        case .leftover:
+            alertMessage = "端末側の入力欄に前回の本文が残っています。ターミナル表示で消してから送ってください。"
+            return false
         case .blocked(.permission):
             alertMessage = "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"
             return false
@@ -261,7 +265,7 @@ final class ChatModel {
             if session.pid == nil { return "起動中…" }
             switch session.inputBlock {
             case .permission: return "権限の確認に答えると送れます"
-            case .menu, .waiting: return "端末側の選択に答えると送れます（ターミナル表示で操作）"
+            case .menu: return "端末側の選択に答えると送れます（ターミナル表示で操作）"
             case nil: return nil
             }
         }
@@ -270,7 +274,7 @@ final class ChatModel {
     private static func blockName(_ block: InputBlock) -> String {
         switch block {
         case .permission: return "権限の確認"
-        case .menu, .waiting: return "端末側の選択肢"
+        case .menu: return "端末側の選択肢"
         }
     }
 

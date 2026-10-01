@@ -23,7 +23,7 @@ final class HostedSession: Identifiable {
     private(set) var pid: Int32?
     private(set) var localStatus: ClaudeStatus = .idle
     private(set) var permissionPrompt: PermissionPrompt?
-    /// 入力欄への送信を止める状態（権限プロンプト・選択メニュー・入力待ち）。
+    /// 入力欄への送信を止める状態（権限プロンプト・選択メニュー）。
     private(set) var inputBlock: InputBlock?
     private(set) var end: End?
     /// 最後に解決できた sessionId。終了して monitor の対応表から消えた後も会話を出すために持ち続ける。

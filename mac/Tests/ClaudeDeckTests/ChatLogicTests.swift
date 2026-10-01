@@ -340,6 +340,120 @@ final class ChoiceMenuTests: XCTestCase {
         XCTAssertFalse(ChoiceMenu.isShowing(screen: ["❯ 1. only one", "text"]))
         XCTAssertFalse(ChoiceMenu.isShowing(screen: ["❯ 1. one", "  3. three"]))
     }
+
+    /// 返答本文が「Do you want to proceed …?」で終わるだけの画面。選択肢は無いので送れる。
+    func testReplyEndingWithProceedQuestionIsNotBlocked() {
+        let screen = [
+            "⏺ I will create a.txt and b.txt in the working directory.",
+            "  Do you want to proceed with this approach?",
+            "",
+            rule,
+            "❯ ",
+            rule,
+            "  ⏵⏵ auto mode on (shift+tab to cycle)",
+        ]
+        XCTAssertNil(InputBlock.detect(screen: screen))
+        XCTAssertFalse(InputBlock.looksWaiting(tail: screen.joined(separator: "\n")))
+    }
+
+    /// 本物の権限メニューは画面判定でも文言でも入力待ち。
+    func testRealPermissionMenuStillBlocks() {
+        let screen = [
+            rule,
+            " Bash command",
+            "   touch a.txt",
+            " Do you want to proceed?",
+            " ❯ 1. Yes",
+            "   2. Yes, and don't ask again for touch commands",
+            "   3. No, and tell Claude what to do differently (esc)",
+        ]
+        XCTAssertEqual(InputBlock.detect(screen: screen), .permission)
+        XCTAssertTrue(InputBlock.looksWaiting(tail: screen.joined(separator: "\n")))
+    }
+
+    /// 縦に長い端末では trust 確認が上詰めで描かれ、下に空行が続く。
+    func testTopAlignedMenuWithManyTrailingBlankLinesIsMenu() {
+        let menu = [
+            rule,
+            " Accessing workspace:",
+            "",
+            " /tmp/trust-a1",
+            "",
+            " Quick safety check: Is this a project you created or one you trust?",
+            "",
+            " ❯ No, exit",
+            "   Yes, I trust this folder",
+            "",
+            " Enter to confirm · Esc to cancel",
+        ]
+        let screen = menu + Array(repeating: "", count: 40)
+        XCTAssertTrue(ChoiceMenu.isShowing(screen: screen))
+        XCTAssertEqual(InputBlock.detect(screen: screen), .menu)
+    }
+
+    func testTopAlignedPermissionPromptWithTrailingBlankLinesIsPermission() {
+        let screen = [
+            rule,
+            " Bash command",
+            "   touch a.txt",
+            " Do you want to proceed?",
+            " ❯ 1. Yes",
+            "   2. No",
+            "",
+            " Esc to cancel · Tab to amend",
+        ] + Array(repeating: "", count: 40)
+        XCTAssertEqual(InputBlock.detect(screen: screen), .permission)
+    }
+
+    /// 操作案内の無いメニューで、カーソルが罫線直後の選択肢にある時も入力欄と取り違えない。
+    func testCursorRightBelowRuleIsNotInputBox() {
+        let screen = [
+            "⏺ Plan ready.",
+            rule,
+            "❯ 1. Yes, and use auto mode",
+            "  2. Yes, manually approve edits",
+            "  3. Tell Claude what to change",
+        ]
+        XCTAssertNil(InputBox.promptIndex(screen))
+        XCTAssertTrue(ChoiceMenu.isShowing(screen: screen))
+        XCTAssertEqual(InputBlock.detect(screen: screen), .menu)
+    }
+}
+
+final class InputBoxTests: XCTestCase {
+    private let rule = String(repeating: "─", count: 40)
+
+    func testEmptyBox() {
+        XCTAssertEqual(InputBox.text(screen: ["⏺ done", rule, "❯ ", rule, "  ⏵⏵ auto mode on"]), "")
+    }
+
+    func testPlaceholderCountsAsEmpty() {
+        XCTAssertEqual(InputBox.text(screen: ["⏺ done", rule, "❯ Try \"fix lint errors\"", rule, "  ? for shortcuts"]), "")
+    }
+
+    func testLeftoverTextIsReturned() {
+        let screen = ["⏺ done", rule, "❯ 前回の本文", "  続きの行", rule, "  ⏵⏵ auto mode on"] + Array(repeating: "", count: 30)
+        XCTAssertEqual(InputBox.text(screen: screen), "前回の本文\n続きの行")
+    }
+
+    /// 実画面では ❯ の直後が NBSP になる（v2.1.286）。
+    func testNonBreakingSpaceAfterPromptIsSkipped() {
+        XCTAssertEqual(InputBox.text(screen: [rule, "❯\u{00A0}leftover body", rule]), "leftover body")
+        XCTAssertEqual(InputBox.text(screen: [rule, "❯\u{00A0}", rule]), "")
+    }
+
+    func testPastedPlaceholderIsLeftover() {
+        XCTAssertEqual(InputBox.text(screen: [rule, "❯ [Pasted text #1 +3 lines]", rule]), "[Pasted text #1 +3 lines]")
+    }
+
+    func testNoBoxWhileMenuIsShowing() {
+        XCTAssertNil(InputBox.text(screen: [rule, "❯ 1. Yes", "  2. No"]))
+    }
+
+    /// 履歴にある過去の入力（罫線の直下でない ❯ 行）は入力欄ではない。
+    func testUsesLastBoxNotHistory() {
+        XCTAssertEqual(InputBox.text(screen: ["❯ old prompt", "⏺ reply", rule, "❯ ", rule]), "")
+    }
 }
 
 final class TerminalScreenTests: XCTestCase {

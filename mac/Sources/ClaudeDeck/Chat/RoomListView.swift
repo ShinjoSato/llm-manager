@@ -285,8 +285,26 @@ struct ProjectLauncher: View {
     /// 一覧（GitHub の紐づけ含む）を書き換えた時。
     let onChanged: () -> Void
     let onPick: (ManagedProject) -> Void
-    @State private var projects = ProjectStore.load()
+    @State private var listing = Listing.load()
     @State private var filter = ""
+
+    /// 一覧と各行の 2 行目。描画のたびに TSV を読まないよう、一覧を読んだ時にまとめて作る。
+    struct Listing {
+        var projects: [ManagedProject]
+        var subtitles: [String: String]
+
+        static func load() -> Listing {
+            let projects = ProjectStore.load()
+            let mappings = GitHubBoard.loadMappings()
+            var subtitles: [String: String] = [:]
+            for project in projects {
+                if let mapping = GitHubBoard.mapping(forProject: project, in: mappings) {
+                    subtitles[project.path] = "\(project.path)  ·  GH #\(mapping.number)"
+                }
+            }
+            return Listing(projects: projects, subtitles: subtitles)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -378,19 +396,18 @@ struct ProjectLauncher: View {
     }
 
     private func subtitle(of project: ManagedProject) -> String {
-        if let mapping = GitHubBoard.mapping(forProject: project) { return "\(project.path)  ·  GH #\(mapping.number)" }
-        return project.path
+        listing.subtitles[project.path] ?? project.path
     }
 
     private var filtered: [ManagedProject] {
         let terms = filter.split(whereSeparator: \.isWhitespace)
-        return projects.filter { p in
+        return listing.projects.filter { p in
             terms.allSatisfy { "\(p.name) \(p.path)".range(of: $0, options: [.caseInsensitive, .widthInsensitive]) != nil }
         }
     }
 
     private func reload() {
-        projects = ProjectStore.load()
+        listing = Listing.load()
         onChanged()
     }
 

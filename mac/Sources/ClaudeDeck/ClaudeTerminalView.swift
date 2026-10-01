@@ -52,16 +52,6 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         "esc to interrupt"
     ]
 
-    /// 応答待ち（入力待ち）を示す文言の候補（大文字小文字無視・部分一致）。
-    /// 通常の回答本文との誤検知を避けるため、権限プロンプト固有の言い回しに絞る。
-    /// ⚠️ 実際の Claude Code の権限確認/質問プロンプト文言に合わせて要・実機検証。
-    private static let waitingPhrases: [String] = [
-        "do you want to proceed",
-        "yes, and don't ask again",
-        "no, and tell claude",
-        "❯ 1. yes"
-    ]
-
     /// 上限到達を示す文言の候補（大文字小文字無視・部分一致）。
     /// ⚠️ 実際の Claude Code の上限メッセージ文言に合わせて要・実機検証。
     ///    暫定で代表的な言い回しを並べてある。実機で確認したら最小限に絞る。
@@ -127,15 +117,15 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let quiet = Date().timeIntervalSince(lastDataTime)
         // 権限プロンプト・選択メニュー表示中も点滅表示で出力が流れ続けるので、活動量より先に見る。
         let prompt = PermissionPrompt.parse(screen: screen)
-        var block = InputBlock.detect(screen: screen)
+        let block = InputBlock.detect(screen: screen)
         let newStatus: ClaudeStatus
         if block != nil {
             newStatus = .waitingInput
         } else if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
             newStatus = .working
-        } else if Self.waitingPhrases.contains(where: { tail.contains($0) }) {
+        } else if InputBlock.looksWaiting(tail: tail) {
+            // 文言だけの判定は返答本文と取り違えうるので、バッジにだけ使い送信は止めない。
             newStatus = .waitingInput
-            block = .waiting
         } else {
             newStatus = .idle
         }
@@ -165,31 +155,44 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         return (base..<count).compactMap { term.getScrollInvariantLine(row: top + $0).map(Self.text(of:)) }
     }
 
-    /// 送信を止めるべき状態か。タイマーを待たず今の画面で判定し、入力待ちと判定済みなら安全側で止める。
+    /// 送信を止めるべき状態か。タイマーを待たず今の画面で判定する。
     func currentInputBlock() -> InputBlock? {
-        if let block = InputBlock.detect(screen: screenLines()) { return block }
-        return currentStatus == .waitingInput ? .waiting : nil
+        InputBlock.detect(screen: screenLines())
     }
+
+    /// 送信を途中で取りやめ、端末の入力欄に本文を残したかもしれない。
+    private(set) var mayHaveLeftover = false
 
     // MARK: - 入力（本人のキー入力として PTY に書く）
 
     enum SendResult: Equatable {
         case sent
         case empty
-        /// 権限プロンプト・選択メニュー・入力待ちの表示中。Enter がその選択になってしまうので送らない。
+        /// 権限プロンプト・選択メニューの表示中。Enter がその選択になってしまうので送らない。
         case blocked(InputBlock)
+        /// 取りやめた送信の本文が端末の入力欄に残っている。続けて貼ると前回の本文とくっつくので送らない。
+        case leftover
     }
 
     /// チャット欄の本文を入力欄に貼り付けてから Enter で送る。作業中でも Claude Code 側でキューに積まれる。
     /// 貼り付けの前に必ず判定するので、止める時は入力欄に何も入れない。
     /// `onAborted` は貼り付けから Enter までの間に止めるべき状態になり、Enter を押さずにやめた時に呼ばれる（本文は入力欄に残る）。
     func sendMessage(_ text: String, onAborted: ((InputBlock) -> Void)? = nil) -> SendResult {
-        if let block = currentInputBlock() { return .blocked(block) }
+        let screen = screenLines()
+        if let block = InputBlock.detect(screen: screen) { return .blocked(block) }
+        if mayHaveLeftover {
+            // 入力欄が読めない時は残りを確かめられないが、くっつく害は小さいので送る（印は残す）。
+            if let boxText = InputBox.text(screen: screen) {
+                guard boxText.isEmpty else { return .leftover }
+                mayHaveLeftover = false
+            }
+        }
         guard let body = PTYInput.messageBody(text, bracketedPaste: getTerminal().bracketedPasteMode) else { return .empty }
         send(txt: body)
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.submitDelay) { [weak self] in
             guard let self else { return }
             if let block = self.currentInputBlock() {
+                self.mayHaveLeftover = true
                 onAborted?(block)
                 return
             }

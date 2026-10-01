@@ -46,8 +46,6 @@ public enum InputBlock: Sendable, Equatable {
     case permission
     /// 選択メニュー（plan の承認・AskUserQuestion・フォルダの trust 確認など）。Enter が選択中の項目になる。
     case menu
-    /// 入力待ちと判定されたが中身が読めない。安全側で止める。
-    case waiting
 
     /// 画面から判定する（権限プロンプトを優先）。止めなくてよければ nil。
     public static func detect(screen: [String]) -> InputBlock? {
@@ -55,19 +53,32 @@ public enum InputBlock: Sendable, Equatable {
         if ChoiceMenu.isShowing(screen: screen) { return .menu }
         return nil
     }
+
+    /// 状態バッジ用の「入力待ち」文言（小文字・部分一致）。返答本文に出うる言い回しは入れない。送信判定には使わない。
+    public static let waitingPhrases: [String] = [
+        "yes, and don't ask again",
+        "no, and tell claude",
+        "❯ 1. yes",
+    ]
+
+    /// 画面下部の文言だけで入力待ちに見えるか（バッジ用）。
+    public static func looksWaiting(tail: String) -> Bool {
+        let lowered = tail.lowercased()
+        return waitingPhrases.contains { lowered.contains($0) }
+    }
 }
 
 /// 端末画面に出ている選択メニュー（❯ で選ぶもの）の判定。値は TUI v2.1.286 で確認。
 public enum ChoiceMenu {
-    /// 見る範囲（画面の末尾から）。メニューは常に画面下部に出る。
+    /// 見る範囲（末尾の空行を除いた画面の下から）。メニューは常に描画済みの最下部に出る。
     static let tailLines = 30
     /// メニューの操作案内（行頭）。trust 確認のように番号の無いメニューはこれで見分ける。
     static let footerPrefixes = ["enter to confirm", "enter to select", "enter to continue", "esc to cancel", "esc to exit"]
 
     public static func isShowing(screen: [String]) -> Bool {
-        var lines = Array(screen.suffix(tailLines)).map { $0.trimmingCharacters(in: .whitespaces) }
-        // 下部に入力欄（罫線の直下の ❯ 行）があれば、それより上は会話の履歴なので見ない。
-        if let box = lines.indices.last(where: { $0 > 0 && lines[$0].hasPrefix("❯") && PermissionPrompt.isSeparator(lines[$0 - 1]) }) {
+        var lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(tailLines)).map { $0.trimmingCharacters(in: .whitespaces) }
+        // 下部に入力欄があれば、それより上は会話の履歴なので見ない。
+        if let box = InputBox.promptIndex(lines) {
             lines = Array(lines[(box + 1)...])
         }
         let footerZone = lines.filter { !$0.isEmpty }.suffix(8)
@@ -90,9 +101,9 @@ public enum ChoiceMenu {
 
     /// 選択肢の番号。`cursor` なら ❯ の付いた行だけを見る。
     static func choiceNumber(_ line: String, cursor: Bool) -> Int? {
-        var rest = Substring(line)
+        var rest = Substring(line.trimmingCharacters(in: .whitespaces))
         if rest.hasPrefix("❯") {
-            rest = rest.dropFirst().drop(while: { $0 == " " })
+            rest = rest.dropFirst().drop(while: \.isWhitespace)
         } else if cursor {
             return nil
         }
@@ -101,6 +112,40 @@ public enum ChoiceMenu {
         let after = rest.dropFirst(digits.count)
         guard after.hasPrefix(". ") else { return nil }
         return Int(digits)
+    }
+}
+
+/// 端末下部の入力欄（罫線の直下の ❯ 行から次の罫線まで）。
+public enum InputBox {
+    /// 入力欄の ❯ 行の位置。選択肢の形（❯ n. …）の行はメニューのカーソルなので入力欄と見なさない。
+    static func promptIndex(_ lines: [String]) -> Int? {
+        lines.indices.last { index in
+            guard index > 0 else { return false }
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            return line.hasPrefix("❯") && PermissionPrompt.isSeparator(lines[index - 1])
+                && ChoiceMenu.choiceNumber(line, cursor: true) == nil
+        }
+    }
+
+    /// 入力欄に入っている文字（空なら ""）。入力欄が見つからなければ nil。空欄の時の薄字の例文（Try "…"）は空とみなす。
+    public static func text(screen: [String]) -> String? {
+        let lines = TerminalScreen.droppingTrailingBlankLines(screen)
+        guard let start = promptIndex(lines) else { return nil }
+        var parts: [String] = []
+        for (offset, line) in lines[start...].enumerated() {
+            if offset > 0, PermissionPrompt.isSeparator(line) { break }
+            var t = Substring(line.trimmingCharacters(in: .whitespaces))
+            if offset == 0 { t = t.dropFirst().drop(while: \.isWhitespace) }
+            if !t.isEmpty { parts.append(String(t)) }
+        }
+        let text = parts.joined(separator: "\n")
+        if parts.count == 1, isPlaceholder(text) { return "" }
+        return text
+    }
+
+    /// 空欄の時に出る例文（v2.1.286: `Try "fix lint errors"`）。
+    static func isPlaceholder(_ text: String) -> Bool {
+        text.hasPrefix("Try \"") && text.hasSuffix("\"") && text.count > 6
     }
 }
 
@@ -155,6 +200,13 @@ public struct PermissionPrompt: Sendable, Equatable {
 
 /// 端末バッファの読み出しの補助。
 public enum TerminalScreen {
+    /// 末尾の空行を落とす。端末が縦に長いと TUI は上詰めで描くので、下の空行で見る範囲がずれないようにする。
+    public static func droppingTrailingBlankLines(_ screen: [String]) -> [String] {
+        var end = screen.count
+        while end > 0, screen[end - 1].trimmingCharacters(in: .whitespaces).isEmpty { end -= 1 }
+        return Array(screen[..<end])
+    }
+
     /// `exists(i)` が「i < 行数」の時だけ true になる前提で、行数を指数探索 + 二分探索で求める（呼び出しは O(log 行数)）。
     public static func lineCount(rows: Int, exists: (Int) -> Bool) -> Int {
         guard exists(0) else { return 0 }
