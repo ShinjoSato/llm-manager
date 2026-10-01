@@ -30,6 +30,7 @@ mac/
       RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・残量
       ConversationView.swift      見出し・吹き出し・ツール行・権限カード・チャット / ターミナル / GitHub / App Store 切替
       Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード）
+      MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）
       ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
       AppKitHosts.swift           既存の端末ビュー / GitHub ボード / App Store 表示を SwiftUI に差し込む
       ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
@@ -67,7 +68,7 @@ mac/
       RelayNotes.swift            外部セッションへ送った伝言（transcript の写しとの重複排除・送信失敗の理由）
       SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
       RoomGrouping.swift          要対応 / 稼働中 / 待機 のグループ化・並び順・検索・未読数・アイコン色
-      ChatMarkdown.swift          吹き出しの最低限の Markdown（太字・コード・改行・コードブロック）
+      ChatMarkdown.swift          吹き出しの Markdown 解析（見出し・表・リスト・引用・区切り線・段落・コードブロック）
       PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの読み取り
     Stage/
       StageLogic.swift            ステージパネルの文言（いまの動き・職業名・フィード）・埋め込み URL・プレースホルダー・開閉の判定
@@ -198,7 +199,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   SSE は起動時に `?transcripts=*` で張り（ルームを選ぶたびに張り直さない）、ルームを開いた時に GET、以降は SSE を id で重複除去して足す。
   再接続（`connectionEpoch` の増加）後は**全件を取り直して置き換える**（切れていた間の発話は手元の末尾より前に入りうるので `?after=` では埋まらない）。
   取得中に繋ぎ直した時は取得後にもう一度取り直し、失敗した時は間隔を空けて 3 回までやり直す。
-- 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し（太字・インラインコード・改行・コードブロック）。
+- 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し。Claude の応答は Markdown を描く（見出し・表・箇条書き / 番号付きリスト（入れ子）・引用・区切り線・コードブロック、インラインの太字・斜体・コード・リンク）。リンクは http / https だけ開き、`file://` やカスタムスキームは開かない（会話ビュー全体で判定は `ChatMarkdown.isOpenableLink`）。コードブロック内のタブはそのまま保つ。表は寄せ指定に従い、列幅は中身に合わせて長いセルは折り返し、吹き出しより広い時だけ横スクロール。解析は自前（`ChatMarkdown`・外部ライブラリなし）で本文ごとにキャッシュし、描画は `Chat/MarkdownView.swift`。自分の発話と伝言はインライン装飾のみ。
   ツール呼び出しは直前の発話の下に「ツール N件 ▸」の 1 行に畳み、開くとツール名と対象を並べる。実行中のものは緑で強調。
   新着で末尾へ自動スクロールし、上に遡っている間は止める（macOS 15 以降）。
 - 作業中に送った指示は Claude Code 側でキューに入り、ログに「ユーザーの発話」として残らないため吹き出しには出ない（応答には反映される）。

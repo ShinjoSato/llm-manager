@@ -36,6 +36,10 @@ struct ConversationView: View {
                 }
             }
         }
+        // 吹き出しの本文は外部由来なので、http / https 以外のリンクは開かない。
+        .environment(\.openURL, OpenURLAction { url in
+            ChatMarkdown.isOpenableLink(url) ? .systemAction : .discarded
+        })
     }
 
     private func placeholder(_ text: String) -> some View {
@@ -398,26 +402,7 @@ struct ClaudeBubble: View {
     var body: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 4,
                                            bottomTrailingRadius: 16, topTrailingRadius: 16)
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(ChatMarkdown.blocks(text).enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .text(let paragraph):
-                    Text(ChatMarkdown.inline(paragraph))
-                        .font(ChatTheme.body)
-                        .foregroundStyle(ChatTheme.text)
-                        .lineSpacing(3)
-                case .code(_, let code):
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(code)
-                            .font(ChatTheme.mono)
-                            .foregroundStyle(ChatTheme.text)
-                            .padding(10)
-                    }
-                    .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.codeSurface))
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.border))
-                }
-            }
-        }
+        MarkdownView(text: text)
         .textSelection(.enabled)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
