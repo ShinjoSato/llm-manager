@@ -12,6 +12,45 @@ final class SessionIdValidationTests: XCTestCase {
             XCTAssertFalse(SessionHandover.isValidSessionId(bad), bad)
         }
     }
+
+    func testRejectsOptionsThatWouldTurnIntoHeadless() {
+        for bad in ["-p", "--print", "--dangerously-skip-permissions", "-pacb12868-4061-4d7e-987c-0522878e518d",
+                    "-cb12868-4061-4d7e-987c-0522878e518d", "acb12868-4061-4d7e-987c-0522878e518d -p",
+                    "acb1286840614d7e987c0522878e518d", "acb12868-4061-4d7e-987c-0522878e518"] {
+            XCTAssertFalse(SessionHandover.isValidSessionId(bad), bad)
+            XCTAssertNil(SessionHandover.resumeArgument(bad), bad)
+        }
+    }
+
+    func testResumeArgumentIsJoinedWithEquals() {
+        XCTAssertEqual(SessionHandover.resumeArgument("ACB12868-4061-4d7e-987c-0522878e518d"),
+                       "--resume=ACB12868-4061-4d7e-987c-0522878e518d")
+    }
+}
+
+final class HandoverSourceTests: XCTestCase {
+    func testOnlyInteractiveTerminalSessionsCanBeHandedOver() {
+        XCTAssertNil(SessionHandover.unsupportedSourceReason(entrypoint: "cli", kind: "interactive"))
+        XCTAssertNil(SessionHandover.unsupportedSourceReason(entrypoint: "cli", kind: nil))
+        XCTAssertEqual(SessionHandover.unsupportedSourceReason(entrypoint: "claude-vscode", kind: "interactive"),
+                       "VS Code 等で動いているセッションは引き継げません")
+        XCTAssertNotNil(SessionHandover.unsupportedSourceReason(entrypoint: "sdk-cli", kind: nil))
+        XCTAssertNotNil(SessionHandover.unsupportedSourceReason(entrypoint: nil, kind: "interactive"))
+        XCTAssertNotNil(SessionHandover.unsupportedSourceReason(entrypoint: "cli", kind: "print"))
+    }
+
+    func testDescribesWhereTheSessionRuns() {
+        XCTAssertTrue(SessionHandover.sourceDescription(entrypoint: "cli").contains("ターミナル"))
+        XCTAssertTrue(SessionHandover.sourceDescription(entrypoint: "claude-vscode").contains("VS Code"))
+        XCTAssertFalse(SessionHandover.sourceDescription(entrypoint: nil).contains("ターミナル"))
+    }
+
+    func testDecodesEntrypointAndKindFromRegistry() throws {
+        let json = #"{"pid":3450,"sessionId":"9c5a73ea-48db-4aef-9ca5-a772f22c89a0","cwd":"/x","startedAt":1790782475754,"procStart":"Wed Sep 30 15:34:34 2026","kind":"interactive","entrypoint":"claude-vscode","status":"busy"}"#
+        let record = try JSONDecoder().decode(ClaudeSessionRecord.self, from: Data(json.utf8))
+        XCTAssertEqual(record.entrypoint, "claude-vscode")
+        XCTAssertEqual(record.kind, "interactive")
+    }
 }
 
 final class HandoverVerifyTests: XCTestCase {
@@ -26,7 +65,8 @@ final class HandoverVerifyTests: XCTestCase {
 
     private func record(pid: Int32 = 100, sessionId: String? = nil, procStart: String? = "Thu Oct  1 10:02:22 2026",
                         startedAt: Double? = 1_790_848_951_291) -> ClaudeSessionRecord {
-        ClaudeSessionRecord(pid: pid, sessionId: sessionId ?? sid, cwd: "/tmp", startedAt: startedAt, procStart: procStart)
+        ClaudeSessionRecord(pid: pid, sessionId: sessionId ?? sid, cwd: "/tmp", startedAt: startedAt, procStart: procStart,
+                            entrypoint: "cli", kind: "interactive")
     }
 
     func testOkWhenEverythingMatches() {
@@ -70,6 +110,24 @@ final class HandoverVerifyTests: XCTestCase {
         XCTAssertNotEqual(SessionHandover.verify(pid: 100, sessionId: sid, record: late, facts: facts(), ownUid: uid), .ok)
     }
 
+    func testRefusesVSCodeSession() {
+        var vscode = record()
+        vscode.entrypoint = "claude-vscode"
+        vscode.kind = "interactive"
+        // 実体のパス末尾が claude でも、VS Code 拡張の claude は撃たない。
+        let facts = facts(path: "/Users/u/.vscode/extensions/anthropic.claude-code/resources/native-binary/claude", argv0: nil)
+        XCTAssertTrue(facts.looksLikeClaude)
+        XCTAssertEqual(SessionHandover.verify(pid: 100, sessionId: sid, record: vscode, facts: facts, ownUid: uid),
+                       .refused("VS Code 等で動いているセッションは引き継げません"))
+    }
+
+    func testSameProcessIgnoresExecutablePath() {
+        XCTAssertTrue(facts().isSameProcess(as: ProcessFacts(uid: 501, startedAt: start, executablePath: nil, argv0: nil, isZombie: false)))
+        XCTAssertTrue(facts().isSameProcess(as: facts(path: "/somewhere/else")))
+        XCTAssertFalse(facts().isSameProcess(as: facts(start: start.addingTimeInterval(1))))
+        XCTAssertFalse(facts().isSameProcess(as: facts(uid: 0)))
+    }
+
     func testRecognizesClaudeExecutables() {
         XCTAssertTrue(facts(argv0: nil).looksLikeClaude)
         XCTAssertTrue(facts(path: "/opt/homebrew/bin/claude", argv0: nil).looksLikeClaude)
@@ -103,6 +161,10 @@ final class SessionTerminatorTests: XCTestCase {
         var exitsOn: Set<Int32> = []
         /// このシグナルを受けたら pid が別のプロセスに替わる。
         var replacedOn: Set<Int32> = []
+        /// このシグナルを受けたら実行パスが読めなくなる（プロセスは同じまま）。
+        var pathLostOn: Set<Int32> = []
+        /// 同じ会話を動かしている別の claude。
+        var others: [Int32: (ClaudeSessionRecord, ProcessFacts?)] = [:]
 
         func receive(_ sig: Int32) {
             lock.lock(); defer { lock.unlock() }
@@ -113,6 +175,8 @@ final class SessionTerminatorTests: XCTestCase {
             } else if replacedOn.contains(sig), let current = facts {
                 facts = ProcessFacts(uid: current.uid, startedAt: current.startedAt.addingTimeInterval(10),
                                      executablePath: "/bin/sleep", argv0: "sleep", isZombie: false)
+            } else if pathLostOn.contains(sig), let current = facts {
+                facts = ProcessFacts(uid: current.uid, startedAt: current.startedAt, executablePath: nil, argv0: nil, isZombie: false)
             }
         }
 
@@ -129,13 +193,15 @@ final class SessionTerminatorTests: XCTestCase {
         let process = FakeProcess()
         process.facts = ProcessFacts(uid: 501, startedAt: start, executablePath: "/x/claude/versions/2.1.286",
                                      argv0: "claude", isZombie: false)
-        process.record = ClaudeSessionRecord(pid: 100, sessionId: sid, procStart: "Thu Oct  1 10:02:22 2026")
+        process.record = ClaudeSessionRecord(pid: 100, sessionId: sid, procStart: "Thu Oct  1 10:02:22 2026",
+                                             entrypoint: "cli", kind: "interactive")
         return process
     }
 
     private func terminator(_ process: FakeProcess) -> SessionTerminator {
-        var terminator = SessionTerminator(inspect: { _ in process.read { $0.facts } },
+        var terminator = SessionTerminator(inspect: { pid in process.read { pid == 100 ? $0.facts : $0.others[pid]?.1 } },
                                            record: { _ in process.read { $0.record } },
+                                           records: { process.read { p in [p.record].compactMap { $0 } + p.others.values.map(\.0) } },
                                            signal: { _, sig in process.receive(sig) },
                                            sleep: { _ in },
                                            ownUid: 501)
@@ -181,6 +247,41 @@ final class SessionTerminatorTests: XCTestCase {
         let outcome = await terminator(process).terminate(pid: 100, sessionId: sid)
         XCTAssertEqual(outcome, .exited)
         XCTAssertEqual(process.read { $0.signals }, [SIGINT])
+    }
+
+    func testPathReadFailureIsNotTreatedAsExit() async {
+        let process = makeProcess()
+        process.pathLostOn = [SIGINT]
+        let outcome = await terminator(process).terminate(pid: 100, sessionId: sid)
+        XCTAssertEqual(outcome, .stillRunning)
+        XCTAssertEqual(process.read { $0.signals }, [SIGINT, SIGTERM])
+    }
+
+    func testDoesNotResumeWhileTheSameConversationRunsElsewhere() async {
+        let process = makeProcess()
+        process.facts = nil
+        let otherStart = Date(timeIntervalSince1970: 1_790_850_000)
+        process.others[200] = (ClaudeSessionRecord(pid: 200, sessionId: sid, procStart: "Thu Oct  1 10:20:00 2026",
+                                                   entrypoint: "cli", kind: "interactive"),
+                               ProcessFacts(uid: 501, startedAt: otherStart, executablePath: "/x/claude", argv0: "claude", isZombie: false))
+        let outcome = await terminator(process).terminate(pid: 100, sessionId: sid)
+        XCTAssertEqual(outcome, .runningElsewhere(200))
+        XCTAssertEqual(process.read { $0.signals }, [])
+    }
+
+    func testStaleRecordsDoNotBlockResume() async {
+        let process = makeProcess()
+        process.exitsOn = [SIGINT]
+        // 終了済み（pid が無い）・pid が再利用済み（起動時刻が違う）・別の会話は数えない。
+        let reused = ProcessFacts(uid: 501, startedAt: Date(timeIntervalSince1970: 1_790_860_000), executablePath: "/bin/zsh",
+                                  argv0: "zsh", isZombie: false)
+        process.others[200] = (ClaudeSessionRecord(pid: 200, sessionId: sid, procStart: "Thu Oct  1 10:20:00 2026"), nil)
+        process.others[201] = (ClaudeSessionRecord(pid: 201, sessionId: sid, procStart: "Thu Oct  1 10:20:00 2026"), reused)
+        process.others[202] = (ClaudeSessionRecord(pid: 202, sessionId: "bcb12868-4061-4d7e-987c-0522878e518d",
+                                                   procStart: "Thu Oct  1 10:02:22 2026"),
+                               ProcessFacts(uid: 501, startedAt: start, executablePath: nil, argv0: nil, isZombie: false))
+        let outcome = await terminator(process).terminate(pid: 100, sessionId: sid)
+        XCTAssertEqual(outcome, .exited)
     }
 
     func testAlreadyGoneCountsAsExited() async {
@@ -237,6 +338,14 @@ final class RelayNotesTests: XCTestCase {
         XCTAssertEqual(RelayNotes.removingEchoes(from: [before, later], notes: [note]).map(\.id), ["b", "l"])
         let failed = RelayNote(id: "f", text: "OK", sentAt: 100_000, state: .failed("x"))
         XCTAssertEqual(RelayNotes.removingEchoes(from: [user("x", "OK", at: 100_100)], notes: [failed]).map(\.id), ["x"])
+    }
+
+    func testPlainTextWithoutTimestampIsKept() {
+        // 時刻の無い過去の発話は、書き出しが無ければ伝言の写しと見なさない。
+        let note = RelayNote(id: "n", text: "OK", sentAt: 100_000, state: .sent)
+        XCTAssertEqual(RelayNotes.removingEchoes(from: [user("old", "OK", at: nil)], notes: [note]).map(\.id), ["old"])
+        let prefixed = user("p", "Another Claude session sent a message:\nOK", at: nil)
+        XCTAssertEqual(RelayNotes.removingEchoes(from: [prefixed], notes: [note]).map(\.id), [])
     }
 
     func testOneNoteHidesAtMostOneEcho() {

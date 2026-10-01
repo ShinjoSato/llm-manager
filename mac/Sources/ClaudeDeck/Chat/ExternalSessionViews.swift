@@ -9,17 +9,21 @@ struct ExternalBanner: View {
     var body: some View {
         let busy = room.sessionId.map { model.handingOver.contains($0) } ?? false
         let disabledReason = model.handoverDisabledReason(for: room)
+        let sourceReason = model.handoverSourceReason(for: room)
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "terminal")
+            Image(systemName: room.snapshot?.entrypoint == "cli" ? "terminal" : "macwindow")
                 .font(.system(size: 14))
                 .foregroundStyle(ChatTheme.waiting)
-            Text("ターミナルで起動したセッションです。ここから送れるのは『伝言』と権限の許可・拒否だけです。"
-                 + "引き継ぐと、元のターミナルの claude を終了してこのアプリで会話を再開します。")
+            Text(SessionHandover.sourceDescription(entrypoint: room.snapshot?.entrypoint)
+                 + "ここから送れるのは『伝言』と権限の許可・拒否だけです。"
+                 + (sourceReason.map { "\($0)。" } ?? "引き継ぐと、元のターミナルの claude を終了してこのアプリで会話を再開します。"))
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            if busy {
+            if sourceReason != nil {
+                EmptyView()
+            } else if busy {
                 ProgressView().controlSize(.small)
                 Text("引き継ぎ中…").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
             } else {
@@ -94,8 +98,20 @@ struct RelayBubble: View {
 /// 外部セッションが権限待ちなのに monitor に確認が来ていない（Channels を載せていない）時の案内。
 struct ChannelsMissingCard: View {
     let toolName: String?
+    /// 権限待ちになった直後は monitor に確認が届く前なので、少し待ってから出す。
+    @State private var shown = false
 
     var body: some View {
+        Group {
+            if shown { card }
+        }
+        .task {
+            try? await Task.sleep(for: .seconds(3))
+            shown = true
+        }
+    }
+
+    private var card: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.shield").foregroundStyle(ChatTheme.permission)
             VStack(alignment: .leading, spacing: 4) {
@@ -105,7 +121,7 @@ struct ChannelsMissingCard: View {
                         Text(toolName).font(ChatTheme.mono.weight(.semibold)).foregroundStyle(ChatTheme.permission)
                     }
                 }
-                Text("このセッションは Channels を載せていないので、ここからは答えられません（ターミナルで答えてください）。")
+                Text("確認がまだ届いていません。Channels を載せていないセッションは、ここからは答えられません（ターミナルで答えてください）。")
                     .font(ChatTheme.caption)
                     .foregroundStyle(ChatTheme.secondary)
                     .fixedSize(horizontal: false, vertical: true)

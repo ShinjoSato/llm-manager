@@ -8,13 +8,20 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
     public var startedAt: Double?
     /// プロセスの起動時刻（`ps -o lstart` と同じ形・UTC）。pid の再利用を見分けるのに使う。
     public var procStart: String?
+    /// 起動元（`cli` = ターミナル、`claude-vscode` = VS Code 拡張 など）。
+    public var entrypoint: String?
+    /// `interactive` など。
+    public var kind: String?
 
-    public init(pid: Int32, sessionId: String, cwd: String? = nil, startedAt: Double? = nil, procStart: String? = nil) {
+    public init(pid: Int32, sessionId: String, cwd: String? = nil, startedAt: Double? = nil, procStart: String? = nil,
+                entrypoint: String? = nil, kind: String? = nil) {
         self.pid = pid
         self.sessionId = sessionId
         self.cwd = cwd
         self.startedAt = startedAt
         self.procStart = procStart
+        self.entrypoint = entrypoint
+        self.kind = kind
     }
 }
 
@@ -38,6 +45,17 @@ public struct ClaudeSessionRegistry: Sendable {
               let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data),
               record.pid == pid, !record.sessionId.isEmpty else { return nil }
         return record
+    }
+
+    /// 置かれている全レコード（終了済みの残骸も含む。生存は呼び出し側で確かめる）。
+    public func allRecords() -> [ClaudeSessionRecord] {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return urls.filter { $0.pathExtension == "json" }.compactMap { url in
+            guard let data = try? Data(contentsOf: url),
+                  let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data),
+                  !record.sessionId.isEmpty else { return nil }
+            return record
+        }
     }
 
     public func sessionId(forPid pid: Int32) -> String? {

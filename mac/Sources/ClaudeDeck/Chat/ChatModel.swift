@@ -321,6 +321,13 @@ final class ChatModel {
 
     // MARK: - アプリに引き継ぐ
 
+    /// 起動元（VS Code 拡張等）のせいで引き継げない理由。nil ならターミナルの対話セッション。
+    func handoverSourceReason(for room: Room) -> String? {
+        guard let snapshot = room.snapshot else { return "このルームは引き継げません" }
+        let record = ClaudeSessionRegistry().record(forPid: snapshot.pid).flatMap { $0.sessionId == snapshot.sessionId ? $0 : nil }
+        return SessionHandover.unsupportedSourceReason(entrypoint: record?.entrypoint ?? snapshot.entrypoint, kind: record?.kind)
+    }
+
     /// 引き継げない理由。nil なら引き継げる。
     func handoverDisabledReason(for room: Room) -> String? {
         guard room.hosted == nil, let snapshot = room.snapshot, let sessionId = room.sessionId else {
@@ -329,6 +336,7 @@ final class ChatModel {
         if handingOver.contains(sessionId) { return "引き継ぎ中…" }
         if !snapshot.alive || room.status == .stopped { return "このセッションは終了しています" }
         if !SessionHandover.isValidSessionId(sessionId) { return "sessionId の形式が想定外のため引き継げません" }
+        if let reason = handoverSourceReason(for: room) { return reason }
         if LimitWatch.shared.isLimitReached { return "Max 枠の上限に達しているため引き継げません（リセット後に試してください）" }
         return nil
     }
@@ -357,7 +365,11 @@ final class ChatModel {
     }
 
     private func handOver(room: Room, pid: Int32, sessionId: String) {
-        guard !handingOver.contains(sessionId) else { return }
+        // 確認ダイアログを出している間に上限到達・終了などが起きうるので、止める前に判定し直す。
+        if let reason = handoverDisabledReason(for: room) {
+            alertMessage = "引き継ぎを中止しました（何も終了していません）: \(reason)"
+            return
+        }
         handingOver.insert(sessionId)
         let project = ProjectStore.load().first(where: { $0.path == room.cwd })
             ?? ManagedProject(name: room.name, path: room.cwd, status: "active", note: "")
@@ -375,6 +387,8 @@ final class ChatModel {
                 resume(project: project, sessionId: sessionId, from: roomId)
             case .refused(let reason):
                 alertMessage = "引き継ぎを中止しました（何も終了していません）: \(reason)"
+            case .runningElsewhere(let other):
+                alertMessage = "同じ会話が別の claude（pid \(other)）で動いているため、再開していません（二重起動を避けるため）。"
             case .stillRunning:
                 alertMessage = "ターミナルの claude が終了しなかったため、再開していません（同じ会話の二重起動を避けるため）。"
                     + "ターミナルで終了してからもう一度お試しください。"

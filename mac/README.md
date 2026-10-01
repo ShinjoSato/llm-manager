@@ -200,27 +200,33 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 アプリの外で起動した claude には本人の入力として届く経路が無い。ここから出来るのは **伝言** と **権限の許可・拒否（Channels のみ）**、
 そして **アプリに引き継ぐ**（アプリの PTY で同じ会話を再開して、以降は通常のルームとして操作する）の 3 つ。
 
-- 見出しに「外部セッション」タグ、その下にバナー（制約の説明と「アプリに引き継ぐ」ボタン）。
+- 見出しに「外部セッション」タグ、その下にバナー（起動元に応じた説明と「アプリに引き継ぐ」ボタン）。
+- **引き継げるのはターミナルで対話起動した claude だけ**（`~/.claude/sessions/<pid>.json` の `entrypoint` が `cli` で、`kind` があれば `interactive`）。
+  VS Code 拡張（`claude-vscode`）等で動いているセッションは止めると元の画面が壊れるので、ボタンを出さずに理由を表示する（`SessionHandover.unsupportedSourceReason`）。
+  `entrypoint` は環境変数 `CLAUDE_CODE_ENTRYPOINT` を引き継ぐので、Claude Code の中（VS Code 拡張の Bash 等）から起動した claude は `cli` にならず引き継げない。
 - **伝言**: 入力欄が黄色の「伝言」モードになり（注記「受け手には別セッションからのメッセージとして届きます」）、monitor の
   `POST /api/sessions/:id/message`（`MonitorStore.sendMessage`）で送る。受け手には `Another Claude session sent a message:` に続けて
   届き、**本人の指示にはならない**（権限承認・スラッシュコマンド・設定変更は不可。v2.1.286 で確認）。
   - 受け手は伝言を `isMeta: true` の user 行として jsonl に残すので、monitor の transcript には出ない（実機で確認）。そのため
     送った伝言はアプリ側で sessionId ごとに覚え、送信時刻の位置に**点線の吹き出し**で差し込む（アプリを終了すると消える）。
     transcript に写しが出た場合（monitor の仕様が変わった時）は、`RelayNotes.removingEchoes` が 1 通につき 1 件だけ取り除いて二重に並べない
-    （書き出し付きはいつでも、素の同文は送信の 5 秒前〜10 分後のものだけ。届かなかった伝言では消さない）。
+    （書き出し付きはいつでも、素の同文は時刻があり送信の 5 秒前〜10 分後のものだけ。届かなかった伝言では消さない）。
   - 送信失敗は吹き出しの下とダイアログに理由を出す（`not_found` / `not_alive` / `no_socket` / `unreachable`・monitor 未接続）。
 - **権限**: monitor の `permissions`（Channels を載せたセッションのみ）があれば許可 / 拒否カードを出して `store.decide` で返す（二度押し不可）。
-  状態が権限待ちなのに permissions が無い時は「このセッションは Channels を載せていないので、ここからは答えられません（ターミナルで答えてください）」を出す。
+  状態が権限待ちのまま 3 秒経っても permissions が無い時は「確認がまだ届いていません。Channels を載せていないセッションは、ここからは答えられません（ターミナルで答えてください）」を出す。
 - **アプリに引き継ぐ**: 確認ダイアログ（終了する pid・中断されること・再開すること・元のウィンドウは閉じないこと）→ キャンセルなら何もしない。
   1. 終了対象を確かめる（`SessionHandover.verify`）: 自分の uid / プロセスが claude（argv[0] か実行ファイルの場所）/ `~/.claude/sessions/<pid>.json` が
-     その pid で同じ sessionId / レジストリの `procStart`（無い版は `startedAt`）とカーネルの起動時刻が一致（pid の再利用を見分ける）。
+     その pid で同じ sessionId / 起動元が `cli` の対話セッション / レジストリの `procStart`（無い版は `startedAt`）とカーネルの起動時刻が一致（pid の再利用を見分ける）。
      どれかが外れたら何も送らずに中止する。
-  2. SIGINT → 最大 5 秒待つ → 残っていて**同じプロセスのまま**（起動時刻と実行ファイルが同じ）なら SIGTERM → 最大 3 秒待つ。
+  2. SIGINT → 最大 5 秒待つ → 残っていて**同じプロセスのまま**（uid と起動時刻が同じ。実行パスは取れないことがあるので見ない）なら SIGTERM → 最大 3 秒待つ。
      終了を確認できなければ再開しない（同じ会話の二重起動を避ける）。
-  3. 同じ cwd で `claude --resume <sessionId>` を PTY で起動する（`launchClaude(in:resumeSessionId:)`。sessionId は `^[A-Za-z0-9-]+$`
-     のものしかコマンド行に入れない。API キーの除去と `unset` はそのまま。`--resume` は対話起動の引数で headless ではない）。
+     終了を確認できても、`~/.claude/sessions/*.json` に同じ sessionId を持つ生存 pid（記録と起動時刻が合うもの）があれば再開しない。
+  3. 同じ cwd で `claude --resume=<sessionId>` を PTY で起動する（`launchClaude(in:resumeSessionId:)`。sessionId は UUID 形式
+     （`^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$`）のものしかコマンド行に入れず、`=` でつないで別のオプションに化けさせない。API キーの除去と `unset` はそのまま。`--resume` は対話起動の引数で headless ではない）。
      再開しても sessionId は変わらないので、会話はそのまま続き、ルームは通常のホストルームに切り替わる。
-  - 上限到達中（`LimitWatch.isLimitReached`）は引き継がない（終了待ちの間に到達した場合も再開しない）。
+  - 上限到達中（`LimitWatch.isLimitReached`）は引き継がない（確認ダイアログの間・終了待ちの間に到達した場合も、止める前／再開前に判定し直す）。
+  - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
+    安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。
 
 ### GitHub 切替
 

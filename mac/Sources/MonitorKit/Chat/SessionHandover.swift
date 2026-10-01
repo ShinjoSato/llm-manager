@@ -3,11 +3,33 @@ import Darwin
 
 /// 外部（ターミナル等）で動いている claude をアプリに引き継ぐための判定と終了処理。
 public enum SessionHandover {
-    /// シェルのコマンド行に埋め込むので、UUID 相当の文字だけを通す。
+    /// シェルのコマンド行に埋め込むので UUID の形だけを通す（`-p` 等のオプションに化けさせない）。
     public static func isValidSessionId(_ id: String) -> Bool {
-        guard (1...128).contains(id.utf8.count) else { return false }
-        return id.utf8.allSatisfy { c in
-            (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c == 0x2D
+        id.wholeMatch(of: #/[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}/#) != nil
+    }
+
+    /// `claude` に渡す再開の引数。値が次の引数として解釈されないよう `=` でつなぐ。
+    public static func resumeArgument(_ id: String) -> String? {
+        isValidSessionId(id) ? "--resume=\(id)" : nil
+    }
+
+    /// ターミナルで対話起動した claude 以外は止めると元の画面（VS Code 等）が壊れるので引き継がない。
+    public static func unsupportedSourceReason(entrypoint: String?, kind: String?) -> String? {
+        if let kind, kind != "interactive" { return "対話セッションではないため引き継げません" }
+        switch entrypoint {
+        case "cli": return nil
+        case nil: return "起動元が分からないため引き継げません"
+        default: return "VS Code 等で動いているセッションは引き継げません"
+        }
+    }
+
+    /// バナーに出す起動元の説明。
+    public static func sourceDescription(entrypoint: String?) -> String {
+        switch entrypoint {
+        case "cli": return "ターミナルで起動したセッションです。"
+        case "claude-vscode": return "VS Code の拡張で動いているセッションです。"
+        case "claude-desktop": return "Claude デスクトップアプリで動いているセッションです。"
+        default: return "このアプリの外で動いているセッションです。"
         }
     }
 
@@ -33,6 +55,7 @@ public enum SessionHandover {
         guard record.sessionId == sessionId else {
             return .refused("pid \(pid) は別のセッション（\(record.sessionId)）を動かしています")
         }
+        if let reason = unsupportedSourceReason(entrypoint: record.entrypoint, kind: record.kind) { return .refused(reason) }
         guard startMatches(record: record, facts: facts) else {
             return .refused("pid \(pid) は記録と起動時刻が合いません（pid が再利用された可能性）")
         }
@@ -69,6 +92,18 @@ public enum SessionHandover {
         case refused(String)
         /// シグナルを送っても終わらなかった。
         case stillRunning
+        /// 同じ会話が別の pid で動いている。
+        case runningElsewhere(Int32)
+    }
+
+    /// 同じ sessionId を今も動かしている pid（記録と起動時刻が合うものだけ。残骸や再利用された pid は数えない）。
+    public static func liveDuplicate(sessionId: String, records: [ClaudeSessionRecord],
+                                     inspect: (Int32) -> ProcessFacts?) -> Int32? {
+        for record in records where record.sessionId == sessionId && record.pid > 1 {
+            guard let facts = inspect(record.pid), !facts.isZombie, startMatches(record: record, facts: facts) else { continue }
+            return record.pid
+        }
+        return nil
     }
 }
 
@@ -97,9 +132,9 @@ public struct ProcessFacts: Sendable, Equatable {
         return path.contains("/claude/versions/")
     }
 
-    /// 同じプロセスか（pid の再利用で別物に替わっていないか）。
+    /// 同じプロセスか（pid の再利用で別物に替わっていないか）。実行パスは取れないことがあるので見ない。
     public func isSameProcess(as other: ProcessFacts) -> Bool {
-        uid == other.uid && startedAt == other.startedAt && executablePath == other.executablePath
+        uid == other.uid && startedAt == other.startedAt
     }
 
     /// `pid` の素性を読む。存在しなければ nil。
@@ -146,6 +181,7 @@ public struct ProcessFacts: Sendable, Equatable {
 public struct SessionTerminator: Sendable {
     public var inspect: @Sendable (Int32) -> ProcessFacts?
     public var record: @Sendable (Int32) -> ClaudeSessionRecord?
+    public var records: @Sendable () -> [ClaudeSessionRecord]
     public var signal: @Sendable (Int32, Int32) -> Void
     public var sleep: @Sendable (Duration) async -> Void
     public var ownUid: uid_t
@@ -156,35 +192,45 @@ public struct SessionTerminator: Sendable {
 
     public init(inspect: @escaping @Sendable (Int32) -> ProcessFacts? = { ProcessFacts.inspect(pid: $0) },
                 record: @escaping @Sendable (Int32) -> ClaudeSessionRecord? = { ClaudeSessionRegistry().record(forPid: $0) },
+                records: @escaping @Sendable () -> [ClaudeSessionRecord] = { ClaudeSessionRegistry().allRecords() },
                 signal: @escaping @Sendable (Int32, Int32) -> Void = { _ = kill($0, $1) },
                 sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
                 ownUid: uid_t = getuid()) {
         self.inspect = inspect
         self.record = record
+        self.records = records
         self.signal = signal
         self.sleep = sleep
         self.ownUid = ownUid
     }
 
-    /// `pid` が `sessionId` の claude だと確かめてから止める。止まったと確認できた時だけ `.exited`。
+    /// `pid` が `sessionId` の claude だと確かめてから止める。止まったと確認でき、同じ会話が他で動いていない時だけ `.exited`。
     public func terminate(pid: Int32, sessionId: String) async -> SessionHandover.Outcome {
         let facts = inspect(pid)
         switch SessionHandover.verify(pid: pid, sessionId: sessionId, record: record(pid), facts: facts, ownUid: ownUid) {
-        case .notRunning: return .exited
+        case .notRunning: return exited(sessionId: sessionId)
         case .refused(let reason): return .refused(reason)
         case .ok: break
         }
-        guard let original = facts else { return .exited }
+        guard let original = facts else { return exited(sessionId: sessionId) }
 
         signal(pid, SIGINT)
-        if await waitForExit(pid: pid, original: original, within: interruptGrace) { return .exited }
+        if await waitForExit(pid: pid, original: original, within: interruptGrace) { return exited(sessionId: sessionId) }
 
         // 待つ間に pid が別物へ替わっていないことを確かめてから強める（レジストリは終了処理中に消えうるので素性で見る）。
-        guard let current = inspect(pid), !current.isZombie else { return .exited }
-        guard current.isSameProcess(as: original) else { return .exited }
+        guard let current = inspect(pid), !current.isZombie else { return exited(sessionId: sessionId) }
+        guard current.isSameProcess(as: original) else { return exited(sessionId: sessionId) }
         signal(pid, SIGTERM)
-        if await waitForExit(pid: pid, original: original, within: terminateGrace) { return .exited }
+        if await waitForExit(pid: pid, original: original, within: terminateGrace) { return exited(sessionId: sessionId) }
         return .stillRunning
+    }
+
+    /// 再開すると同じ会話を二重に動かすことになるので、他の pid で動いていれば止める。
+    private func exited(sessionId: String) -> SessionHandover.Outcome {
+        if let other = SessionHandover.liveDuplicate(sessionId: sessionId, records: records(), inspect: inspect) {
+            return .runningElsewhere(other)
+        }
+        return .exited
     }
 
     private func waitForExit(pid: Int32, original: ProcessFacts, within grace: Duration) async -> Bool {

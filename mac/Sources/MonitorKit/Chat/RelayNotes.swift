@@ -42,8 +42,8 @@ public enum RelayNotes {
         let text = normalized(raw)
         let body = normalized(note.text)
         guard !body.isEmpty else { return false }
-        // 本人が後で同じ文面を打った時まで消さないよう、素の一致は送信直後に限る。
-        if text == body { return item.at.map { $0 <= note.sentAt + plainEchoWindow } ?? true }
+        // 本人の発話を消さないよう、素の一致は時刻があり送信直後のものに限る。
+        if text == body { return item.at.map { $0 <= note.sentAt + plainEchoWindow } ?? false }
         guard text.hasPrefix(peerPrefix) else { return false }
         let rest = normalized(String(text.dropFirst(peerPrefix.count)))
         return rest == body || rest.hasPrefix(body + "\n")

@@ -54,14 +54,14 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
 
     /// 指定プロジェクトのディレクトリで `claude` を起動する。
     /// ログインシェル経由で PATH（~/.local/bin など）を継承しつつ、API キーは二重に遮断する。
-    /// `resumeSessionId` があれば対話起動のまま `claude --resume <id>` で会話を再開する。不正な id なら起動せず false。
+    /// `resumeSessionId` があれば対話起動のまま `claude --resume=<id>` で会話を再開する。不正な id なら起動せず false。
     @discardableResult
     func launchClaude(in directory: String, resumeSessionId: String? = nil) -> Bool {
         var command = "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec claude"
         if let resumeSessionId {
-            // シェルのコマンド行に埋め込むので、英数字とハイフン以外を含む値は通さない。
-            guard SessionHandover.isValidSessionId(resumeSessionId) else { return false }
-            command += " --resume \(resumeSessionId)"
+            // シェルのコマンド行に埋め込むので UUID の形のものだけを `--resume=<id>` で渡す。
+            guard let argument = SessionHandover.resumeArgument(resumeSessionId) else { return false }
+            command += " \(argument)"
         }
         let env = Self.buildSafeEnvironment()
         startProcess(
