@@ -482,14 +482,21 @@ final class ChatModel {
                 return
             case .failed(.gone):
                 self.alertMessage = "端末に選択肢が見当たりません。既に答え終わっている可能性があります。"
+            case .failed(.vanished):
+                self.alertMessage = "❯ を動かしている途中で端末の選択肢が読み取れなくなったため、Enter を押さずにやめました。端末の表示を確かめてから答えてください。"
             case .failed(.changed):
                 self.alertMessage = "選択肢の内容が替わったため送りませんでした（矢印で ❯ を動かしていた場合は Enter を押していません）。カードの内容を確かめてから答えてください。"
             case .failed(.stuck):
                 self.alertMessage = "選択肢の位置を合わせられなかったため、Enter を押さずにやめました。カードの内容を確かめてからもう一度答えてください。"
+            case .ended:
+                self.alertMessage = "claude が終了した（終了・上限到達など）ため、選択肢を確定できませんでした。Enter は押していません。"
             case .unavailable:
                 self.alertMessage = "この選択肢はここからは選べません。"
+            case .settling:
+                self.alertMessage = "直前に送った矢印キーが端末に反映されるのを待っています。少し待ってからもう一度押してください。"
             }
-            self.busyPermissionKeys.remove(key)
+            // やめた移動の矢印が遅れて反映されうるので、すぐには押せるようにしない。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
         }
     }
 

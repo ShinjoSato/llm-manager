@@ -1,8 +1,8 @@
 import Foundation
 
 /// 端末画面に出ている選択メニュー（plan の承認・AskUserQuestion・trust 確認など）の中身。
-public struct MenuPrompt: Sendable, Equatable {
-    public struct Option: Sendable, Equatable {
+public struct MenuPrompt: Sendable, Hashable {
+    public struct Option: Sendable, Hashable {
         /// 「1. …」の番号。trust 確認のように番号の無いメニューでは nil。
         public var number: Int?
         public var label: String
@@ -57,6 +57,16 @@ public struct MenuPrompt: Sendable, Equatable {
     /// カーソル位置を除いて同じメニューか（押した時のカードと今の画面の照合に使う）。
     public func sameMenu(as other: MenuPrompt) -> Bool {
         context == other.context && question == other.question && options == other.options
+    }
+
+    /// カーソル位置を除いた中身の識別子（中身が替わったカードを作り直すのに使う）。
+    public var identity: Int {
+        var hasher = Hasher()
+        hasher.combine(context)
+        hasher.combine(question)
+        hasher.combine(options)
+        hasher.combine(footer)
+        return hasher.finalize()
     }
 }
 
@@ -272,7 +282,7 @@ extension ChoiceMenu {
 }
 
 /// 中身を読み取れない選択メニューの写し。
-public struct UnreadableMenu: Sendable, Equatable {
+public struct UnreadableMenu: Sendable, Hashable {
     /// メニューの範囲の空でない行（下から最大 12 行）。
     public var lines: [String]
     /// Esc が claude の終了になるか。
@@ -286,16 +296,19 @@ public struct UnreadableMenu: Sendable, Equatable {
 
 /// カードで押した選択肢まで ❯ を矢印キーで動かし、着いたら Enter で確定する手順。
 /// 番号キーは使わない（trust 確認には番号が無く、番号キーが「移動」か「即決定」かもメニューごとに違うため）。
-/// 未反映の矢印は常に 0 か 1 個に保ち、送った数と ❯ の動いた回数が揃い、着いた位置が続けて変わらない時だけ確定する。
+/// 未反映の矢印は常に 0 か 1 個に保ち、❯ が送った向きへ 1 行ずつ動いた時だけ受け入れ、着いた位置が続けて変わらない時だけ確定する。
+/// 未反映の矢印を残して止まった時は `PendingArrowHold` で次の移動を待たせ、ナビゲーションをまたいでも 0 か 1 個を保つ。
 public struct MenuNavigator: Sendable {
     public enum Direction: Sendable, Equatable { case up, down }
 
     public enum Failure: Sendable, Equatable {
-        /// メニューが消えた（既に答え終わった等）。
+        /// 押した時にメニューが出ていない（既に答え終わった等）。
         case gone
+        /// 動かしている途中でメニューが読めなくなったまま戻らない。
+        case vanished
         /// 押した時のカードと別のメニューになった。
         case changed
-        /// 矢印キーを送っても ❯ が動かない・送った数より多く動いた・目的の行に着かない。
+        /// 矢印キーを送っても ❯ が動かない・送っていない動きをした・目的の行に着かない。
         case stuck
     }
 
@@ -317,12 +330,10 @@ public struct MenuNavigator: Sendable {
     private var budget: Int
     private var missing = 0
     /// 最後に読めた ❯ の位置。
-    private var lastCursor = 0
-    private var sent = 0
-    /// ❯ の位置が変わった回数。
-    private var moves = 0
-    /// 送った矢印がまだ画面に反映されていない。
-    private var pending = false
+    public private(set) var lastCursor = 0
+    /// 送った矢印がまだ画面に反映されていない。中止した時に残っていれば、後から ❯ が動きうる。
+    public private(set) var hasPendingKey = false
+    private var lastDirection: Direction = .down
     private var waited = 0
     /// 目的の行に着いた後、もう一度読んでも動いていないかを確かめている。
     private var settling = false
@@ -343,7 +354,8 @@ public struct MenuNavigator: Sendable {
             // 最初に読めなければ消えている。動かしている途中は描き替えの合間かもしれないので少し待つ。
             missing += 1
             settling = false
-            return !started || missing > 5 ? .abort(.gone) : .wait
+            if !started { return .abort(.gone) }
+            return missing > 5 ? .abort(.vanished) : .wait
         }
         missing = 0
         if !started {
@@ -353,30 +365,63 @@ public struct MenuNavigator: Sendable {
         }
         // 移動中は ❯ の行の描き方が変わりうるので、問い・本文・選択肢の数だけで同じメニューかを見る。
         guard current.question == expected.question, current.context == expected.context,
-              current.options.count == expected.options.count else { return .abort(.changed) }
-        if current.cursor != lastCursor {
+              current.options.count == expected.options.count else {
             lastCursor = current.cursor
-            moves += 1
-            pending = false
-            settling = false
-            // 送った数より多く動いた（遅れて届いたキー・別の入力）なら、どこで止まるか分からない。
-            guard moves <= sent else { return .abort(.stuck) }
+            return .abort(.changed)
         }
-        if pending {
+        if current.cursor != lastCursor {
+            let step = current.cursor - lastCursor
+            let accepted = hasPendingKey && step == (lastDirection == .down ? 1 : -1)
+            lastCursor = current.cursor
+            settling = false
+            // 送っていない動き・2 行以上の動きは数えていない入力がある証拠なので、どこで止まるか分からない。
+            guard accepted else { return .abort(.stuck) }
+            hasPendingKey = false
+        }
+        if hasPendingKey {
             waited += 1
             return waited > Self.maxWaitsPerPress ? .abort(.stuck) : .wait
         }
         if current.cursor == target {
-            guard moves == sent else { return .abort(.stuck) }
             guard current.sameMenu(as: expected) else { return .abort(.changed) }
             if settling { return .confirm }
             settling = true
             return .wait
         }
         settling = false
-        pending = true
+        hasPendingKey = true
         waited = 0
-        sent += 1
-        return .press(current.cursor < target ? .down : .up)
+        lastDirection = current.cursor < target ? .down : .up
+        return .press(lastDirection)
+    }
+}
+
+/// 未反映の矢印を残して移動をやめた後、次の移動を始めさせない印。
+/// 残ったキーが次の移動の 1 歩と数えられると、着いたと見なした後にもう 1 行動いて別の選択肢で確定してしまうため。
+public struct PendingArrowHold: Sendable, Equatable {
+    /// 端末の出力がこれだけ止まっていれば、残ったキーは処理済み（か捨てられた）とみなす。
+    public static let quietInterval: TimeInterval = 1.5
+    /// メニューの描き替えで出力が止まらなくても、claude が入力を読んでいる間にこれだけ経てば外す。
+    public static let maxHold: TimeInterval = 5
+
+    public let since: Date
+    /// 中止した時に見えていた ❯ の位置。
+    public let cursor: Int?
+
+    public init(since: Date, cursor: Int?) {
+        self.since = since
+        self.cursor = cursor
+    }
+
+    /// 中止した移動に未反映の矢印が残っていれば印を作る。
+    public static func after(_ navigator: MenuNavigator, now: Date) -> PendingArrowHold? {
+        navigator.hasPendingKey ? PendingArrowHold(since: now, cursor: navigator.lastCursor) : nil
+    }
+
+    /// 印を外してよいか。❯ が動いた（残りのキーが反映された）・出力が止まった・上限を過ぎた時。
+    public func isReleased(now: Date, lastOutput: Date, currentCursor: Int?) -> Bool {
+        if let cursor, let currentCursor, currentCursor != cursor { return true }
+        if now.timeIntervalSince(max(since, lastOutput)) >= Self.quietInterval { return true }
+        return now.timeIntervalSince(since) >= Self.maxHold
     }
 }

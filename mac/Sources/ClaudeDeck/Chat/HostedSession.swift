@@ -99,7 +99,7 @@ final class HostedSession: Identifiable {
     }
 
     func answerMenu(_ expected: MenuPrompt, choice: Int?, completion: @escaping (ClaudeTerminalView.MenuAnswerOutcome) -> Void) {
-        guard isRunning else { return completion(.failed(.gone)) }
+        guard isRunning else { return completion(.ended) }
         terminal.answerMenu(expected, choice: choice, completion: completion)
     }
 

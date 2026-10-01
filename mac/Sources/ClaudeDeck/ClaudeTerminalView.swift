@@ -43,6 +43,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     private(set) var unreadableMenu: UnreadableMenu?
     /// 選択肢へ ❯ を動かしている最中。重ねて動かすと互いのキーで行き先がずれる。
     private(set) var isNavigatingMenu = false
+    /// 未反映の矢印を残して移動をやめた印。外れるまで次の移動を始めない。
+    private var pendingArrowHold: PendingArrowHold?
 
     private var limitHandled = false
     private var limitCheckPending = false
@@ -146,6 +148,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             onInputBlockChanged?(block)
         }
         let menu = block == .menu ? ChoiceMenu.parseShowing(screen: screen) : nil
+        releasePendingArrowHoldIfDone(cursor: menu?.cursor)
         if menu != menuPrompt {
             menuPrompt = menu
             onMenuPromptChanged?(menu)
@@ -246,8 +249,18 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         case confirmed
         case cancelled
         case failed(MenuNavigator.Failure)
+        /// 移動の途中で claude が終わった・端末ビューが無くなった（Enter は送っていない）。
+        case ended
         /// 押せない選択肢（自由入力）か、別の選択肢へ動かしている最中。
         case unavailable
+        /// 前回やめた移動の矢印がまだ反映されていないかもしれない。少し待てば押せる。
+        case settling
+    }
+
+    private func releasePendingArrowHoldIfDone(cursor: Int?) {
+        guard let hold = pendingArrowHold,
+              hold.isReleased(now: Date(), lastOutput: lastDataTime, currentCursor: cursor) else { return }
+        pendingArrowHold = nil
     }
 
     /// 今の画面の選択メニュー（権限プロンプトが出ていれば nil）。
@@ -266,7 +279,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
                 evaluateStatus()
                 return completion(.failed(.gone))
             }
-            guard current.sameMenu(as: expected) else {
+            // sameMenu は案内行を比べないので、Esc が終了になるかも揃っているかを別に見る。
+            guard current.sameMenu(as: expected), current.cancelExits == expected.cancelExits else {
                 evaluateStatus()
                 return completion(.failed(.changed))
             }
@@ -274,6 +288,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             return completion(.cancelled)
         }
         guard let navigator = MenuNavigator(expected: expected, target: choice) else { return completion(.unavailable) }
+        releasePendingArrowHoldIfDone(cursor: currentMenu()?.cursor)
+        guard pendingArrowHold == nil else { return completion(.settling) }
         isNavigatingMenu = true
         stepMenu(navigator, completion: completion)
     }
@@ -282,7 +298,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         var navigator = navigator
         guard process?.running == true else {
             isNavigatingMenu = false
-            return completion(.failed(.gone))
+            return completion(.ended)
         }
         switch navigator.next(currentMenu()) {
         case .confirm:
@@ -292,6 +308,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             return
         case .abort(let failure):
             isNavigatingMenu = false
+            pendingArrowHold = PendingArrowHold.after(navigator, now: Date())
             evaluateStatus()
             completion(.failed(failure))
             return
@@ -302,7 +319,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.menuStepInterval) { [weak self] in
             // 移動中に端末ビューが解放されても、呼び出し側の送信中の印が残らないよう必ず結果を返す。
-            guard let self else { return completion(.failed(.gone)) }
+            guard let self else { return completion(.ended) }
             self.stepMenu(navigator, completion: completion)
         }
     }

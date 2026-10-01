@@ -102,7 +102,7 @@ public enum ChoiceMenu {
     /// 「❯ n. …」の近くに n±1 の選択肢が並んでいるか。
     static func hasNumberedChoices(_ lines: [String]) -> Bool {
         for (index, line) in lines.enumerated() {
-            guard let number = choiceNumber(line, cursor: true) else { continue }
+            guard let number = choiceNumber(line, cursor: true) ?? emptyFreeTextNumber(line) else { continue }
             let window = lines[max(0, index - 6)..<min(lines.count, index + 7)]
             if window.contains(where: { other in
                 guard let n = choiceNumber(other, cursor: false) else { return false }
@@ -110,6 +110,17 @@ public enum ChoiceMenu {
             }) { return true }
         }
         return false
+    }
+
+    /// 自由入力の行に ❯ が乗って文字が空の時の「❯ n.」。案内行が出ていなくても入力欄への送信を止めるため、判定にだけ使う。
+    static func emptyFreeTextNumber(_ line: String) -> Int? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("❯") else { return nil }
+        let rest = trimmed.dropFirst().drop(while: \.isWhitespace)
+        guard rest.last == "." else { return nil }
+        let digits = rest.dropLast()
+        guard (1...2).contains(digits.count), digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        return Int(digits)
     }
 
     /// 選択肢の番号。`cursor` なら ❯ の付いた行だけを見る。

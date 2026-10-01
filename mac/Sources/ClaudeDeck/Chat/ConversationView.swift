@@ -202,11 +202,13 @@ struct MessageList: View {
                         let key = ChatModel.ptyMenuKey(session)
                         let busy = model.busyPermissionKeys.contains(key)
                         if let menu = session.menuPrompt {
-                            MenuCard(menu: menu, busy: busy, notice: model.menuNotices[key]) { choice in
-                                model.answerMenu(session, menu: menu, choice: choice)
+                            MenuCard(menu: menu, busy: busy, notice: model.menuNotices[key]) { shown, choice in
+                                model.answerMenu(session, menu: shown, choice: choice)
                             }
+                            .id(menu.identity)
                         } else if let unreadable = session.unreadableMenu {
-                            UnreadableMenuCard(menu: unreadable, busy: busy) { model.cancelUnreadableMenu(session, menu: unreadable) }
+                            UnreadableMenuCard(menu: unreadable, busy: busy) { shown in model.cancelUnreadableMenu(session, menu: shown) }
+                                .id(unreadable)
                         }
                     }
                     Color.clear.frame(height: 1).id(Self.bottomId)
@@ -478,9 +480,10 @@ struct MenuCard: View {
     let busy: Bool
     /// 直前の操作の結果（複数選択でチェックを切り替えた等）。
     let notice: String?
-    /// 選択肢の位置。nil は取り消し（Esc）。
-    let onChoose: (Int?) -> Void
-    @State private var confirmingExit = false
+    /// 押した時のメニューと選択肢の位置。nil は取り消し（Esc）。
+    let onChoose: (MenuPrompt, Int?) -> Void
+    /// 終了の確認を開いた時のメニュー。確認中に差し替わっても、開いた時のメニューで照合する。
+    @State private var exitMenu: MenuPrompt?
 
     /// 今の ❯ から自由入力の行をまたがないと届かない選択肢があるか。
     private var crossesFreeText: Bool {
@@ -512,7 +515,7 @@ struct MenuCard: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(menu.options.enumerated()), id: \.offset) { index, option in
-                    MenuOptionRow(option: option, isCursor: index == menu.cursor) { onChoose(index) }
+                    MenuOptionRow(option: option, isCursor: index == menu.cursor) { onChoose(menu, index) }
                 }
             }
             if menu.isMultiSelect {
@@ -531,7 +534,7 @@ struct MenuCard: View {
             }
             HStack(spacing: 8) {
                 Button {
-                    if menu.cancelExits { confirmingExit = true } else { onChoose(nil) }
+                    if menu.cancelExits { exitMenu = menu } else { onChoose(menu, nil) }
                 } label: {
                     Text(menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
                         .font(.system(size: 13, weight: .semibold))
@@ -554,17 +557,19 @@ struct MenuCard: View {
         .frame(maxWidth: 640, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
-        .exitConfirmation(isPresented: $confirmingExit) { onChoose(nil) }
+        .exitConfirmation(presenting: $exitMenu) { onChoose($0, nil) }
     }
 }
 
 private extension View {
     /// Esc が claude の終了になるメニューで、送る前に確かめる。
-    func exitConfirmation(isPresented: Binding<Bool>, onExit: @escaping () -> Void) -> some View {
-        confirmationDialog("claude を終了しますか？", isPresented: isPresented) {
-            Button("終了する（Esc）", role: .destructive, action: onExit)
+    /// `presenting` は確認を開いた時のメニューで、送る時の照合にはそれを使う。
+    func exitConfirmation<Menu>(presenting: Binding<Menu?>, onExit: @escaping (Menu) -> Void) -> some View {
+        let isPresented = Binding(get: { presenting.wrappedValue != nil }, set: { if !$0 { presenting.wrappedValue = nil } })
+        return confirmationDialog("claude を終了しますか？", isPresented: isPresented, presenting: presenting.wrappedValue) { menu in
+            Button("終了する（Esc）", role: .destructive) { onExit(menu) }
             Button("やめる", role: .cancel) {}
-        } message: {
+        } message: { _ in
             Text("このメニューで Esc を押すと、取り消しではなく Claude Code の終了になります。")
         }
     }
@@ -621,8 +626,9 @@ private struct MenuOptionRow: View {
 struct UnreadableMenuCard: View {
     let menu: UnreadableMenu
     let busy: Bool
-    let onCancel: () -> Void
-    @State private var confirmingExit = false
+    /// 押した時の写しを渡す。
+    let onCancel: (UnreadableMenu) -> Void
+    @State private var exitMenu: UnreadableMenu?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -637,7 +643,7 @@ struct UnreadableMenuCard: View {
                 .foregroundStyle(ChatTheme.secondary)
             HStack(spacing: 8) {
                 Button {
-                    if menu.cancelExits { confirmingExit = true } else { onCancel() }
+                    if menu.cancelExits { exitMenu = menu } else { onCancel(menu) }
                 } label: {
                     Text(menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
                         .font(.system(size: 13, weight: .semibold))
@@ -656,6 +662,6 @@ struct UnreadableMenuCard: View {
         .frame(maxWidth: 640, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
-        .exitConfirmation(isPresented: $confirmingExit, onExit: onCancel)
+        .exitConfirmation(presenting: $exitMenu, onExit: onCancel)
     }
 }
