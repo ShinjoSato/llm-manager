@@ -96,6 +96,16 @@ final class RoomGroupingTests: XCTestCase {
         XCTAssertEqual(groups[2].ids, ["idle1", "err", "stopped"])
     }
 
+    func testEntriesFlattenWithStableRowIds() {
+        let before = RoomGrouping.entries(RoomGrouping.group([room("a", .idle, at: 1), room("b", .working, at: 2)]))
+        XCTAssertEqual(before, [.header(.active, count: 1), .row("b"), .header(.idle, count: 1), .row("a")])
+        XCTAssertEqual(Set(before.map(\.id)).count, before.count)
+        // 待機 → 稼働中 に移っても行の id は変わらず、置き場所だけが変わる。
+        let after = RoomGrouping.entries(RoomGrouping.group([room("a", .working, at: 3), room("b", .working, at: 2)]))
+        XCTAssertEqual(after, [.header(.active, count: 2), .row("a"), .row("b")])
+        XCTAssertEqual(after[1].id, before[3].id)
+    }
+
     func testSameTimeSortsByName() {
         let groups = RoomGrouping.group([room("b", .idle, at: 1), room("a", .idle, at: 1)])
         XCTAssertEqual(groups[0].ids, ["a", "b"])
