@@ -8,6 +8,19 @@ public enum PTYInput {
     public static let denyKey = "\u{1b}"
     /// 送信（入力欄で Enter）。
     public static let submitKey = "\r"
+    /// 選択メニューの取り消し（操作案内の「Esc to cancel」）。
+    public static let cancelMenuKey = "\u{1b}"
+    /// 選択メニューで ❯ のある選択肢を確定する（操作案内の「Enter to select / confirm」）。
+    public static let confirmMenuKey = "\r"
+    /// 矢印キーを 1 つずつ送り、画面で ❯ の動きを確かめてから次を送る間隔。
+    public static let menuStepInterval: TimeInterval = 0.1
+
+    /// 矢印キー。端末がアプリケーションカーソルモード（DECCKM）なら SS3、そうでなければ CSI（実キーボードと同じ列）。
+    public static func arrowKey(_ direction: MenuNavigator.Direction, applicationCursor: Bool) -> String {
+        let final = direction == .up ? "A" : "B"
+        return (applicationCursor ? "\u{1b}O" : "\u{1b}[") + final
+    }
+
     /// 貼り付けと Enter を同時に送ると Enter が貼り付けに飲まれるので、少し空ける。
     public static let submitDelay: TimeInterval = 0.3
 
@@ -44,7 +57,7 @@ public enum PTYInput {
 public enum InputBlock: Sendable, Equatable {
     /// ツール使用の権限プロンプト。Enter が「1. Yes」になる。
     case permission
-    /// 選択メニュー（plan の承認・AskUserQuestion・フォルダの trust 確認など）。Enter が選択中の項目になる。
+    /// 選択メニュー（plan の承認・AskUserQuestion・フォルダの trust 確認など）。Enter が選択中の項目になる。中身は `ChoiceMenu.parse`。
     case menu
 
     /// 画面から判定する（権限プロンプトを優先）。止めなくてよければ nil。
@@ -89,7 +102,7 @@ public enum ChoiceMenu {
     /// 「❯ n. …」の近くに n±1 の選択肢が並んでいるか。
     static func hasNumberedChoices(_ lines: [String]) -> Bool {
         for (index, line) in lines.enumerated() {
-            guard let number = choiceNumber(line, cursor: true) else { continue }
+            guard let number = choiceNumber(line, cursor: true) ?? emptyFreeTextNumber(line) else { continue }
             let window = lines[max(0, index - 6)..<min(lines.count, index + 7)]
             if window.contains(where: { other in
                 guard let n = choiceNumber(other, cursor: false) else { return false }
@@ -97,6 +110,17 @@ public enum ChoiceMenu {
             }) { return true }
         }
         return false
+    }
+
+    /// 自由入力の行に ❯ が乗って文字が空の時の「❯ n.」。案内行が出ていなくても入力欄への送信を止めるため、判定にだけ使う。
+    static func emptyFreeTextNumber(_ line: String) -> Int? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("❯") else { return nil }
+        let rest = trimmed.dropFirst().drop(while: \.isWhitespace)
+        guard rest.last == "." else { return nil }
+        let digits = rest.dropLast()
+        guard (1...2).contains(digits.count), digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        return Int(digits)
     }
 
     /// 選択肢の番号。`cursor` なら ❯ の付いた行だけを見る。
