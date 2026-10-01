@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 左カラム: ルーム一覧（検索・新規・グループ・残量）。
+/// 左カラム: ルーム一覧（検索・新規・接続状態・グループ）。
 struct RoomListView: View {
     @Bindable var model: ChatModel
     @State private var showingLauncher = false
@@ -10,6 +10,7 @@ struct RoomListView: View {
         VStack(spacing: 0) {
             header
             search
+            if !model.store.connection.isConnected { ConnectionNotice(connection: model.store.connection) }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     let items = model.listItems
@@ -38,7 +39,6 @@ struct RoomListView: View {
                 .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
-            UsageFooter(store: model.store)
         }
         .background(ChatTheme.sidebar)
     }
@@ -59,7 +59,7 @@ struct RoomListView: View {
             .buttonStyle(.plain)
             .help("プロジェクトを選んで Claude Code を起動（新しいルーム）")
             .popover(isPresented: $showingLauncher, arrowEdge: .bottom) {
-                ProjectLauncher(onChanged: { model.projectsChanged() }) { project in
+                ProjectLauncher { project in
                     showingLauncher = false
                     model.launch(project)
                 }
@@ -212,42 +212,24 @@ struct RoomAvatar: View {
     }
 }
 
-/// 下部: monitor の接続状態と 5 時間 / 7 日間の残り%。
-struct UsageFooter: View {
-    let store: MonitorStore
+/// monitor に繋がっていない間だけ、検索欄の下に出す。
+struct ConnectionNotice: View {
+    let connection: MonitorConnectionState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !store.connection.isConnected {
-                HStack(spacing: 6) {
-                    Image(systemName: "bolt.horizontal.circle")
-                    Text(connectionText)
-                }
-                .font(ChatTheme.caption)
-                .foregroundStyle(ChatTheme.permission)
-            }
-            if let usage = store.usage {
-                UsageBar(title: "5時間", window: usage.fiveHour)
-                UsageBar(title: "7日間", window: usage.sevenDay)
-                TimelineView(.periodic(from: .now, by: 30)) { context in
-                    Text("取得 \(ChatTime.elapsed(since: usage.fetchedDate, now: context.date))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(ChatTheme.tertiary)
-                }
-            } else if store.connection.isConnected {
-                Text("残量は未取得（statusLine 未設定）")
-                    .font(ChatTheme.caption)
-                    .foregroundStyle(ChatTheme.tertiary)
-            }
+        HStack(spacing: 6) {
+            Image(systemName: "bolt.horizontal.circle")
+            Text(text)
         }
+        .font(ChatTheme.caption)
+        .foregroundStyle(ChatTheme.permission)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .overlay(alignment: .top) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
     }
 
-    private var connectionText: String {
-        switch store.connection {
+    private var text: String {
+        switch connection {
         case .connecting: return "monitor に接続中…"
         case .disconnected: return "monitor 未接続（再接続を試みています）"
         case .idle, .connected: return "monitor 未接続"
@@ -255,37 +237,8 @@ struct UsageFooter: View {
     }
 }
 
-struct UsageBar: View {
-    let title: String
-    let window: UsageWindow?
-
-    var body: some View {
-        let remaining = window?.remainingPercentage
-        let color = remaining.map { $0 < 20 ? ChatTheme.error : $0 < 50 ? ChatTheme.permission : ChatTheme.working } ?? ChatTheme.idle
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title).foregroundStyle(ChatTheme.secondary)
-                Spacer()
-                Text(remaining.map { "残り \(Int($0.rounded()))%" } ?? "—")
-                    .foregroundStyle(remaining == nil ? ChatTheme.tertiary : ChatTheme.text)
-                    .monospacedDigit()
-            }
-            .font(ChatTheme.caption)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(ChatTheme.inputSurface)
-                    Capsule().fill(color).frame(width: geo.size.width * CGFloat((remaining ?? 0) / 100))
-                }
-            }
-            .frame(height: 5)
-        }
-    }
-}
-
 /// 「+」の中身: 登録済みプロジェクトから選んで起動する。一覧の追加・削除・取り込み・GitHub の紐づけもここで行う。
 struct ProjectLauncher: View {
-    /// 一覧（GitHub の紐づけ含む）を書き換えた時。
-    let onChanged: () -> Void
     let onPick: (ManagedProject) -> Void
     // 初期値の式は親の再描画のたびに評価されるので、読み込みは表示時に 1 回だけ行う。
     @State private var listing = Listing(projects: [], subtitles: [:])
@@ -412,7 +365,6 @@ struct ProjectLauncher: View {
 
     private func reload() {
         listing = Listing.load()
-        onChanged()
     }
 
     private func importRegistry() {

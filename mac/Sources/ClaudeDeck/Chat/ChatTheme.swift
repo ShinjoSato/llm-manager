@@ -104,12 +104,4 @@ enum ChatTime {
         let formatter = Calendar.current.isDate(date, inSameDayAs: now) ? timeFormatter : dayFormatter
         return formatter.string(from: date)
     }
-
-    static func elapsed(since date: Date, now: Date = Date()) -> String {
-        let seconds = max(0, now.timeIntervalSince(date))
-        if seconds < 60 { return "たった今" }
-        if seconds < 3600 { return "\(Int(seconds / 60))分前" }
-        if seconds < 86_400 { return "\(Int(seconds / 3600))時間前" }
-        return "\(Int(seconds / 86_400))日前"
-    }
 }

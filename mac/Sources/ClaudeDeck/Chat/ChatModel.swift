@@ -7,28 +7,6 @@ enum RoomID: Hashable {
     case external(String)
 }
 
-enum RoomMode: Hashable, CaseIterable {
-    case chat, terminal, github, appstore
-
-    var title: String {
-        switch self {
-        case .chat: return "チャット"
-        case .terminal: return "ターミナル"
-        case .github: return "GitHub"
-        case .appstore: return "App Store"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .chat: return "bubble.left.and.bubble.right"
-        case .terminal: return "terminal"
-        case .github: return "checklist"
-        case .appstore: return "app.badge"
-        }
-    }
-}
-
 /// ルーム一覧と会話画面が描く 1 ルーム分の値。
 struct Room: Identifiable {
     let id: RoomID
@@ -75,7 +53,6 @@ final class ChatModel {
     var query = ""
     /// ルームごとの書きかけ。ルームを行き来しても残す。
     var drafts: [RoomID: String] = [:]
-    private var modes: [RoomID: RoomMode] = [:]
 
     private(set) var transcripts: [String: TranscriptBuffer] = [:]
     private(set) var loadingTranscripts: Set<String> = []
@@ -106,11 +83,7 @@ final class ChatModel {
     /// Xcode に閉じるよう頼んでいる最中のルーム。二度押しさせない。
     private(set) var closingXcode: Set<RoomID> = []
 
-    @ObservationIgnored private var boards: [String: GitHubBoardView] = [:]
-    @ObservationIgnored private var appStoreViews: [String: AppStoreView] = [:]
     @ObservationIgnored private var xcodeProjects: [String: URL?] = [:]
-    @ObservationIgnored private var boardMappings: [String: BoardMapping?] = [:]
-    @ObservationIgnored private var appStoreNames: Set<String>?
 
     init(store: MonitorStore) {
         self.store = store
@@ -211,10 +184,6 @@ final class ChatModel {
         markSelectedSeen()
     }
 
-    func mode(for id: RoomID) -> RoomMode { modes[id] ?? .chat }
-
-    func setMode(_ mode: RoomMode, for id: RoomID) { modes[id] = mode }
-
     /// 選択中のルームを既読にする（新着を受けるたびにも呼ぶ）。
     func markSelectedSeen() {
         guard let sessionId = selectedRoom?.sessionId else { return }
@@ -267,20 +236,19 @@ final class ChatModel {
         let result = session.send(text) { [weak self] block in
             // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
             self?.alertMessage = "送信の途中で\(Self.blockName(block))が出たため、Enter を押さずに取りやめました。"
-                + "端末側の入力欄に本文が残っています（ターミナル表示で確認）。確認に答えた後、ターミナルで Enter を押すか本文を消してください。"
-                + "消さずにここから送ると、残っている本文とつながって送られます。"
+                + "端末側の入力欄に本文が残っています。確認に答えた後にここから送ると、残っている本文とつながって送られます。"
         }
         switch result {
         case .sent: return true
         case .leftover:
-            alertMessage = "端末側の入力欄に前回の本文が残っているようです。ターミナル表示で消してから送ってください。"
+            alertMessage = "端末側の入力欄に前回の本文が残っているようです。"
                 + "このままもう一度送ると、残っている本文の後ろにつながって送られます。"
             return false
         case .blocked(.permission):
             alertMessage = "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"
             return false
         case .blocked:
-            alertMessage = "端末側で選択肢が出ています。ターミナル表示で選択に答えてから送ってください（今 Enter を送るとその選択が確定します）。"
+            alertMessage = "端末側で選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。"
             return false
         case .empty, nil: return false
         }
@@ -307,7 +275,7 @@ final class ChatModel {
             if session.pid == nil { return "起動中…" }
             switch session.inputBlock {
             case .permission: return "権限の確認に答えると送れます"
-            case .menu: return "端末側の選択に答えると送れます（ターミナル表示で操作）"
+            case .menu: return "端末側で選択肢が出ているため送れません"
             case nil: return nil
             }
         }
@@ -429,7 +397,6 @@ final class ChatModel {
         hosted.append(session)
         session.start()
         if let draft = drafts.removeValue(forKey: roomId) { drafts[.hosted(session.id)] = draft }
-        modes[roomId] = nil
         select(.hosted(session.id))
     }
 
@@ -479,7 +446,7 @@ final class ChatModel {
         case .sent:
             break
         case .noPrompt:
-            alertMessage = "端末に権限確認が見当たりません。ターミナルで確認してください。"
+            alertMessage = "端末に権限確認が見当たりません。既に答え終わっている可能性があります。"
             return
         case .changed:
             alertMessage = "権限の確認の内容が替わったため送りませんでした。カードの内容を確かめてから答えてください。"
@@ -558,50 +525,6 @@ final class ChatModel {
     }
 
     // MARK: - 付随ビュー
-
-    /// 見出しは毎秒描き直されるので、TSV / 一覧の読み込みはルームごとに一度だけにする。
-    func boardMapping(for room: Room) -> BoardMapping? {
-        let key = "\(room.cwd)|\(room.name)"
-        if let cached = boardMappings[key] { return cached }
-        let mapping: BoardMapping?
-        // owner/number は後から設定できるので、起動時に持っていた値より保存済みの一覧を優先する。
-        if let project = ProjectStore.load().first(where: { $0.path == room.cwd }) ?? room.hosted?.project {
-            mapping = GitHubBoard.mapping(forProject: project)
-        } else {
-            mapping = GitHubBoard.mapping(forProjectNamed: room.name)
-        }
-        boardMappings[key] = mapping
-        return mapping
-    }
-
-    /// プロジェクト一覧（GitHub の紐づけ等）を書き換えた後に、読み込み済みの値を捨てる。
-    func projectsChanged() {
-        boardMappings = [:]
-        appStoreNames = nil
-    }
-
-    /// appstore.tsv に載っているプロジェクトだけ App Store を出す。
-    func hasAppStore(_ room: Room) -> Bool {
-        if appStoreNames == nil { appStoreNames = AppStoreClient.registeredNames() }
-        return appStoreNames?.contains(room.name) ?? false
-    }
-
-    /// App Store 表示は server に取りに行くので、ルームを行き来しても作り直さない。
-    func appStoreView(for room: Room) -> AppStoreView {
-        if let view = appStoreViews[room.name] { return view }
-        let view = AppStoreView(projectName: room.name)
-        appStoreViews[room.name] = view
-        return view
-    }
-
-    /// GitHub ボードは取得に gh を叩くので、ルームを行き来しても作り直さない。
-    func boardView(for mapping: BoardMapping) -> GitHubBoardView {
-        let key = "\(mapping.owner)/\(mapping.number)"
-        if let view = boards[key] { return view }
-        let view = GitHubBoardView(mapping: mapping)
-        boards[key] = view
-        return view
-    }
 
     func xcodeProject(for room: Room) -> URL? {
         if let cached = xcodeProjects[room.cwd] { return cached }

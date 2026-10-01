@@ -3,7 +3,7 @@ import Observation
 import SwiftTerm
 import MonitorKit
 
-/// アプリが PTY でホストしている claude 1 つ（= 1 ルーム）。ルームやタブを切り替えても端末とプロセスはここで生き続ける。
+/// アプリが PTY でホストしている claude 1 つ（= 1 ルーム）。端末ビューは画面に載せず、PTY の受信と画面読み取りだけに使う。
 @MainActor
 @Observable
 final class HostedSession: Identifiable {
