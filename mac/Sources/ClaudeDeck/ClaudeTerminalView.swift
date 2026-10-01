@@ -234,14 +234,23 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         InputBlock.detect(screen: screenLines())
     }
 
-    /// 送信を途中で取りやめ、端末の入力欄に本文を残したかもしれない。
+    /// 送信を途中で取りやめ、端末の入力欄に本文や画像を残したかもしれない。
     private(set) var mayHaveLeftover = false
+
+    /// 送信の途中（画像の取り込み待ち〜Enter）。終わるまで次の送信を受けない。
+    private(set) var isSending = false {
+        didSet { if isSending != oldValue { onSendingChanged?(isSending) } }
+    }
+    var onSendingChanged: ((Bool) -> Void)?
 
     // MARK: - 入力（本人のキー入力として PTY に書く）
 
     enum SendResult: Equatable {
-        case sent
+        /// 送り始めた。結末は `completion` で返る。
+        case started
         case empty
+        /// 前の送信がまだ終わっていない。
+        case busy
         /// 権限プロンプト・選択メニューの表示中。Enter がその選択になってしまうので送らない。
         case blocked(InputBlock)
         /// 取りやめた送信の本文が端末の入力欄に残っている。続けて貼ると前回の本文とくっつくので送らない。
@@ -250,8 +259,9 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
 
     /// チャット欄の本文を入力欄に貼り付けてから Enter で送る。作業中でも Claude Code 側でキューに積まれる。
     /// 貼り付けの前に必ず判定するので、止める時は入力欄に何も入れない。
-    /// `onAborted` は貼り付けから Enter までの間に止めるべき状態になり、Enter を押さずにやめた時に呼ばれる（本文は入力欄に残る）。
-    func sendMessage(_ text: String, attachments: [Attachment] = [], onAborted: ((InputBlock) -> Void)? = nil) -> SendResult {
+    /// `.started` を返した時だけ、Enter を送った・途中でやめた・端末が無くなったのいずれかを `completion` に 1 回返す。
+    func sendMessage(_ text: String, attachments: [Attachment] = [], completion: @escaping (SendCompletion) -> Void) -> SendResult {
+        guard !isSending else { return .busy }
         let screen = screenLines()
         if let block = InputBlock.detect(screen: screen) { return .blocked(block) }
         if mayHaveLeftover {
@@ -265,50 +275,57 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let bracketed = getTerminal().bracketedPasteMode
         let message = AttachmentFormat.outgoing(text: text, attachments: attachments, pasteImages: bracketed)
         let body = PTYInput.messageBody(message.body, bracketedPaste: bracketed)
-        guard let imagePaste = message.imagePaste.flatMap({ PTYInput.messageBody($0, bracketedPaste: true) }) else {
-            guard let body else { return .empty }
-            pasteAndSubmit(body, onAborted: onAborted)
-            return .sent
+        let imagePaste = message.imagePaste.flatMap { PTYInput.messageBody($0, bracketedPaste: true) }
+        guard imagePaste != nil || body != nil else { return .empty }
+        isSending = true
+        let finish: (SendCompletion) -> Void = { [weak self] outcome in
+            self?.isSending = false
+            completion(outcome)
+        }
+        guard let imagePaste else {
+            if let body { pasteAndSubmit(body, finish: finish) }
+            return .started
         }
         // 画像のパスだけを先に 1 回で貼る（本文と同じ貼り付けだと TUI が本文を空白 + / や改行で割って繋ぎ直すため）。
         let before = InputBox.text(screen: screen).map(AttachmentFormat.imageTokenCount)
         send(txt: imagePaste)
         waitForImages(expected: before.map { $0 + message.imageCount },
                       deadline: Date().addingTimeInterval(AttachmentFormat.imageIngestTimeout)) { [weak self] ingested in
-            guard let self else { return }
+            guard let self else { return finish(.ended) }
             if let block = self.currentInputBlock() {
+                // 本文は貼っていないが、入力欄には画像の印が残る。
                 self.mayHaveLeftover = true
-                onAborted?(block)
-                return
+                return finish(.abortedBeforeBody(block))
             }
             // 取り込みを確かめられなかった時は Enter が捨てられているかもしれないので、次の送信で入力欄の残りを確かめる。
             if !ingested { self.mayHaveLeftover = true }
             if let body {
-                self.pasteAndSubmit(body, onAborted: onAborted)
+                self.pasteAndSubmit(body, finish: finish)
             } else {
                 self.send(txt: PTYInput.submitKey)
+                finish(.submitted)
             }
         }
-        return .sent
+        return .started
     }
 
-    private func pasteAndSubmit(_ body: String, onAborted: ((InputBlock) -> Void)?) {
+    private func pasteAndSubmit(_ body: String, finish: @escaping (SendCompletion) -> Void) {
         send(txt: body)
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.submitDelay) { [weak self] in
-            guard let self else { return }
+            guard let self else { return finish(.ended) }
             if let block = self.currentInputBlock() {
                 self.mayHaveLeftover = true
-                onAborted?(block)
-                return
+                return finish(.abortedAfterBody(block))
             }
             self.send(txt: PTYInput.submitKey)
+            finish(.submitted)
         }
     }
 
     /// 入力欄の `[Image #N]` が `expected` 個になるか期限まで待つ。入力欄を読めなければ期限まで待って false。
     private func waitForImages(expected: Int?, deadline: Date, completion: @escaping (Bool) -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + AttachmentFormat.imageIngestPollInterval) { [weak self] in
-            guard let self else { return }
+            guard let self else { return completion(false) }
             if let expected, let box = InputBox.text(screen: self.screenLines()),
                AttachmentFormat.imageTokenCount(in: box) >= expected {
                 // 印が出た直後は貼り付け処理の後始末が残るので、本文の貼り付けを少しだけ遅らせる。

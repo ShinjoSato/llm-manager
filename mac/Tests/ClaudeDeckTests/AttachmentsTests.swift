@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import XCTest
 @testable import MonitorKit
 
@@ -83,6 +84,19 @@ final class AttachmentFormatTests: XCTestCase {
         XCTAssertEqual(AttachmentFormat.imageTokenCount(in: "[Image #1] [Image #2] 本文"), 2)
         XCTAssertEqual(AttachmentFormat.imageTokenCount(in: "[Pasted text #1]"), 0)
     }
+
+    func testImageTokenCountAcrossWrappedLines() {
+        // 折り返しで印が割れた入力欄（InputBox.text は行ごとに詰めて改行でつなぐ）。
+        let screen = [
+            "────────────────────",
+            "❯ [Image #1] [Image",
+            "  #2] [Ima",
+            "  ge #3]",
+            "────────────────────",
+        ]
+        XCTAssertEqual(InputBox.text(screen: screen).map(AttachmentFormat.imageTokenCount), 3)
+        XCTAssertEqual(AttachmentFormat.imageTokenCount(in: "[Image\n#2]"), 1)
+    }
 }
 
 @MainActor
@@ -132,11 +146,25 @@ final class AttachmentPasteboardTests: XCTestCase {
         XCTAssertEqual(AttachmentPasteboard.sources(in: pasteboard, imageName: "x.png"), [.imageData(png, name: "x.png")])
     }
 
-    func testTIFFIsConvertedToPNG() throws {
+    func testTIFFIsPassedAsIsForBackgroundConversion() throws {
         let tiff = try XCTUnwrap(NSImage(data: pngData())?.tiffRepresentation)
         pasteboard.setData(tiff, forType: .tiff)
-        guard case .imageData(let data, _)? = AttachmentPasteboard.sources(in: pasteboard).first else { return XCTFail("画像になっていない") }
-        XCTAssertEqual(Array(data.prefix(4)), [0x89, 0x50, 0x4E, 0x47])
+        XCTAssertTrue(AttachmentPasteboard.canAttach(pasteboard))
+        XCTAssertEqual(AttachmentPasteboard.sources(in: pasteboard, imageName: "x"), [.imageData(tiff, name: "x")])
+    }
+
+    func testJPEGOnlyIsAttached() throws {
+        let rep = try XCTUnwrap(NSBitmapImageRep(data: pngData()))
+        let jpeg = try XCTUnwrap(rep.representation(using: .jpeg, properties: [:]))
+        let type = NSPasteboard.PasteboardType(UTType.jpeg.identifier)
+        pasteboard.setData(jpeg, forType: type)
+        XCTAssertTrue(AttachmentPasteboard.canAttach(pasteboard))
+        XCTAssertEqual(AttachmentPasteboard.sources(in: pasteboard, imageName: "x"), [.imageData(jpeg, name: "x")])
+    }
+
+    func testImageTypesIncludeCommonFormats() {
+        let types = Set(AttachmentPasteboard.imageTypes.map(\.rawValue))
+        XCTAssertTrue(types.isSuperset(of: [UTType.png.identifier, UTType.jpeg.identifier, UTType.tiff.identifier]))
     }
 }
 
@@ -202,6 +230,53 @@ final class AttachmentStoreTests: XCTestCase {
         XCTAssertEqual(Array(try Data(contentsOf: URL(fileURLWithPath: attachment.path)).prefix(4)), [0x89, 0x50, 0x4E, 0x47])
     }
 
+    func testCopiedImageIsPrivateEvenIfOriginalIsNot() throws {
+        let original = root.appendingPathComponent("a.jpeg")
+        try pngData().write(to: original)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: original.path)
+        let image = try store.ingest(.file(original))
+        XCTAssertTrue(image.path.hasSuffix(".jpg"))
+        XCTAssertEqual(try permissions(image.path), 0o600)
+    }
+
+    func testImageDataKeepsPasteableFormatAndConvertsOthers() throws {
+        let rep = try XCTUnwrap(NSBitmapImageRep(data: pngData()))
+        let jpeg = try XCTUnwrap(rep.representation(using: .jpeg, properties: [:]))
+        let kept = try store.ingest(.imageData(jpeg, name: "j"))
+        XCTAssertTrue(kept.path.hasSuffix(".jpg"))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: kept.path)), jpeg)
+
+        let tiff = try XCTUnwrap(rep.representation(using: .tiff, properties: [:]))
+        let converted = try store.ingest(.imageData(tiff, name: "t"))
+        XCTAssertTrue(converted.path.hasSuffix(".png"))
+        XCTAssertEqual(Array(try Data(contentsOf: URL(fileURLWithPath: converted.path)).prefix(4)), [0x89, 0x50, 0x4E, 0x47])
+        XCTAssertNotNil(AttachmentStore.thumbnail(of: converted.path))
+    }
+
+    func testUnreadableImageDataThrows() {
+        XCTAssertThrowsError(try store.ingest(.imageData(Data("not an image".utf8), name: "x"))) { error in
+            XCTAssertEqual(error as? AttachmentStore.StoreError, .unreadable("x"))
+        }
+    }
+
+    func testTooLargeImagesAreRefused() throws {
+        let big = Data(count: AttachmentStore.maxImageBytes + 1)
+        XCTAssertThrowsError(try store.ingest(.imageData(big, name: "big"))) { error in
+            XCTAssertEqual(error as? AttachmentStore.StoreError, .tooLarge("big", bytes: AttachmentStore.maxImageBytes + 1))
+        }
+        let file = root.appendingPathComponent("big.png")
+        XCTAssertTrue(FileManager.default.createFile(atPath: file.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: UInt64(AttachmentStore.maxImageBytes + 1))
+        try handle.close()
+        XCTAssertThrowsError(try store.ingest(.file(file)))
+        // 画像以外は写さないので大きさを問わない。
+        let text = root.appendingPathComponent("big.log")
+        try FileManager.default.copyItem(at: file, to: text)
+        XCTAssertEqual(try store.ingest(.file(text)).kind, .file)
+        XCTAssertEqual((try? FileManager.default.contentsOfDirectory(atPath: store.directory.path))?.count ?? 0, 0)
+    }
+
     func testMissingFileThrows() {
         XCTAssertThrowsError(try store.ingest(.file(root.appendingPathComponent("none.png"))))
     }
@@ -229,5 +304,50 @@ final class AttachmentStoreTests: XCTestCase {
 
     func testSweepWithoutDirectoryIsNoop() {
         XCTAssertEqual(AttachmentStore(directory: root.appendingPathComponent("missing")).sweep(), 0)
+    }
+}
+
+final class SendCompletionTests: XCTestCase {
+    private func file(_ path: String) -> Attachment { Attachment(kind: .file, path: path, name: "f", sourcePath: path) }
+
+    func testOnlyAbortBeforeBodyRestoresDraft() {
+        XCTAssertTrue(SendCompletion.abortedBeforeBody(.menu).restoresDraft)
+        XCTAssertFalse(SendCompletion.abortedAfterBody(.menu).restoresDraft)
+        XCTAssertFalse(SendCompletion.submitted.restoresDraft)
+        XCTAssertFalse(SendCompletion.ended.restoresDraft)
+    }
+
+    func testNoticeTellsWhatIsLeftInTheTerminal() throws {
+        let before = try XCTUnwrap(SendCompletion.abortedBeforeBody(.permission).notice)
+        XCTAssertTrue(before.contains("本文を貼る前に"))
+        XCTAssertTrue(before.contains("画像（[Image #N]）だけが残っています"))
+        XCTAssertTrue(before.contains("入力欄に戻しました"))
+        XCTAssertTrue(before.contains("権限の確認"))
+        XCTAssertFalse(before.contains("本文が残っています"))
+
+        let after = try XCTUnwrap(SendCompletion.abortedAfterBody(.menu).notice)
+        XCTAssertTrue(after.contains("本文を貼った後"))
+        XCTAssertTrue(after.contains("本文が残っています"))
+        XCTAssertTrue(after.contains("選択肢"))
+        XCTAssertFalse(after.contains("戻しました"))
+
+        XCTAssertNil(SendCompletion.submitted.notice)
+        XCTAssertNil(SendCompletion.ended.notice)
+    }
+
+    func testRestoredDraftComesBeforeNewText() {
+        XCTAssertEqual(ComposerRestore.draft(restoring: "送った文", current: ""), "送った文")
+        XCTAssertEqual(ComposerRestore.draft(restoring: "送った文", current: "  \n"), "送った文")
+        XCTAssertEqual(ComposerRestore.draft(restoring: "送った文", current: "書き足し"), "送った文\n書き足し")
+        XCTAssertEqual(ComposerRestore.draft(restoring: " ", current: "書き足し"), "書き足し")
+    }
+
+    func testRestoredAttachmentsDropDuplicatesAddedMeanwhile() {
+        let sent = [file("/a.txt"), Attachment(kind: .image, path: "/c/1.png", name: "i", sourcePath: nil)]
+        let again = file("/a.txt")
+        let other = file("/b.txt")
+        let result = ComposerRestore.attachments(restoring: sent, current: [again, other])
+        XCTAssertEqual(result.merged.map(\.id), sent.map(\.id) + [other.id])
+        XCTAssertEqual(result.dropped.map(\.id), [again.id])
     }
 }

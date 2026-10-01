@@ -58,6 +58,8 @@ final class ChatModel {
     private(set) var attachments: [RoomID: [Attachment]] = [:]
     /// 添付 id → チップのサムネイル（添えた時に縮小して作る）。
     @ObservationIgnored private(set) var thumbnails: [UUID: NSImage] = [:]
+    /// ルーム → 取り込み中の添付（取り込み id → 元ファイルのパス）。片付けで消えたら結果は捨てる。
+    private(set) var importing: [RoomID: [UUID: String?]] = [:]
     @ObservationIgnored private let attachmentStore = AttachmentStore()
     /// 1 通に添えられる数。
     static let maxAttachments = 20
@@ -117,6 +119,18 @@ final class ChatModel {
         rooms = all
         groupedRooms = grouped.groups
         listItems = grouped.items
+        discardVanishedExternalRooms(all)
+    }
+
+    /// 一覧から消えた外部ルームの添付を片付ける。未接続の間は一覧が古いので触らず、引き継ぎ中は移し先へ渡すので残す。
+    private func discardVanishedExternalRooms(_ all: [Room]) {
+        guard store.connection.isConnected else { return }
+        let alive = Set(all.map(\.id))
+        let stale = Set(attachments.keys).union(importing.keys).filter { id in
+            guard case .external(let sessionId) = id else { return false }
+            return !alive.contains(id) && !handingOver.contains(sessionId)
+        }
+        for id in stale { discardPendingAttachments(of: id) }
     }
 
     private func buildRooms() -> [Room] {
@@ -241,23 +255,25 @@ final class ChatModel {
         session.terminate()
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
+        drafts[.hosted(session.id)] = nil
+        discardPendingAttachments(of: .hosted(session.id))
     }
 
     func send(_ text: String, to room: Room) -> Bool {
-        guard let session = room.hosted else { return false }
-        let result = session.send(text, attachments: attachments[room.id] ?? []) { [weak self] block in
-            // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
-            let answer = block == .permission ? "権限の確認に答えた後に" : "上の選択肢に答えた後に"
-            self?.alertMessage = "送信の途中で\(Self.blockName(block))が出たため、Enter を押さずに取りやめました。"
-                + "端末側の入力欄に本文が残っています。\(answer)ここから送ると、残っている本文とつながって送られます。"
+        guard let session = room.hosted, sendBlockedReason(for: room) == nil else { return false }
+        let roomId = room.id
+        let sending = attachments[roomId] ?? []
+        let result = session.send(text, attachments: sending) { [weak self] completion in
+            self?.finishSend(completion, text: text, attachments: sending, in: roomId)
         }
         switch result {
-        case .sent:
-            clearAttachments(of: room.id)
+        case .started:
+            // サムネイルは結末が出るまで残す（本文を貼る前にやめたら入力欄へ戻すため）。
+            attachments[roomId] = nil
             return true
         case .leftover:
-            alertMessage = "端末側の入力欄に前回の本文が残っているようです。"
-                + "このままもう一度送ると、残っている本文の後ろにつながって送られます。"
+            alertMessage = "端末側の入力欄に前回の本文や画像が残っているようです。"
+                + "このままもう一度送ると、残っているものの後ろにつながって送られます。"
             return false
         case .blocked(.permission):
             alertMessage = "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"
@@ -265,8 +281,30 @@ final class ChatModel {
         case .blocked:
             alertMessage = "選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。上のカードで答えてください。"
             return false
-        case .empty, nil: return false
+        case .busy, .empty, nil: return false
         }
+    }
+
+    private func finishSend(_ completion: SendCompletion, text: String, attachments sent: [Attachment], in roomId: RoomID) {
+        let roomExists = hosted.contains { RoomID.hosted($0.id) == roomId }
+        if completion.restoresDraft, roomExists {
+            drafts[roomId] = ComposerRestore.draft(restoring: text, current: drafts[roomId] ?? "")
+            let restored = ComposerRestore.attachments(restoring: sent, current: attachments[roomId] ?? [])
+            for attachment in restored.dropped { forget(attachment, deletingFile: true) }
+            attachments[roomId] = restored.merged.isEmpty ? nil : restored.merged
+        } else {
+            // 端末に渡った画像は受け手が後から読むことがあるので一時ファイルは残す（起動時の掃除に任せる）。
+            let keepFiles = roomExists && completion != .ended
+            for attachment in sent { forget(attachment, deletingFile: !keepFiles) }
+        }
+        if let notice = completion.notice, roomExists { alertMessage = notice }
+    }
+
+    /// 送信を一時的に止める理由（入力欄は書ける）。nil なら送れる。
+    func sendBlockedReason(for room: Room) -> String? {
+        if room.hosted?.isSending == true { return "送信中…" }
+        if importing[room.id]?.isEmpty == false { return "添付を読み込み中…" }
+        return nil
     }
 
     /// 入力欄を無効にする理由（送信時の判定と同じ条件）。nil なら送れる。外部ルームは伝言を送れるか。
@@ -300,52 +338,79 @@ final class ChatModel {
 
     func pendingAttachments(for roomId: RoomID) -> [Attachment] { attachments[roomId] ?? [] }
 
+    /// 取り込み中の数（チップの「読み込み中」に出す）。
+    func importingCount(for roomId: RoomID) -> Int { importing[roomId]?.count ?? 0 }
+
+    /// 写し・変換・サムネイル作りはバックグラウンドで行い、揃ったらメインで並べる。
     func attach(_ sources: [AttachmentSource], to roomId: RoomID) {
-        var list = attachments[roomId] ?? []
-        var failures: [String] = []
+        let existing = attachments[roomId] ?? []
+        var pending = importing[roomId] ?? [:]
+        var accepted: [(UUID, AttachmentSource)] = []
         var overflow = false
         for source in sources {
-            if case .file(let url) = source, list.contains(where: { $0.sourcePath == url.standardizedFileURL.path }) { continue }
-            guard list.count < Self.maxAttachments else {
+            if let path = source.sourcePath,
+               existing.contains(where: { $0.sourcePath == path }) || pending.values.contains(path) { continue }
+            guard existing.count + pending.count < Self.maxAttachments else {
                 overflow = true
                 break
             }
-            do {
-                let attachment = try attachmentStore.ingest(source)
-                if attachment.kind == .image { thumbnails[attachment.id] = Self.thumbnail(of: attachment.path) }
-                list.append(attachment)
-            } catch {
-                failures.append((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            let id = UUID()
+            pending[id] = source.sourcePath
+            accepted.append((id, source))
+        }
+        importing[roomId] = pending.isEmpty ? nil : pending
+        if overflow { alertMessage = "添付できなかったものがあります。\n1 通に添えられるのは \(Self.maxAttachments) 個までです" }
+        guard !accepted.isEmpty else { return }
+        let store = attachmentStore
+        Task { [weak self] in
+            let results = await Task.detached(priority: .userInitiated) {
+                accepted.map { id, source in ImportResult.make(id: id, source: source, store: store) }
+            }.value
+            self?.finishImport(results, in: roomId)
+        }
+    }
+
+    private func finishImport(_ results: [ImportResult], in roomId: RoomID) {
+        var failures: [String] = []
+        for result in results {
+            // 待つ間にルームが片付けられていたら、作った一時ファイルも消す。
+            guard importing[roomId]?.removeValue(forKey: result.id) != nil else {
+                if let attachment = result.attachment { attachmentStore.discard(attachment) }
+                continue
+            }
+            if let attachment = result.attachment {
+                if let image = result.thumbnail {
+                    thumbnails[attachment.id] = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+                }
+                attachments[roomId, default: []].append(attachment)
+            } else if let failure = result.failure {
+                failures.append(failure)
             }
         }
-        attachments[roomId] = list.isEmpty ? nil : list
-        var messages = failures
-        if overflow { messages.append("1 通に添えられるのは \(Self.maxAttachments) 個までです") }
-        if !messages.isEmpty { alertMessage = "添付できなかったものがあります。\n" + messages.joined(separator: "\n") }
+        if importing[roomId]?.isEmpty == true { importing[roomId] = nil }
+        if !failures.isEmpty { alertMessage = "添付できなかったものがあります。\n" + failures.joined(separator: "\n") }
     }
 
     func removeAttachment(_ attachment: Attachment, from roomId: RoomID) {
         attachments[roomId]?.removeAll { $0.id == attachment.id }
         if attachments[roomId]?.isEmpty == true { attachments[roomId] = nil }
-        thumbnails[attachment.id] = nil
-        attachmentStore.discard(attachment)
+        forget(attachment, deletingFile: true)
     }
 
     /// 送った後に外す。一時ファイルは受け手が後から読むことがあるので消さない（起動時の掃除に任せる）。
     private func clearAttachments(of roomId: RoomID) {
-        for attachment in attachments[roomId] ?? [] { thumbnails[attachment.id] = nil }
-        attachments[roomId] = nil
+        for attachment in attachments.removeValue(forKey: roomId) ?? [] { forget(attachment, deletingFile: false) }
     }
 
-    private static func thumbnail(of path: String) -> NSImage? {
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 128,
-        ]
-        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    /// ルームが無くなった時に、送る前の添付・取り込み中の分・サムネイル・一時ファイルを片付ける。
+    private func discardPendingAttachments(of roomId: RoomID) {
+        importing[roomId] = nil
+        for attachment in attachments.removeValue(forKey: roomId) ?? [] { forget(attachment, deletingFile: true) }
+    }
+
+    private func forget(_ attachment: Attachment, deletingFile: Bool) {
+        thumbnails[attachment.id] = nil
+        if deletingFile { attachmentStore.discard(attachment) }
     }
 
     // MARK: - 伝言（外部セッション）
@@ -357,7 +422,8 @@ final class ChatModel {
 
     /// 外部セッションへ伝言を送る。受け手には「別セッションからのメッセージ」として届き、本人の入力にはならない。
     func sendRelay(_ text: String, to room: Room) -> Bool {
-        guard room.hosted == nil, let sessionId = room.sessionId, inputDisabledReason(for: room) == nil else { return false }
+        guard room.hosted == nil, let sessionId = room.sessionId, inputDisabledReason(for: room) == nil,
+              sendBlockedReason(for: room) == nil else { return false }
         // 受け手は伝言を本文として読むだけなので、画像もパスで添える（Read で開ける）。
         let message = AttachmentFormat.outgoing(text: text, attachments: attachments[room.id] ?? [], pasteImages: false)
         let body = RelayNotes.normalized(message.body)
@@ -469,13 +535,6 @@ final class ChatModel {
         if let draft = drafts.removeValue(forKey: roomId) { drafts[.hosted(session.id)] = draft }
         if let pending = attachments.removeValue(forKey: roomId) { attachments[.hosted(session.id)] = pending }
         select(.hosted(session.id))
-    }
-
-    private static func blockName(_ block: InputBlock) -> String {
-        switch block {
-        case .permission: return "権限の確認"
-        case .menu: return "選択肢"
-        }
     }
 
     private func showLimitAlert(for session: HostedSession) {
@@ -727,6 +786,25 @@ final class ChatModel {
             try? await Task.sleep(for: delay)
             // 後から出した結果を古いタイマーで消さない。
             if self?.editorNotes[roomId]?.id == note.id { self?.editorNotes[roomId] = nil }
+        }
+    }
+}
+
+/// バックグラウンドでの添付の取り込み 1 件分の結果。CGImage は作った後に書き換えないので渡してよい。
+private struct ImportResult: @unchecked Sendable {
+    let id: UUID
+    let attachment: Attachment?
+    let thumbnail: CGImage?
+    let failure: String?
+
+    static func make(id: UUID, source: AttachmentSource, store: AttachmentStore) -> ImportResult {
+        do {
+            let attachment = try store.ingest(source)
+            let thumbnail = attachment.kind == .image ? AttachmentStore.thumbnail(of: attachment.path) : nil
+            return ImportResult(id: id, attachment: attachment, thumbnail: thumbnail, failure: nil)
+        } catch {
+            let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return ImportResult(id: id, attachment: nil, thumbnail: nil, failure: reason)
         }
     }
 }

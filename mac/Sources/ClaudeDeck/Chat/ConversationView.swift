@@ -154,8 +154,10 @@ struct ChatPane: View {
             MessageList(model: model, room: room, items: items)
             Composer(text: Binding(get: { model.drafts[room.id] ?? "" }, set: { model.drafts[room.id] = $0 }),
                      disabledReason: model.inputDisabledReason(for: room),
+                     sendBlockedReason: model.sendBlockedReason(for: room),
                      relay: room.isExternal,
                      attachments: model.pendingAttachments(for: room.id),
+                     importingCount: model.importingCount(for: room.id),
                      thumbnail: { model.thumbnails[$0.id] },
                      onAttach: { model.attach($0, to: room.id) },
                      onRemoveAttachment: { model.removeAttachment($0, from: room.id) }) { text in

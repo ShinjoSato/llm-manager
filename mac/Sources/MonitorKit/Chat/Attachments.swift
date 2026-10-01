@@ -33,8 +33,14 @@ public struct Attachment: Sendable, Equatable, Identifiable {
 /// 添付の入手元（ファイル選択・ペースト・ドロップ）。
 public enum AttachmentSource: Sendable, Equatable {
     case file(URL)
-    /// クリップボード等の画像（PNG）。
+    /// クリップボード・ドロップの画像（形式は問わない。取り込み時に必要なら PNG に変換する）。
     case imageData(Data, name: String)
+
+    /// 元のファイルのパス（同じものを二重に添えないために使う）。
+    public var sourcePath: String? {
+        if case .file(let url) = self { return url.standardizedFileURL.path }
+        return nil
+    }
 }
 
 /// 送る形への組み立て。値は Claude Code v2.1.286 の貼り付け処理（`[Image #N]` への変換）で確認。
@@ -85,7 +91,7 @@ public enum AttachmentFormat {
     static func pasteToken(_ path: String) -> String? {
         guard path.hasPrefix("/"), !path.contains(" /"), !path.contains("\\"),
               path == path.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
-        guard !path.unicodeScalars.contains(where: { $0.properties.generalCategory == .control || $0 == "\n" }) else { return nil }
+        guard !path.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) else { return nil }
         guard pasteableImageExtensions.contains((path as NSString).pathExtension.lowercased()) else { return nil }
         var token = ""
         for character in path {
@@ -102,31 +108,41 @@ public enum AttachmentFormat {
     }
 
     /// 端末の入力欄に出ている画像の印（`[Image #N]`）の数。取り込みが済んだかを見るのに使う。
+    /// 入力欄は折り返しで行が割れ（`InputBox.text` は行ごとに詰めて改行でつなぐ）、印の途中で切れることがあるので空白を除いて数える。
     public static func imageTokenCount(in text: String) -> Int {
-        text.components(separatedBy: "[Image #").count - 1
+        text.filter { !$0.isWhitespace }.components(separatedBy: "[Image#").count - 1
     }
 }
 
 /// ペースト・ドロップの中身から添付を拾う。
 public enum AttachmentPasteboard {
-    /// `sources` が空でないか（画像の変換をせずに型だけで見る。ドラッグ中に何度も呼ばれるため）。
+    /// 画像として受ける型（ドラッグ先の登録用）。
+    public static var imageTypes: [NSPasteboard.PasteboardType] {
+        NSImage.imageTypes.map { NSPasteboard.PasteboardType(rawValue: $0) }
+    }
+
+    /// `sources` が空でないか（データを読まずに型だけで見る。ドラッグ中に何度も呼ばれるため）。
     public static func canAttach(_ pasteboard: NSPasteboard) -> Bool {
         if pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) { return true }
         if pasteboard.availableType(from: [.string]) != nil { return false }
-        return pasteboard.availableType(from: [.png, .tiff]) != nil
+        return imageType(in: pasteboard) != nil
     }
 
-    /// ファイル URL があればそれを、文字列が無く画像だけならその画像（PNG）を返す。添付にしないなら空。
+    /// ファイル URL があればそれを、文字列が無く画像だけならその画像（元の形式のまま）を返す。添付にしないなら空。
     /// 文字列を含むコピー（アプリによっては本文の画像表現も載る）は従来どおり文字として貼るため、画像より文字を優先する。
-    public static func sources(in pasteboard: NSPasteboard, imageName: String = "貼り付けた画像.png") -> [AttachmentSource] {
+    /// 変換は重いのでここではせず、取り込み（`AttachmentStore.ingest`）でバックグラウンドに任せる。
+    public static func sources(in pasteboard: NSPasteboard, imageName: String = "貼り付けた画像") -> [AttachmentSource] {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         if !urls.isEmpty { return urls.map { .file($0) } }
         if pasteboard.availableType(from: [.string]) != nil { return [] }
-        if let png = pasteboard.data(forType: .png) { return [.imageData(png, name: imageName)] }
-        if let tiff = pasteboard.data(forType: .tiff), let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
-            return [.imageData(png, name: imageName)]
-        }
-        return []
+        guard let type = imageType(in: pasteboard), let data = pasteboard.data(forType: type) else { return [] }
+        return [.imageData(data, name: imageName)]
+    }
+
+    /// 載っている画像の型。PNG があればそれを優先する（変換が要らないため）。
+    static func imageType(in pasteboard: NSPasteboard) -> NSPasteboard.PasteboardType? {
+        if pasteboard.availableType(from: [.png]) != nil { return .png }
+        return pasteboard.types?.first { UTType($0.rawValue)?.conforms(to: .image) == true }
     }
 }
 
@@ -135,6 +151,8 @@ public struct AttachmentStore: Sendable {
     public let directory: URL
     /// これより古い一時ファイルは起動時に消す。
     public static let maxAge: TimeInterval = 7 * 24 * 3600
+    /// 画像 1 件の大きさの上限（写しと変換の負荷、Claude に渡す画像の大きさを抑える）。
+    public static let maxImageBytes = 20 * 1024 * 1024
 
     public init(directory: URL = AttachmentStore.defaultDirectory) {
         self.directory = directory
@@ -146,12 +164,17 @@ public struct AttachmentStore: Sendable {
         return caches.appendingPathComponent("claude-deck/attachments", isDirectory: true)
     }
 
-    public enum StoreError: LocalizedError {
+    public enum StoreError: LocalizedError, Equatable {
         case unreadable(String)
+        case tooLarge(String, bytes: Int)
 
         public var errorDescription: String? {
             switch self {
             case .unreadable(let name): return "「\(name)」を読み込めませんでした"
+            case .tooLarge(let name, let bytes):
+                let limit = AttachmentStore.maxImageBytes / (1024 * 1024)
+                let size = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+                return "「\(name)」は大きすぎるため添付しませんでした（\(size)。画像は \(limit)MB まで）"
             }
         }
     }
@@ -163,10 +186,18 @@ public struct AttachmentStore: Sendable {
     }
 
     /// 画像は一時保存先へ写す（元が消える・パスに空白がある・TUI が読めない形式でも取り込めるように）。それ以外は元のパスのまま。
+    /// 写しと変換で重くなりうるので、メインスレッドから呼ばない。
     public func ingest(_ source: AttachmentSource) throws -> Attachment {
         switch source {
         case .imageData(let data, let name):
-            let url = try write(data, extension: "png")
+            guard data.count <= Self.maxImageBytes else { throw StoreError.tooLarge(name, bytes: data.count) }
+            guard let image = CGImageSourceCreateWithData(data as CFData, nil) else { throw StoreError.unreadable(name) }
+            if let ext = Self.pasteableExtension(of: image) {
+                let url = try write(data, extension: ext)
+                return Attachment(kind: .image, path: url.path, name: name, sourcePath: nil)
+            }
+            guard let png = Self.pngData(from: image) else { throw StoreError.unreadable(name) }
+            let url = try write(png, extension: "png")
             return Attachment(kind: .image, path: url.path, name: name, sourcePath: nil)
         case .file(let original):
             let url = original.standardizedFileURL
@@ -174,16 +205,22 @@ public struct AttachmentStore: Sendable {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { throw StoreError.unreadable(name) }
             let ext = url.pathExtension.lowercased()
-            if !isDirectory.boolValue, AttachmentFormat.pasteableImageExtensions.contains(ext) {
-                guard let data = try? Data(contentsOf: url) else { throw StoreError.unreadable(name) }
-                let copy = try write(data, extension: ext == "jpeg" ? "jpg" : ext)
+            let isPasteable = AttachmentFormat.pasteableImageExtensions.contains(ext)
+            guard !isDirectory.boolValue, isPasteable || AttachmentFormat.convertibleImageExtensions.contains(ext) else {
+                return Attachment(kind: .file, path: url.path, name: name, sourcePath: url.path)
+            }
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            guard size <= Self.maxImageBytes else { throw StoreError.tooLarge(name, bytes: size) }
+            if isPasteable {
+                let copy = try copy(url, extension: ext == "jpeg" ? "jpg" : ext, name: name)
                 return Attachment(kind: .image, path: copy.path, name: name, sourcePath: url.path)
             }
-            if !isDirectory.boolValue, AttachmentFormat.convertibleImageExtensions.contains(ext), let png = Self.pngData(contentsOf: url) {
-                let copy = try write(png, extension: "png")
-                return Attachment(kind: .image, path: copy.path, name: name, sourcePath: url.path)
+            guard let image = CGImageSourceCreateWithURL(url as CFURL, nil), let png = Self.pngData(from: image) else {
+                // 変換できない画像は TUI も読めないので、パスで渡して Claude に任せる。
+                return Attachment(kind: .file, path: url.path, name: name, sourcePath: url.path)
             }
-            return Attachment(kind: .file, path: url.path, name: name, sourcePath: url.path)
+            let converted = try write(png, extension: "png")
+            return Attachment(kind: .image, path: converted.path, name: name, sourcePath: url.path)
         }
     }
 
@@ -213,6 +250,19 @@ public struct AttachmentStore: Sendable {
         return removed
     }
 
+    private func copy(_ original: URL, extension ext: String, name: String) throws -> URL {
+        try prepare()
+        let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        do {
+            try FileManager.default.copyItem(at: original, to: url)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw StoreError.unreadable(name)
+        }
+        return url
+    }
+
     private func write(_ data: Data, extension ext: String) throws -> URL {
         try prepare()
         let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
@@ -222,13 +272,93 @@ public struct AttachmentStore: Sendable {
         return url
     }
 
-    static func pngData(contentsOf url: URL) -> Data? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+    /// TUI がそのまま取り込める形式なら、その拡張子。
+    static func pasteableExtension(of image: CGImageSource) -> String? {
+        guard let identifier = CGImageSourceGetType(image) as String?, let type = UTType(identifier) else { return nil }
+        let candidates: [(UTType, String)] = [(.png, "png"), (.jpeg, "jpg"), (.gif, "gif"), (.webP, "webp")]
+        return candidates.first { type.conforms(to: $0.0) }?.1
+    }
+
+    /// チップに出す縮小画像。読めなければ nil。
+    public static func thumbnail(of path: String, maxPixelSize: Int = 128) -> CGImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let image = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(image, 0, options as CFDictionary)
+    }
+
+    static func pngData(from image: CGImageSource) -> Data? {
+        guard let frame = CGImageSourceCreateImageAtIndex(image, 0, nil) else { return nil }
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationAddImage(destination, frame, nil)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return output as Data
+    }
+}
+
+/// 送信の結末（画像の取り込み待ち・Enter の直前の判定を経た後）。
+public enum SendCompletion: Sendable, Equatable {
+    /// Enter まで送った。
+    case submitted
+    /// 画像だけ貼り、本文を貼る前にやめた（端末の入力欄には画像の印だけが残る）。
+    case abortedBeforeBody(InputBlock)
+    /// 本文を貼った後、Enter を押さずにやめた（本文が端末の入力欄に残る）。
+    case abortedAfterBody(InputBlock)
+    /// 待っている間に端末が無くなった。
+    case ended
+
+    /// 本文と添付を入力欄に戻すか（端末に本文が入っていない時だけ。戻すと二重に送ることになるため）。
+    public var restoresDraft: Bool {
+        if case .abortedBeforeBody = self { return true }
+        return false
+    }
+
+    /// 取りやめた時に出す案内。送れた・端末が無くなった時は nil。
+    public var notice: String? {
+        switch self {
+        case .submitted, .ended:
+            return nil
+        case .abortedBeforeBody(let block):
+            return "送信の途中で\(Self.blockName(block))が出たため、本文を貼る前に取りやめました。"
+                + "端末側の入力欄には画像（[Image #N]）だけが残っています。本文と添付はこの入力欄に戻しました。"
+                + "\(Self.answerHint(block))、そのまま送り直すと画像が二重に付きます（端末側の入力欄の画像はターミナルで消せます）。"
+        case .abortedAfterBody(let block):
+            // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
+            return "送信の途中で\(Self.blockName(block))が出たため、本文を貼った後、Enter を押さずに取りやめました。"
+                + "端末側の入力欄に本文が残っています。\(Self.answerHint(block))ここから送ると、残っている本文とつながって送られます。"
+        }
+    }
+
+    static func blockName(_ block: InputBlock) -> String {
+        switch block {
+        case .permission: return "権限の確認"
+        case .menu: return "選択肢"
+        }
+    }
+
+    private static func answerHint(_ block: InputBlock) -> String {
+        block == .permission ? "権限の確認に答えた後に" : "上の選択肢に答えた後に"
+    }
+}
+
+/// 取りやめた送信の本文・添付を入力欄に戻す時の合わせ方。
+public enum ComposerRestore {
+    /// 戻す本文を、その間に書き足した下書きの前に置く（書いた順に並べる）。
+    public static func draft(restoring sent: String, current: String) -> String {
+        let sentTrimmed = sent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sentTrimmed.isEmpty else { return current }
+        guard !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return sent }
+        return sent + "\n" + current
+    }
+
+    /// 戻す添付を前に置き、その間に添えた同じ元ファイルは外す。外したものは `dropped` に返す（一時ファイルを消すため）。
+    public static func attachments(restoring sent: [Attachment], current: [Attachment]) -> (merged: [Attachment], dropped: [Attachment]) {
+        let sources = Set(sent.compactMap(\.sourcePath))
+        let duplicate: (Attachment) -> Bool = { $0.sourcePath.map(sources.contains) ?? false }
+        return (sent + current.filter { !duplicate($0) }, current.filter(duplicate))
     }
 }
