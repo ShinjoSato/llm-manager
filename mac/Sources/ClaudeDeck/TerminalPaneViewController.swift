@@ -1,5 +1,6 @@
 import AppKit
 import SwiftTerm
+import MonitorKit
 
 /// 1ペイン = 1プロジェクト。Claude Code（端末）と GitHub Project（ボード）を切り替えて表示する。
 /// GitHub ボードのマッピングが無いプロジェクトでは切替を出さず、Claude Code のみ表示する。
@@ -21,6 +22,8 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     private var lastStatus: ClaudeStatus?
     private var ended = false
     private var started = false
+    /// monitor 側のセッションと突き合わせるため、起動した claude の pid を覚えておく。
+    private(set) var hostedPid: pid_t?
 
     // GitHub ボード（マッピングがあるときだけ生成）
     private let boardMapping: BoardMapping?
@@ -248,6 +251,21 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         guard !started else { return }
         started = true
         terminal.launchClaude(in: project.path)
+        if let pid = terminal.claudePid {
+            hostedPid = pid
+            MonitorBridge.store.registerHostedProcess(pid: pid)
+        }
+    }
+
+    /// monitor 側で対応付いたセッション（未接続・未検出なら nil）。
+    var monitorSession: SessionSnapshot? {
+        hostedPid.flatMap { MonitorBridge.store.session(forHostedPid: $0) }
+    }
+
+    private func releaseHostedPid() {
+        guard let pid = hostedPid else { return }
+        hostedPid = nil
+        MonitorBridge.store.unregisterHostedProcess(pid: pid)
     }
 
     func focusTerminal() {
@@ -419,6 +437,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     private func handleLimitReached() {
         setTerminalBadge("⛔ 上限到達", color: .systemRed)   // ended=true（後続の processTerminated を抑止）
         terminal.terminate()
+        releaseHostedPid()
         let alert = NSAlert()
         alert.messageText = "Max 枠の上限に達しました"
         alert.informativeText = "「\(project.name)」のセッションを強制終了しました。枠がリセットされるまでお待ちください。（API 課金は発生しません）"
@@ -485,6 +504,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     @objc private func closeTapped() {
         terminal.stopStatusMonitoring()
         terminal.terminate()
+        releaseHostedPid()
         onClose?()
     }
 
@@ -493,6 +513,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func processTerminated(source: TerminalView, exitCode: Int32?) {
+        releaseHostedPid()
         guard !ended else { return }   // 上限到達などで既に終了表示済みなら上書きしない
         setTerminalBadge("● 終了", color: .secondaryLabelColor)
         onSessionEnded?(.exited(exitCode))

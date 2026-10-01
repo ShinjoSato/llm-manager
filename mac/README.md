@@ -32,8 +32,41 @@ mac/
     ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 上限文言監視
     ProjectRegistry.swift       projects/registry.tsv のパーサ
     AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも TSV / monitor を引ける）
+    MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（SSE 接続は 1 本）
+  Sources/MonitorKit/           monitor（:8766）クライアント。UI 無し・テスト可能な library
+    MonitorModels.swift         monitor/src/types.ts に対応する Codable 型
+    SSEParser.swift             text/event-stream の逐次パーサ（URLSession の生バイトを自前で解釈）
+    MonitorEvent.swift          sessions / feed / feed-batch / usage / permissions / transcript のデコード
+    MonitorConfiguration.swift  接続先・無通信タイムアウト・再接続バックオフ
+    MonitorClient.swift         SSE 購読（自動再接続）+ REST / 書き込み系ラッパー
+    MonitorStore.swift          @Observable ストア（接続状態・セッション・フィード・残量・権限確認・pid 対応付け）
+    ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
+  Sources/MonitorProbe/         GUI 無しで接続を確かめるデバッグ用エントリ（swift run monitor-probe）
+  Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）
   Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
   scripts/bundle.sh             claude-deck.app を組み立てて ad-hoc 署名する
+```
+
+## monitor 連携（MonitorKit）
+
+起動時に `MonitorBridge.store.start()` で monitor の `GET /events` を購読し、セッション・フィード・残量・
+保留中の権限確認をストアに保持する（UI は後続の画面が使う）。monitor が起動していなくてもアプリは動き、
+`connection` が `.disconnected` のまま指数バックオフ（0.5 秒〜最大 10 秒）で張り直し続ける。
+
+- 接続先: `CLAUDE_DECK_MONITOR_URL`（例 `http://127.0.0.1:8799`）> `CLAUDE_DECK_MONITOR_PORT` > 既定 `http://127.0.0.1:8766`
+- デバッグ出力: `CLAUDE_DECK_MONITOR_DEBUG=1` で接続状態とイベントの要約を標準エラーに出す
+- 無通信 10 秒で切れたとみなす（monitor は sessions を 1 秒ごとに送るため）
+- 切れている間: 権限確認は答えられないので空にする。sessions / usage / feed は最後の値を残す（鮮度は `connection` で判断）
+- 再接続のたびに `connectionEpoch` が増える。transcript の差分 GET をやり直す合図に使う
+- アプリで起動した claude の pid を `registerHostedProcess(pid:)` で登録し、`~/.claude/sessions/<pid>.json` の
+  sessionId で monitor のセッションと対応付ける（`session(forHostedPid:)` / `externalSessions`）。
+  `/clear` で sessionId が替わるので sessions を受けるたびに読み直す
+
+```sh
+# GUI 無しで接続・再接続・対応付けを確かめる（45 秒、pid 14978 をホスト中とみなす）
+CLAUDE_DECK_MONITOR_PORT=8799 swift run monitor-probe 45 14978
+# 実 monitor に繋ぐテスト（未設定ならスキップ）
+MONITOR_TEST_URL=http://127.0.0.1:8799 swift test
 ```
 
 ## プロジェクト一覧（ユーザー管理 + 永続化）
