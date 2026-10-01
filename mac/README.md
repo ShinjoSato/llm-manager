@@ -140,6 +140,7 @@ MONITOR_TEST_URL=http://127.0.0.1:8799 swift test
 
 Claude Code のセッションを**チャットアプリの操作感**で扱う。セッション 1 つ = トークルーム 1 つ。
 右側はステージパネル（`MainViewController` で `ChatRootView(model:) { StagePanel(model:) }` として差し込む）。
+埋め込み表示の URL は monitor の接続先のホスト・ポートだけを使い、`CLAUDE_DECK_MONITOR_URL` に付けたパスやクエリ（LAN のトークン等）は引き継がない（ループバックの monitor を前提にしている）。
 
 ### ルーム一覧（左 312px）
 

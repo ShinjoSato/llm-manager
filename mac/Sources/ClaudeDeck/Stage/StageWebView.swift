@@ -66,12 +66,14 @@ final class StageWebContainer: NSView, WKNavigationDelegate {
         cache = [:]
         recent = []
         currentURL = nil
+        retries = [:]
     }
 
     private func evict() {
         while recent.count > Self.keepCount {
             let url = recent.removeFirst()
             guard url != currentURL, let web = cache.removeValue(forKey: url) else { continue }
+            retries[ObjectIdentifier(web)] = nil
             web.stopLoading()
             web.navigationDelegate = nil
             web.removeFromSuperview()
@@ -98,25 +100,39 @@ final class StageWebContainer: NSView, WKNavigationDelegate {
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         let target = action.request.url
         let origin = cache.first { $0.value === webView }?.key
-        let sameOrigin = target?.host == origin?.host && target?.port == origin?.port
+        let sameOrigin = target?.scheme == origin?.scheme && target?.host == origin?.host && target?.port == origin?.port
         decisionHandler(sameOrigin || target?.scheme == "about" ? .allow : .cancel)
     }
 
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        retries[ObjectIdentifier(webView)] = nil
+    }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        retryLater(webView)
+        retryLater(webView, error: error)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        retryLater(webView)
+        retryLater(webView, error: error)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        retryLater(webView)
+        retryLater(webView, error: nil)
     }
 
-    /// monitor の起動直後で読めなかった時に、空のまま残さない。
-    private func retryLater(_ webView: WKWebView) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak webView] in
+    /// 1 枚あたりの再試行の上限。描画が落ち続ける時に読み直しを繰り返さない（monitor に繋ぎ直すと数え直す）。
+    private static let maxRetries = 5
+    private var retries: [ObjectIdentifier: Int] = [:]
+
+    /// monitor の起動直後で読めなかった時に、空のまま残さない。間隔は 2, 4, 8… 秒（最大 30 秒）に伸ばす。
+    private func retryLater(_ webView: WKWebView, error: Error?) {
+        if let error = error as NSError?, error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return }
+        let key = ObjectIdentifier(webView)
+        let attempt = retries[key, default: 0]
+        guard attempt < Self.maxRetries else { return }
+        retries[key] = attempt + 1
+        let delay = min(30, 2 * pow(2, Double(attempt)))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak webView] in
             guard let self, let webView, let url = self.cache.first(where: { $0.value === webView })?.key else { return }
             webView.load(URLRequest(url: url))
         }

@@ -59,7 +59,7 @@ public enum StageLogic {
 
     /// ツールの動作の一言。Agent / Task は子が出るので持ち物にしない（kit.ts の itemForVerb と同じ）。
     public static func toolVerb(_ tool: String?) -> String? {
-        guard let tool, tool != "Agent", tool != "Task" else { return nil }
+        guard let tool, !tool.isEmpty, tool != "Agent", tool != "Task" else { return nil }
         return verbs[tool] ?? "手を動かしている"
     }
 
@@ -177,6 +177,8 @@ public enum StageLogic {
         ]
         items.append(URLQueryItem(name: "bg", value: background.map { String(format: "%06x", $0) } ?? "transparent"))
         components.queryItems = items
+        // URLQueryItem は + を残し、ページ側の URLSearchParams で空白と読まれるので明示的に符号化する。
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         components.fragment = nil
         return components.url ?? base
     }

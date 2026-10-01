@@ -86,6 +86,14 @@ final class StageLogicTests: XCTestCase {
         XCTAssertEqual(url.absoluteString, "http://127.0.0.1:8799/?embed=stage&session=abc-123&mode=3d&bg=0b111d")
         let clear = StageLogic.embedURL(base: URL(string: "http://127.0.0.1:8766/x?y=1#z")!, sessionId: "s", mode: .flat, background: nil)
         XCTAssertEqual(clear.absoluteString, "http://127.0.0.1:8766/?embed=stage&session=s&mode=2d&bg=transparent")
+        let plus = StageLogic.embedURL(base: base, sessionId: "a+b", mode: .flat, background: nil)
+        XCTAssertTrue(plus.absoluteString.contains("session=a%2Bb"))
+    }
+
+    func testToolVerbIgnoresEmptyTool() {
+        XCTAssertNil(StageLogic.toolVerb(""))
+        XCTAssertNil(StageLogic.toolVerb(nil))
+        XCTAssertNotNil(StageLogic.toolVerb("Bash"))
     }
 
     // MARK: - プレースホルダー
