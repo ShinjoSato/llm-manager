@@ -129,13 +129,130 @@ final class RoomGroupingTests: XCTestCase {
 }
 
 final class ChatMarkdownTests: XCTestCase {
+    typealias B = ChatMarkdown.Block
+
     func testSplitsFencedCode() {
         let blocks = ChatMarkdown.blocks("前置き\n\n```swift\nlet a = 1\n\nlet b = 2\n```\n後書き")
-        XCTAssertEqual(blocks, [.text("前置き"), .code(language: "swift", "let a = 1\n\nlet b = 2"), .text("後書き")])
+        XCTAssertEqual(blocks, [.paragraph("前置き"), .code(language: "swift", "let a = 1\n\nlet b = 2"), .paragraph("後書き")])
     }
 
     func testUnclosedFenceRunsToEnd() {
-        XCTAssertEqual(ChatMarkdown.blocks("a\n```\nx"), [.text("a"), .code(language: nil, "x")])
+        XCTAssertEqual(ChatMarkdown.blocks("a\n```\nx"), [.paragraph("a"), .code(language: nil, "x")])
+    }
+
+    func testMarkdownInsideCodeIsNotInterpreted() {
+        let src = "```md\n# 見出しではない\n| a | b |\n|---|---|\n- リストではない\n> 引用ではない\n---\n```"
+        XCTAssertEqual(ChatMarkdown.blocks(src),
+                       [.code(language: "md", "# 見出しではない\n| a | b |\n|---|---|\n- リストではない\n> 引用ではない\n---")])
+    }
+
+    func testTildeFenceAndLongerClosingFence() {
+        XCTAssertEqual(ChatMarkdown.blocks("~~~\n```\n~~~"), [.code(language: nil, "```")])
+        XCTAssertEqual(ChatMarkdown.blocks("````\n```\n````\nafter"), [.code(language: nil, "```"), .paragraph("after")])
+    }
+
+    func testParagraphKeepsLineBreaks() {
+        XCTAssertEqual(ChatMarkdown.blocks("一行目\n二行目\n\n次の段落"), [.paragraph("一行目\n二行目"), .paragraph("次の段落")])
+    }
+
+    func testHeadings() {
+        XCTAssertEqual(ChatMarkdown.blocks("# 大\n## 中 ##\n### 小\n#ハッシュタグ\n## C#"),
+                       [.heading(level: 1, "大"), .heading(level: 2, "中"), .heading(level: 3, "小"),
+                        .paragraph("#ハッシュタグ"), .heading(level: 2, "C#")])
+        XCTAssertEqual(ChatMarkdown.blocks("####### 七つ"), [.paragraph("####### 七つ")])
+    }
+
+    func testRules() {
+        XCTAssertEqual(ChatMarkdown.blocks("a\n\n---\n\n***\n- - -\nb"), [.paragraph("a"), .rule, .rule, .rule, .paragraph("b")])
+        XCTAssertEqual(ChatMarkdown.blocks("--"), [.paragraph("--")])
+    }
+
+    func testBulletAndOrderedLists() {
+        XCTAssertEqual(ChatMarkdown.blocks("- a\n- b\n\n3. c\n4. d"), [
+            .list(ordered: false, start: 0, items: [.init([.paragraph("a")]), .init([.paragraph("b")])]),
+            .list(ordered: true, start: 3, items: [.init([.paragraph("c")]), .init([.paragraph("d")])]),
+        ])
+        XCTAssertEqual(ChatMarkdown.blocks("**太字**の段落"), [.paragraph("**太字**の段落")])
+    }
+
+    func testNestedLists() {
+        let src = "- 親1\n  - 子1\n    - 孫\n  - 子2\n- 親2\n1. 番号\n   - 下の箇条"
+        XCTAssertEqual(ChatMarkdown.blocks(src), [
+            .list(ordered: false, start: 0, items: [
+                .init([.paragraph("親1"), .list(ordered: false, start: 0, items: [
+                    .init([.paragraph("子1"), .list(ordered: false, start: 0, items: [.init([.paragraph("孫")])])]),
+                    .init([.paragraph("子2")]),
+                ])]),
+                .init([.paragraph("親2")]),
+            ]),
+            .list(ordered: true, start: 1, items: [
+                .init([.paragraph("番号"), .list(ordered: false, start: 0, items: [.init([.paragraph("下の箇条")])])]),
+            ]),
+        ])
+    }
+
+    func testListItemContinuationAndLooseItems() {
+        let src = "- 一行目\n続き\n\n- 二つ目\n\n  二つ目の段落\n\n本文"
+        XCTAssertEqual(ChatMarkdown.blocks(src), [
+            .list(ordered: false, start: 0, items: [
+                .init([.paragraph("一行目\n続き")]),
+                .init([.paragraph("二つ目"), .paragraph("二つ目の段落")]),
+            ]),
+            .paragraph("本文"),
+        ])
+    }
+
+    func testCodeInsideListItem() {
+        XCTAssertEqual(ChatMarkdown.blocks("1. 実行:\n   ```sh\n   # コメント\n   ls\n   ```"), [
+            .list(ordered: true, start: 1, items: [.init([.paragraph("実行:"), .code(language: "sh", "# コメント\nls")])]),
+        ])
+    }
+
+    func testQuote() {
+        XCTAssertEqual(ChatMarkdown.blocks("> 引用\n> - 項目\n>\n> > 入れ子\n本文"), [
+            .quote([.paragraph("引用"), .list(ordered: false, start: 0, items: [.init([.paragraph("項目")])]),
+                    .quote([.paragraph("入れ子")])]),
+            .paragraph("本文"),
+        ])
+    }
+
+    func testTableWithAlignment() {
+        let src = "前置き\n| Issue | 内容 | 数 | 中央 |\n|---|:---|---:|:-:|\n| #1 | **太字** | 3 | x |\n| #2 | 短い |\n\n後書き"
+        XCTAssertEqual(ChatMarkdown.blocks(src), [
+            .paragraph("前置き"),
+            .table(.init(header: ["Issue", "内容", "数", "中央"],
+                         alignments: [.leading, .leading, .trailing, .center],
+                         rows: [["#1", "**太字**", "3", "x"], ["#2", "短い", "", ""]])),
+            .paragraph("後書き"),
+        ])
+    }
+
+    func testTableWithoutOuterPipesAndExtraCells() {
+        XCTAssertEqual(ChatMarkdown.blocks("a | b\n--- | ---\n1 | 2 | 3"),
+                       [.table(.init(header: ["a", "b"], alignments: [.leading, .leading], rows: [["1", "2"]]))])
+    }
+
+    func testTableEscapedPipeAndBreaks() {
+        XCTAssertEqual(ChatMarkdown.splitRow(#"| `a \| b` | x\|y | 1<br>2 | \* |"#), ["`a | b`", "x|y", "1\n2", "\\*"])
+        XCTAssertEqual(ChatMarkdown.splitRow("| `a | b` |"), ["`a", "b`"])
+    }
+
+    func testMismatchedDelimiterIsNotATable() {
+        XCTAssertEqual(ChatMarkdown.blocks("| a | b |\n|---|\n| 1 | 2 |"), [.paragraph("| a | b |\n|---|\n| 1 | 2 |")])
+        XCTAssertEqual(ChatMarkdown.blocks("見出し\n---"), [.paragraph("見出し"), .rule])
+    }
+
+    func testMalformedInputDoesNotCrash() {
+        let inputs = ["", "\n\n", "|", "||", "|-|", "| a |\n|", ">", "> ", "-", "- ", "1.", "1)", "#", "```", "~~~~",
+                      "\t- tab\n\t\t- deep", "\r\n- crlf\r\n", String(repeating: ">", count: 500) + " deep",
+                      String(repeating: "  ", count: 300) + "- x", (0..<200).map { String(repeating: "  ", count: $0) + "- n" }.joined(separator: "\n"),
+                      "| a | b |\n|:-:|:-:|", "- a\n\n\n", "1. a\n- b\n2. c", "\\", "| \\"]
+        for input in inputs {
+            _ = ChatMarkdown.blocks(input)
+        }
+        XCTAssertEqual(ChatMarkdown.blocks(""), [])
+        XCTAssertEqual(ChatMarkdown.blocks("| a | b |\n|:-:|:-:|"),
+                       [.table(.init(header: ["a", "b"], alignments: [.center, .center], rows: []))])
     }
 
     func testInlineBoldCodeAndNewlines() {
@@ -145,6 +262,14 @@ final class ChatMarkdownTests: XCTestCase {
         XCTAssertEqual(bold.map { String(s[$0.range].characters) }, "太字")
         let code = s.runs.first { $0.inlinePresentationIntent?.contains(.code) == true }
         XCTAssertEqual(code.map { String(s[$0.range].characters) }, "code")
+    }
+
+    func testInlineLinkAndItalic() {
+        let s = ChatMarkdown.inline("[PR](https://github.com/x/y/pull/1) と *斜体*")
+        let link = s.runs.first { $0.link != nil }
+        XCTAssertEqual(link?.link, URL(string: "https://github.com/x/y/pull/1"))
+        XCTAssertEqual(link.map { String(s[$0.range].characters) }, "PR")
+        XCTAssertNotNil(s.runs.first { $0.inlinePresentationIntent?.contains(.emphasized) == true })
     }
 }
 
