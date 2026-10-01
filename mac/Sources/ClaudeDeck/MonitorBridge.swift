@@ -23,16 +23,24 @@ enum MonitorBridge {
         store.start()
     }
 
-    /// 自分が起動した monitor だけを止める。
-    static func shutdown() {
-        launcher.stop()
+    /// 止めるべき子プロセスがあるか（終了を遅らせて非同期で止めるかの判断に使う）。
+    static var needsShutdown: Bool { launcher.hasOwnedProcess }
+
+    /// 自分が起動した monitor だけを止める（main を止めない）。完了はバックグラウンドスレッドで呼ばれる。
+    static func shutdown(completion: @escaping @Sendable () -> Void) {
+        launcher.stopInBackground(completion: completion)
+    }
+
+    /// 非同期の停止を経ずに終了する経路の最終手段。
+    static func shutdownImmediately() {
+        launcher.stopImmediately()
     }
 
     /// SIGTERM / SIGINT では applicationWillTerminate が呼ばれず子が孤児になるので、通常の終了経路に乗せる。
     private static func installTerminationSignals() {
         guard signalSources.isEmpty else { return }
+        TerminationSignals.installNoopHandlers(for: [SIGTERM, SIGINT])
         for sig in [SIGTERM, SIGINT] {
-            signal(sig, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             source.setEventHandler { NSApp.terminate(nil) }
             source.resume()

@@ -23,7 +23,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    func applicationWillTerminate(_ notification: Notification) { MonitorBridge.shutdown() }
+    private var shuttingDown = false
+
+    /// 自分が起動した monitor を止め終えてから終了する（同期で待つと main が止まるため遅延終了にする）。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard MonitorBridge.needsShutdown else { return .terminateNow }
+        if !shuttingDown {
+            shuttingDown = true
+            MonitorBridge.shutdown {
+                // 終了確認中の main は modalPanel モードで回り main actor のタスクが進まないので、モードを指定して返す。
+                RunLoop.main.perform(inModes: [.default, .modalPanel]) {
+                    MainActor.assumeIsolated { NSApp.reply(toApplicationShouldTerminate: true) }
+                }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
+            }
+        }
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) { MonitorBridge.shutdownImmediately() }
 
     // MARK: - メニュー（最小構成: アプリ / 編集）
 

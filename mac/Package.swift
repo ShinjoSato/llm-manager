@@ -35,7 +35,8 @@ let package = Package(
         ),
         .testTarget(
             name: "ClaudeDeckTests",
-            dependencies: ["MonitorKit"],
+            // SwiftTerm は端末ペインと同じ起動経路（forkpty）でシグナル設定の漏れを確かめるため。
+            dependencies: ["MonitorKit", .product(name: "SwiftTerm", package: "SwiftTerm")],
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         )
     ]

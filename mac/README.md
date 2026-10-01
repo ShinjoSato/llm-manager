@@ -69,15 +69,25 @@ mac/
 
 1. 接続先がループバック以外（`CLAUDE_DECK_MONITOR_URL` で別ホスト）なら起動しない（`.skippedRemote`）
 2. `GET /api/health` が応答すれば既存の monitor を使う（`.usingExisting`。アプリ終了時も止めない）
-3. 応答が無ければ `<ai-manager ルート>/monitor` で、`node_modules` が無ければ `npm install`（`.installing`）、
-   `ui/dist` が無ければ `npm run build`（`.building`）を済ませてから `npm start`（`.starting` → `.running`）
-4. 自分が起動した monitor だけを `applicationWillTerminate` で止める（SIGTERM / SIGINT も通常の終了経路に乗せる）
+3. 応答が無ければ `<ai-manager ルート>/monitor` で、install が済んでいなければ `npm install`（`.installing`）、
+   `ui/dist` が無ければ `npm run build`（`.building`）を済ませてから `npm start`（`.starting` → `.running`）。
+   済んだかは `node_modules/.package-lock.json` / `ui/dist/index.html` と、実行中だけ置く
+   `node_modules/.claude-deck-{install,build}-incomplete` で判定する（途中で止めた install / build は次回やり直す）
+4. 自分が起動した monitor だけを、アプリ終了時に止める。`applicationShouldTerminate` で `.terminateLater` を返し、
+   バックグラウンドで止め終えてから終了する（main を止めない）。SIGTERM / SIGINT も通常の終了経路に乗せる
 
 - 子プロセスは `/bin/zsh -lc` 経由（node / npm の PATH をログインシェルから得る）で、新しいプロセスグループの先頭として
-  `posix_spawn` する。停止は `kill(-pgid, SIGTERM)` → 3 秒待って残れば SIGKILL（npm → tsx → node をまとめて止め、孤児を残さない）
+  `posix_spawn` する。停止は `kill(-pgid, SIGTERM)` → 3 秒待って残れば SIGKILL（npm → tsx → node をまとめて止め、孤児を残さない）。
+  起動待ちの間や起動後に npm（グループ先頭）だけ落ちた場合も、残ったグループを同じ手順で片付ける
+- SIGTERM / SIGINT は `SIG_IGN` ではなく何もしないハンドラ（`TerminationSignals`）で既定動作だけ外す。
+  `SIG_IGN` は exec を越えて子に残り、端末ペインの claude（SwiftTerm の forkpty 経路）が SIGTERM を無視して
+  上限到達時の `terminate()` が効かなくなるため。ハンドラは exec で既定に戻るので子に漏れない（`TerminationSignalsTests`）
+- 停止要求の後は何も起動しない（start / stop ごとの世代番号で、古い実行が新しい実行の状態を書き換えない）
 - 環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `MONITOR_LAN` / `MONITOR_TOKEN` を除去し、シェル側でも unset する。
   `PORT` は接続先のポートに合わせる（LAN 公開モードでは起動しない）
-- 標準出力 / 標準エラーは `~/Library/Logs/claude-deck/monitor.log`（追記）。launcher 自身の起動・失敗・停止の記録も同じファイルに残る
+- 標準出力 / 標準エラーは `~/Library/Logs/claude-deck/monitor.log`（追記・`O_CLOEXEC`）。launcher 自身の起動・失敗・停止の記録も同じファイルに残る。
+  起動時に 5MB を超えていれば `monitor.log.1` に回す（1 世代）
+- ポート使用中の判定は 127.0.0.1 と ::1 の両方を見る。URL にポートが無ければ scheme の既定（http 80 / https 443）
 - 失敗理由は `MonitorLaunchFailure`（monitor ディレクトリが無い・node が無い・ポートが別プロセスに使用中・
   install/build 失敗・45 秒で health が上がらない・起動後に終了）。`launcher.phase` が `.failed` になり、NSAlert でも知らせる
 - 画面表示は `MonitorBridge.launcher.phase`（`@Observable`。`isBusy` で準備中か分かる）と `ownedPid` / `logURL` を使う

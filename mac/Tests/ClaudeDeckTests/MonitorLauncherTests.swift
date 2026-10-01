@@ -8,7 +8,9 @@ private final class FakeChild: MonitorChildProcess, @unchecked Sendable {
     private let lock = NSLock()
     private var code: Int32?
     private var waiters: [CheckedContinuation<Int32, Never>] = []
-    private(set) var terminated = false
+    private var receivedSignals: [Int32] = []
+    /// true の間は先頭が終わってもグループ（tsx / node 役）が残る。
+    private var lingering = false
 
     init(pid: Int32, script: String) {
         self.pid = pid
@@ -16,10 +18,14 @@ private final class FakeChild: MonitorChildProcess, @unchecked Sendable {
     }
 
     var hasExited: Bool { lock.withLock { code != nil } }
+    var signals: [Int32] { lock.withLock { receivedSignals } }
+    var terminated: Bool { signals.contains(SIGTERM) }
 
-    func exit(_ value: Int32) {
+    func exit(_ value: Int32, leavingGroup: Bool = false) {
         let pending: [CheckedContinuation<Int32, Never>] = lock.withLock {
+            guard code == nil else { return [] }
             code = value
+            lingering = leavingGroup
             defer { waiters = [] }
             return waiters
         }
@@ -33,74 +39,149 @@ private final class FakeChild: MonitorChildProcess, @unchecked Sendable {
         }
     }
 
-    func terminateGroup(grace: TimeInterval) {
-        terminated = true
-        exit(143)
+    func signalGroup(_ signal: Int32) {
+        lock.withLock {
+            receivedSignals.append(signal)
+            lingering = false
+        }
+        exit(128 + signal)
     }
+
+    var isGroupAlive: Bool { lock.withLock { code == nil || lingering } }
 }
 
-/// スクリプトごとに終了コードを決めて即終了させる。`npm start` だけは動き続ける。
+/// スクリプトごとに終了コードを決めて即終了させる。`npm start` と `holding` に含まれる手順は動き続ける。
 private final class FakeRunner: MonitorProcessRunning, @unchecked Sendable {
     private let lock = NSLock()
-    private(set) var spawned: [FakeChild] = []
-    private(set) var environments: [[String: String]] = []
+    private var children: [FakeChild] = []
+    private var envs: [[String: String]] = []
     var exitCodes: [String: Int32] = [:]
+    var holding: Set<String> = []
     var serverExitsWith: Int32?
+    /// サーバーが落ちたとき、グループに子が残る。
+    var serverLeavesGroup = false
 
     func spawn(script: String, directory: URL, environment: [String: String], logURL: URL?) throws -> any MonitorChildProcess {
         let child = lock.withLock { () -> FakeChild in
-            let c = FakeChild(pid: Int32(1000 + spawned.count), script: script)
-            spawned.append(c)
-            environments.append(environment)
+            let c = FakeChild(pid: Int32(1000 + children.count), script: script)
+            children.append(c)
+            envs.append(environment)
             return c
         }
         if script.hasSuffix("npm start") {
-            if let code = serverExitsWith { child.exit(code) }
-        } else {
+            if let code = serverExitsWith { child.exit(code, leavingGroup: serverLeavesGroup) }
+        } else if !holding.contains(where: { script.hasSuffix($0) }) {
             let code = exitCodes.first(where: { script.contains($0.key) })?.value ?? 0
             child.exit(code)
         }
         return child
     }
 
-    var commands: [String] { lock.withLock { spawned.map(\.script) } }
+    var spawned: [FakeChild] { lock.withLock { children } }
+    var environments: [[String: String]] { lock.withLock { envs } }
+    var commands: [String] { spawned.map(\.script) }
+    func count(_ suffix: String) -> Int { commands.filter { $0.hasSuffix(suffix) }.count }
 }
 
-/// 呼ばれた回数で結果を変える health。
+/// 呼ばれた回数で結果を変える health。`beforeAnswer` で呼び出しの途中に割り込める。
 private final class HealthScript: @unchecked Sendable {
     private let lock = NSLock()
     private var answers: [Bool]
+    private var calls = 0
+    var beforeAnswer: (@Sendable (Int) async -> Void)?
+
     init(_ answers: [Bool]) { self.answers = answers }
-    func next() -> Bool {
-        lock.withLock { answers.count > 1 ? answers.removeFirst() : (answers.first ?? false) }
+
+    func next() async -> Bool {
+        let n = lock.withLock { () -> Int in calls += 1; return calls }
+        await beforeAnswer?(n)
+        return lock.withLock { answers.count > 1 ? answers.removeFirst() : (answers.first ?? false) }
     }
+}
+
+/// 開くまで呼び出し側を止める門。
+private final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    var waitingCount: Int { lock.withLock { waiters.count } }
+
+    func pass() async {
+        await withCheckedContinuation { c in
+            lock.lock()
+            if isOpen { lock.unlock(); c.resume() } else { waiters.append(c); lock.unlock() }
+        }
+    }
+
+    func open() {
+        let pending: [CheckedContinuation<Void, Never>] = lock.withLock {
+            isOpen = true
+            defer { waiters = [] }
+            return waiters
+        }
+        pending.forEach { $0.resume() }
+    }
+}
+
+/// 存在するファイルの集合。
+private final class FakeFiles: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: Set<String>
+    init(_ paths: Set<String>) { self.paths = paths }
+    func exists(_ path: String) -> Bool { lock.withLock { paths.contains(path) } }
+    func create(_ path: String) { _ = lock.withLock { paths.insert(path) } }
+    func remove(_ path: String) { _ = lock.withLock { paths.remove(path) } }
 }
 
 @MainActor
 final class MonitorLauncherTests: XCTestCase {
     private let dir = URL(fileURLWithPath: "/tmp/ai-manager/monitor")
 
-    private func makeLauncher(health: [Bool], portOpen: Bool = false, existing: Set<String>,
+    private func path(_ relative: String) -> String { dir.appendingPathComponent(relative).path }
+
+    private func makeLauncher(health: HealthScript, portOpen: Bool = false, files: FakeFiles,
                               runner: FakeRunner, baseURL: URL = MonitorConfiguration.defaultBaseURL,
                               env: [String: String] = [:]) -> MonitorLauncher {
-        let script = HealthScript(health)
         let environment = MonitorLauncherEnvironment(
-            isHealthy: { script.next() },
+            isHealthy: { await health.next() },
             isPortOpen: { _ in portOpen },
-            fileExists: { path in existing.contains(path) },
+            fileExists: { files.exists($0) },
+            createFile: { files.create($0) },
+            removeFile: { files.remove($0) },
             runner: runner,
             processEnvironment: env
         )
         let launcher = MonitorLauncher(configuration: MonitorConfiguration(baseURL: baseURL),
                                        monitorDirectory: dir, logURL: nil, environment: environment)
         launcher.pollInterval = 0.01
+        launcher.terminationGrace = 0.2
         return launcher
     }
 
+    private func makeLauncher(health: [Bool], portOpen: Bool = false, existing: Set<String>,
+                              runner: FakeRunner, baseURL: URL = MonitorConfiguration.defaultBaseURL,
+                              env: [String: String] = [:]) -> MonitorLauncher {
+        makeLauncher(health: HealthScript(health), portOpen: portOpen, files: FakeFiles(existing),
+                     runner: runner, baseURL: baseURL, env: env)
+    }
+
     private var ready: Set<String> {
-        [dir.appendingPathComponent("package.json").path,
-         dir.appendingPathComponent("node_modules").path,
-         dir.appendingPathComponent("ui/dist/index.html").path]
+        [path("package.json"), path(MonitorLauncher.installCompleteFile), path(MonitorLauncher.buildOutputFile)]
+    }
+
+    /// 条件が満たされるまで待つ。期限を過ぎたら失敗にして抜ける。
+    private func waitUntil(_ what: String, timeout: TimeInterval = 5,
+                           file: StaticString = #filePath, line: UInt = #line,
+                           _ condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() >= deadline {
+                XCTFail("待ち切れません: \(what)", file: file, line: line)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
     }
 
     func testUsesExistingMonitorWithoutSpawning() async {
@@ -109,7 +190,7 @@ final class MonitorLauncherTests: XCTestCase {
         await launcher.run()
         XCTAssertEqual(launcher.phase, .usingExisting)
         XCTAssertTrue(runner.commands.isEmpty)
-        launcher.stop()
+        await launcher.stop()
         XCTAssertEqual(launcher.phase, .usingExisting, "既存の monitor は止めない")
     }
 
@@ -151,12 +232,11 @@ final class MonitorLauncherTests: XCTestCase {
 
     func testInstallsAndBuildsBeforeStartingThenStopsOwnProcess() async {
         let runner = FakeRunner()
-        let launcher = makeLauncher(health: [false, false, false, true],
-                                    existing: [dir.appendingPathComponent("package.json").path],
-                                    runner: runner,
+        let files = FakeFiles([path("package.json")])
+        let launcher = makeLauncher(health: HealthScript([false, false, false, true]), files: files, runner: runner,
                                     env: ["ANTHROPIC_API_KEY": "x", "ANTHROPIC_AUTH_TOKEN": "y", "MONITOR_LAN": "1", "HOME": "/h"])
         let task = Task { await launcher.run() }
-        while launcher.phase != .running(pid: 1003) { await Task.yield() }
+        await waitUntil("running") { launcher.phase == .running(pid: 1003) }
 
         XCTAssertEqual(runner.commands.count, 4)
         XCTAssertTrue(runner.commands[1].hasSuffix("exec npm install"))
@@ -171,8 +251,10 @@ final class MonitorLauncherTests: XCTestCase {
             XCTAssertEqual(env["HOME"], "/h")
         }
         XCTAssertEqual(launcher.ownedPid, 1003)
+        XCTAssertFalse(files.exists(path(MonitorLauncher.installIncompleteMarker)), "完了したら印を消す")
+        XCTAssertFalse(files.exists(path(MonitorLauncher.buildIncompleteMarker)))
 
-        launcher.stop()
+        await launcher.stop()
         await task.value
         XCTAssertEqual(launcher.phase, .stopped)
         XCTAssertTrue(runner.spawned[3].terminated)
@@ -182,17 +264,116 @@ final class MonitorLauncherTests: XCTestCase {
     func testStepFailureIsReported() async {
         let runner = FakeRunner()
         runner.exitCodes = ["npm install": 1]
-        let launcher = makeLauncher(health: [false], existing: [dir.appendingPathComponent("package.json").path], runner: runner)
+        let launcher = makeLauncher(health: [false], existing: [path("package.json")], runner: runner)
         await launcher.run()
         XCTAssertEqual(launcher.phase, .failed(.stepFailed(step: "npm install", exitCode: 1)))
     }
 
-    func testServerExitBeforeHealthy() async {
+    /// 途中で止めた install は印が残り、次回は node_modules があってもやり直す。
+    func testInterruptedInstallIsRerun() async {
+        let runner = FakeRunner()
+        runner.holding = ["npm install"]
+        let files = FakeFiles([path("package.json")])
+        let launcher = makeLauncher(health: HealthScript([false]), files: files, runner: runner)
+        launcher.start()
+        await waitUntil("install 開始") { runner.count("npm install") == 1 }
+        XCTAssertTrue(files.exists(path(MonitorLauncher.installIncompleteMarker)))
+        await launcher.stop()
+        XCTAssertTrue(runner.spawned[1].terminated)
+        XCTAssertEqual(launcher.phase, .stopped)
+
+        // npm が途中まで書いた状態（.package-lock.json と ui/dist はある）を再現する。
+        files.create(path(MonitorLauncher.installCompleteFile))
+        files.create(path(MonitorLauncher.buildOutputFile))
+        let next = FakeRunner()
+        let relaunched = makeLauncher(health: HealthScript([false, false, true]), files: files, runner: next)
+        relaunched.start()
+        await waitUntil("running") { relaunched.ownedPid != nil && relaunched.phase == .running(pid: relaunched.ownedPid!) }
+        XCTAssertEqual(next.count("npm install"), 1, "中断された install はやり直す")
+        XCTAssertEqual(next.count("npm run build"), 0)
+        XCTAssertFalse(files.exists(path(MonitorLauncher.installIncompleteMarker)))
+        await relaunched.stop()
+    }
+
+    func testInterruptedBuildIsRerun() async {
+        let runner = FakeRunner()
+        let files = FakeFiles(ready.union([path(MonitorLauncher.buildIncompleteMarker)]))
+        let launcher = makeLauncher(health: HealthScript([false, false, true]), files: files, runner: runner)
+        launcher.start()
+        await waitUntil("npm start") { runner.count("npm start") == 1 }
+        XCTAssertEqual(runner.count("npm install"), 0)
+        XCTAssertEqual(runner.count("npm run build"), 1)
+        XCTAssertFalse(files.exists(path(MonitorLauncher.buildIncompleteMarker)))
+        await launcher.stop()
+    }
+
+    /// 準備後の health 確認の最中に止められたら npm start を起動しない。
+    func testStopDuringFinalHealthCheckDoesNotSpawnServer() async {
+        let runner = FakeRunner()
+        let health = HealthScript([false])
+        let launcher = makeLauncher(health: health, files: FakeFiles(ready), runner: runner)
+        health.beforeAnswer = { call in
+            if call == 2 { await launcher.stop() }
+        }
+        await launcher.run()
+        XCTAssertEqual(runner.count("npm start"), 0)
+        XCTAssertEqual(runner.commands.count, 1, "node の確認だけ")
+        XCTAssertNil(launcher.ownedPid)
+    }
+
+    /// stop 直後の start で、古い実行が新しい実行と並んで動き出さない。
+    func testRestartAfterStopDoesNotResurrectOldRun() async {
+        let runner = FakeRunner()
+        let gate = Gate()
+        let health = HealthScript([false])
+        health.beforeAnswer = { call in
+            if call <= 2 { await gate.pass() }
+        }
+        let launcher = makeLauncher(health: health, files: FakeFiles(ready), runner: runner)
+        launcher.startupTimeout = 30
+        var failures: [MonitorLaunchFailure] = []
+        launcher.onFailure = { failures.append($0) }
+
+        launcher.start()
+        await waitUntil("1 回目の health 待ち") { gate.waitingCount == 1 }
+        await launcher.stop()
+        launcher.start()
+        await waitUntil("2 回目の health 待ち") { gate.waitingCount == 2 }
+        gate.open()
+
+        await waitUntil("starting") {
+            if case .starting = launcher.phase { return true }
+            return false
+        }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(runner.count("command -v node >/dev/null && command -v npm >/dev/null"), 1, "古い実行は何も起動しない")
+        XCTAssertEqual(runner.count("npm start"), 1)
+        XCTAssertTrue(failures.isEmpty)
+        await launcher.stop()
+        XCTAssertTrue(runner.spawned.last?.terminated ?? false)
+    }
+
+    /// health 待ちの間に npm（先頭）だけ落ちても、残った tsx / node をグループごと止める。
+    func testServerExitBeforeHealthyCleansUpGroup() async {
         let runner = FakeRunner()
         runner.serverExitsWith = 1
+        runner.serverLeavesGroup = true
         let launcher = makeLauncher(health: [false], existing: ready, runner: runner)
         await launcher.run()
         XCTAssertEqual(launcher.phase, .failed(.processExited(exitCode: 1)))
+        XCTAssertEqual(runner.spawned.last?.signals.first, SIGTERM)
+        XCTAssertFalse(runner.spawned.last?.isGroupAlive ?? true)
+    }
+
+    func testServerExitAfterRunningCleansUpGroup() async {
+        let runner = FakeRunner()
+        let launcher = makeLauncher(health: [false, false, true], existing: ready, runner: runner)
+        launcher.start()
+        await waitUntil("running") { launcher.phase == .running(pid: 1001) }
+        runner.spawned[1].exit(1, leavingGroup: true)
+        await waitUntil("failed") { launcher.phase == .failed(.processExited(exitCode: 1)) }
+        XCTAssertEqual(runner.spawned[1].signals.first, SIGTERM)
+        XCTAssertNil(launcher.ownedPid)
     }
 
     func testHealthTimeoutKillsOwnProcess() async {
@@ -202,6 +383,7 @@ final class MonitorLauncherTests: XCTestCase {
         await launcher.run()
         XCTAssertEqual(launcher.phase, .failed(.healthTimeout(seconds: 0)))
         XCTAssertTrue(runner.spawned.last?.terminated ?? false)
+        XCTAssertFalse(launcher.hasOwnedProcess)
     }
 
     func testChildEnvironmentAndLoopback() {
@@ -212,26 +394,72 @@ final class MonitorLauncherTests: XCTestCase {
         XCTAssertFalse(MonitorLauncher.isLoopback(URL(string: "http://example.com:8766")!))
     }
 
-    /// 実プロセスで、孫プロセスまでグループごと止まることを確かめる。
+    func testDefaultPortFollowsScheme() {
+        XCTAssertEqual(MonitorLauncher.port(of: URL(string: "http://127.0.0.1")!), 80)
+        XCTAssertEqual(MonitorLauncher.port(of: URL(string: "https://localhost")!), 443)
+        XCTAssertEqual(MonitorLauncher.port(of: URL(string: "https://localhost:8799")!), 8799)
+    }
+
+    /// ::1 だけで待ち受けているポートも使用中とみなす。
+    func testLoopbackPortSeesIPv6Listener() throws {
+        let fd = socket(AF_INET6, SOCK_STREAM, 0)
+        try XCTSkipIf(fd < 0, "IPv6 ソケットを作れない環境")
+        defer { close(fd) }
+        var addr = sockaddr_in6()
+        addr.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        addr.sin6_family = sa_family_t(AF_INET6)
+        addr.sin6_addr = in6addr_loopback
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) }
+        }
+        try XCTSkipIf(bound != 0, "::1 に bind できない環境")
+        XCTAssertEqual(listen(fd, 16), 0)
+        var len = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        _ = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) }
+        }
+        let port = Int(UInt16(bigEndian: addr.sin6_port))
+        XCTAssertTrue(LoopbackPort.isOpen(port))
+        XCTAssertTrue(LoopbackPort.isOpenIPv6(port))
+        XCTAssertFalse(LoopbackPort.isOpenIPv4(port))
+    }
+
+    func testLogFileIsCloseOnExecAndRotates() throws {
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("launcher-\(UUID().uuidString).log")
+        defer {
+            try? FileManager.default.removeItem(at: log)
+            try? FileManager.default.removeItem(at: log.appendingPathExtension("1"))
+        }
+        let fd = MonitorLogFile.open(log)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        XCTAssertNotEqual(fcntl(fd, F_GETFD) & FD_CLOEXEC, 0)
+        close(fd)
+
+        MonitorLogFile.append(String(repeating: "x", count: 100), to: log)
+        MonitorLogFile.rotateIfNeeded(log, limit: 1000)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: log.path), "上限以下なら回さない")
+        MonitorLogFile.rotateIfNeeded(log, limit: 50)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log.path))
+        XCTAssertEqual(try String(contentsOf: log.appendingPathExtension("1"), encoding: .utf8).count, 100)
+    }
+
+    /// 実プロセスで、孫プロセスまでグループごと止まることを確かめる（ログインシェルの設定に左右されないよう sh を使う）。
     func testPosixRunnerTerminatesWholeGroup() async throws {
         let log = FileManager.default.temporaryDirectory.appendingPathComponent("launcher-\(UUID().uuidString).log")
-        let child = try PosixProcessRunner().spawn(
+        defer { try? FileManager.default.removeItem(at: log) }
+        let child = try PosixProcessRunner(shell: ["/bin/sh", "-c"]).spawn(
             script: "sleep 30 & echo started; wait",
             directory: FileManager.default.temporaryDirectory,
-            environment: ProcessInfo.processInfo.environment,
+            environment: ["PATH": "/usr/bin:/bin"],
             logURL: log
         )
-        // ログインシェルの読み込みが遅いので、子が書き始めるまで待つ。
-        let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline, !((try? String(contentsOf: log, encoding: .utf8)) ?? "").contains("started") {
-            try await Task.sleep(nanoseconds: 100_000_000)
+        await waitUntil("子の書き込み", timeout: 10) {
+            ((try? String(contentsOf: log, encoding: .utf8)) ?? "").contains("started")
         }
-        XCTAssertEqual(kill(-child.pid, 0), 0)
-        child.terminateGroup(grace: 2)
+        XCTAssertTrue(child.isGroupAlive)
+        await MonitorLauncher.terminate(child, grace: 2)
         let code = await child.waitForExit()
         XCTAssertNotEqual(code, 0)
-        XCTAssertEqual(kill(-child.pid, 0), -1, "グループに残りが無い")
-        let text = try String(contentsOf: log, encoding: .utf8)
-        XCTAssertTrue(text.contains("started"))
+        await waitUntil("グループが空になる") { !child.isGroupAlive }
     }
 }
