@@ -17,13 +17,11 @@ struct StagePanel: View {
     var launcher: MonitorLauncher = MonitorBridge.launcher
     var baseURL: URL = MonitorBridge.configuration.baseURL
 
-    @AppStorage("stagePanel.mode") private var modeRaw = StageMode.solid.rawValue
     @AppStorage("stagePanel.open") private var preferOpen = true
     @State private var windowWidth: CGFloat?
     @State private var openedWhileNarrow = false
 
     private var store: MonitorStore { model.store }
-    private var mode: StageMode { StageMode(rawValue: modeRaw) ?? .solid }
     private var expanded: Bool {
         StageLogic.isExpanded(preference: preferOpen, windowWidth: windowWidth, openedWhileNarrow: openedWhileNarrow)
     }
@@ -45,6 +43,8 @@ struct StagePanel: View {
         .onChange(of: isNarrow) { _, narrow in
             if !narrow { openedWhileNarrow = false }
         }
+        // 表示は 3D 固定なので、古い 2D/3D 選択の保存値を残さない。
+        .onAppear { UserDefaults.standard.removeObject(forKey: "stagePanel.mode") }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stage-panel")
     }
@@ -118,16 +118,6 @@ struct StagePanel: View {
                 .tracking(1.2)
                 .foregroundStyle(ChatTheme.tertiary)
             Spacer(minLength: 8)
-            Picker("表示", selection: $modeRaw) {
-                ForEach(StageMode.allCases, id: \.rawValue) { mode in
-                    Text(mode.title).tag(mode.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("ステージを 2D / 3D で表示")
-            .accessibilityIdentifier("stage-mode")
             Button(action: toggle) {
                 Image(systemName: "sidebar.right")
                     .font(.system(size: 13))
@@ -152,7 +142,7 @@ struct StagePanel: View {
                                          sessionKnown: known)
         switch content {
         case .stage(let id):
-            StageWebView(url: StageLogic.embedURL(base: baseURL, sessionId: id, mode: mode,
+            StageWebView(url: StageLogic.embedURL(base: baseURL, sessionId: id,
                                                   background: StageTheme.embedBackground),
                          epoch: store.connectionEpoch)
         case .placeholder(let text):

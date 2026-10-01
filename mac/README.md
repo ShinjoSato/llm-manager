@@ -34,7 +34,7 @@ mac/
       AppKitHosts.swift           既存の端末ビュー / GitHub ボード / App Store 表示を SwiftUI に差し込む
       ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
     Stage/                      右側のステージパネル（画面案B の右 360px）
-      StagePanel.swift            見出し（2D / 3D・開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
+      StagePanel.swift            見出し（開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
       StageWebView.swift          monitor の埋め込み表示を出す WKWebView（直近 3 枚を保持して切替）とウィンドウ幅の監視
     ProjectStore.swift              プロジェクト一覧の永続化（Application Support の JSON）
     GitHubProjectPrompt.swift       プロジェクトに GitHub Project（owner/number）を紐づける入力ダイアログ
@@ -161,8 +161,8 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 選択中のルームのセッションを、monitor のステージ（アニメーション）と monitor クライアントのデータで見せる。
 文言・URL・判定は `Sources/MonitorKit/Stage/StageLogic.swift`（テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
 
-- **見出し**: 「ステージ」・**2D / 3D 切替**（既定は 3D。UserDefaults `stagePanel.mode`）・畳むボタン。
-- **ステージ**: WKWebView で monitor の埋め込み表示 `/?embed=stage&session=<id>&mode=2d|3d&bg=transparent` を読む。
+- **見出し**: 「ステージ」・畳むボタン。ステージは 3D 表示だけ（以前の 2D / 3D の保存値 `stagePanel.mode` はパネル表示時に消す）。
+- **ステージ**: WKWebView で monitor の埋め込み表示 `/?embed=stage&session=<id>&mode=3d&bg=transparent` を読む（monitor 側の `mode=2d` は monitor の UI 用に残っているが、アプリからは使わない）。
   接続先は `MonitorConfiguration`（`CLAUDE_DECK_MONITOR_URL` / `CLAUDE_DECK_MONITOR_PORT`）。ルームを切り替えると URL を差し替える。
   埋め込み表示は URL を読み込み時にしか見ないので切替は読み直しになるが、直近 3 枚の WKWebView を生かしておき、行き来した時は読み直さない。
   monitor に繋ぎ直した（`connectionEpoch` が増えた）時は保持分を捨てて読み直す。読み込みに失敗したら 2 秒後にやり直す。
