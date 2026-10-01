@@ -33,9 +33,9 @@ struct TerminalHost: NSViewRepresentable {
     }
 }
 
-/// GitHub ボード（既存の AppKit ビュー）を差し込む。
-struct BoardHost: NSViewRepresentable {
-    let board: GitHubBoardView
+/// 既存の AppKit ビュー（GitHub ボード・App Store）を差し込む。ビューはモデルが持ち続ける。
+struct ViewHost: NSViewRepresentable {
+    let view: NSView
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -52,12 +52,12 @@ struct BoardHost: NSViewRepresentable {
     }
 
     private func attach(to container: NSView) {
-        guard board.superview !== container else { return }
+        guard view.superview !== container else { return }
         container.subviews.forEach { $0.removeFromSuperview() }
-        board.removeFromSuperview()
-        board.translatesAutoresizingMaskIntoConstraints = true
-        board.frame = container.bounds
-        board.autoresizingMask = [.width, .height]
-        container.addSubview(board)
+        view.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = true
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
     }
 }

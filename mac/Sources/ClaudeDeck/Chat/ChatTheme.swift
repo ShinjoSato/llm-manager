@@ -89,11 +89,19 @@ extension NSColor {
 
 /// 時刻の短い表記（今日なら HH:mm、それ以外は M/d）。
 enum ChatTime {
-    static func short(_ date: Date?, now: Date = Date()) -> String {
-        guard let date else { return "" }
+    private static let timeFormatter = makeFormatter("HH:mm")
+    private static let dayFormatter = makeFormatter("M/d")
+
+    private static func makeFormatter(_ format: String) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
-        formatter.dateFormat = Calendar.current.isDate(date, inSameDayAs: now) ? "HH:mm" : "M/d"
+        formatter.dateFormat = format
+        return formatter
+    }
+
+    static func short(_ date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "" }
+        let formatter = Calendar.current.isDate(date, inSameDayAs: now) ? timeFormatter : dayFormatter
         return formatter.string(from: date)
     }
 

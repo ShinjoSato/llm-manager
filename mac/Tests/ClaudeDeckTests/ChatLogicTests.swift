@@ -207,3 +207,162 @@ final class PTYInputTests: XCTestCase {
         XCTAssertNil(PermissionPrompt.parse(screen: ["❯ hello"]))
     }
 }
+
+final class PTYSanitizeTests: XCTestCase {
+    func testControlCharactersAreDroppedExceptNewlineAndTab() {
+        let input = "a\u{0}b\u{3}c\u{7}d\u{8}e\u{1b}f\u{7f}g\u{85}h\u{9b}i\tj\nk"
+        XCTAssertEqual(PTYInput.sanitize(input), "abcdefghi\tj\nk")
+    }
+
+    func testBothPathsDropControlCharacters() {
+        XCTAssertEqual(PTYInput.messageBody("x\u{3}\u{9b}201~y\nz", bracketedPaste: true), "\u{1b}[200~x201~y\nz\u{1b}[201~")
+        XCTAssertEqual(PTYInput.messageBody("x\u{15}y\n\u{7f}z", bracketedPaste: false), "xy z")
+    }
+
+    func testOnlyControlCharactersIsEmpty() {
+        XCTAssertNil(PTYInput.messageBody("\u{3}\u{1b}\u{9b}", bracketedPaste: true))
+    }
+
+    func testNonControlUnicodeIsKept() {
+        XCTAssertEqual(PTYInput.sanitize("日本語 🙂 é"), "日本語 🙂 é")
+    }
+}
+
+final class ChoiceMenuTests: XCTestCase {
+    private let rule = String(repeating: "─", count: 40)
+
+    /// 新しいフォルダで初回起動した時の trust 確認（番号の無いメニュー。v2.1.286 の実画面）。
+    func testTrustDialogWithoutNumbersIsMenu() {
+        let screen = [
+            rule,
+            " Accessing workspace:",
+            "",
+            " /tmp/trust-a1",
+            "",
+            " Quick safety check: Is this a project you created or one you trust?",
+            "",
+            " ❯ No, exit",
+            "   Yes, I trust this folder",
+            "",
+            " Enter to confirm · Esc to cancel",
+            "", "", "",
+        ]
+        XCTAssertTrue(ChoiceMenu.isShowing(screen: screen))
+        XCTAssertEqual(InputBlock.detect(screen: screen), .menu)
+    }
+
+    /// AskUserQuestion（説明行を挟む番号付きメニュー）。
+    func testAskUserQuestionIsMenu() {
+        let screen = [
+            "❯ Use the AskUserQuestion tool once to ask me: pick a color.",
+            rule,
+            " ☐ Color",
+            "",
+            "Pick a color?",
+            "",
+            "❯ 1. Red",
+            "     Choose red",
+            "  2. Blue",
+            "     Choose blue",
+            "  3. Type something.",
+            rule,
+            "  4. Chat about this",
+            "",
+            "Enter to select · ↑/↓ to navigate · Esc to cancel",
+        ]
+        XCTAssertEqual(InputBlock.detect(screen: screen), .menu)
+        // 操作案内の行が無くても番号付きの選択肢だけで分かる。
+        XCTAssertTrue(ChoiceMenu.hasNumberedChoices(screen.map { $0.trimmingCharacters(in: .whitespaces) }))
+    }
+
+    /// plan モードの承認（操作案内の行が無い）。
+    func testPlanApprovalIsMenu() {
+        let screen = [
+            "  " + rule,
+            "   Ready to code?",
+            "   Here is Claude's plan:",
+            "   Create an empty file a.txt in the working directory.",
+            "  " + rule,
+            "   Claude has written up a plan and is ready to execute. Would you like to proceed?",
+            "   ❯ 1. Yes, and use auto mode",
+            "     2. Yes, manually approve edits",
+            "     3. Tell Claude what to change",
+            "        shift+tab to approve with this feedback",
+            "   ctrl+g to edit in Vim · ~/.claude/plans/plan.md",
+        ]
+        XCTAssertEqual(InputBlock.detect(screen: screen), .menu)
+    }
+
+    func testPermissionPromptWins() {
+        let screen = [
+            rule,
+            " Bash command",
+            "   touch hello.txt",
+            " Do you want to proceed?",
+            " ❯ 1. Yes",
+            "   2. No",
+            "",
+            " Esc to cancel · Tab to amend",
+        ]
+        XCTAssertEqual(InputBlock.detect(screen: screen), .permission)
+    }
+
+    /// 番号付きリストを送った後の通常画面。入力欄より上は履歴なのでメニュー扱いしない。
+    func testNumberedListInHistoryIsNotMenu() {
+        let screen = [
+            "❯ 1. まずテストを書く",
+            "  2. 次に実装する",
+            "",
+            "⏺ 了解しました。",
+            "",
+            "✻ Cooked for 2s",
+            rule,
+            "❯ ",
+            rule,
+            "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+        ]
+        XCTAssertNil(InputBlock.detect(screen: screen))
+    }
+
+    func testIdleScreenIsNotMenu() {
+        let screen = [
+            "⏺ User declined to answer questions",
+            "  ⎿  · Pick a color? (Red / Blue)",
+            rule,
+            "❯ Try \"fix lint errors\"",
+            rule,
+            "  ⏵⏵ auto mode on (shift+tab to cycle)",
+        ]
+        XCTAssertNil(InputBlock.detect(screen: screen))
+    }
+
+    func testSingleNumberedLineIsNotMenu() {
+        XCTAssertFalse(ChoiceMenu.isShowing(screen: ["❯ 1. only one", "text"]))
+        XCTAssertFalse(ChoiceMenu.isShowing(screen: ["❯ 1. one", "  3. three"]))
+    }
+}
+
+final class TerminalScreenTests: XCTestCase {
+    func testLineCountFindsBoundary() {
+        for count in [0, 1, 5, 40, 41, 79, 80, 81, 539, 1000] {
+            var calls = 0
+            let found = TerminalScreen.lineCount(rows: 40) { calls += 1; return $0 < count }
+            XCTAssertEqual(found, count, "count \(count)")
+            XCTAssertLessThan(calls, 45, "count \(count)")
+        }
+    }
+}
+
+final class UnreadCountsTests: XCTestCase {
+    func testCountsAllSessionsInOnePass() {
+        func f(_ id: Int, _ s: String, _ kind: FeedKind, _ at: Double) -> FeedItem {
+            FeedItem(id: id, sessionId: s, project: "p", at: at, kind: kind, text: "", tool: nil, local: nil)
+        }
+        let feed = [f(1, "s1", .message, 10), f(2, "s1", .message, 30), f(3, "s1", .tool, 40), f(4, "s2", .message, 50),
+                    f(5, "s3", .message, 5)]
+        let counts = RoomGrouping.unreadCounts(feed: feed, since: ["s1": 20], defaultSince: 8)
+        XCTAssertEqual(counts["s1"], 1)
+        XCTAssertEqual(counts["s2"], 1)
+        XCTAssertNil(counts["s3"])
+    }
+}

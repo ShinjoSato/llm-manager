@@ -10,6 +10,8 @@ final class HostedSession: Identifiable {
     enum End: Equatable {
         case exited(Int32?)
         case limitReached
+        /// claude を起動できなかった（PTY の子プロセスが取れない）。
+        case launchFailed
     }
 
     let id = UUID()
@@ -21,7 +23,11 @@ final class HostedSession: Identifiable {
     private(set) var pid: Int32?
     private(set) var localStatus: ClaudeStatus = .idle
     private(set) var permissionPrompt: PermissionPrompt?
+    /// 入力欄への送信を止める状態（権限プロンプト・選択メニュー・入力待ち）。
+    private(set) var inputBlock: InputBlock?
     private(set) var end: End?
+    /// 最後に解決できた sessionId。終了して monitor の対応表から消えた後も会話を出すために持ち続ける。
+    @ObservationIgnored var lastSessionId: String?
     /// 最後にローカル判定が変わった時刻（monitor 未接続時の並び順に使う）。
     private(set) var lastChangeAt = Date()
 
@@ -37,6 +43,7 @@ final class HostedSession: Identifiable {
             self?.lastChangeAt = Date()
         }
         terminal.onPermissionPromptChanged = { [weak self] in self?.permissionPrompt = $0 }
+        terminal.onInputBlockChanged = { [weak self] in self?.inputBlock = $0 }
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
     }
@@ -46,10 +53,22 @@ final class HostedSession: Identifiable {
     func start() {
         guard pid == nil, end == nil else { return }
         terminal.launchClaude(in: project.path)
-        if let pid = terminal.claudePid {
-            self.pid = pid
-            MonitorBridge.store.registerHostedProcess(pid: pid)
+        guard let pid = terminal.claudePid else {
+            terminal.stopStatusMonitoring()
+            end = .launchFailed
+            return
         }
+        self.pid = pid
+        MonitorBridge.store.registerHostedProcess(pid: pid)
+    }
+
+    /// 今の sessionId（monitor の対応表から引けなければ最後に解決できたもの）。
+    func resolveSessionId(_ store: MonitorStore) -> String? {
+        if let pid, let id = store.sessionId(forHostedPid: pid) {
+            lastSessionId = id
+            return id
+        }
+        return lastSessionId
     }
 
     /// claude を終わらせる（ルームを閉じる時）。
@@ -59,19 +78,21 @@ final class HostedSession: Identifiable {
         release()
     }
 
-    func send(_ text: String, onAborted: (() -> Void)? = nil) -> ClaudeTerminalView.SendResult? {
+    func send(_ text: String, onAborted: ((InputBlock) -> Void)? = nil) -> ClaudeTerminalView.SendResult? {
         guard isRunning else { return nil }
         return terminal.sendMessage(text, onAborted: onAborted)
     }
 
-    func answerPermission(allow: Bool) -> Bool {
-        guard isRunning else { return false }
-        return terminal.answerPermission(allow: allow)
+    func answerPermission(_ expected: PermissionPrompt, allow: Bool) -> ClaudeTerminalView.AnswerResult {
+        guard isRunning else { return .noPrompt }
+        return terminal.answerPermission(expected, allow: allow)
     }
 
     private func handleLimitReached() {
         guard end == nil else { return }
         end = .limitReached
+        permissionPrompt = nil
+        inputBlock = nil
         terminal.stopStatusMonitoring()
         terminal.terminate()
         release()
@@ -82,11 +103,13 @@ final class HostedSession: Identifiable {
         terminal.stopStatusMonitoring()
         if end == nil { end = .exited(code) }
         permissionPrompt = nil
+        inputBlock = nil
         release()
     }
 
     private func release() {
         guard let pid else { return }
+        _ = resolveSessionId(MonitorBridge.store)
         MonitorBridge.store.unregisterHostedProcess(pid: pid)
     }
 }

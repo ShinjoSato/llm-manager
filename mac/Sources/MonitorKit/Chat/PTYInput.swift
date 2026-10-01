@@ -14,10 +14,7 @@ public enum PTYInput {
     /// 入力欄に入れる本文。bracketed paste なら改行を含めたまま 1 回の貼り付けとして届く（Enter で送信されない）。
     /// 返り値が nil なら送るものが無い。
     public static func messageBody(_ text: String, bracketedPaste: Bool) -> String? {
-        // 貼り付けの終端（ESC[201~）を本文から作らせないため ESC は落とす。
-        var body = text.replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .replacingOccurrences(of: "\u{1b}", with: "")
+        var body = sanitize(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n"))
         body = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return nil }
         if bracketedPaste {
@@ -25,6 +22,85 @@ public enum PTYInput {
         }
         // 貼り付けモードでない端末では改行が送信になるので、1 行に畳む。
         return body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+    }
+
+    /// 改行とタブ以外の制御文字（C0・DEL・C1）を落とす。ESC や Ctrl-C 等が本文から端末操作として効かないようにするため。
+    public static func sanitize(_ text: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars where !isControl(scalar) { scalars.append(scalar) }
+        return String(scalars)
+    }
+
+    static func isControl(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x0A, 0x09: return false
+        case 0x00...0x1F, 0x7F, 0x80...0x9F: return true
+        default: return false
+        }
+    }
+}
+
+/// 入力欄への送信（Enter）を止めるべき端末画面の状態。
+public enum InputBlock: Sendable, Equatable {
+    /// ツール使用の権限プロンプト。Enter が「1. Yes」になる。
+    case permission
+    /// 選択メニュー（plan の承認・AskUserQuestion・フォルダの trust 確認など）。Enter が選択中の項目になる。
+    case menu
+    /// 入力待ちと判定されたが中身が読めない。安全側で止める。
+    case waiting
+
+    /// 画面から判定する（権限プロンプトを優先）。止めなくてよければ nil。
+    public static func detect(screen: [String]) -> InputBlock? {
+        if PermissionPrompt.parse(screen: screen) != nil { return .permission }
+        if ChoiceMenu.isShowing(screen: screen) { return .menu }
+        return nil
+    }
+}
+
+/// 端末画面に出ている選択メニュー（❯ で選ぶもの）の判定。値は TUI v2.1.286 で確認。
+public enum ChoiceMenu {
+    /// 見る範囲（画面の末尾から）。メニューは常に画面下部に出る。
+    static let tailLines = 30
+    /// メニューの操作案内（行頭）。trust 確認のように番号の無いメニューはこれで見分ける。
+    static let footerPrefixes = ["enter to confirm", "enter to select", "enter to continue", "esc to cancel", "esc to exit"]
+
+    public static func isShowing(screen: [String]) -> Bool {
+        var lines = Array(screen.suffix(tailLines)).map { $0.trimmingCharacters(in: .whitespaces) }
+        // 下部に入力欄（罫線の直下の ❯ 行）があれば、それより上は会話の履歴なので見ない。
+        if let box = lines.indices.last(where: { $0 > 0 && lines[$0].hasPrefix("❯") && PermissionPrompt.isSeparator(lines[$0 - 1]) }) {
+            lines = Array(lines[(box + 1)...])
+        }
+        let footerZone = lines.filter { !$0.isEmpty }.suffix(8)
+        if footerZone.contains(where: { line in footerPrefixes.contains { line.lowercased().hasPrefix($0) } }) { return true }
+        return hasNumberedChoices(lines)
+    }
+
+    /// 「❯ n. …」の近くに n±1 の選択肢が並んでいるか。
+    static func hasNumberedChoices(_ lines: [String]) -> Bool {
+        for (index, line) in lines.enumerated() {
+            guard let number = choiceNumber(line, cursor: true) else { continue }
+            let window = lines[max(0, index - 6)..<min(lines.count, index + 7)]
+            if window.contains(where: { other in
+                guard let n = choiceNumber(other, cursor: false) else { return false }
+                return n == number + 1 || n == number - 1
+            }) { return true }
+        }
+        return false
+    }
+
+    /// 選択肢の番号。`cursor` なら ❯ の付いた行だけを見る。
+    static func choiceNumber(_ line: String, cursor: Bool) -> Int? {
+        var rest = Substring(line)
+        if rest.hasPrefix("❯") {
+            rest = rest.dropFirst().drop(while: { $0 == " " })
+        } else if cursor {
+            return nil
+        }
+        let digits = rest.prefix(while: \.isASCII).prefix(while: \.isNumber)
+        guard !digits.isEmpty, digits.count <= 2 else { return nil }
+        let after = rest.dropFirst(digits.count)
+        guard after.hasPrefix(". ") else { return nil }
+        return Int(digits)
     }
 }
 
@@ -74,5 +150,27 @@ public struct PermissionPrompt: Sendable, Equatable {
     static func isRule(_ line: String, of character: Character) -> Bool {
         let t = line.trimmingCharacters(in: .whitespaces)
         return t.count >= 8 && t.allSatisfy { $0 == character }
+    }
+}
+
+/// 端末バッファの読み出しの補助。
+public enum TerminalScreen {
+    /// `exists(i)` が「i < 行数」の時だけ true になる前提で、行数を指数探索 + 二分探索で求める（呼び出しは O(log 行数)）。
+    public static func lineCount(rows: Int, exists: (Int) -> Bool) -> Int {
+        guard exists(0) else { return 0 }
+        var low = max(0, rows - 1)
+        guard exists(low) else {
+            return (0..<rows).first { !exists($0) } ?? rows
+        }
+        var high = low + 1
+        while exists(high) {
+            low = high
+            high *= 2
+        }
+        while high - low > 1 {
+            let mid = (low + high) / 2
+            if exists(mid) { low = mid } else { high = mid }
+        }
+        return high
     }
 }

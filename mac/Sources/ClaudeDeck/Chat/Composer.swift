@@ -41,6 +41,15 @@ struct Composer: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(ChatTheme.inputSurface))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChatTheme.inputBorder))
         .opacity(enabled ? 1 : 0.7)
+        .overlay(alignment: .topLeading) {
+            // 書きかけがあると欄内の案内が隠れるので、無効の理由を欄の上にも出す。
+            if let disabledReason, !text.isEmpty {
+                Text(disabledReason)
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.permission)
+                    .offset(x: 4, y: -18)
+            }
+        }
         .padding(.horizontal, 28)
         .padding(.top, 8)
         .padding(.bottom, 18)

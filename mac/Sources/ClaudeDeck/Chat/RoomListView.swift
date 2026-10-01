@@ -56,7 +56,7 @@ struct RoomListView: View {
             .buttonStyle(.plain)
             .help("プロジェクトを選んで Claude Code を起動（新しいルーム）")
             .popover(isPresented: $showingLauncher, arrowEdge: .bottom) {
-                ProjectLauncher { project in
+                ProjectLauncher(onChanged: { model.projectsChanged() }) { project in
                     showingLauncher = false
                     model.launch(project)
                 }
@@ -280,8 +280,10 @@ struct UsageBar: View {
     }
 }
 
-/// 「+」の中身: 登録済みプロジェクトから選んで起動する。
+/// 「+」の中身: 登録済みプロジェクトから選んで起動する。一覧の追加・削除・取り込み・GitHub の紐づけもここで行う。
 struct ProjectLauncher: View {
+    /// 一覧（GitHub の紐づけ含む）を書き換えた時。
+    let onChanged: () -> Void
     let onPick: (ManagedProject) -> Void
     @State private var projects = ProjectStore.load()
     @State private var filter = ""
@@ -302,20 +304,36 @@ struct ProjectLauncher: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(filtered, id: \.path) { project in
-                        Button { onPick(project) } label: {
-                            HStack(spacing: 8) {
-                                RoomAvatar(name: project.name, status: nil, size: 26)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(project.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(ChatTheme.text)
-                                    Text(project.path).font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)
-                                        .lineLimit(1).truncationMode(.middle)
+                        HStack(spacing: 4) {
+                            Button { onPick(project) } label: {
+                                HStack(spacing: 8) {
+                                    RoomAvatar(name: project.name, status: nil, size: 26)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(project.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(ChatTheme.text)
+                                        Text(subtitle(of: project)).font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)
+                                            .lineLimit(1).truncationMode(.middle)
+                                    }
+                                    Spacer()
                                 }
-                                Spacer()
+                                .padding(6)
+                                .contentShape(Rectangle())
                             }
-                            .padding(6)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            .help(project.path)
+                            Menu {
+                                actions(for: project)
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(ChatTheme.secondary)
+                                    .frame(width: 24, height: 24)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                            .help("GitHub Project の設定・一覧から削除")
                         }
-                        .buttonStyle(.plain)
+                        .contextMenu { actions(for: project) }
                     }
                     if filtered.isEmpty {
                         Text("プロジェクトがありません").font(ChatTheme.caption).foregroundStyle(ChatTheme.tertiary).padding(6)
@@ -324,16 +342,44 @@ struct ProjectLauncher: View {
             }
             .frame(height: min(CGFloat(max(filtered.count, 1)) * 44, 320))
             Divider().overlay(ChatTheme.border)
-            Button { addFolder() } label: {
-                Label("フォルダを追加…", systemImage: "folder.badge.plus")
-                    .font(ChatTheme.caption)
-                    .foregroundStyle(ChatTheme.secondary)
+            HStack {
+                Button { addFolder() } label: {
+                    Label("フォルダを追加…", systemImage: "folder.badge.plus")
+                }
+                .help("Claude Code を起動するプロジェクトフォルダを一覧に追加")
+                Spacer()
+                Button { importRegistry() } label: {
+                    Label("registry.tsv を取り込む", systemImage: "square.and.arrow.down")
+                }
+                .help("ai-manager の projects/registry.tsv にあるプロジェクトを一覧に足す（既にあるものは重複させない）")
             }
             .buttonStyle(.plain)
+            .font(ChatTheme.caption)
+            .foregroundStyle(ChatTheme.secondary)
         }
         .padding(12)
-        .frame(width: 320)
+        .frame(width: 360)
         .background(ChatTheme.sidebar)
+    }
+
+    @ViewBuilder
+    private func actions(for project: ManagedProject) -> some View {
+        Button("GitHub Project を設定…") {
+            if GitHubProjectPrompt.run(for: project) { reload() }
+        }
+        Button("Finder で表示") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.path)])
+        }
+        Divider()
+        Button("一覧から削除", role: .destructive) {
+            ProjectStore.remove(path: project.path)
+            reload()
+        }
+    }
+
+    private func subtitle(of project: ManagedProject) -> String {
+        if let mapping = GitHubBoard.mapping(forProject: project) { return "\(project.path)  ·  GH #\(mapping.number)" }
+        return project.path
     }
 
     private var filtered: [ManagedProject] {
@@ -343,6 +389,16 @@ struct ProjectLauncher: View {
         }
     }
 
+    private func reload() {
+        projects = ProjectStore.load()
+        onChanged()
+    }
+
+    private func importRegistry() {
+        ProjectStore.importFromRegistry()
+        reload()
+    }
+
     private func addFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -350,6 +406,7 @@ struct ProjectLauncher: View {
         panel.allowsMultipleSelection = true
         panel.prompt = "追加"
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls { projects = ProjectStore.add(path: url.path) }
+        for url in panel.urls { ProjectStore.add(path: url.path) }
+        reload()
     }
 }

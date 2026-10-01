@@ -5,7 +5,7 @@ import MonitorKit
 /// Claude Code の作業状態（ペイン見出しのバッジ表示に使う）。
 enum ClaudeStatus: Equatable {
     case working        // 出力が流れている（生成中）
-    case waitingInput   // 出力停止 かつ 権限確認/質問プロンプトを検出（要応答）
+    case waitingInput   // 権限確認・選択メニュー・質問プロンプトを検出（要応答）
     case idle           // 出力停止 かつ プロンプト無し（待機/完了）
 }
 
@@ -28,7 +28,11 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 画面に出ている権限プロンプトが変わったときに呼ばれる（メインスレッド）。
     var onPermissionPromptChanged: ((PermissionPrompt?) -> Void)?
 
+    /// 入力欄への送信を止める状態が変わったときに呼ばれる（メインスレッド）。
+    var onInputBlockChanged: ((InputBlock?) -> Void)?
+
     private(set) var permissionPrompt: PermissionPrompt?
+    private(set) var inputBlock: InputBlock?
 
     private var scanBuffer = ""
     private var limitHandled = false
@@ -117,18 +121,21 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 判定は端末の「現在画面の下数行」を直接読む（履歴が累積する scanBuffer は使わない）ため、
     /// プロンプト応答後に古い文言が残って誤判定する問題が起きない。
     /// dataReceived も Timer も SwiftTerm 既定キュー（main）上で動くので端末バッファ参照は安全。
-    private func evaluateStatus() {
-        let tail = visibleTailText(lines: 8)
+    func evaluateStatus() {
+        let screen = screenLines()
+        let tail = Self.tailText(screen, lines: 8)
         let quiet = Date().timeIntervalSince(lastDataTime)
-        // 権限プロンプト表示中も点滅表示で出力が流れ続けるので、プロンプトを活動量より先に見る。
-        let prompt = PermissionPrompt.parse(screen: visibleLines())
+        // 権限プロンプト・選択メニュー表示中も点滅表示で出力が流れ続けるので、活動量より先に見る。
+        let prompt = PermissionPrompt.parse(screen: screen)
+        var block = InputBlock.detect(screen: screen)
         let newStatus: ClaudeStatus
-        if prompt != nil {
+        if block != nil {
             newStatus = .waitingInput
         } else if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
             newStatus = .working
         } else if Self.waitingPhrases.contains(where: { tail.contains($0) }) {
             newStatus = .waitingInput
+            block = .waiting
         } else {
             newStatus = .idle
         }
@@ -136,15 +143,32 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             permissionPrompt = prompt
             onPermissionPromptChanged?(prompt)
         }
+        if block != inputBlock {
+            inputBlock = block
+            onInputBlockChanged?(block)
+        }
         guard newStatus != currentStatus else { return }
         currentStatus = newStatus
         onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
     }
 
-    /// 現在表示中の画面の全行（上から順・右端の空白は除く）。
-    func visibleLines() -> [String] {
+    /// アプリが今いじっている実画面の全行（上から順・右端の空白は除く）。
+    /// ターミナル表示で上にスクロールしていても、表示位置（yDisp）ではなく末尾の `rows` 行を読む。
+    /// SwiftTerm は `lines.count == yBase + rows` を保つが yBase を公開していないので、行数を探って求める。
+    func screenLines() -> [String] {
         let term = getTerminal()
-        return (0..<term.rows).compactMap { term.getLine(row: $0).map(Self.text(of:)) }
+        let rows = term.rows
+        guard rows > 0 else { return [] }
+        let top = term.buffer.totalLinesTrimmed
+        let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
+        let base = max(0, count - rows)
+        return (base..<count).compactMap { term.getScrollInvariantLine(row: top + $0).map(Self.text(of:)) }
+    }
+
+    /// 送信を止めるべき状態か。タイマーを待たず今の画面で判定し、入力待ちと判定済みなら安全側で止める。
+    func currentInputBlock() -> InputBlock? {
+        if let block = InputBlock.detect(screen: screenLines()) { return block }
+        return currentStatus == .waitingInput ? .waiting : nil
     }
 
     // MARK: - 入力（本人のキー入力として PTY に書く）
@@ -152,20 +176,21 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     enum SendResult: Equatable {
         case sent
         case empty
-        /// 権限プロンプト表示中。Enter がプロンプトの「Yes」になってしまうので送らない。
-        case blockedByPermissionPrompt
+        /// 権限プロンプト・選択メニュー・入力待ちの表示中。Enter がその選択になってしまうので送らない。
+        case blocked(InputBlock)
     }
 
     /// チャット欄の本文を入力欄に貼り付けてから Enter で送る。作業中でも Claude Code 側でキューに積まれる。
-    /// `onAborted` は貼り付けから Enter までの間に権限プロンプトが出て、Enter を押さずにやめた時に呼ばれる。
-    func sendMessage(_ text: String, onAborted: (() -> Void)? = nil) -> SendResult {
-        guard PermissionPrompt.parse(screen: visibleLines()) == nil else { return .blockedByPermissionPrompt }
+    /// 貼り付けの前に必ず判定するので、止める時は入力欄に何も入れない。
+    /// `onAborted` は貼り付けから Enter までの間に止めるべき状態になり、Enter を押さずにやめた時に呼ばれる（本文は入力欄に残る）。
+    func sendMessage(_ text: String, onAborted: ((InputBlock) -> Void)? = nil) -> SendResult {
+        if let block = currentInputBlock() { return .blocked(block) }
         guard let body = PTYInput.messageBody(text, bracketedPaste: getTerminal().bracketedPasteMode) else { return .empty }
         send(txt: body)
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.submitDelay) { [weak self] in
             guard let self else { return }
-            guard PermissionPrompt.parse(screen: self.visibleLines()) == nil else {
-                onAborted?()
+            if let block = self.currentInputBlock() {
+                onAborted?(block)
                 return
             }
             self.send(txt: PTYInput.submitKey)
@@ -173,26 +198,31 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         return .sent
     }
 
-    /// 権限プロンプトに答える。画面にプロンプトが無ければ、入力欄へ文字が入るのを避けて何もしない。
-    func answerPermission(allow: Bool) -> Bool {
-        guard PermissionPrompt.parse(screen: visibleLines()) != nil else { return false }
-        send(txt: allow ? PTYInput.allowKey : PTYInput.denyKey)
-        return true
+    enum AnswerResult: Equatable {
+        case sent
+        /// 権限プロンプトが出ていない。入力欄へ文字が入るのを避けて何もしない。
+        case noPrompt
+        /// 押した時に見ていたものと別のプロンプトに替わっている。
+        case changed(PermissionPrompt)
     }
 
-    /// 現在表示中の画面の下から `lines` 行を、小文字化して連結した文字列で返す。
-    private func visibleTailText(lines: Int) -> String {
-        let term = getTerminal()
-        let rows = term.rows
-        guard rows > 0 else { return "" }
-        var text = ""
-        for r in max(0, rows - lines)..<rows {
-            if let line = term.getLine(row: r) {
-                text += Self.text(of: line)
-                text += "\n"
-            }
+    /// 権限プロンプトに答える。`expected`（カードに出していたもの）と今の画面のプロンプトが一致する時だけキーを送る。
+    func answerPermission(_ expected: PermissionPrompt, allow: Bool) -> AnswerResult {
+        guard let current = PermissionPrompt.parse(screen: screenLines()) else {
+            evaluateStatus()
+            return .noPrompt
         }
-        return text.lowercased()
+        guard current == expected else {
+            evaluateStatus()
+            return .changed(current)
+        }
+        send(txt: allow ? PTYInput.allowKey : PTYInput.denyKey)
+        return .sent
+    }
+
+    /// 画面の下から `lines` 行を、小文字化して連結した文字列で返す。
+    private static func tailText(_ screen: [String], lines: Int) -> String {
+        screen.suffix(lines).joined(separator: "\n").lowercased()
     }
 
     /// 1 行の文字列。TUI は空白を書かずにカーソル移動で桁を飛ばすので、未記入のセル（NUL）を空白に戻す（全角の後半セルは除く）。
@@ -230,10 +260,9 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     private func scan(_ chunk: String) {
         scanBuffer += chunk
         let cleaned = Self.stripANSI(scanBuffer).lowercased()
-        for phrase in Self.limitPhrases where cleaned.contains(phrase) {
+        if Self.limitPhrases.contains(where: { cleaned.contains($0) }) {
             limitHandled = true
             DispatchQueue.main.async { [weak self] in self?.onLimitReached?() }
-            break
         }
         // バッファは末尾だけ保持（文言は分割受信されうるので少し広めに）
         if scanBuffer.count > 8192 {

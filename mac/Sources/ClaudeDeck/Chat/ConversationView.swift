@@ -23,9 +23,15 @@ struct ConversationView: View {
                 }
             case .github:
                 if let mapping = model.boardMapping(for: room) {
-                    BoardHost(board: model.boardView(for: mapping))
+                    ViewHost(view: model.boardView(for: mapping))
                 } else {
                     placeholder("このプロジェクトには GitHub Project の紐づけがありません。")
+                }
+            case .appstore:
+                if model.hasAppStore(room) {
+                    ViewHost(view: model.appStoreView(for: room))
+                } else {
+                    placeholder("このプロジェクトは appstore.tsv に登録がありません。")
                 }
             }
         }
@@ -75,9 +81,12 @@ struct ConversationHeader: View {
             if model.xcodeProject(for: room) != nil {
                 HeaderIconButton(symbol: "hammer", help: "Xcode で開く") { model.openInXcode(room) }
             }
-            ModeSegment(selected: mode, isEnabled: { m in
+            // App Store は登録のあるプロジェクトだけ出す（他は無効表示で並べる）。
+            ModeSegment(selected: mode,
+                        modes: RoomMode.allCases.filter { $0 != .appstore || model.hasAppStore(room) },
+                        isEnabled: { m in
                 switch m {
-                case .chat: return true
+                case .chat, .appstore: return true
                 case .terminal: return room.hosted != nil
                 case .github: return model.boardMapping(for: room) != nil
                 }
@@ -130,12 +139,13 @@ struct HeaderIconButton: View {
 
 struct ModeSegment: View {
     let selected: RoomMode
+    let modes: [RoomMode]
     let isEnabled: (RoomMode) -> Bool
     let onSelect: (RoomMode) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(RoomMode.allCases, id: \.self) { mode in
+            ForEach(modes, id: \.self) { mode in
                 let enabled = isEnabled(mode)
                 Button { onSelect(mode) } label: {
                     HStack(spacing: 5) {
@@ -170,22 +180,11 @@ struct ChatPane: View {
         VStack(spacing: 0) {
             MessageList(model: model, room: room, items: items)
             Composer(text: Binding(get: { model.drafts[room.id] ?? "" }, set: { model.drafts[room.id] = $0 }),
-                     disabledReason: disabledReason) { text in
+                     disabledReason: ChatModel.inputDisabledReason(for: room)) { text in
                 model.send(text, to: room)
             }
         }
         .background(ChatTheme.background)
-    }
-
-    private var disabledReason: String? {
-        guard let session = room.hosted else { return "外部セッションにはここから送れません" }
-        switch session.end {
-        case .limitReached: return "上限に達したため終了しました"
-        case .exited: return "claude は終了しました"
-        case nil:
-            if session.pid == nil { return "起動中…" }
-            return session.permissionPrompt != nil ? "権限の確認に答えると送れます" : nil
-        }
     }
 }
 
@@ -219,7 +218,7 @@ struct MessageList: View {
                                        description: prompt.title,
                                        lines: prompt.lines,
                                        busy: model.busyPermissionKeys.contains(ChatModel.ptyPermissionKey(session))) { allow in
-                            model.answerOnTerminal(session, allow: allow)
+                            model.answerOnTerminal(session, prompt: prompt, allow: allow)
                         }
                     }
                     Color.clear.frame(height: 1).id(Self.bottomId)
@@ -265,6 +264,10 @@ struct MessageList: View {
             return ("bolt.horizontal.circle", "monitor に未接続のため会話を表示できません。\nターミナルに切り替えると操作できます。")
         }
         guard let sessionId = room.sessionId else {
+            if room.hosted?.end == .launchFailed {
+                return ("exclamationmark.triangle", "claude を起動できませんでした。\nログインシェルの PATH に claude があるか確かめてください。")
+            }
+            if room.hosted?.end != nil { return ("stop.circle", "会話を取得する前に claude が終了しました。") }
             return ("hourglass", "セッションの開始を待っています…")
         }
         if model.loadingTranscripts.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…") }

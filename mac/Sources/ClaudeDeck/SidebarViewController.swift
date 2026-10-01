@@ -138,40 +138,7 @@ final class SidebarViewController: NSViewController {
 
     @objc private func configureGitHub() {
         guard let p = project(at: tableView.clickedRow) else { return }
-        let alert = NSAlert()
-        alert.messageText = "GitHub Project を設定"
-        alert.informativeText = """
-        「\(p.name)」に紐づける GitHub Project を入力してください。
-        ・URL 例: https://github.com/users/ShinjoSato/projects/5
-        ・owner/番号 例: ShinjoSato/5
-        ・番号のみ（owner は git remote から補完）
-        空欄で「設定」を押すと解除します。
-        """
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        if let o = p.ghOwner, let n = p.ghNumber { field.stringValue = "\(o)/\(n)" }
-        alert.accessoryView = field
-        alert.addButton(withTitle: "設定")
-        alert.addButton(withTitle: "キャンセル")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let input = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if input.isEmpty {
-            ProjectStore.setGitHub(path: p.path, owner: nil, number: nil)   // 解除
-            reload()
-            return
-        }
-        let ownerFallback = GitHubBoard.gitRemoteOwner(forPath: p.path)
-        if let ref = GitHubBoard.parseProjectRef(input, ownerFallback: ownerFallback) {
-            ProjectStore.setGitHub(path: p.path, owner: ref.owner, number: ref.number)
-            reload()
-        } else {
-            NSSound.beep()
-            let err = NSAlert()
-            err.messageText = "入力を認識できませんでした"
-            err.informativeText = "Project の URL、または owner/番号 の形式で入力してください。"
-            err.runModal()
-        }
+        if GitHubProjectPrompt.run(for: p) { reload() }
     }
 }
 

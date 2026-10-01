@@ -77,6 +77,15 @@ public enum RoomGrouping {
         feed.reduce(0) { $0 + ($1.sessionId == sessionId && $1.kind == .message && $1.at > since ? 1 : 0) }
     }
 
+    /// 全セッションの未読数を feed の 1 回の走査で数える。`since` に無いセッションは `defaultSince` から数える。
+    public static func unreadCounts(feed: [FeedItem], since: [String: Double], defaultSince: Double) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for item in feed where item.kind == .message && item.at > (since[item.sessionId] ?? defaultSince) {
+            counts[item.sessionId, default: 0] += 1
+        }
+        return counts
+    }
+
     /// プロジェクト名から決まる色番号。`hashValue` はプロセスごとに変わるので自前の FNV-1a を使う。
     public static func colorIndex(for name: String, paletteSize: Int) -> Int {
         guard paletteSize > 0 else { return 0 }
