@@ -117,7 +117,7 @@ struct RoomRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            RoomAvatar(name: room.name, status: room.status, size: 36)
+            PixelAvatar(status: room.status, size: 36)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(room.name)
@@ -186,10 +186,9 @@ struct ExternalTag: View {
     }
 }
 
-/// プロジェクトの頭文字アイコン + 状態ドット。
+/// プロジェクトの頭文字アイコン（セッションを持たないプロジェクト一覧用）。
 struct RoomAvatar: View {
     let name: String
-    let status: SessionStatus?
     let size: CGFloat
 
     var body: some View {
@@ -200,15 +199,6 @@ struct RoomAvatar: View {
             .frame(width: size, height: size)
             .background(RoundedRectangle(cornerRadius: size * 0.28).fill(color.opacity(0.16)))
             .overlay(RoundedRectangle(cornerRadius: size * 0.28).stroke(color.opacity(0.28)))
-            .overlay(alignment: .bottomTrailing) {
-                if let status {
-                    Circle()
-                        .fill(ChatTheme.color(for: status))
-                        .frame(width: size * 0.3, height: size * 0.3)
-                        .overlay(Circle().stroke(ChatTheme.sidebar, lineWidth: 2))
-                        .offset(x: 3, y: 3)
-                }
-            }
     }
 }
 
@@ -328,7 +318,7 @@ struct ProjectLauncher: View {
                         HStack(spacing: 4) {
                             Button { onPick(project) } label: {
                                 HStack(spacing: 8) {
-                                    RoomAvatar(name: project.name, status: nil, size: 26)
+                                    RoomAvatar(name: project.name, size: 26)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(project.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(ChatTheme.text)
                                         Text(subtitle(of: project)).font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)
