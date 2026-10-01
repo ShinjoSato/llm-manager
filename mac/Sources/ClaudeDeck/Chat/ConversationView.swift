@@ -1,59 +1,27 @@
 import SwiftUI
 import MonitorKit
 
-/// 中央カラム: 見出し + （チャット / ターミナル / GitHub）。
+/// 中央カラム: 見出し + チャット。
 struct ConversationView: View {
     @Bindable var model: ChatModel
     let room: Room
 
     var body: some View {
-        let mode = model.mode(for: room.id)
         VStack(spacing: 0) {
-            ConversationHeader(model: model, room: room, mode: mode)
+            ConversationHeader(model: model, room: room)
             if room.isExternal { ExternalBanner(model: model, room: room) }
-            switch mode {
-            case .chat:
-                ChatPane(model: model, room: room)
-            case .terminal:
-                if let session = room.hosted {
-                    TerminalHost(terminal: session.terminal)
-                        .padding(8)
-                        .background(Color.black)
-                } else {
-                    placeholder("外部セッションの端末はここでは開けません。")
-                }
-            case .github:
-                if let mapping = model.boardMapping(for: room) {
-                    ViewHost(view: model.boardView(for: mapping))
-                } else {
-                    placeholder("このプロジェクトには GitHub Project の紐づけがありません。")
-                }
-            case .appstore:
-                if model.hasAppStore(room) {
-                    ViewHost(view: model.appStoreView(for: room))
-                } else {
-                    placeholder("このプロジェクトは appstore.tsv に登録がありません。")
-                }
-            }
+            ChatPane(model: model, room: room)
         }
         // 吹き出しの本文は外部由来なので、http / https 以外のリンクは開かない。
         .environment(\.openURL, OpenURLAction { url in
             ChatMarkdown.isOpenableLink(url) ? .systemAction : .discarded
         })
     }
-
-    private func placeholder(_ text: String) -> some View {
-        Text(text)
-            .font(ChatTheme.body)
-            .foregroundStyle(ChatTheme.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 }
 
 struct ConversationHeader: View {
     let model: ChatModel
     let room: Room
-    let mode: RoomMode
 
     var body: some View {
         HStack(spacing: 12) {
@@ -81,16 +49,6 @@ struct ConversationHeader: View {
             }
             Spacer(minLength: 12)
             EditorButtons(model: model, room: room)
-            // App Store は登録のあるプロジェクトだけ出す（他は無効表示で並べる）。
-            ModeSegment(selected: mode,
-                        modes: RoomMode.allCases.filter { $0 != .appstore || model.hasAppStore(room) },
-                        isEnabled: { m in
-                switch m {
-                case .chat, .appstore: return true
-                case .terminal: return room.hosted != nil
-                case .github: return model.boardMapping(for: room) != nil
-                }
-            }) { model.setMode($0, for: room.id) }
         }
         .padding(.horizontal, 20)
         .frame(height: 64)
@@ -181,38 +139,6 @@ struct HeaderButton: View {
         .disabled(disabled)
         .help(help)
         .onHover { hovering = $0 }
-    }
-}
-
-struct ModeSegment: View {
-    let selected: RoomMode
-    let modes: [RoomMode]
-    let isEnabled: (RoomMode) -> Bool
-    let onSelect: (RoomMode) -> Void
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(modes, id: \.self) { mode in
-                let enabled = isEnabled(mode)
-                Button { onSelect(mode) } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: mode.symbol).font(.system(size: 11))
-                        Text(mode.title)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(mode == selected ? ChatTheme.heading : enabled ? ChatTheme.secondary : ChatTheme.tertiary.opacity(0.5))
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(mode == selected ? ChatTheme.selectedRow : .clear))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!enabled)
-            }
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
     }
 }
 
@@ -312,7 +238,8 @@ struct MessageList: View {
 
     private var emptyMessage: (String, String) {
         if !model.store.connection.isConnected {
-            return ("bolt.horizontal.circle", "monitor に未接続のため会話を表示できません。\nターミナルに切り替えると操作できます。")
+            return ("bolt.horizontal.circle", "monitor に未接続のため会話を表示できません。"
+                    + (room.hosted?.isRunning == true ? "\n下の入力欄からの送信はできます。" : ""))
         }
         guard let sessionId = room.sessionId else {
             if room.hosted?.end == .launchFailed {

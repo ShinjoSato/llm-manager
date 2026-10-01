@@ -26,13 +26,12 @@ mac/
     Chat/                       チャット画面（ルーム一覧・会話・入力欄・権限カード）
       ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
       ChatModel.swift             ルーム（monitor のセッション + ホスト中のセッション）・会話履歴・権限確認の状態
-      HostedSession.swift         アプリが PTY でホストする claude 1 つ（ルームを切り替えても端末とプロセスを保持）
-      RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・残量
-      ConversationView.swift      見出し・吹き出し・ツール行・権限カード・チャット / ターミナル / GitHub / App Store 切替
+      HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
+      RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・monitor の接続状態
+      ConversationView.swift      見出し・吹き出し・ツール行・権限カード
       Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード）
       MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）
       ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
-      AppKitHosts.swift           既存の端末ビュー / GitHub ボード / App Store 表示を SwiftUI に差し込む
       ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
     Stage/                      右側のステージパネル（画面案B の右 360px）
       StagePanel.swift            見出し（開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
@@ -159,7 +158,9 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   - 会話の見出しのアイコンも同じキャラ。「+」のプロジェクト一覧はセッションを持たないので頭文字アイコンのまま
 - 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。
   一覧の追加・削除・取り込み・GitHub の紐づけもここ）。右クリック → 「ルームを閉じる（claude を終了）」。
-- 下部: 5 時間 / 7 日間の残り% と取得からの経過（statusLine 未設定なら未取得と出す）。monitor 未接続ならその旨を出す。
+- 検索欄の下: monitor 未接続（接続中・再接続待ち）の間だけその旨を出す。
+- 上限の残り% は出さない（statusLine はターミナル起動の Claude Code でしか更新されず、VS Code 拡張だけ動いていると古い値が残るため）。
+  上限到達の強制終了（`LimitGuard` / `LimitWatch`）は従来どおり `MonitorStore.usage`（取得 10 分以内の値だけ）を使う。
 
 ### ステージパネル（右 360px）
 
@@ -187,14 +188,15 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「Xcode」「閉じる」・**チャット / ターミナル / GitHub / App Store** 切替。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「Xcode」「閉じる」。表示の切替は無く、どのルームも常にチャット。
   「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`findXcodeProject`）。「閉じる」は確認ダイアログの後、
   monitor の `close.ts` と同じ AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
   （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。monitor 未接続でも、ホスト中のルームでも使える。
   結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。
   初回は macOS が「claude-deck が Xcode を操作する」許可（オートメーション）を求める。拒否するとエラー（-1743）になる。
-  ターミナルは既存の端末ビュー、GitHub は既存のボード表示、App Store は既存の `AppStoreView`（`appstore.tsv` に登録のあるプロジェクトだけ出す）。
-  切り替えても、ルームを移っても、各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
+  ルームを移っても各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
+- 端末ビュー（`ClaudeTerminalView`）は画面に載せない。PTY の受信は main キューで端末バッファに流れ、状態・権限プロンプト・選択待ち・上限表示は
+  0.3 秒ごとのタイマーと受信時にバッファ末尾の `rows` 行を読むので、ビュー階層に無くても動く。桁数は作成時の 960×640pt のまま固定。
 - 会話は monitor の会話履歴 API（`/api/sessions/:id/transcript` + SSE `transcript`）から組み立てる。
   SSE は起動時に `?transcripts=*` で張り（ルームを選ぶたびに張り直さない）、ルームを開いた時に GET、以降は SSE を id で重複除去して足す。
   再接続（`connectionEpoch` の増加）後は**全件を取り直して置き換える**（切れていた間の発話は手元の末尾より前に入りうるので `?after=` では埋まらない）。
@@ -216,14 +218,15 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   入力欄より上の履歴は見ない。画面下の空行は落としてから見るので、縦に長いウィンドウで上詰めに描かれたメニューも拾う）で行う。
   「❯ n.」の選択肢の形の行は、罫線の直下にあっても入力欄とは見なさない。文言だけで決めた「入力待ち」はバッジ表示用で、
   送信は止めない（返答本文が「Do you want to proceed …?」で終わるだけの画面で送れなくならないように）。入力欄は同じ条件で無効にし、
-  権限なら「権限の確認に答えると送れます」、それ以外は「端末側の選択に答えると送れます（ターミナル表示で操作）」と出す。
+  権限なら「権限の確認に答えると送れます」、それ以外は「端末側で選択肢が出ているため送れません」と出す。
+  **アプリから答えられるのは権限プロンプトだけ**（権限カード）。plan の承認・AskUserQuestion・trust 確認などのメニューには答える手段が無い。
 - 判定は**貼り付けの前**と、**Enter の直前**の 2 回。貼り付けた後に止めた場合は本文が Claude Code の入力欄に残る
   （安全に消すキーが無い。Esc はメニューの取り消しになる）ので、その旨を知らせ、チャット欄の下書きには戻さない（送り直しで二重にしない）。
   取りやめが起きたセッションでは、次の送信の前に端末の入力欄（罫線の間の ❯ 行）が空かを画面から確かめ、残っていれば送らずに
   「端末側の入力欄に前回の本文が残っているようです」と知らせる（前回の本文にくっつけないため）。警告は 1 回だけで、
   もう一度送ると送れる（未知の薄字表示を本文と誤認しても、チャットから送れないまま固まらないため）。
   空欄の時に薄字で出る例文（`Try "…"`）は空とみなす。
-- 判定はターミナル表示のスクロール位置に依らない（SwiftTerm の表示位置 `yDisp` ではなく、バッファ末尾の `rows` 行 = 実画面を読む）。
+- 判定は SwiftTerm の表示位置 `yDisp` ではなく、バッファ末尾の `rows` 行（= 実画面）を読む。
 - 本文からは改行・タブ以外の制御文字（C0・DEL・C1）を落としてから送る（ESC や Ctrl-C が端末操作として効かないように）。
 
 ### 権限カード
@@ -268,22 +271,11 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
     安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。
 
-### GitHub 切替
+### GitHub / App Store 表示（旧ペインのみ）
 
-- そのプロジェクトの Issue を**ステータス別（Todo / In Progress / Debug / Review / Done / その他）にグループ化**して表示。各行は `[repo] #番号 タイトル @担当`、**クリックで GitHub を開く**。右上の 🔄 で再取得。ルームを行き来しても取り直さない。
-- マッピング元: プロジェクトに保存した GitHub 参照（owner/number）→ `projects/github-projects.tsv`（name / owner / number / repo / url）の名前一致。外部セッションは cwd が一覧のプロジェクトと一致すればそれを使う。**マッピングが無いルームでは GitHub を選べない**。
-- 取得は `gh project item-list <number> --owner <owner> --format json` をログインシェル経由で実行（**`gh` の認証 + `project` スコープが前提**）。
-- 解決順（github-projects.tsv）: 環境変数 `CLAUDE_DECK_GH_PROJECTS` → ai-manager ルート配下（後述「ai-manager ルートの解決」）。
-
-### App Store 切替
-
-`projects/appstore.tsv` に登録があるプロジェクト（mirio / sandora 等）は、会話の見出しの切替に **App Store**（`app.badge`）が追加で出る（旧ペインのトグルと同じ表示）。
-
-- **App Store**: そのアプリの審査ステータス・最新 TestFlight ビルド・レビュー件数などを **Web の AppStoreCard 相当のサマリ**で表示。REJECT/FAILED 系は赤、配信中/完了/利用可は緑のバッジ（Web と色基準を合わせている）。右上の 🔄 で再取得。
-- ロジックは **server に一本化**。claude-deck は ASC API を直接叩かず、既存 HTTP API `GET /api/appstore/:name` を fetch するだけ（二重実装しない）。
-- 前提: **server（`:8765`）が起動していること**（`./scripts/dev.sh` 等）。**server 未起動・API エラー・認証未設定時は、その旨をペイン内に文言表示してフォールバック**（アプリは落とさない）。
-- 対象判定元: `projects/appstore.tsv`（name / bundleId）。ルームの名前（プロジェクト名）で引く。**登録が無いプロジェクトでは App Store を出さない**。
-- 解決順（appstore.tsv）: 環境変数 `CLAUDE_DECK_APPSTORE_TSV` → ai-manager ルート配下（後述「ai-manager ルートの解決」）。API ベース URL は `CLAUDE_DECK_API_BASE`（既定 `http://localhost:8765`）で差し替え可能。
+会話画面からは外した。`GitHubBoardView`（`gh project item-list` で Issue をステータス別に表示）と `AppStoreView`（server の
+`GET /api/appstore/:name` のサマリ）は、使われていない旧ペイン（`TerminalPaneViewController`）にだけ残っている。
+「+」の「GitHub Project を設定…」で保存した owner/number は、一覧の 2 行目（`GH #番号`）に出る。
 
 **永続化先**: `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。試験用に別の一覧を使うときは環境変数 `CLAUDE_DECK_PROJECTS`（JSON のパス）で差し替える。
 **初回のみ** `registry.tsv` から取り込んで空にしない（以降は完全にユーザー管理）。
