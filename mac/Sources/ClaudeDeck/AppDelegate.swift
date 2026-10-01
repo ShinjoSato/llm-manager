@@ -6,18 +6,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        // チャット画面は全セッションの transcript を SSE で受ける（ルームを選ぶたびに張り直さないため）。
+        MonitorBridge.store.setTranscriptSubscription(.all)
         MonitorBridge.start()
 
-        let split = MainSplitViewController()
+        let main = MainViewController()
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "claude-deck"
-        window.contentViewController = split
-        window.setFrameAutosaveName("ClaudeDeckMainWindow")
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(hex: 0x0a0f1a)
+        window.titlebarAppearsTransparent = true
+        window.contentViewController = main
+        window.contentMinSize = NSSize(width: 860, height: 520)
+        window.setFrameAutosaveName("ClaudeDeckChatWindow")
         window.center()
         window.makeKeyAndOrderFront(nil)
     }

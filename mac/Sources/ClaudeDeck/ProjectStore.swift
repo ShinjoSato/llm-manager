@@ -8,6 +8,10 @@ import Foundation
 enum ProjectStore {
 
     private static var fileURL: URL {
+        // 試験用の一覧で本物の一覧を汚さないため、環境変数で差し替えられるようにする。
+        if let path = ProcessInfo.processInfo.environment["CLAUDE_DECK_PROJECTS"], !path.isEmpty {
+            return URL(fileURLWithPath: path)
+        }
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("claude-deck", isDirectory: true)
