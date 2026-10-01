@@ -1,0 +1,19 @@
+{
+  "repoOwner": "ShinjoSato",
+  "repoName": "llm-manager",
+  "projectNumber": 8,
+  "projectId": "PVT_kwHOAhOx-c4BamNX",
+  "statusFieldId": "PVTSSF_lAHOAhOx-c4BamNXzhVcqrI",
+  "statusOptions": {
+    "todo": "f75ad846",
+    "in-progress": "47fc9ee4",
+    "debug": "c75ea69c",
+    "done": "98236657"
+  },
+  "branches": {
+    "base": "develop",
+    "preview": "preview",
+    "production": "main"
+  },
+  "preSubmitChecks": []
+}
