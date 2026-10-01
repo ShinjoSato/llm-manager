@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import MonitorKit
 
 /// 入力欄。⏎ 送信・⇧⏎ 改行。`disabledReason` があれば送れない理由を出して無効にする。
 struct Composer: View {
@@ -87,6 +88,8 @@ struct Composer: View {
     }
 
     private func submit() {
+        // 変換中の文字は `text` に入っていないので、送ると確定前の部分を落としたうえで欄を空にしてしまう。
+        if let field = NSApp.keyWindow?.firstResponder as? SubmitTextView, field.hasMarkedText() { return }
         guard canSend else { return }
         if onSend(text) { text = "" }
     }
@@ -140,7 +143,9 @@ struct ComposerTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = scroll.documentView as? SubmitTextView else { return }
-        if textView.string != text {
+        // 変換中の文字は下書きに入っていないので、再描画のたびに書き戻すと消える。本当の外部変更（送信後の空など）だけ反映する。
+        if context.coordinator.sync.shouldApply(external: text, shown: textView.string) {
+            if textView.hasMarkedText() { textView.inputContext?.discardMarkedText() }
             textView.string = text
             context.coordinator.recalculateHeight(textView)
         }
@@ -152,12 +157,14 @@ struct ComposerTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
+        var sync = ComposerSync()
 
         init(_ parent: ComposerTextView) { self.parent = parent }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
+            sync.published(textView.string)
+            if parent.text != textView.string { parent.text = textView.string }
             recalculateHeight(textView)
         }
 
