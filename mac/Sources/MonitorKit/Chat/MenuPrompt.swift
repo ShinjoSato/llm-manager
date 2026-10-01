@@ -8,11 +8,14 @@ public struct MenuPrompt: Sendable, Equatable {
         public var label: String
         /// 選択肢の下に字下げで続く説明行。
         public var detail: [String]
+        /// 複数選択のチェック欄（`[ ]` / `[✓]` 等）。チェック欄の無い選択肢は nil、あれば付いているか。
+        public var checked: Bool?
 
-        public init(number: Int?, label: String, detail: [String] = []) {
+        public init(number: Int?, label: String, detail: [String] = [], checked: Bool? = nil) {
             self.number = number
             self.label = label
             self.detail = detail
+            self.checked = checked
         }
 
         /// 選ぶと文字の入力に移る選択肢。カードからは本文を渡せないので選ばせない。
@@ -29,12 +32,23 @@ public struct MenuPrompt: Sendable, Equatable {
     public var options: [Option]
     /// ❯ の付いている選択肢の位置（options の添字）。
     public var cursor: Int
+    /// 操作案内の行（`Enter to confirm · Esc to cancel` 等）。無ければ ""。
+    public var footer: String
 
-    public init(context: [String], question: String, options: [Option], cursor: Int) {
+    public init(context: [String], question: String, options: [Option], cursor: Int, footer: String = "") {
         self.context = context
         self.question = question
         self.options = options
         self.cursor = cursor
+        self.footer = footer
+    }
+
+    /// 複数選択（チェック欄付き）のメニューか。Enter は確定ではなくチェックの切り替えになる。
+    public var isMultiSelect: Bool { options.contains { $0.checked != nil } }
+
+    /// Esc が claude の終了になるメニュー（案内が「Esc to exit」か、フォルダの trust 確認）。
+    public var cancelExits: Bool {
+        ChoiceMenu.footerExits(footer) || options.contains { $0.label.lowercased().hasPrefix("yes, i trust this folder") }
     }
 
     /// AskUserQuestion の「Type something.」・plan の「Tell Claude what to change」（v2.1.286）。
@@ -47,23 +61,79 @@ public struct MenuPrompt: Sendable, Equatable {
 }
 
 extension ChoiceMenu {
+    /// ❯ の行を探すのは操作案内（無ければ画面の末尾）からこの行数まで。上の会話履歴の ❯ を選択肢と読まないため。
+    static let cursorSearchLines = 24
+
     /// 画面の選択メニューを読み取る。メニューが無い・形が読めない時は nil。
     public static func parse(screen: [String]) -> MenuPrompt? {
         guard isShowing(screen: screen) else { return nil }
-        var lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(tailLines))
-        if let box = InputBox.promptIndex(lines) { lines = Array(lines[(box + 1)...]) }
-        guard let cursorRow = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }) else { return nil }
+        return parseShowing(screen: screen)
+    }
+
+    /// `isShowing` を確かめ済みの画面から読み取る。
+    public static func parseShowing(screen: [String]) -> MenuPrompt? {
+        let lines = menuZone(screen)
+        let footerRow = footerIndex(lines)
+        guard let cursorRow = cursorIndex(lines, footerRow: footerRow) else { return nil }
 
         let rows: [(index: Int, option: MenuPrompt.Option)]
         if choiceNumber(lines[cursorRow], cursor: true) != nil {
             rows = numberedRows(lines, cursorRow: cursorRow)
         } else {
+            // 番号の無い ❯ 行は会話履歴の発話と見分けにくいので、操作案内が出ている時だけ選択肢とみなす。
+            guard footerRow != nil else { return nil }
             rows = plainRows(lines, cursorRow: cursorRow)
         }
         guard rows.count >= 2, let first = rows.first, let cursor = rows.firstIndex(where: { $0.index == cursorRow }) else { return nil }
         let (question, questionRow) = questionAbove(lines, before: first.index)
         let context = contextAbove(lines, before: questionRow ?? first.index)
-        return MenuPrompt(context: context, question: question, options: rows.map(\.option), cursor: cursor)
+        let footer = footerRow.map { lines[$0].trimmingCharacters(in: .whitespaces) } ?? ""
+        return MenuPrompt(context: context, question: question, options: rows.map(\.option), cursor: cursor, footer: footer)
+    }
+
+    /// メニューを探す範囲（画面の下部。入力欄があればその下だけ）。
+    static func menuZone(_ screen: [String]) -> [String] {
+        var lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(tailLines))
+        if let box = InputBox.promptIndex(lines) { lines = Array(lines[(box + 1)...]) }
+        return lines
+    }
+
+    static func footerIndex(_ lines: [String]) -> Int? {
+        lines.lastIndex { isFooter($0) }
+    }
+
+    static func isFooter(_ line: String) -> Bool {
+        let lowered = line.trimmingCharacters(in: .whitespaces).lowercased()
+        return footerPrefixes.contains { lowered.hasPrefix($0) }
+    }
+
+    /// 案内行が「Esc to exit」（Esc で claude が終わる）か。
+    public static func footerExits(_ footer: String) -> Bool {
+        footer.lowercased().contains("esc to exit")
+    }
+
+    /// 案内行（無ければ末尾）から上へ限られた行数だけ ❯ の行を探す。会話の返答（⏺）に当たればそこで止める。
+    static func cursorIndex(_ lines: [String], footerRow: Int?) -> Int? {
+        var index = (footerRow ?? lines.count) - 1
+        var scanned = 0
+        while index >= 0, scanned < cursorSearchLines {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("⏺") { return nil }
+            if trimmed.hasPrefix("❯") { return index }
+            index -= 1
+            scanned += 1
+        }
+        return nil
+    }
+
+    /// 選択肢が出ているのに中身を読めない時、そのメニューを見分ける写し（押した時と今が同じかの照合に使う）。
+    /// 選択肢として読める・メニューが無い時は nil。
+    public static func unreadable(screen: [String]) -> UnreadableMenu? {
+        guard isShowing(screen: screen), parseShowing(screen: screen) == nil else { return nil }
+        let lines = menuZone(screen).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let footer = footerIndex(lines).map { lines[$0] } ?? ""
+        let exits = footerExits(footer) || lines.contains { $0.lowercased().contains("trust this folder") }
+        return UnreadableMenu(lines: Array(lines.suffix(12)), cancelExits: exits)
     }
 
     /// 番号付きの選択肢。❯ の行から番号が 1 ずつ続く範囲だけを取る（上の本文の番号付きリストを混ぜないため）。
@@ -90,7 +160,8 @@ extension ChoiceMenu {
                 }
                 detail.append(trimmed)
             }
-            return (index, MenuPrompt.Option(number: number, label: label(afterNumberIn: lines[index]), detail: detail))
+            let (text, checked) = checkbox(in: label(afterNumberIn: lines[index]))
+            return (index, MenuPrompt.Option(number: number, label: text, detail: detail, checked: checked))
         }
     }
 
@@ -127,25 +198,55 @@ extension ChoiceMenu {
         return ("", nil)
     }
 
-    /// 問いの上の本文。すぐ上が罫線なら（plan の承認）、その罫線の上の囲みを本文とする。
+    /// 問いの上の本文。上の罫線までを囲みとし（すぐ上が罫線の plan の承認はその上の囲み）、
+    /// 罫線が見当たらなければ空行・会話の行・経過表示で止める（照合に使うので変化する行を入れない）。
     static func contextAbove(_ lines: [String], before row: Int) -> [String] {
-        var collected: [String] = []
-        var crossedRule = false
-        var index = row - 1
-        while index >= 0, collected.count < 12 {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if PermissionPrompt.isSeparator(line) {
-                guard collected.isEmpty, !crossedRule else { break }
-                crossedRule = true
-            } else if !trimmed.isEmpty {
-                // 入力欄の上の過去の発話（❯ …）は本文に入れない。
-                if trimmed.hasPrefix("❯") { break }
-                collected.append(trimmed)
-            }
-            index -= 1
+        var end = row - 1
+        while end >= 0, lines[end].trimmingCharacters(in: .whitespaces).isEmpty { end -= 1 }
+        if end >= 0, PermissionPrompt.isSeparator(lines[end]) { end -= 1 }
+        guard end >= 0 else { return [] }
+        var top = end
+        var bounded = false
+        while top >= 0, end - top < contextScanLines {
+            let line = lines[top]
+            if PermissionPrompt.isSeparator(line) { bounded = true; break }
+            if isHistoryOrProgress(line) { break }
+            top -= 1
         }
-        return collected.reversed()
+        guard top < end else { return [] }
+        var collected: [String] = []
+        for line in lines[(top + 1)...end].reversed() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                if bounded { continue }
+                break
+            }
+            collected.append(trimmed)
+        }
+        return Array(collected.prefix(12).reversed())
+    }
+
+    /// 本文の上端を探す行数。
+    static let contextScanLines = 24
+
+    /// 会話の履歴（返答の ⏺・過去の発話の ❯）や経過表示（`✻ Thinking… (3s)` 等）の行。
+    static func isHistoryOrProgress(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let first = trimmed.first else { return false }
+        if first == "⏺" || first == "❯" { return true }
+        return "✻✽✶✳✢✺·*".contains(first) && trimmed.contains("…")
+    }
+
+    /// 行頭のチェック欄（`[ ]` / `[✓]` / `[x]` / `☐` / `☒` / `☑`）を外し、付いているかを返す。無ければ checked は nil。
+    static func checkbox(in label: String) -> (String, Bool?) {
+        let marks: [(String, Bool)] = [("[ ]", false), ("[✓]", true), ("[✔]", true), ("[x]", true), ("[X]", true),
+                                       ("☐", false), ("☒", true), ("☑", true)]
+        for (mark, checked) in marks where label.hasPrefix(mark) {
+            let rest = label.dropFirst(mark.count)
+            guard rest.isEmpty || rest.first?.isWhitespace == true else { continue }
+            return (rest.trimmingCharacters(in: .whitespaces), checked)
+        }
+        return (label, nil)
     }
 
     static func label(afterNumberIn line: String) -> String {
@@ -170,8 +271,22 @@ extension ChoiceMenu {
     }
 }
 
+/// 中身を読み取れない選択メニューの写し。
+public struct UnreadableMenu: Sendable, Equatable {
+    /// メニューの範囲の空でない行（下から最大 12 行）。
+    public var lines: [String]
+    /// Esc が claude の終了になるか。
+    public var cancelExits: Bool
+
+    public init(lines: [String], cancelExits: Bool) {
+        self.lines = lines
+        self.cancelExits = cancelExits
+    }
+}
+
 /// カードで押した選択肢まで ❯ を矢印キーで動かし、着いたら Enter で確定する手順。
 /// 番号キーは使わない（trust 確認には番号が無く、番号キーが「移動」か「即決定」かもメニューごとに違うため）。
+/// 未反映の矢印は常に 0 か 1 個に保ち、送った数と ❯ の動いた回数が揃い、着いた位置が続けて変わらない時だけ確定する。
 public struct MenuNavigator: Sendable {
     public enum Direction: Sendable, Equatable { case up, down }
 
@@ -180,7 +295,7 @@ public struct MenuNavigator: Sendable {
         case gone
         /// 押した時のカードと別のメニューになった。
         case changed
-        /// 矢印キーを送っても ❯ が目的の行に着かない。
+        /// 矢印キーを送っても ❯ が動かない・送った数より多く動いた・目的の行に着かない。
         case stuck
     }
 
@@ -188,26 +303,36 @@ public struct MenuNavigator: Sendable {
         /// 画面の書き換えを待つ。
         case wait
         case press(Direction)
-        /// ❯ が目的の行にあり、メニューも押した時と同じ。Enter を送ってよい。
+        /// ❯ が目的の行で止まっていて、メニューも押した時と同じ。Enter を送ってよい。
         case confirm
         case abort(Failure)
     }
+
+    /// 矢印の反映を待つ回数の上限。過ぎても再送しない（再送すると未反映のキーが 2 つになり行き過ぎるため）。
+    public static let maxWaitsPerPress = 10
 
     public let expected: MenuPrompt
     public let target: Int
     private var started = false
     private var budget: Int
     private var missing = 0
-    /// 直前に矢印を送った時の ❯ の位置。画面が追いつくまで次を送らない（送りすぎて行き過ぎないため）。
-    private var pressedFrom: Int?
+    /// 最後に読めた ❯ の位置。
+    private var lastCursor = 0
+    private var sent = 0
+    /// ❯ の位置が変わった回数。
+    private var moves = 0
+    /// 送った矢印がまだ画面に反映されていない。
+    private var pending = false
     private var waited = 0
+    /// 目的の行に着いた後、もう一度読んでも動いていないかを確かめている。
+    private var settling = false
 
     /// 押せない選択肢（範囲外・自由入力）なら nil。
     public init?(expected: MenuPrompt, target: Int) {
         guard expected.options.indices.contains(target), !expected.options[target].isFreeText else { return nil }
         self.expected = expected
         self.target = target
-        self.budget = expected.options.count * 6 + 12
+        self.budget = expected.options.count * (Self.maxWaitsPerPress + 2) + 12
     }
 
     /// 今の画面のメニュー（読めなければ nil）を受けて次の一手を返す。
@@ -217,26 +342,41 @@ public struct MenuNavigator: Sendable {
         guard let current else {
             // 最初に読めなければ消えている。動かしている途中は描き替えの合間かもしれないので少し待つ。
             missing += 1
+            settling = false
             return !started || missing > 5 ? .abort(.gone) : .wait
         }
         missing = 0
         if !started {
             guard current.sameMenu(as: expected) else { return .abort(.changed) }
             started = true
+            lastCursor = current.cursor
         }
         // 移動中は ❯ の行の描き方が変わりうるので、問い・本文・選択肢の数だけで同じメニューかを見る。
         guard current.question == expected.question, current.context == expected.context,
               current.options.count == expected.options.count else { return .abort(.changed) }
-        if let from = pressedFrom, current.cursor == from, waited < 4 {
+        if current.cursor != lastCursor {
+            lastCursor = current.cursor
+            moves += 1
+            pending = false
+            settling = false
+            // 送った数より多く動いた（遅れて届いたキー・別の入力）なら、どこで止まるか分からない。
+            guard moves <= sent else { return .abort(.stuck) }
+        }
+        if pending {
             waited += 1
+            return waited > Self.maxWaitsPerPress ? .abort(.stuck) : .wait
+        }
+        if current.cursor == target {
+            guard moves == sent else { return .abort(.stuck) }
+            guard current.sameMenu(as: expected) else { return .abort(.changed) }
+            if settling { return .confirm }
+            settling = true
             return .wait
         }
-        pressedFrom = nil
-        if current.cursor == target {
-            return current.sameMenu(as: expected) ? .confirm : .abort(.changed)
-        }
-        pressedFrom = current.cursor
+        settling = false
+        pending = true
         waited = 0
+        sent += 1
         return .press(current.cursor < target ? .down : .up)
     }
 }

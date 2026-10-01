@@ -138,6 +138,92 @@ final class MenuPromptParseTests: XCTestCase {
         let history = ["❯ 1. まずテストを書く", "  2. 次に実装する", "", "⏺ 了解しました。", rule, "❯ ", rule]
         XCTAssertNil(ChoiceMenu.parse(screen: history))
     }
+
+    func testFooterAndExitDetection() throws {
+        let ask = try XCTUnwrap(ChoiceMenu.parse(screen: askScreen))
+        XCTAssertEqual(ask.footer, "Enter to select · ↑/↓ to navigate · Esc to cancel")
+        XCTAssertFalse(ask.cancelExits)
+        // trust 確認は案内が「Esc to cancel」でも Esc で claude が終わる。
+        XCTAssertTrue(try XCTUnwrap(ChoiceMenu.parse(screen: trustScreen)).cancelExits)
+        XCTAssertEqual(try XCTUnwrap(ChoiceMenu.parse(screen: planScreen)).footer, "")
+
+        var exitScreen = askScreen
+        exitScreen[14] = "Enter to select · Esc to exit"
+        XCTAssertTrue(try XCTUnwrap(ChoiceMenu.parse(screen: exitScreen)).cancelExits)
+    }
+
+    /// 選択肢の ❯ が読めない時に、上の会話履歴の発話（❯ …）を選択肢と読まない。
+    func testHistoryPromptIsNotReadAsOptions() {
+        let screen = [
+            "❯ 一つ目の依頼",
+            "  二行目の続き",
+            "⏺ 了解しました。",
+            rule,
+            " Pick a color?",
+            "   1. Red",
+            "   2. Blue",
+            "",
+            " Enter to select · Esc to cancel",
+        ]
+        XCTAssertTrue(ChoiceMenu.isShowing(screen: screen))
+        XCTAssertNil(ChoiceMenu.parse(screen: screen))
+        let unreadable = ChoiceMenu.unreadable(screen: screen)
+        XCTAssertNotNil(unreadable)
+        XCTAssertEqual(unreadable?.cancelExits, false)
+    }
+
+    /// 番号の無い ❯ 行は操作案内が無ければ選択肢と読まない。
+    func testPlainCursorWithoutFooterIsNotMenu() {
+        let screen = ["❯ 依頼の一行目", "  依頼の二行目", "", "  1. a", "  2. b"]
+        XCTAssertNil(ChoiceMenu.parseShowing(screen: screen))
+    }
+
+    /// ❯ を探すのは案内行から上へ限られた行数まで。
+    func testCursorFarAboveFooterIsIgnored() {
+        var screen = ["❯ 1. 古い発話", "  2. 続き"]
+        screen += Array(repeating: "  本文", count: ChoiceMenu.cursorSearchLines)
+        screen += ["Enter to select · Esc to cancel"]
+        XCTAssertNil(ChoiceMenu.parse(screen: screen))
+    }
+
+    /// 罫線が無い時は、空行・会話の行・経過表示の手前までを本文にする。
+    func testContextWithoutRuleStopsAtBlankAndHistory() throws {
+        let screen = [
+            "⏺ 以前の返答",
+            "✻ Thinking… (12s)",
+            "",
+            "Color",
+            "Pick a color?",
+            "❯ 1. Red",
+            "  2. Blue",
+            "Enter to select · Esc to cancel",
+        ]
+        let menu = try XCTUnwrap(ChoiceMenu.parse(screen: screen))
+        XCTAssertEqual(menu.question, "Pick a color?")
+        XCTAssertEqual(menu.context, ["Color"])
+
+        let noBlank = ["⏺ 以前の返答", "✻ Thinking… (12s)", "Pick a color?", "❯ 1. Red", "  2. Blue", "Enter to select · Esc to cancel"]
+        XCTAssertEqual(try XCTUnwrap(ChoiceMenu.parse(screen: noBlank)).context, [])
+    }
+
+    func testMultiSelectCheckboxes() throws {
+        let screen = [
+            rule,
+            "Pick colors?",
+            "",
+            "❯ 1. [ ] Red",
+            "  2. [✓] Blue",
+            "  3. Type something.",
+            "",
+            "Enter to select · ↑/↓ to navigate · Esc to cancel",
+        ]
+        let menu = try XCTUnwrap(ChoiceMenu.parse(screen: screen))
+        XCTAssertTrue(menu.isMultiSelect)
+        XCTAssertEqual(menu.options.map(\.label), ["Red", "Blue", "Type something."])
+        XCTAssertEqual(menu.options.map(\.checked), [false, true, nil])
+        XCTAssertTrue(menu.options[2].isFreeText)
+        XCTAssertFalse(try XCTUnwrap(ChoiceMenu.parse(screen: askScreen)).isMultiSelect)
+    }
 }
 
 final class MenuNavigatorTests: XCTestCase {
@@ -147,8 +233,10 @@ final class MenuNavigatorTests: XCTestCase {
                    options: labels.enumerated().map { .init(number: $0.offset + 1, label: $0.element) }, cursor: cursor)
     }
 
-    func testConfirmsImmediatelyWhenCursorIsOnTarget() {
+    /// 目的の行にいても、もう一度読んで動いていないのを確かめてから Enter。
+    func testConfirmsAfterStableReadOnTarget() {
         var nav = MenuNavigator(expected: menu(cursor: 0), target: 0)!
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .wait)
         XCTAssertEqual(nav.next(menu(cursor: 0)), .confirm)
     }
 
@@ -157,13 +245,35 @@ final class MenuNavigatorTests: XCTestCase {
         XCTAssertEqual(nav.next(menu(cursor: 0)), .press(.down))
         XCTAssertEqual(nav.next(menu(cursor: 1)), .press(.down))
         XCTAssertEqual(nav.next(menu(cursor: 2)), .press(.down))
+        XCTAssertEqual(nav.next(menu(cursor: 3)), .wait)
         XCTAssertEqual(nav.next(menu(cursor: 3)), .confirm)
+    }
+
+    /// 自由入力の行に乗った時点で画面が選択肢として読めなくなれば、Enter を押さずに止まる。
+    func testStopsWhenFreeTextRowMakesMenuUnreadable() {
+        var nav = MenuNavigator(expected: menu(cursor: 0), target: 3)!
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .press(.down))
+        XCTAssertEqual(nav.next(menu(cursor: 1)), .press(.down))
+        var actions: [MenuNavigator.Action] = []
+        for _ in 0..<6 { actions.append(nav.next(nil)) }
+        XCTAssertEqual(actions.last, .abort(.gone))
+        XCTAssertFalse(actions.contains(.confirm))
+        XCTAssertFalse(actions.contains { if case .press = $0 { return true } else { return false } })
+    }
+
+    /// 自由入力の行で選択肢の並びが変わって見えたら止まる。
+    func testStopsWhenFreeTextRowChangesOptions() {
+        var nav = MenuNavigator(expected: menu(cursor: 0), target: 3)!
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .press(.down))
+        XCTAssertEqual(nav.next(menu(cursor: 1)), .press(.down))
+        XCTAssertEqual(nav.next(menu(cursor: 2, labels: ["Red", "Blue", "Chat about this"])), .abort(.changed))
     }
 
     func testMovesUp() {
         var nav = MenuNavigator(expected: menu(cursor: 3), target: 1)!
         XCTAssertEqual(nav.next(menu(cursor: 3)), .press(.up))
         XCTAssertEqual(nav.next(menu(cursor: 2)), .press(.up))
+        XCTAssertEqual(nav.next(menu(cursor: 1)), .wait)
         XCTAssertEqual(nav.next(menu(cursor: 1)), .confirm)
     }
 
@@ -172,7 +282,34 @@ final class MenuNavigatorTests: XCTestCase {
         var nav = MenuNavigator(expected: menu(cursor: 0), target: 1)!
         XCTAssertEqual(nav.next(menu(cursor: 0)), .press(.down))
         XCTAssertEqual(nav.next(menu(cursor: 0)), .wait)
+        XCTAssertEqual(nav.next(menu(cursor: 1)), .wait)
         XCTAssertEqual(nav.next(menu(cursor: 1)), .confirm)
+    }
+
+    /// 反映待ちが切れても同じ矢印を再送しない（未反映のキーを 2 つにしない）。
+    func testDoesNotResendArrowWhileWaiting() {
+        var nav = MenuNavigator(expected: menu(cursor: 0), target: 3)!
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .press(.down))
+        for _ in 0..<MenuNavigator.maxWaitsPerPress {
+            XCTAssertEqual(nav.next(menu(cursor: 0)), .wait)
+        }
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .abort(.stuck))
+    }
+
+    /// 目的の行に見えた後で遅れて届いたキーで ❯ が動いたら、確定しない。
+    func testLateMoveAfterReachingTargetDoesNotConfirm() {
+        var nav = MenuNavigator(expected: menu(cursor: 0), target: 1)!
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .press(.down))
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .wait)
+        XCTAssertEqual(nav.next(menu(cursor: 1)), .wait)
+        XCTAssertEqual(nav.next(menu(cursor: 2)), .abort(.stuck))
+    }
+
+    /// 送っていないのに ❯ が動いたら（送った数と動いた回数が合わない）確定しない。
+    func testCursorMovingWithoutPressAborts() {
+        var nav = MenuNavigator(expected: menu(cursor: 0), target: 0)!
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .wait)
+        XCTAssertEqual(nav.next(menu(cursor: 1)), .abort(.stuck))
     }
 
     /// 行き過ぎたら戻す。
@@ -180,6 +317,7 @@ final class MenuNavigatorTests: XCTestCase {
         var nav = MenuNavigator(expected: menu(cursor: 0), target: 1)!
         XCTAssertEqual(nav.next(menu(cursor: 0)), .press(.down))
         XCTAssertEqual(nav.next(menu(cursor: 2)), .press(.up))
+        XCTAssertEqual(nav.next(menu(cursor: 1)), .wait)
         XCTAssertEqual(nav.next(menu(cursor: 1)), .confirm)
     }
 
@@ -210,7 +348,17 @@ final class MenuNavigatorTests: XCTestCase {
         var nav = MenuNavigator(expected: menu(cursor: 0), target: 1)!
         XCTAssertEqual(nav.next(menu(cursor: 0)), .press(.down))
         XCTAssertEqual(nav.next(nil), .wait)
+        XCTAssertEqual(nav.next(menu(cursor: 1)), .wait)
         XCTAssertEqual(nav.next(menu(cursor: 1)), .confirm)
+    }
+
+    /// 安定確認の間に読めなくなったら、読み直して確かめ直す。
+    func testUnreadableDuringSettleRestartsCheck() {
+        var nav = MenuNavigator(expected: menu(cursor: 0), target: 0)!
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .wait)
+        XCTAssertEqual(nav.next(nil), .wait)
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .wait)
+        XCTAssertEqual(nav.next(menu(cursor: 0)), .confirm)
     }
 
     func testMenuGoneWhileMovingAbortsEventually() {
@@ -221,15 +369,18 @@ final class MenuNavigatorTests: XCTestCase {
         XCTAssertEqual(last, .abort(.gone))
     }
 
-    /// 矢印が効かず ❯ が動かないままなら、いずれ諦める。
+    /// 矢印が効かず ❯ が動かないままなら、矢印は 1 回だけ送って諦める。
     func testStuckCursorGivesUp() {
         var nav = MenuNavigator(expected: menu(cursor: 0), target: 1)!
         var last: MenuNavigator.Action = .wait
+        var presses = 0
         for _ in 0..<100 {
             last = nav.next(menu(cursor: 0))
+            if case .press = last { presses += 1 }
             if case .abort = last { break }
         }
         XCTAssertEqual(last, .abort(.stuck))
+        XCTAssertEqual(presses, 1)
     }
 
     func testFreeTextAndOutOfRangeTargetsAreRejected() {
@@ -258,6 +409,7 @@ final class MenuNavigatorTests: XCTestCase {
         let expected = try XCTUnwrap(ChoiceMenu.parse(screen: screen(cursor: 0)))
         var nav = try XCTUnwrap(MenuNavigator(expected: expected, target: 1))
         XCTAssertEqual(nav.next(ChoiceMenu.parse(screen: screen(cursor: 0))), .press(.down))
+        XCTAssertEqual(nav.next(ChoiceMenu.parse(screen: screen(cursor: 1))), .wait)
         XCTAssertEqual(nav.next(ChoiceMenu.parse(screen: screen(cursor: 1))), .confirm)
     }
 }

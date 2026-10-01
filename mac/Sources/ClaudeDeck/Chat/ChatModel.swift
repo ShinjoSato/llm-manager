@@ -77,6 +77,8 @@ final class ChatModel {
 
     /// 送信中の権限確認（monitor の key か "pty:<ルーム>"）。二度押しさせない。
     private(set) var busyPermissionKeys: Set<String> = []
+    /// 選択肢カードに数秒だけ出す結果（"menu:<ルーム>" → 文言）。複数選択でチェックを切り替えた時など。
+    private(set) var menuNotices: [String: String] = [:]
     var alertMessage: String?
     /// ルーム → 見出しの「VS Code / Xcode / 閉じる」の結果。数秒で消す。
     private(set) var editorNotes: [RoomID: EditorNote] = [:]
@@ -470,6 +472,11 @@ final class ChatModel {
             guard let self else { return }
             switch outcome {
             case .confirmed, .cancelled:
+                if outcome == .confirmed, let choice, menu.options[choice].checked != nil {
+                    // 複数選択では Enter はチェックの切り替えで、メニューは閉じない。
+                    self.menuNotices[key] = "「\(menu.options[choice].label)」のチェックを切り替えました。"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.menuNotices[key] = nil }
+                }
                 // キーを送ってからメニューが消えるまで少し掛かるので、その間は押せないままにする。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
                 return
@@ -486,12 +493,17 @@ final class ChatModel {
         }
     }
 
-    /// 中身を読み取れない選択メニューを閉じる。
-    func cancelUnreadableMenu(_ session: HostedSession) {
+    /// 中身を読み取れない選択メニューを閉じる。`menu` はカードに出していた写し。
+    func cancelUnreadableMenu(_ session: HostedSession, menu: UnreadableMenu) {
         let key = Self.ptyMenuKey(session)
         guard !busyPermissionKeys.contains(key) else { return }
-        guard session.cancelUnreadableMenu() else {
-            alertMessage = "端末に選択肢が見当たりません。既に答え終わっている可能性があります。"
+        switch session.cancelUnreadableMenu(menu) {
+        case .sent: break
+        case .gone:
+            alertMessage = "端末に読み取れない選択肢が見当たりません。既に答え終わったか、カードで答えられる形になった可能性があります。"
+            return
+        case .changed:
+            alertMessage = "端末の選択肢が替わったため送りませんでした。カードの内容を確かめてから操作してください。"
             return
         }
         busyPermissionKeys.insert(key)

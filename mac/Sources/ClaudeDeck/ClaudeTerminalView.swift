@@ -34,9 +34,13 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 画面に出ている選択メニューの中身が変わったときに呼ばれる（メインスレッド）。
     var onMenuPromptChanged: ((MenuPrompt?) -> Void)?
 
+    /// 中身を読み取れない選択メニューの写しが変わったときに呼ばれる（メインスレッド）。
+    var onUnreadableMenuChanged: ((UnreadableMenu?) -> Void)?
+
     private(set) var permissionPrompt: PermissionPrompt?
     private(set) var inputBlock: InputBlock?
     private(set) var menuPrompt: MenuPrompt?
+    private(set) var unreadableMenu: UnreadableMenu?
     /// 選択肢へ ❯ を動かしている最中。重ねて動かすと互いのキーで行き先がずれる。
     private(set) var isNavigatingMenu = false
 
@@ -120,7 +124,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let quiet = Date().timeIntervalSince(lastDataTime)
         // 権限プロンプト・選択メニュー表示中も点滅表示で出力が流れ続けるので、活動量より先に見る。
         let prompt = PermissionPrompt.parse(screen: screen)
-        let block = InputBlock.detect(screen: screen)
+        // InputBlock.detect と同じ判定を、読み取り済みの権限プロンプトを使い回して行う。
+        let block: InputBlock? = prompt != nil ? .permission : (ChoiceMenu.isShowing(screen: screen) ? .menu : nil)
         let newStatus: ClaudeStatus
         if block != nil {
             newStatus = .waitingInput
@@ -140,10 +145,15 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             inputBlock = block
             onInputBlockChanged?(block)
         }
-        let menu = block == .menu ? ChoiceMenu.parse(screen: screen) : nil
+        let menu = block == .menu ? ChoiceMenu.parseShowing(screen: screen) : nil
         if menu != menuPrompt {
             menuPrompt = menu
             onMenuPromptChanged?(menu)
+        }
+        let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen) : nil
+        if unreadable != unreadableMenu {
+            unreadableMenu = unreadable
+            onUnreadableMenuChanged?(unreadable)
         }
         guard newStatus != currentStatus else { return }
         currentStatus = newStatus
@@ -244,7 +254,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     private func currentMenu() -> MenuPrompt? {
         let screen = screenLines()
         guard InputBlock.detect(screen: screen) == .menu else { return nil }
-        return ChoiceMenu.parse(screen: screen)
+        return ChoiceMenu.parseShowing(screen: screen)
     }
 
     /// 選択メニューに答える。`choice` は `expected`（カードに出していたもの）の選択肢の位置、nil なら Esc で取り消す。
@@ -291,18 +301,34 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             break
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.menuStepInterval) { [weak self] in
-            self?.stepMenu(navigator, completion: completion)
+            // 移動中に端末ビューが解放されても、呼び出し側の送信中の印が残らないよう必ず結果を返す。
+            guard let self else { return completion(.failed(.gone)) }
+            self.stepMenu(navigator, completion: completion)
         }
     }
 
-    /// 中身を読み取れない選択メニューを Esc で閉じる。メニューが出ている時だけ送る。
-    func cancelUnreadableMenu() -> Bool {
-        guard !isNavigatingMenu, currentInputBlock() == .menu else {
+    enum UnreadableCancelResult: Equatable {
+        case sent
+        /// 読めないメニューが出ていない（消えた・読めるようになった）。
+        case gone
+        /// 押した時と別の画面になっている。
+        case changed
+    }
+
+    /// 中身を読み取れない選択メニューを Esc で閉じる。押した時の写し `expected` と今の画面が同じ時だけ送る。
+    func cancelUnreadableMenu(_ expected: UnreadableMenu) -> UnreadableCancelResult {
+        guard !isNavigatingMenu else { return .changed }
+        let screen = screenLines()
+        guard PermissionPrompt.parse(screen: screen) == nil, let current = ChoiceMenu.unreadable(screen: screen) else {
             evaluateStatus()
-            return false
+            return .gone
+        }
+        guard current == expected else {
+            evaluateStatus()
+            return .changed
         }
         send(txt: PTYInput.cancelMenuKey)
-        return true
+        return .sent
     }
 
     /// 画面の下から `lines` 行を、小文字化して連結した文字列で返す。
