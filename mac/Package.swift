@@ -10,8 +10,8 @@ let package = Package(
         .executable(name: "claude-deck", targets: ["ClaudeDeck"])
     ],
     dependencies: [
-        // VT100/Xterm 端末エミュレータ。PTY ホスト（LocalProcessTerminalView）を提供。
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm", branch: "main")
+        // VT100/Xterm 端末エミュレータ。PTY ホスト（LocalProcessTerminalView）を提供。上流の変更で挙動が変わらないようリビジョンで固定する。
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "a3b8c9b680cb38d87d2a067b8ecd6427910538a6")
     ],
     targets: [
         .executableTarget(

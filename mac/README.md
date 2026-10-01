@@ -16,7 +16,7 @@ SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Termina
 
 ```
 mac/
-  Package.swift                 SPM。SwiftTerm を依存に持つ実行ファイル "claude-deck"
+  Package.swift                 SPM。SwiftTerm を依存に持つ実行ファイル "claude-deck"（SwiftTerm はリビジョン固定。更新時は Package.swift の revision を書き換える）
   Sources/ClaudeDeck/
     main.swift                  NSApplication 起動
     AppDelegate.swift           ウィンドウ + メニュー

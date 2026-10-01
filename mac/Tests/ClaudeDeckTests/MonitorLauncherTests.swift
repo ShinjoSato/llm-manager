@@ -11,6 +11,8 @@ private final class FakeChild: MonitorChildProcess, @unchecked Sendable {
     private var receivedSignals: [Int32] = []
     /// true の間は先頭が終わってもグループ（tsx / node 役）が残る。
     private var lingering = false
+    /// 届いても終わらないシグナル（SIGTERM を無視する子の代役）。
+    var ignored: Set<Int32> = []
 
     init(pid: Int32, script: String) {
         self.pid = pid
@@ -40,11 +42,13 @@ private final class FakeChild: MonitorChildProcess, @unchecked Sendable {
     }
 
     func signalGroup(_ signal: Int32) {
-        lock.withLock {
+        let ignoring = lock.withLock { () -> Bool in
             receivedSignals.append(signal)
+            if ignored.contains(signal) { return true }
             lingering = false
+            return false
         }
-        exit(128 + signal)
+        if !ignoring { exit(128 + signal) }
     }
 
     var isGroupAlive: Bool { lock.withLock { code == nil || lingering } }
@@ -60,6 +64,8 @@ private final class FakeRunner: MonitorProcessRunning, @unchecked Sendable {
     var serverExitsWith: Int32?
     /// サーバーが落ちたとき、グループに子が残る。
     var serverLeavesGroup = false
+    /// サーバー（のグループ）が SIGTERM を無視する。
+    var serverIgnoresTerm = false
 
     func spawn(script: String, directory: URL, environment: [String: String], logURL: URL?) throws -> any MonitorChildProcess {
         let child = lock.withLock { () -> FakeChild in
@@ -69,6 +75,7 @@ private final class FakeRunner: MonitorProcessRunning, @unchecked Sendable {
             return c
         }
         if script.hasSuffix("npm start") {
+            if serverIgnoresTerm { child.ignored = [SIGTERM] }
             if let code = serverExitsWith { child.exit(code, leavingGroup: serverLeavesGroup) }
         } else if !holding.contains(where: { script.hasSuffix($0) }) {
             let code = exitCodes.first(where: { script.contains($0.key) })?.value ?? 0
@@ -384,6 +391,86 @@ final class MonitorLauncherTests: XCTestCase {
         XCTAssertEqual(launcher.phase, .failed(.healthTimeout(seconds: 0)))
         XCTAssertTrue(runner.spawned.last?.terminated ?? false)
         XCTAssertFalse(launcher.hasOwnedProcess)
+    }
+
+    /// health タイムアウト後の片付け中も持ち主のままで、その間の終了で SIGKILL まで届く。
+    func testCleanupAfterHealthTimeoutStaysOwned() async {
+        let runner = FakeRunner()
+        runner.serverIgnoresTerm = true
+        let launcher = makeLauncher(health: [false], existing: ready, runner: runner)
+        launcher.startupTimeout = 0.05
+        launcher.terminationGrace = 30
+        launcher.start()
+        await waitUntil("SIGTERM") { runner.spawned.count == 2 && runner.spawned[1].signals.contains(SIGTERM) }
+        XCTAssertTrue(launcher.hasOwnedProcess, "片付け中も停止対象")
+        launcher.stopImmediately()
+        XCTAssertEqual(runner.spawned[1].signals, [SIGTERM, SIGTERM, SIGKILL])
+        XCTAssertFalse(runner.spawned[1].isGroupAlive)
+        XCTAssertFalse(launcher.hasOwnedProcess)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(launcher.phase, .stopped, "片付けの続きが失敗を書き込まない")
+    }
+
+    /// npm だけ落ちて残ったグループを片付けている間も持ち主のまま。
+    func testCleanupAfterServerExitStaysOwned() async {
+        let runner = FakeRunner()
+        runner.serverExitsWith = 1
+        runner.serverLeavesGroup = true
+        runner.serverIgnoresTerm = true
+        let launcher = makeLauncher(health: [false], existing: ready, runner: runner)
+        launcher.terminationGrace = 30
+        launcher.start()
+        await waitUntil("SIGTERM") { runner.spawned.count == 2 && runner.spawned[1].signals.contains(SIGTERM) }
+        XCTAssertNil(launcher.ownedPid, "先頭は終了済み")
+        XCTAssertTrue(launcher.hasOwnedProcess, "片付け中も停止対象")
+        launcher.terminationGrace = 0.2
+        let stopped = expectation(description: "停止完了")
+        launcher.stopInBackground { stopped.fulfill() }
+        await fulfillment(of: [stopped], timeout: 5)
+        XCTAssertEqual(runner.spawned[1].signals.last, SIGKILL)
+        XCTAssertFalse(launcher.hasOwnedProcess)
+    }
+
+    /// キャンセル済みのタスクから呼んでも猶予を守り、main actor を止めない。
+    func testTerminateFromCancelledTaskKeepsGraceWithoutBlockingMain() async {
+        let child = FakeChild(pid: 1, script: "npm start")
+        child.ignored = [SIGTERM]
+        let task = Task { @MainActor () -> TimeInterval in
+            withUnsafeCurrentTask { $0?.cancel() }
+            let started = Date()
+            await MonitorLauncher.terminate(child, grace: 0.3)
+            return Date().timeIntervalSince(started)
+        }
+        var ticks = 0
+        let until = Date().addingTimeInterval(0.2)
+        while Date() < until {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            ticks += 1
+        }
+        let elapsed = await task.value
+        XCTAssertGreaterThan(ticks, 5, "待ちの間も main actor が進む")
+        XCTAssertGreaterThanOrEqual(elapsed, 0.25)
+        XCTAssertEqual(child.signals, [SIGTERM, SIGKILL])
+    }
+
+    /// 走り出す前に止められた実行は phase を書き換えない。
+    func testStopBeforeRunStartsLeavesPhase() async {
+        let runner = FakeRunner()
+        let launcher = makeLauncher(health: [false], existing: ready, runner: runner,
+                                    baseURL: URL(string: "http://192.168.1.5:8766")!)
+        launcher.start()
+        await launcher.stop()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(launcher.phase, .idle)
+    }
+
+    func testTerminationGateRepliesOnceAndKeepsWaiting() {
+        let gate = MonitorTerminationGate()
+        XCTAssertEqual(gate.decide(needsShutdown: true), .terminateLater(startShutdown: true))
+        // 1 回目で子を引き取った後は needsShutdown が false になるが、停止の途中なので抜けない。
+        XCTAssertEqual(gate.decide(needsShutdown: false), .terminateLater(startShutdown: false))
+        XCTAssertEqual(gate.decide(needsShutdown: true), .terminateLater(startShutdown: false))
+        XCTAssertEqual(MonitorTerminationGate().decide(needsShutdown: false), .terminateNow)
     }
 
     func testChildEnvironmentAndLoopback() {

@@ -1,4 +1,5 @@
 import AppKit
+import MonitorKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
@@ -23,22 +24,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    private var shuttingDown = false
+    private let terminationGate = MonitorTerminationGate()
 
     /// 自分が起動した monitor を止め終えてから終了する（同期で待つと main が止まるため遅延終了にする）。
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard MonitorBridge.needsShutdown else { return .terminateNow }
-        if !shuttingDown {
-            shuttingDown = true
-            MonitorBridge.shutdown {
-                // 終了確認中の main は modalPanel モードで回り main actor のタスクが進まないので、モードを指定して返す。
-                RunLoop.main.perform(inModes: [.default, .modalPanel]) {
-                    MainActor.assumeIsolated { NSApp.reply(toApplicationShouldTerminate: true) }
+        switch terminationGate.decide(needsShutdown: MonitorBridge.needsShutdown) {
+        case .terminateNow:
+            return .terminateNow
+        case .terminateLater(let startShutdown):
+            if startShutdown {
+                MonitorBridge.shutdown {
+                    // 終了確認中の main は modalPanel モードで回り main actor のタスクが進まないので、モードを指定して返す。
+                    RunLoop.main.perform(inModes: [.default, .modalPanel]) {
+                        MainActor.assumeIsolated { NSApp.reply(toApplicationShouldTerminate: true) }
+                    }
+                    CFRunLoopWakeUp(CFRunLoopGetMain())
                 }
-                CFRunLoopWakeUp(CFRunLoopGetMain())
             }
+            return .terminateLater
         }
-        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) { MonitorBridge.shutdownImmediately() }

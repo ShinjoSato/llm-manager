@@ -157,6 +157,8 @@ public final class MonitorLauncher {
 
     @ObservationIgnored private let environment: MonitorLauncherEnvironment
     @ObservationIgnored private var child: (any MonitorChildProcess)?
+    /// 落ちた / 見限った子をグループごと片付けている最中のもの。終了時の停止対象に含める。
+    @ObservationIgnored private var cleaning: [any MonitorChildProcess] = []
     @ObservationIgnored private var task: Task<Void, Never>?
     /// start / stop ごとに進める。古い実行が新しい実行の状態を書き換えないよう照合に使う。
     @ObservationIgnored private var generation = 0
@@ -190,7 +192,7 @@ public final class MonitorLauncher {
     }
 
     /// 止めるべき子プロセス（準備中の npm を含む）を持っているか。
-    public var hasOwnedProcess: Bool { child != nil }
+    public var hasOwnedProcess: Bool { child != nil || !cleaning.isEmpty }
 
     public var port: Int { Self.port(of: configuration.baseURL) }
 
@@ -228,57 +230,71 @@ public final class MonitorLauncher {
 
     /// 自分が起動したもの（準備中の npm を含む）だけを止める。main を止めずに SIGTERM → 猶予 → SIGKILL。
     public func stop() async {
-        guard let process = detachForStop() else { return }
-        await Self.terminate(process, grace: terminationGrace)
-        appendLog("[claude-deck] monitor（pgid \(process.pid)）を停止しました")
+        let processes = detachForStop()
+        guard !processes.isEmpty else { return }
+        await Self.terminate(processes, grace: terminationGrace)
+        appendLog(Self.stoppedMessage(processes))
     }
 
     /// main actor に戻らずに止め、完了をバックグラウンドで知らせる（終了確認中の run loop では main actor のタスクが進まないため）。
     public func stopInBackground(completion: @escaping @Sendable () -> Void) {
-        guard let process = detachForStop() else { return completion() }
+        let processes = detachForStop()
+        guard !processes.isEmpty else { return completion() }
         let grace = terminationGrace
         let logURL = logURL
         DispatchQueue.global(qos: .userInitiated).async {
-            Self.terminateBlocking(process, grace: grace)
-            if let logURL { MonitorLogFile.append("[claude-deck] monitor（pgid \(process.pid)）を停止しました\n", to: logURL) }
+            Self.terminateBlocking(processes, grace: grace)
+            if let logURL { MonitorLogFile.append(Self.stoppedMessage(processes) + "\n", to: logURL) }
             completion()
         }
     }
 
     /// 同期で止める（非同期の停止を経ずに終わる経路の最終手段）。
     public func stopImmediately() {
-        guard let process = detachForStop() else { return }
-        Self.terminateBlocking(process, grace: immediateTerminationGrace)
-        appendLog("[claude-deck] monitor（pgid \(process.pid)）を停止しました")
+        let processes = detachForStop()
+        guard !processes.isEmpty else { return }
+        Self.terminateBlocking(processes, grace: immediateTerminationGrace)
+        appendLog(Self.stoppedMessage(processes))
     }
 
-    /// 実行中の手順を無効にし、止めるべき子を引き取る。
-    private func detachForStop() -> (any MonitorChildProcess)? {
+    /// 実行中の手順を無効にし、止めるべき子（片付け中のものを含む）を引き取る。
+    private func detachForStop() -> [any MonitorChildProcess] {
         generation &+= 1
         task?.cancel()
         task = nil
-        if child != nil || phase.isBusy { phase = .stopped }
-        guard let process = child else { return nil }
+        let processes = (child.map { [$0] } ?? []) + cleaning.filter { $0 !== child }
         child = nil
-        return process
+        cleaning = []
+        if !processes.isEmpty || phase.isBusy { phase = .stopped }
+        return processes
+    }
+
+    private nonisolated static func stoppedMessage(_ processes: [any MonitorChildProcess]) -> String {
+        "[claude-deck] monitor（pgid \(processes.map { String($0.pid) }.joined(separator: ", "))）を停止しました"
+    }
+
+    nonisolated static func terminate(_ process: any MonitorChildProcess, grace: TimeInterval) async {
+        await terminate([process], grace: grace)
     }
 
     /// グループへ SIGTERM し、猶予内に消えなければ SIGKILL する。
-    nonisolated static func terminate(_ process: any MonitorChildProcess, grace: TimeInterval) async {
-        process.signalGroup(SIGTERM)
-        let deadline = Date().addingTimeInterval(grace)
-        while process.isGroupAlive && Date() < deadline {
-            // キャンセル済みのタスクでも待ちが空回りしないよう、スリープの失敗は無視せず usleep に落とす。
-            do { try await Task.sleep(nanoseconds: 50_000_000) } catch { usleep(50_000) }
-        }
-        if process.isGroupAlive { process.signalGroup(SIGKILL) }
+    nonisolated static func terminate(_ processes: [any MonitorChildProcess], grace: TimeInterval) async {
+        processes.forEach { $0.signalGroup(SIGTERM) }
+        // 呼び出し元がキャンセル済みでも猶予を守り、かつスレッドを塞がないよう、キャンセルの伝わらない別タスクで待つ。
+        await Task.detached {
+            let deadline = Date().addingTimeInterval(grace)
+            while processes.contains(where: \.isGroupAlive) && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }.value
+        processes.filter(\.isGroupAlive).forEach { $0.signalGroup(SIGKILL) }
     }
 
-    nonisolated static func terminateBlocking(_ process: any MonitorChildProcess, grace: TimeInterval) {
-        process.signalGroup(SIGTERM)
+    nonisolated static func terminateBlocking(_ processes: [any MonitorChildProcess], grace: TimeInterval) {
+        processes.forEach { $0.signalGroup(SIGTERM) }
         let deadline = Date().addingTimeInterval(grace)
-        while process.isGroupAlive && Date() < deadline { usleep(20_000) }
-        if process.isGroupAlive { process.signalGroup(SIGKILL) }
+        while processes.contains(where: \.isGroupAlive) && Date() < deadline { usleep(20_000) }
+        processes.filter(\.isGroupAlive).forEach { $0.signalGroup(SIGKILL) }
     }
 
     // MARK: - 手順
@@ -292,8 +308,10 @@ public final class MonitorLauncher {
     private func isCurrent(_ gen: Int) -> Bool { gen == generation }
 
     private func run(generation gen: Int) async {
+        guard isCurrent(gen) else { return }
         phase = .checking
         guard Self.isLoopback(configuration.baseURL) else {
+            guard isCurrent(gen) else { return }
             phase = .skippedRemote(host: configuration.baseURL.host ?? "?")
             return
         }
@@ -361,8 +379,7 @@ public final class MonitorLauncher {
             guard isCurrent(gen) else { return }
             if healthy { break }
             if Date() >= deadline {
-                if child === server { child = nil }
-                await Self.terminate(server, grace: terminationGrace)
+                await cleanUp(server)
                 return fail(.healthTimeout(seconds: Int(startupTimeout)), gen)
             }
             try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
@@ -378,8 +395,19 @@ public final class MonitorLauncher {
 
     /// 先頭（npm）が落ちてもグループに tsx / node が残りうるので、まとめて片付ける。
     private func releaseExited(_ process: any MonitorChildProcess) async {
+        if process.isGroupAlive {
+            await cleanUp(process)
+        } else if child === process {
+            child = nil
+        }
+    }
+
+    /// 片付けの間も `cleaning` に残し、その間にアプリが終了しても停止対象から漏れないようにする。
+    private func cleanUp(_ process: any MonitorChildProcess) async {
         if child === process { child = nil }
-        if process.isGroupAlive { await Self.terminate(process, grace: terminationGrace) }
+        cleaning.append(process)
+        await Self.terminate(process, grace: terminationGrace)
+        cleaning.removeAll { $0 === process }
     }
 
     /// 完了まで待って終了コードを返す。止められたら nil。
@@ -420,6 +448,27 @@ public final class MonitorLauncher {
     private func appendLog(_ line: String) {
         guard let logURL else { return }
         MonitorLogFile.append(line + "\n", to: logURL)
+    }
+}
+
+/// アプリ終了要求への返答を決める。停止の最中に来た 2 回目の要求で停止を打ち切らない。
+@MainActor
+public final class MonitorTerminationGate {
+    public enum Decision: Equatable, Sendable {
+        case terminateNow
+        /// 遅延終了にする。`startShutdown` が true のときだけ停止を始めて返答する（返答を 1 回にするため）。
+        case terminateLater(startShutdown: Bool)
+    }
+
+    public private(set) var shuttingDown = false
+
+    public nonisolated init() {}
+
+    public func decide(needsShutdown: Bool) -> Decision {
+        if shuttingDown { return .terminateLater(startShutdown: false) }
+        guard needsShutdown else { return .terminateNow }
+        shuttingDown = true
+        return .terminateLater(startShutdown: true)
     }
 }
 
