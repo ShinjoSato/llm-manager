@@ -27,7 +27,7 @@ mac/
       ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
       ChatModel.swift             ルーム（monitor のセッション + ホスト中のセッション）・会話履歴・権限確認の状態
       HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
-      RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・残量
+      RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・monitor の接続状態
       ConversationView.swift      見出し・吹き出し・ツール行・権限カード・選択肢カード
       Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード）
       MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）

@@ -235,8 +235,9 @@ final class ChatModel {
         guard let session = room.hosted else { return false }
         let result = session.send(text) { [weak self] block in
             // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
+            let answer = block == .permission ? "権限の確認に答えた後に" : "上の選択肢に答えた後に"
             self?.alertMessage = "送信の途中で\(Self.blockName(block))が出たため、Enter を押さずに取りやめました。"
-                + "端末側の入力欄に本文が残っています。確認に答えた後にここから送ると、残っている本文とつながって送られます。"
+                + "端末側の入力欄に本文が残っています。\(answer)ここから送ると、残っている本文とつながって送られます。"
         }
         switch result {
         case .sent: return true

@@ -250,7 +250,7 @@ struct MessageList: View {
     private var emptyMessage: (String, String) {
         if !model.store.connection.isConnected {
             return ("bolt.horizontal.circle", "monitor に未接続のため会話を表示できません。"
-                    + (room.hosted != nil ? "\n下の入力欄からの送信はできます。" : ""))
+                    + (room.hosted?.isRunning == true ? "\n下の入力欄からの送信はできます。" : ""))
         }
         guard let sessionId = room.sessionId else {
             if room.hosted?.end == .launchFailed {
