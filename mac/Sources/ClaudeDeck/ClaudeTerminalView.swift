@@ -45,6 +45,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     private(set) var isNavigatingMenu = false
     /// 未反映の矢印を残して移動をやめた印。外れるまで次の移動を始めない。
     private var pendingArrowHold: PendingArrowHold?
+    /// 最後に画面の写しを残したメニュー（同じものを何度も書かない）。
+    private var lastLoggedMenu: Int?
 
     private var limitHandled = false
     private var limitCheckPending = false
@@ -147,7 +149,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             inputBlock = block
             onInputBlockChanged?(block)
         }
-        let menu = block == .menu ? ChoiceMenu.parseShowing(screen: screen) : nil
+        let menu = block == .menu ? ChoiceMenu.parseShowing(screen: screen, highlight: highlightReader()) : nil
         releasePendingArrowHoldIfDone(cursor: menu?.cursor)
         if menu != menuPrompt {
             menuPrompt = menu
@@ -158,6 +160,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             unreadableMenu = unreadable
             onUnreadableMenuChanged?(unreadable)
         }
+        logMenuScreen(menu: menu, unreadable: unreadable, screen: screen)
         guard newStatus != currentStatus else { return }
         currentStatus = newStatus
         onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
@@ -174,6 +177,56 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
         let base = max(0, count - rows)
         return (base..<count).compactMap { term.getScrollInvariantLine(row: top + $0).map(Self.text(of:)) }
+    }
+
+    /// 実画面の行（`screenLines` の添字）の各文字に背景色（か反転）が付いているか。タブ行の今のタブを読むのに使う。
+    /// 文字の並びは `screenLines` と同じく全角の後半セルを飛ばして数える。
+    private func highlightReader() -> (Int) -> [Bool]? {
+        let term = getTerminal()
+        let rows = term.rows
+        let top = term.buffer.totalLinesTrimmed
+        let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
+        let base = max(0, count - rows)
+        return { row in
+            guard rows > 0, let line = term.getScrollInvariantLine(row: top + base + row) else { return nil }
+            var flags: [Bool] = []
+            var text = ""
+            _ = line.translateToString(trimRight: true, skipNullCellsFollowingWide: true) { cell in
+                let character = cell.getCharacter()
+                let before = text.count
+                text.append(character)
+                // 結合文字は前の文字にまとまるので、文字数が増えた時だけ数える。
+                if text.count > before {
+                    let attribute = cell.attribute
+                    flags.append(Self.isColored(attribute.bg) || attribute.style.contains(.inverse))
+                }
+                return character
+            }
+            return flags
+        }
+    }
+
+    private static func isColored(_ color: Attribute.Color) -> Bool {
+        switch color {
+        case .ansi256, .trueColor: return true
+        case .defaultColor, .defaultInvertedColor: return false
+        }
+    }
+
+    /// 選択肢カードを出した・読めなかった画面の写しを、中身が替わった時だけ残す。
+    private func logMenuScreen(menu: MenuPrompt?, unreadable: UnreadableMenu?, screen: [String]) {
+        let key: Int?
+        if let menu {
+            key = menu.identity
+        } else if let unreadable {
+            key = unreadable.hashValue
+        } else {
+            key = nil
+        }
+        guard key != lastLoggedMenu else { return }
+        lastLoggedMenu = key
+        guard key != nil else { return }
+        MenuScreenLog.record(kind: menu != nil ? .menu : .unreadable, columns: getTerminal().cols, screen: screen)
     }
 
     /// 送信を止めるべき状態か。タイマーを待たず今の画面で判定する。
@@ -255,6 +308,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         case unavailable
         /// 前回やめた移動の矢印がまだ反映されていないかもしれない。少し待てば押せる。
         case settling
+        /// 問いのタブを移った。
+        case moved
     }
 
     private func releasePendingArrowHoldIfDone(cursor: Int?) {
@@ -267,7 +322,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     private func currentMenu() -> MenuPrompt? {
         let screen = screenLines()
         guard InputBlock.detect(screen: screen) == .menu else { return nil }
-        return ChoiceMenu.parseShowing(screen: screen)
+        return ChoiceMenu.parseShowing(screen: screen, highlight: highlightReader())
     }
 
     /// 選択メニューに答える。`choice` は `expected`（カードに出していたもの）の選択肢の位置、nil なら Esc で取り消す。
@@ -321,6 +376,45 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             // 移動中に端末ビューが解放されても、呼び出し側の送信中の印が残らないよう必ず結果を返す。
             guard let self else { return completion(.ended) }
             self.stepMenu(navigator, completion: completion)
+        }
+    }
+
+    /// 問いのタブを →/← で 1 つ移る。`expected` と今の画面のメニューが同じ時だけ送り、問いが替わったのを確かめて終える。
+    func moveMenuTab(_ expected: MenuPrompt, direction: MenuTabMover.Direction, completion: @escaping (MenuAnswerOutcome) -> Void) {
+        guard !isNavigatingMenu else { return completion(.unavailable) }
+        guard let mover = MenuTabMover(expected: expected, direction: direction) else { return completion(.unavailable) }
+        releasePendingArrowHoldIfDone(cursor: currentMenu()?.cursor)
+        guard pendingArrowHold == nil else { return completion(.settling) }
+        isNavigatingMenu = true
+        stepTab(mover, completion: completion)
+    }
+
+    private func stepTab(_ mover: MenuTabMover, completion: @escaping (MenuAnswerOutcome) -> Void) {
+        var mover = mover
+        guard process?.running == true else {
+            isNavigatingMenu = false
+            return completion(.ended)
+        }
+        switch mover.next(currentMenu()) {
+        case .moved:
+            isNavigatingMenu = false
+            evaluateStatus()
+            completion(.moved)
+            return
+        case .abort(let failure):
+            isNavigatingMenu = false
+            pendingArrowHold = PendingArrowHold.after(mover, now: Date())
+            evaluateStatus()
+            completion(.failed(failure))
+            return
+        case .press(let direction):
+            send(txt: PTYInput.tabKey(direction, applicationCursor: getTerminal().applicationCursor))
+        case .wait:
+            break
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.menuStepInterval) { [weak self] in
+            guard let self else { return completion(.ended) }
+            self.stepTab(mover, completion: completion)
         }
     }
 

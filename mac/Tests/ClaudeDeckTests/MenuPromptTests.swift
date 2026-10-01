@@ -126,7 +126,10 @@ final class MenuPromptParseTests: XCTestCase {
     func testAskUserQuestion() throws {
         let menu = try XCTUnwrap(ChoiceMenu.parse(screen: askScreen))
         XCTAssertEqual(menu.question, "Pick a color?")
-        XCTAssertEqual(menu.context, ["☐ Color"])
+        // 問いが 1 つの単一選択は矢印も Submit タブも無いタブ行だけが出る。
+        XCTAssertEqual(menu.context, [])
+        XCTAssertEqual(menu.tabs, MenuTabs(tabs: [.init(title: "Color", answered: false)], hasSubmit: false, hasArrows: false))
+        XCTAssertNil(MenuTabMover(expected: menu, direction: .next))
         XCTAssertEqual(menu.options, [
             .init(number: 1, label: "Red", detail: ["Choose red"]),
             .init(number: 2, label: "Blue", detail: ["Choose blue"]),

@@ -10,16 +10,22 @@ public struct MenuPrompt: Sendable, Hashable {
         public var detail: [String]
         /// 複数選択のチェック欄（`[ ]` / `[✓]` 等）。チェック欄の無い選択肢は nil、あれば付いているか。
         public var checked: Bool?
+        /// 複数選択の選択肢の下に出る「Submit」/「Next」の行。番号もチェック欄も無く、Enter で次の問い（最後なら確認）へ進む。
+        public var isSubmit: Bool
 
-        public init(number: Int?, label: String, detail: [String] = [], checked: Bool? = nil) {
+        public init(number: Int?, label: String, detail: [String] = [], checked: Bool? = nil, isSubmit: Bool = false) {
             self.number = number
             self.label = label
             self.detail = detail
             self.checked = checked
+            self.isSubmit = isSubmit
         }
 
         /// 選ぶと文字の入力に移る選択肢。カードからは本文を渡せないので選ばせない。
+        /// 複数選択の自由入力の行は ❯ が乗ると例文が消えてチェック欄だけになる。
         public var isFreeText: Bool {
+            if isSubmit { return false }
+            if checked != nil && label.isEmpty { return true }
             let lowered = label.lowercased()
             return MenuPrompt.freeTextPrefixes.contains { lowered.hasPrefix($0) }
         }
@@ -34,14 +40,20 @@ public struct MenuPrompt: Sendable, Hashable {
     public var cursor: Int
     /// 操作案内の行（`Enter to confirm · Esc to cancel` 等）。無ければ ""。
     public var footer: String
+    /// AskUserQuestion の問いのタブ（`← ☒ 見出し  ✔ Submit →`）。無ければ nil。
+    public var tabs: MenuTabs?
 
-    public init(context: [String], question: String, options: [Option], cursor: Int, footer: String = "") {
+    public init(context: [String], question: String, options: [Option], cursor: Int, footer: String = "", tabs: MenuTabs? = nil) {
         self.context = context
         self.question = question
         self.options = options
         self.cursor = cursor
         self.footer = footer
+        self.tabs = tabs
     }
+
+    /// AskUserQuestion の最後の確認（Submit タブ）の画面か。
+    public var isReview: Bool { tabs?.isOnSubmit == true }
 
     /// 複数選択（チェック欄付き）のメニューか。Enter は確定ではなくチェックの切り替えになる。
     public var isMultiSelect: Bool { options.contains { $0.checked != nil } }
@@ -55,8 +67,16 @@ public struct MenuPrompt: Sendable, Hashable {
     static let freeTextPrefixes = ["type something", "tell claude what to change"]
 
     /// カーソル位置を除いて同じメニューか（押した時のカードと今の画面の照合に使う）。
+    /// 今のタブは文字ではなく背景色で読むので比べない（問いの文面でタブの違いは分かる）。
     public func sameMenu(as other: MenuPrompt) -> Bool {
         context == other.context && question == other.question && options == other.options
+            && tabs?.ignoringCurrent == other.tabs?.ignoringCurrent
+    }
+
+    /// 同じ問いの画面か（チェック・❯ の位置は見ない）。タブを移ったかの判定に使う。
+    public func samePage(as other: MenuPrompt) -> Bool {
+        context == other.context && question == other.question && options.map(\.label) == other.options.map(\.label)
+            && tabs?.current == other.tabs?.current
     }
 
     /// カーソル位置を除いた中身の識別子（中身が替わったカードを作り直すのに使う）。
@@ -66,7 +86,108 @@ public struct MenuPrompt: Sendable, Hashable {
         hasher.combine(question)
         hasher.combine(options)
         hasher.combine(footer)
+        hasher.combine(tabs)
         return hasher.finalize()
+    }
+}
+
+/// AskUserQuestion の上部のタブ行。問いごとのタブと、最後の Submit タブ（回答の確認）。
+/// v2.1.286 の描画: `← ` + 各問い ` ☒ 見出し `（☒ 回答済み・☐ 未回答）+ ` ✔ Submit ` + ` →`。
+/// 問いが 1 つの単一選択は Submit タブも矢印も無く ` ☐ 見出し ` だけ。今のタブは背景色だけで示される。
+public struct MenuTabs: Sendable, Hashable {
+    public struct Tab: Sendable, Hashable {
+        public var title: String
+        public var answered: Bool
+
+        public init(title: String, answered: Bool) {
+            self.title = title
+            self.answered = answered
+        }
+    }
+
+    public var tabs: [Tab]
+    public var hasSubmit: Bool
+    /// ← / → で移れるか（矢印が出ているか）。
+    public var hasArrows: Bool
+    /// 今のタブ（tabs の添字。tabs.count は Submit タブ）。読めなければ nil。
+    public var current: Int?
+
+    public init(tabs: [Tab], hasSubmit: Bool, hasArrows: Bool, current: Int? = nil) {
+        self.tabs = tabs
+        self.hasSubmit = hasSubmit
+        self.hasArrows = hasArrows
+        self.current = current
+    }
+
+    public var isOnSubmit: Bool { hasSubmit && current == tabs.count }
+    /// → で次へ移れるか（今のタブが読めなければ移れるものとして送り、画面で確かめる）。
+    public var canMoveNext: Bool {
+        guard hasArrows else { return false }
+        guard let current else { return true }
+        return current < tabs.count - (hasSubmit ? 0 : 1)
+    }
+    public var canMovePrevious: Bool {
+        guard hasArrows else { return false }
+        guard let current else { return true }
+        return current > 0
+    }
+
+    /// 今のタブの名前（Submit タブなら "Submit"）。読めなければ nil。
+    public var currentTitle: String? {
+        guard let current else { return nil }
+        if current == tabs.count { return hasSubmit ? "Submit" : nil }
+        return tabs.indices.contains(current) ? tabs[current].title : nil
+    }
+
+    var ignoringCurrent: MenuTabs {
+        var copy = self
+        copy.current = nil
+        return copy
+    }
+
+    static let marks: [Character: Bool?] = ["☐": false, "☒": true, "✔": nil]
+
+    /// タブ行を読む。各タブの文字の範囲（行の Character の位置。最後が Submit）も返す。タブ行でなければ nil。
+    static func parse(_ line: String) -> (MenuTabs, [Range<Int>])? {
+        let characters = Array(line)
+        var start = characters.firstIndex { !$0.isWhitespace } ?? characters.count
+        var end = (characters.lastIndex { !$0.isWhitespace } ?? -1) + 1
+        guard start < end else { return nil }
+        let hasArrows = characters[start] == "←" && characters[end - 1] == "→" && end - start > 2
+        if hasArrows {
+            start += 1
+            end -= 1
+        }
+        var items: [(mark: Character, range: Range<Int>)] = []
+        for index in start..<end where marks[characters[index]] != nil {
+            guard index == start || characters[index - 1].isWhitespace else { continue }
+            if let last = items.popLast() { items.append((last.mark, last.range.lowerBound..<index)) }
+            items.append((characters[index], index..<end))
+        }
+        guard let first = items.first, first.range.lowerBound == (characters[start...].firstIndex { !$0.isWhitespace } ?? end) else { return nil }
+        var tabs: [Tab] = []
+        var ranges: [Range<Int>] = []
+        var hasSubmit = false
+        for (offset, item) in items.enumerated() {
+            let text = String(characters[(item.range.lowerBound + 1)..<item.range.upperBound]).trimmingCharacters(in: .whitespaces)
+            var upper = item.range.upperBound
+            while upper > item.range.lowerBound + 1, characters[upper - 1].isWhitespace { upper -= 1 }
+            let range = item.range.lowerBound..<upper
+            guard let answered = marks[item.mark] ?? nil else {
+                // ✔ は最後の Submit タブだけ。
+                guard offset == items.count - 1, text == "Submit", !tabs.isEmpty else { return nil }
+                hasSubmit = true
+                ranges.append(range)
+                continue
+            }
+            guard !text.isEmpty else { return nil }
+            tabs.append(Tab(title: text, answered: answered))
+            ranges.append(range)
+        }
+        guard !tabs.isEmpty else { return nil }
+        // 矢印が無いのは問いが 1 つの単一選択だけ（Submit タブも無い）。
+        if !hasArrows, tabs.count != 1 || hasSubmit { return nil }
+        return (MenuTabs(tabs: tabs, hasSubmit: hasSubmit, hasArrows: hasArrows), ranges)
     }
 }
 
@@ -75,20 +196,25 @@ extension ChoiceMenu {
     static let cursorSearchLines = 24
 
     /// 画面の選択メニューを読み取る。メニューが無い・形が読めない時は nil。
-    public static func parse(screen: [String]) -> MenuPrompt? {
+    /// `highlight` は画面の行（`screen` の添字）の各文字に背景色が付いているか。タブ行の今のタブを見分けるのに使う。
+    public static func parse(screen: [String], highlight: ((Int) -> [Bool]?)? = nil) -> MenuPrompt? {
         guard isShowing(screen: screen) else { return nil }
-        return parseShowing(screen: screen)
+        return parseShowing(screen: screen, highlight: highlight)
     }
 
     /// `isShowing` を確かめ済みの画面から読み取る。
-    public static func parseShowing(screen: [String]) -> MenuPrompt? {
-        let lines = menuZone(screen)
+    public static func parseShowing(screen: [String], highlight: ((Int) -> [Bool]?)? = nil) -> MenuPrompt? {
+        let (lines, offset) = menuZoneWithOffset(screen)
         let footerRow = footerIndex(lines)
         guard let cursorRow = cursorIndex(lines, footerRow: footerRow) else { return nil }
 
         let rows: [(index: Int, option: MenuPrompt.Option)]
         if choiceNumber(lines[cursorRow], cursor: true) != nil {
-            rows = numberedRows(lines, cursorRow: cursorRow)
+            rows = numberedRows(lines, anchorRow: cursorRow)
+        } else if isSubmitButton(lines[cursorRow]),
+                  let anchor = (0..<cursorRow).last(where: { choiceNumber(lines[$0], cursor: false) != nil }) {
+            // ❯ が複数選択の Submit 行にある時は、すぐ上の選択肢から番号の列を読む。
+            rows = numberedRows(lines, anchorRow: anchor)
         } else {
             // 番号の無い ❯ 行は会話履歴の発話と見分けにくいので、操作案内が出ている時だけ選択肢とみなす。
             guard footerRow != nil else { return nil }
@@ -96,16 +222,74 @@ extension ChoiceMenu {
         }
         guard rows.count >= 2, let first = rows.first, let cursor = rows.firstIndex(where: { $0.index == cursorRow }) else { return nil }
         let (question, questionRow) = questionAbove(lines, before: first.index)
-        let context = contextAbove(lines, before: questionRow ?? first.index)
+        let top = questionRow ?? first.index
         let footer = footerRow.map { lines[$0].trimmingCharacters(in: .whitespaces) } ?? ""
-        return MenuPrompt(context: context, question: question, options: rows.map(\.option), cursor: cursor, footer: footer)
+        let context: [String]
+        var tabs: MenuTabs?
+        if let (tabRow, parsed, ranges) = tabRow(lines, above: top, question: question) {
+            // タブ行より上は会話の履歴なので、本文はタブ行と問いの間だけ。
+            context = Array(lines[(tabRow + 1)..<top].map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.suffix(12))
+            tabs = parsed
+            if parsed.hasSubmit, question == reviewQuestion || context.contains(reviewTitle) {
+                tabs?.current = parsed.tabs.count
+            } else if let flags = highlight?(tabRow + offset) {
+                tabs?.current = ranges.firstIndex { range in range.contains { $0 < flags.count && flags[$0] } }
+            }
+        } else {
+            context = contextAbove(lines, before: top)
+        }
+        return MenuPrompt(context: context, question: question, options: rows.map(\.option), cursor: cursor, footer: footer, tabs: tabs)
     }
+
+    /// Submit タブ（回答の確認）の見出しと問い（v2.1.286）。
+    static let reviewTitle = "Review your answers"
+    static let reviewQuestion = "Ready to submit your answers?"
+
+    /// 問い（無ければ選択肢）の上にあるタブ行の位置と中身。罫線・会話の行に当たるまでに無ければ nil。
+    /// 問いの画面ではすぐ上、確認画面では間に見出しと回答の一覧が入る。
+    static func tabRow(_ lines: [String], above row: Int, question: String) -> (Int, MenuTabs, [Range<Int>])? {
+        var index = row - 1
+        var scanned = 0
+        while index >= 0, scanned < contextScanLines {
+            let line = lines[index]
+            if PermissionPrompt.isSeparator(line) || isHistoryOrProgress(line) { return nil }
+            if let (tabs, ranges) = MenuTabs.parse(line) { return (index, tabs, ranges) }
+            // 本文の「☐ …」をタブと読まないよう、確認画面以外はすぐ上の行だけを見る。
+            if question != reviewQuestion, !line.trimmingCharacters(in: .whitespaces).isEmpty { return nil }
+            index -= 1
+            scanned += 1
+        }
+        return nil
+    }
+
+    /// 複数選択の選択肢の下の「Submit」（最後の問い）/「Next」の行。
+    static func isSubmitButton(_ line: String) -> Bool {
+        submitLabel(line) != nil
+    }
+
+    static func submitLabel(_ line: String) -> String? {
+        var rest = Substring(line.trimmingCharacters(in: .whitespaces))
+        if rest.hasPrefix("❯") { rest = rest.dropFirst().drop(while: \.isWhitespace) }
+        return submitLabels.contains(String(rest)) ? String(rest) : nil
+    }
+
+    static let submitLabels: Set<String> = ["Submit", "Next"]
 
     /// メニューを探す範囲（画面の下部。入力欄があればその下だけ）。
     static func menuZone(_ screen: [String]) -> [String] {
-        var lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(tailLines))
-        if let box = InputBox.promptIndex(lines) { lines = Array(lines[(box + 1)...]) }
-        return lines
+        menuZoneWithOffset(screen).lines
+    }
+
+    /// メニューを探す範囲と、その先頭が `screen` の何行目か。
+    static func menuZoneWithOffset(_ screen: [String]) -> (lines: [String], offset: Int) {
+        let trimmed = TerminalScreen.droppingTrailingBlankLines(screen)
+        var offset = max(0, trimmed.count - tailLines)
+        var lines = Array(trimmed[offset...])
+        if let box = InputBox.promptIndex(lines) {
+            lines = Array(lines[(box + 1)...])
+            offset += box + 1
+        }
+        return (lines, offset)
     }
 
     static func footerIndex(_ lines: [String]) -> Int? {
@@ -146,23 +330,32 @@ extension ChoiceMenu {
         return UnreadableMenu(lines: Array(lines.suffix(12)), cancelExits: exits)
     }
 
-    /// 番号付きの選択肢。❯ の行から番号が 1 ずつ続く範囲だけを取る（上の本文の番号付きリストを混ぜないため）。
-    static func numberedRows(_ lines: [String], cursorRow: Int) -> [(index: Int, option: MenuPrompt.Option)] {
+    /// 番号付きの選択肢。`anchorRow` の行から番号が 1 ずつ続く範囲だけを取る（上の本文の番号付きリストを混ぜないため）。
+    /// 複数選択の最後のチェック欄の下に Submit / Next の行があれば、その位置に選択肢として入れる。
+    static func numberedRows(_ lines: [String], anchorRow: Int) -> [(index: Int, option: MenuPrompt.Option)] {
         let numbered = lines.indices.compactMap { index in choiceNumber(lines[index], cursor: false).map { (index, $0) } }
-        guard let at = numbered.firstIndex(where: { $0.0 == cursorRow }) else { return [] }
+        guard let at = numbered.firstIndex(where: { $0.0 == anchorRow }) else { return [] }
         var lower = at
         while lower > 0, numbered[lower - 1].1 == numbered[lower].1 - 1 { lower -= 1 }
         var upper = at
         while upper + 1 < numbered.count, numbered[upper + 1].1 == numbered[upper].1 + 1 { upper += 1 }
         let run = Array(numbered[lower...upper])
-        return run.enumerated().map { offset, entry in
+        let lastChecked = run.lastIndex { checkbox(in: label(afterNumberIn: lines[$0.0])).1 != nil }
+        var result: [(index: Int, option: MenuPrompt.Option)] = []
+        for (offset, entry) in run.enumerated() {
             let (index, number) = entry
             let indent = numberColumn(lines[index])
             let end = offset + 1 < run.count ? run[offset + 1].0 : lines.count
             var detail: [String] = []
-            for line in lines[(index + 1)..<end] {
+            var submit: (row: Int, label: String)?
+            for row in (index + 1)..<end {
+                let line = lines[row]
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.isEmpty || PermissionPrompt.isSeparator(line) { continue }
+                if offset == lastChecked, let label = submitLabel(line) {
+                    submit = (row, label)
+                    break
+                }
                 // 字下げが選択肢より浅い行は操作案内などの外の行。
                 guard leadingWidth(line) > indent else {
                     if offset + 1 == run.count { break }
@@ -171,8 +364,12 @@ extension ChoiceMenu {
                 detail.append(trimmed)
             }
             let (text, checked) = checkbox(in: label(afterNumberIn: lines[index]))
-            return (index, MenuPrompt.Option(number: number, label: text, detail: detail, checked: checked))
+            result.append((index, MenuPrompt.Option(number: number, label: text, detail: detail, checked: checked)))
+            if let submit {
+                result.append((submit.row, MenuPrompt.Option(number: nil, label: submit.label, isSubmit: true)))
+            }
         }
+        return result
     }
 
     /// 番号の無い選択肢（trust 確認）。❯ の行と、空行を挟まずに同じ字下げで並ぶ行。
@@ -196,16 +393,43 @@ extension ChoiceMenu {
     }
 
     /// 選択肢の直前（空行は飛ばす）の行。罫線に当たれば問いは無い。
+    /// 80 桁を超える・改行のある問いは左の縦線（`│ `）付きで折り返して出るので、続く縦線の行をまとめて 1 つの問いにする。
     static func questionAbove(_ lines: [String], before row: Int) -> (String, Int?) {
         var index = row - 1
         while index >= 0 {
             let line = lines[index]
             if PermissionPrompt.isSeparator(line) { return ("", nil) }
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix(gutter) {
+                var top = index
+                while top > 0, lines[top - 1].trimmingCharacters(in: .whitespaces).hasPrefix(gutter) { top -= 1 }
+                let parts = lines[top...index].map { $0.trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces) }
+                return (joinWrapped(parts), top)
+            }
             if !trimmed.isEmpty { return (trimmed, index) }
             index -= 1
         }
         return ("", nil)
+    }
+
+    /// 折り返した問いの左の縦線（Ink の borderLeft・single）。
+    static let gutter = "│"
+
+    /// 折り返した行をつなぐ。英数字は空白の所で折り返されて空白が消えるので戻し、和文はそのままつなぐ。
+    static func joinWrapped(_ parts: [String]) -> String {
+        var result = ""
+        for part in parts where !part.isEmpty {
+            if let last = result.last, let first = part.first, last.isASCII, !last.isWhitespace, isWordCharacter(first),
+               isWordCharacter(last) || ",.;:!?)".contains(last) {
+                result += " "
+            }
+            result += part
+        }
+        return result
+    }
+
+    static func isWordCharacter(_ character: Character) -> Bool {
+        character.isASCII && (character.isLetter || character.isNumber)
     }
 
     /// 問いの上の本文。上の罫線までを囲みとし（すぐ上が罫線の plan の承認はその上の囲み）、
@@ -423,5 +647,68 @@ public struct PendingArrowHold: Sendable, Equatable {
         if let cursor, let currentCursor, currentCursor != cursor { return true }
         if now.timeIntervalSince(max(since, lastOutput)) >= Self.quietInterval { return true }
         return now.timeIntervalSince(since) >= Self.maxHold
+    }
+}
+
+extension PendingArrowHold {
+    /// タブの移動をやめた時に →/← が未反映で残っていれば印を作る（❯ は動かないので時間だけで外す）。
+    public static func after(_ mover: MenuTabMover, now: Date) -> PendingArrowHold? {
+        mover.hasPendingKey ? PendingArrowHold(since: now, cursor: nil) : nil
+    }
+}
+
+/// AskUserQuestion の問いのタブを →/← で 1 つ移る手順。キーは 1 回だけ送り、画面の問いが替わったのを確かめて終える。
+/// 反映を待ち切れなくても再送しない（2 つ届くと 2 つ先へ移るため）。
+public struct MenuTabMover: Sendable {
+    public enum Direction: Sendable, Equatable { case next, previous }
+
+    public enum Action: Sendable, Equatable {
+        case wait
+        case press(Direction)
+        /// 別の問い（か確認画面）に替わった。
+        case moved
+        case abort(MenuNavigator.Failure)
+    }
+
+    /// 送ってから画面が替わるのを待つ回数の上限。
+    public static let maxWaits = 15
+
+    public let expected: MenuPrompt
+    public let direction: Direction
+    private var pressed = false
+    private var waited = 0
+    private var missing = 0
+    /// 送った矢印がまだ画面に反映されていない。
+    public private(set) var hasPendingKey = false
+
+    /// タブが無い・その向きへ移れない・❯ が自由入力の行にある（→/← が文字入力の操作になる）なら nil。
+    public init?(expected: MenuPrompt, direction: Direction) {
+        guard let tabs = expected.tabs, direction == .next ? tabs.canMoveNext : tabs.canMovePrevious,
+              expected.options.indices.contains(expected.cursor), !expected.options[expected.cursor].isFreeText else { return nil }
+        self.expected = expected
+        self.direction = direction
+    }
+
+    public mutating func next(_ current: MenuPrompt?) -> Action {
+        guard pressed else {
+            guard let current else { return .abort(.gone) }
+            guard current.sameMenu(as: expected), current.options.indices.contains(current.cursor),
+                  !current.options[current.cursor].isFreeText else { return .abort(.changed) }
+            pressed = true
+            hasPendingKey = true
+            return .press(direction)
+        }
+        guard let current else {
+            // 問いを描き替える合間は読めないことがある。
+            missing += 1
+            return missing > 10 ? .abort(.vanished) : .wait
+        }
+        missing = 0
+        if !current.samePage(as: expected) {
+            hasPendingKey = false
+            return .moved
+        }
+        waited += 1
+        return waited > Self.maxWaits ? .abort(.stuck) : .wait
     }
 }

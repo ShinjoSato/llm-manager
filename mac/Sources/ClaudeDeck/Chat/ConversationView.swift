@@ -204,6 +204,8 @@ struct MessageList: View {
                         if let menu = session.menuPrompt {
                             MenuCard(menu: menu, busy: busy, notice: model.menuNotices[key]) { shown, choice in
                                 model.answerMenu(session, menu: shown, choice: choice)
+                            } onMoveTab: { shown, direction in
+                                model.moveMenuTab(session, menu: shown, direction: direction)
                             }
                             .id(menu.identity)
                         } else if let unreadable = session.unreadableMenu {
@@ -482,6 +484,8 @@ struct MenuCard: View {
     let notice: String?
     /// 押した時のメニューと選択肢の位置。nil は取り消し（Esc）。
     let onChoose: (MenuPrompt, Int?) -> Void
+    /// 押した時のメニューと、問いのタブを移る向き。
+    let onMoveTab: (MenuPrompt, MenuTabMover.Direction) -> Void
     /// 終了の確認を開いた時のメニュー。確認中に差し替わっても、開いた時のメニューで照合する。
     @State private var exitMenu: MenuPrompt?
 
@@ -499,6 +503,11 @@ struct MenuCard: View {
             HStack(spacing: 8) {
                 Image(systemName: "list.bullet.circle.fill").foregroundStyle(ChatTheme.permission)
                 Text("選択肢").font(.system(size: 13, weight: .bold)).foregroundStyle(ChatTheme.heading)
+            }
+            if let tabs = menu.tabs, tabs.hasArrows {
+                MenuTabBar(tabs: tabs, onCursorFreeText: menu.options.indices.contains(menu.cursor) && menu.options[menu.cursor].isFreeText) {
+                    onMoveTab(menu, $0)
+                }
             }
             if !menu.context.isEmpty {
                 Text(menu.context.joined(separator: "\n"))
@@ -519,7 +528,14 @@ struct MenuCard: View {
                 }
             }
             if menu.isMultiSelect {
-                Text("複数選択: 押すとチェックを切り替えます。")
+                Text(menu.options.contains(where: \.isSubmit)
+                     ? "複数選択: 押すとチェックを切り替えます。選び終えたら「Submit」/「Next」を押して先へ進みます。"
+                     : "複数選択: 押すとチェックを切り替えます。")
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.secondary)
+            }
+            if menu.isReview {
+                Text("回答を送るには「Submit answers」を押します。「Cancel」は質問ごと取り消します。直す時は「← 前の問い」で戻ります。")
                     .font(ChatTheme.caption)
                     .foregroundStyle(ChatTheme.secondary)
             }
@@ -586,7 +602,7 @@ private struct MenuOptionRow: View {
         let disabled = option.isFreeText
         Button(action: action) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(option.number.map { "\($0)." } ?? "•")
+                Text(option.number.map { "\($0)." } ?? (option.isSubmit ? "→" : "•"))
                     .font(ChatTheme.mono.weight(.semibold))
                     .foregroundStyle(ChatTheme.permission)
                 if let checked = option.checked {
@@ -594,8 +610,8 @@ private struct MenuOptionRow: View {
                         .foregroundStyle(checked ? ChatTheme.permission : ChatTheme.secondary)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(option.label)
-                        .font(.system(size: 13, weight: .medium))
+                    Text(option.isSubmit ? (option.label == "Next" ? "Next（次の問いへ）" : "Submit（回答の確認へ）") : option.label)
+                        .font(.system(size: 13, weight: option.isSubmit ? .bold : .medium))
                         .foregroundStyle(disabled ? ChatTheme.tertiary : ChatTheme.text)
                     ForEach(Array(option.detail.enumerated()), id: \.offset) { _, line in
                         Text(line).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
@@ -619,6 +635,62 @@ private struct MenuOptionRow: View {
         .disabled(disabled)
         .help(disabled ? "文字の入力に移る選択肢はカードからは選べません" : option.label)
         .onHover { hovering = $0 }
+    }
+}
+
+/// AskUserQuestion の問いのタブ。今のタブ（端末で背景色の付いたもの）を強調し、← / → で移る。
+private struct MenuTabBar: View {
+    let tabs: MenuTabs
+    /// ❯ が文字入力の行にある（→ / ← が文字入力の操作になるので移れない）。
+    let onCursorFreeText: Bool
+    let onMove: (MenuTabMover.Direction) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                ForEach(Array(tabs.tabs.enumerated()), id: \.offset) { index, tab in
+                    chip((tab.answered ? "☒ " : "☐ ") + tab.title, current: tabs.current == index)
+                }
+                if tabs.hasSubmit {
+                    chip("✔ Submit", current: tabs.isOnSubmit)
+                }
+            }
+            HStack(spacing: 8) {
+                moveButton("← 前の問い", direction: .previous, enabled: tabs.canMovePrevious)
+                moveButton(tabs.current.map { $0 + 1 >= tabs.tabs.count } == true && tabs.hasSubmit ? "回答の確認へ →" : "次の問い →",
+                           direction: .next, enabled: tabs.canMoveNext)
+                if tabs.current == nil {
+                    Text("今のタブは読み取れませんでした").font(ChatTheme.caption).foregroundStyle(ChatTheme.tertiary)
+                }
+            }
+            if onCursorFreeText {
+                Text("端末の ❯ が文字入力の行にあるため、ここからはタブを移れません。").font(ChatTheme.caption).foregroundStyle(ChatTheme.tertiary)
+            }
+        }
+    }
+
+    private func chip(_ text: String, current: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: current ? .bold : .regular))
+            .foregroundStyle(current ? ChatTheme.heading : ChatTheme.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 7).fill(current ? ChatTheme.permission.opacity(0.25) : ChatTheme.inputSurface))
+    }
+
+    private func moveButton(_ title: String, direction: MenuTabMover.Direction, enabled: Bool) -> some View {
+        Button { onMove(direction) } label: {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(enabled && !onCursorFreeText ? ChatTheme.text : ChatTheme.tertiary)
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.inputSurface))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.inputBorder))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled || onCursorFreeText)
     }
 }
 
