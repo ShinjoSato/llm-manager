@@ -470,34 +470,52 @@ final class ChatModel {
         busyPermissionKeys.insert(key)
         session.answerMenu(menu, choice: choice) { [weak self] outcome in
             guard let self else { return }
-            switch outcome {
-            case .confirmed, .cancelled:
-                if outcome == .confirmed, let choice, menu.options[choice].checked != nil {
-                    // 複数選択では Enter はチェックの切り替えで、メニューは閉じない。
-                    self.menuNotices[key] = "「\(menu.options[choice].label)」のチェックを切り替えました。"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.menuNotices[key] = nil }
-                }
-                // キーを送ってからメニューが消えるまで少し掛かるので、その間は押せないままにする。
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
-                return
-            case .failed(.gone):
-                self.alertMessage = "端末に選択肢が見当たりません。既に答え終わっている可能性があります。"
-            case .failed(.vanished):
-                self.alertMessage = "❯ を動かしている途中で端末の選択肢が読み取れなくなったため、Enter を押さずにやめました。端末の表示を確かめてから答えてください。"
-            case .failed(.changed):
-                self.alertMessage = "選択肢の内容が替わったため送りませんでした（矢印で ❯ を動かしていた場合は Enter を押していません）。カードの内容を確かめてから答えてください。"
-            case .failed(.stuck):
-                self.alertMessage = "選択肢の位置を合わせられなかったため、Enter を押さずにやめました。カードの内容を確かめてからもう一度答えてください。"
-            case .ended:
-                self.alertMessage = "claude が終了した（終了・上限到達など）ため、選択肢を確定できませんでした。Enter は押していません。"
-            case .unavailable:
-                self.alertMessage = "この選択肢はここからは選べません。"
-            case .settling:
-                self.alertMessage = "直前に送った矢印キーが端末に反映されるのを待っています。少し待ってからもう一度押してください。"
+            if outcome == .confirmed, let choice, menu.options[choice].checked != nil {
+                // 複数選択では Enter はチェックの切り替えで、メニューは閉じない。
+                self.showMenuNotice(key, "「\(menu.options[choice].label)」のチェックを切り替えました。")
             }
-            // やめた移動の矢印が遅れて反映されうるので、すぐには押せるようにしない。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+            self.finishMenuOperation(key, outcome: outcome)
         }
+    }
+
+    /// AskUserQuestion の問いのタブを 1 つ移る（→ / ←）。`menu` はカードに出していたもの。
+    func moveMenuTab(_ session: HostedSession, menu: MenuPrompt, direction: MenuTabMover.Direction) {
+        let key = Self.ptyMenuKey(session)
+        guard !busyPermissionKeys.contains(key) else { return }
+        busyPermissionKeys.insert(key)
+        session.moveMenuTab(menu, direction: direction) { [weak self] outcome in
+            self?.finishMenuOperation(key, outcome: outcome)
+        }
+    }
+
+    private func showMenuNotice(_ key: String, _ text: String) {
+        menuNotices[key] = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            if self?.menuNotices[key] == text { self?.menuNotices[key] = nil }
+        }
+    }
+
+    private func finishMenuOperation(_ key: String, outcome: ClaudeTerminalView.MenuAnswerOutcome) {
+        switch outcome {
+        case .confirmed, .cancelled, .moved:
+            break
+        case .failed(.gone):
+            alertMessage = "端末に選択肢が見当たりません。既に答え終わっている可能性があります。"
+        case .failed(.vanished):
+            alertMessage = "キーを送った後に端末の選択肢が読み取れなくなったため、Enter を押さずにやめました。端末の表示を確かめてから答えてください。"
+        case .failed(.changed):
+            alertMessage = "選択肢の内容が替わったため送りませんでした（矢印で ❯ を動かしていた場合は Enter を押していません）。カードの内容を確かめてから答えてください。"
+        case .failed(.stuck):
+            alertMessage = "選択肢の位置を合わせられなかった（またはタブが移らなかった）ため、Enter を押さずにやめました。カードの内容を確かめてからもう一度答えてください。"
+        case .ended:
+            alertMessage = "claude が終了した（終了・上限到達など）ため、選択肢を確定できませんでした。Enter は押していません。"
+        case .unavailable:
+            alertMessage = "この操作はここからはできません（文字入力の行に ❯ がある時はタブを移れません）。"
+        case .settling:
+            alertMessage = "直前に送った矢印キーが端末に反映されるのを待っています。少し待ってからもう一度押してください。"
+        }
+        // キーを送ってから画面が替わるまで・やめた移動の矢印が遅れて反映されうる間は、すぐには押せるようにしない。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
     }
 
     /// 中身を読み取れない選択メニューを閉じる。`menu` はカードに出していた写し。

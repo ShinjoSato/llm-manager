@@ -46,6 +46,12 @@ final class HostedSession: Identifiable {
         self.lastSessionId = resumeSessionId
         // 起動時点の桁数で TUI が組まれるので、0 幅ではなく現実的な大きさで作る。
         self.terminal = ClaudeTerminalView(frame: NSRect(x: 0, y: 0, width: 960, height: 640))
+        // 画面に載せないので桁は自由に取れる。狭いと問いや選択肢の説明が折り返して読みにくいので広げる（起動前に決める）。
+        let columns = terminal.getTerminal().cols
+        if columns > 0, columns < Self.terminalColumns {
+            let width = (terminal.frame.width * CGFloat(Self.terminalColumns) / CGFloat(columns)).rounded(.up)
+            terminal.setFrameSize(NSSize(width: width, height: terminal.frame.height))
+        }
         terminal.processDelegate = observer
         terminal.onStatusChanged = { [weak self] status in
             self?.localStatus = status
@@ -58,6 +64,9 @@ final class HostedSession: Identifiable {
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
     }
+
+    /// 端末の桁数の目安。
+    static let terminalColumns = 160
 
     var isRunning: Bool { end == nil && pid != nil }
 
@@ -101,6 +110,11 @@ final class HostedSession: Identifiable {
     func answerMenu(_ expected: MenuPrompt, choice: Int?, completion: @escaping (ClaudeTerminalView.MenuAnswerOutcome) -> Void) {
         guard isRunning else { return completion(.ended) }
         terminal.answerMenu(expected, choice: choice, completion: completion)
+    }
+
+    func moveMenuTab(_ expected: MenuPrompt, direction: MenuTabMover.Direction, completion: @escaping (ClaudeTerminalView.MenuAnswerOutcome) -> Void) {
+        guard isRunning else { return completion(.ended) }
+        terminal.moveMenuTab(expected, direction: direction, completion: completion)
     }
 
     func cancelUnreadableMenu(_ expected: UnreadableMenu) -> ClaudeTerminalView.UnreadableCancelResult {

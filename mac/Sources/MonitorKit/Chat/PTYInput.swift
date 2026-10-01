@@ -21,6 +21,13 @@ public enum PTYInput {
         return (applicationCursor ? "\u{1b}O" : "\u{1b}[") + final
     }
 
+    /// AskUserQuestion のタブ移動（Tabs の既定の割り当て: → が tabs:next、← が tabs:previous。v2.1.286）。
+    /// Tab キーは複数選択では選択肢の移動に取られるので使わない。
+    public static func tabKey(_ direction: MenuTabMover.Direction, applicationCursor: Bool) -> String {
+        let final = direction == .next ? "C" : "D"
+        return (applicationCursor ? "\u{1b}O" : "\u{1b}[") + final
+    }
+
     /// 貼り付けと Enter を同時に送ると Enter が貼り付けに飲まれるので、少し空ける。
     public static let submitDelay: TimeInterval = 0.3
 
