@@ -16,7 +16,7 @@ SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Termina
 
 ```
 mac/
-  Package.swift                 SPM。SwiftTerm を依存に持つ実行ファイル "claude-deck"
+  Package.swift                 SPM。SwiftTerm を依存に持つ実行ファイル "claude-deck"（SwiftTerm はリビジョン固定。更新時は Package.swift の revision を書き換える）
   Sources/ClaudeDeck/
     main.swift                  NSApplication 起動
     AppDelegate.swift           ウィンドウ + メニュー
@@ -42,13 +42,14 @@ mac/
     ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 上限文言監視
     ProjectRegistry.swift       projects/registry.tsv のパーサ
     AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも TSV / monitor を引ける）
-    MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（SSE 接続は 1 本）
+    MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（SSE 接続は 1 本）+ monitor 自動起動の配線
   Sources/MonitorKit/           monitor（:8766）クライアント。UI 無し・テスト可能な library
     MonitorModels.swift         monitor/src/types.ts に対応する Codable 型
     SSEParser.swift             text/event-stream の逐次パーサ（URLSession の生バイトを自前で解釈）
     MonitorEvent.swift          sessions / feed / feed-batch / usage / permissions / transcript のデコード
     MonitorConfiguration.swift  接続先・無通信タイムアウト・再接続バックオフ
     MonitorClient.swift         SSE 購読（自動再接続）+ REST / 書き込み系ラッパー
+    MonitorLauncher.swift       monitor の自動起動・停止（@Observable の phase で状態を公開）
     MonitorStore.swift          @Observable ストア（接続状態・セッション・フィード・残量・権限確認・pid 対応付け）
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
@@ -77,6 +78,36 @@ mac/
 - アプリで起動した claude の pid を `registerHostedProcess(pid:)` で登録し、`~/.claude/sessions/<pid>.json` の
   sessionId で monitor のセッションと対応付ける（`session(forHostedPid:)` / `externalSessions`）。
   `/clear` で sessionId が替わるので sessions を受けるたびに読み直す
+
+### monitor の自動起動（`MonitorLauncher`）
+
+起動時に `MonitorBridge.start()` が launcher → store の順に動かす（store は自分で再接続するので launcher の完了は待たない）。
+
+1. 接続先がループバック以外（`CLAUDE_DECK_MONITOR_URL` で別ホスト）なら起動しない（`.skippedRemote`）
+2. `GET /api/health` が応答すれば既存の monitor を使う（`.usingExisting`。アプリ終了時も止めない）
+3. 応答が無ければ `<ai-manager ルート>/monitor` で、install が済んでいなければ `npm install`（`.installing`）、
+   `ui/dist` が無ければ `npm run build`（`.building`）を済ませてから `npm start`（`.starting` → `.running`）。
+   済んだかは `node_modules/.package-lock.json` / `ui/dist/index.html` と、実行中だけ置く
+   `node_modules/.claude-deck-{install,build}-incomplete` で判定する（途中で止めた install / build は次回やり直す）
+4. 自分が起動した monitor だけを、アプリ終了時に止める。`applicationShouldTerminate` で `.terminateLater` を返し、
+   バックグラウンドで止め終えてから終了する（main を止めない）。SIGTERM / SIGINT も通常の終了経路に乗せる
+
+- 子プロセスは `/bin/zsh -lc` 経由（node / npm の PATH をログインシェルから得る）で、新しいプロセスグループの先頭として
+  `posix_spawn` する。停止は `kill(-pgid, SIGTERM)` → 3 秒待って残れば SIGKILL（npm → tsx → node をまとめて止め、孤児を残さない）。
+  起動待ちの間や起動後に npm（グループ先頭）だけ落ちた場合も、残ったグループを同じ手順で片付ける
+- SIGTERM / SIGINT は `SIG_IGN` ではなく何もしないハンドラ（`TerminationSignals`）で既定動作だけ外す。
+  `SIG_IGN` は exec を越えて子に残り、端末ペインの claude（SwiftTerm の forkpty 経路）が SIGTERM を無視して
+  上限到達時の `terminate()` が効かなくなるため。ハンドラは exec で既定に戻るので子に漏れない（`TerminationSignalsTests`）
+- 停止要求の後は何も起動しない（start / stop ごとの世代番号で、古い実行が新しい実行の状態を書き換えない）
+- 環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `MONITOR_LAN` / `MONITOR_TOKEN` を除去し、シェル側でも unset する。
+  `PORT` は接続先のポートに合わせる（LAN 公開モードでは起動しない）
+- 標準出力 / 標準エラーは `~/Library/Logs/claude-deck/monitor.log`（追記・`O_CLOEXEC`）。launcher 自身の起動・失敗・停止の記録も同じファイルに残る。
+  起動時に 5MB を超えていれば `monitor.log.1` に回す（1 世代）
+- ポート使用中の判定は 127.0.0.1 と ::1 の両方を見る。URL にポートが無ければ scheme の既定（http 80 / https 443）
+- 失敗理由は `MonitorLaunchFailure`（monitor ディレクトリが無い・node が無い・ポートが別プロセスに使用中・
+  install/build 失敗・45 秒で health が上がらない・起動後に終了）。`launcher.phase` が `.failed` になり、NSAlert でも知らせる
+- 画面表示は `MonitorBridge.launcher.phase`（`@Observable`。`isBusy` で準備中か分かる）と `ownedPid` / `logURL` を使う
+- アプリが強制終了（クラッシュ・SIGKILL）した場合は monitor が残る。次回起動時は health が応答するのでそれを使う
 
 ```sh
 # GUI 無しで接続・再接続・対応付けを確かめる（45 秒、pid 14978 をホスト中とみなす）

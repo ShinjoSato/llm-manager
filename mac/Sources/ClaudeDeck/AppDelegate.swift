@@ -1,4 +1,5 @@
 import AppKit
+import MonitorKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
@@ -7,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         // チャット画面は全セッションの transcript を SSE で受ける（ルームを選ぶたびに張り直さないため）。
         MonitorBridge.store.setTranscriptSubscription(.all)
-        MonitorBridge.store.start()
+        MonitorBridge.start()
 
         let main = MainViewController()
         window = NSWindow(
@@ -28,6 +29,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    private let terminationGate = MonitorTerminationGate()
+
+    /// 自分が起動した monitor を止め終えてから終了する（同期で待つと main が止まるため遅延終了にする）。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        switch terminationGate.decide(needsShutdown: MonitorBridge.needsShutdown) {
+        case .terminateNow:
+            return .terminateNow
+        case .terminateLater(let startShutdown):
+            if startShutdown {
+                MonitorBridge.shutdown {
+                    // 終了確認中の main は modalPanel モードで回り main actor のタスクが進まないので、モードを指定して返す。
+                    RunLoop.main.perform(inModes: [.default, .modalPanel]) {
+                        MainActor.assumeIsolated { NSApp.reply(toApplicationShouldTerminate: true) }
+                    }
+                    CFRunLoopWakeUp(CFRunLoopGetMain())
+                }
+            }
+            return .terminateLater
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) { MonitorBridge.shutdownImmediately() }
 
     // MARK: - メニュー（最小構成: アプリ / 編集）
 

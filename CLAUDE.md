@@ -165,6 +165,7 @@ mirio / sandora など iOS アプリの状況を App Store Connect API から取
 - **上限到達で強制終了**: PTY 出力を監視し「上限到達」文言を検知したらセッションを `terminate()`。検知文言は要・実機検証（`ClaudeTerminalView.swift` の `limitPhrases`）。正確な残量 API は無いため事後トリガー方式。
 - **ビルド/実行**: `cd mac && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み。
 - **`.app` 化**: `mac/scripts/bundle.sh` → `mac/dist/claude-deck.app`（ad-hoc 署名・バンドル ID `com.shinjosato.claude-deck`）→ `open mac/dist/claude-deck.app`。Metal Toolchain が無い環境では通常ビルドが SwiftTerm のシェーダーで失敗するため、自動で `--build-system native` に切り替える。Developer ID 署名・公証・配布・自動更新はしない。
+- **monitor の自動起動**: 起動時に `GET /api/health` を見て、monitor（:8766）が動いていなければ `<ルート>/monitor` で（必要なら `npm install` / `npm run build` を済ませて）`npm start` を子プロセスとして起動し、アプリ終了時に**自分が起動したものだけ**をプロセスグループごと止める（既存の monitor は止めない）。`/bin/zsh -lc` 経由で PATH を得て、API キーと `MONITOR_LAN` は渡さない。接続先がループバック以外（`CLAUDE_DECK_MONITOR_URL`）なら起動しない。ログは `~/Library/Logs/claude-deck/monitor.log`、状態は `MonitorBridge.launcher.phase`（`mac/Sources/MonitorKit/MonitorLauncher.swift`）。失敗時は NSAlert で理由を出す。アプリ側の SIGTERM / SIGINT は `SIG_IGN` にしない（exec を越えて端末ペインの claude に残り、上限到達時の `terminate()` が効かなくなる。何もしないハンドラで捕捉する）。
 - **ai-manager ルートの解決**: `.app` 起動は cwd が `/` なので、TSV 等は `AIManagerRoot`（`mac/Sources/ClaudeDeck/AIManagerRoot.swift`）経由で引く。順序は 環境変数 `AI_MANAGER_ROOT` → `defaults write com.shinjosato.claude-deck aiManagerRoot <path>` → 実行ファイル位置/cwd から親へ遡る → `/Users/shinjo/project/ai-manager`。確認は `claude-deck --print-ai-manager-root`。
 
 ## Claude Code セッション監視（monitor）
