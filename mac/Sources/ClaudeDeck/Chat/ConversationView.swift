@@ -57,7 +57,7 @@ struct ConversationHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RoomAvatar(name: room.name, status: nil, size: 38)
+            PixelAvatar(status: room.status, size: 38, hidesFromAccessibility: true)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(room.name)
@@ -80,12 +80,7 @@ struct ConversationHeader: View {
                 .lineLimit(1)
             }
             Spacer(minLength: 12)
-            HeaderIconButton(symbol: "chevron.left.forwardslash.chevron.right", help: "VS Code で開く") {
-                model.openInVSCode(room)
-            }
-            if model.xcodeProject(for: room) != nil {
-                HeaderIconButton(symbol: "hammer", help: "Xcode で開く") { model.openInXcode(room) }
-            }
+            EditorButtons(model: model, room: room)
             // App Store は登録のあるプロジェクトだけ出す（他は無効表示で並べる）。
             ModeSegment(selected: mode,
                         modes: RoomMode.allCases.filter { $0 != .appstore || model.hasAppStore(room) },
@@ -121,22 +116,69 @@ struct StatusBadge: View {
     }
 }
 
-struct HeaderIconButton: View {
+/// 見出しの「VS Code」「Xcode」「閉じる」と、押した結果の短い一言。
+struct EditorButtons: View {
+    let model: ChatModel
+    let room: Room
+    @State private var confirmingClose = false
+
+    var body: some View {
+        let xcodeProject = model.xcodeProject(for: room)
+        let closing = model.closingXcode.contains(room.id)
+        HStack(spacing: 6) {
+            if let note = model.editorNotes[room.id] {
+                Text(note.outcome.message)
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(note.outcome.isFailure ? ChatTheme.error : ChatTheme.working)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 200, alignment: .trailing)
+                    .help(note.outcome.message)
+            }
+            HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", title: "VS Code",
+                         help: "VS Code で開く: \(room.cwd)") { model.openInVSCode(room) }
+            if let xcodeProject {
+                HeaderButton(symbol: "hammer", title: "Xcode",
+                             help: "Xcode で開く: \(xcodeProject.path)") { model.openInXcode(room) }
+                HeaderButton(symbol: "xmark", title: closing ? "閉じています…" : "閉じる",
+                             help: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
+                             disabled: closing) { confirmingClose = true }
+                    .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
+                        Button("閉じる", role: .destructive) { model.closeInXcode(room) }
+                        Button("やめる", role: .cancel) {}
+                    } message: {
+                        Text("\(xcodeProject.lastPathComponent) を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
+                    }
+            }
+        }
+        .fixedSize()
+    }
+}
+
+struct HeaderButton: View {
     let symbol: String
+    let title: String
     let help: String
+    var disabled = false
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(ChatTheme.secondary)
-                .frame(width: 32, height: 30)
-                .background(RoundedRectangle(cornerRadius: 9).fill(hovering ? ChatTheme.selectedRow : ChatTheme.inputSurface))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+            HStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 11, weight: .medium))
+                Text(title)
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(disabled ? ChatTheme.tertiary : ChatTheme.text)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
         .help(help)
         .onHover { hovering = $0 }
     }

@@ -55,7 +55,7 @@ export function App() {
   const orphans = useMemo(() => permissions.filter((p) => !p.sessionId), [permissions]);
 
   const count = (f: (s: (typeof sessions)[number]) => boolean) => sessions.filter(f).length;
-  const attention = count((s) => ["permission", "waiting", "error"].includes(s.status));
+  const attention = count((s) => styleOf(s.status).attention);
 
   return (
     <div className="mx-auto max-w-[1700px] p-5">
@@ -177,6 +177,8 @@ export function App() {
           label="要対応"
           value={attention}
           sub="権限 / 入力待ち"
+          onClick={attention > 0 ? jumpToAttention : undefined}
+          hint={attention > 0 ? "最初の要対応のカードへ移る" : undefined}
         />
         <StatCard
           icon={<Pause size={18} />}
@@ -256,6 +258,23 @@ export function App() {
       </div>
     </div>
   );
+}
+
+// 動きを減らす設定なら、滑らかに流さずその場へ移す。
+const reducedMotion =
+  typeof window !== "undefined" && window.matchMedia
+    ? window.matchMedia("(prefers-reduced-motion: reduce)")
+    : null;
+
+/** 先頭の要対応カードへ移る。カードは要対応から並ぶので、文書順の最初が目当てのもの。 */
+function jumpToAttention() {
+  const card = document.querySelector<HTMLElement>('[data-attention="true"]');
+  if (!card) return;
+  card.scrollIntoView({ behavior: reducedMotion?.matches ? "auto" : "smooth", block: "start" });
+  // 縁取りは常に出ているので、どれへ移ったのかを一瞬だけ光らせて示す。
+  card.classList.remove("flash");
+  void card.offsetWidth;
+  card.classList.add("flash");
 }
 
 function ModeButton({

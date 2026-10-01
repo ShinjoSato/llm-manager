@@ -23,6 +23,16 @@ export function dur(ts: number | null, now: number): string {
   return h > 0 ? `${h}時間${m}分` : `${m}分`;
 }
 
+/** 返答待ちの長さ。止まっている事実が伝わるよう、1 分未満も秒で出す。 */
+export function waited(ts: number | null, now: number, verb = "待っています"): string | null {
+  if (!ts) return null;
+  const s = Math.max(0, Math.floor((now - ts) / 1000));
+  if (s < 60) return `${s}秒${verb}`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}時間${m}分${verb}` : `${m}分${verb}`;
+}
+
 /** 未来の時刻までの残り。dur の向き違い。 */
 export function until(ts: number | null, now: number): string {
   if (!ts) return "—";

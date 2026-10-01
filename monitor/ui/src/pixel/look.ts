@@ -44,6 +44,8 @@ export const LOOK: Record<SessionStatus, Look> = {
   error: {
     sprite: AGENT_DOWN,
     palette: { ...SKIN, G: "#f87171", B: "#dc2626", D: "#991b1b" },
+    mark: MARK_BANG,
+    markPalette: { A: "#f87171" },
     note: "API エラーなどでターンが終わっている",
   },
   idle: {

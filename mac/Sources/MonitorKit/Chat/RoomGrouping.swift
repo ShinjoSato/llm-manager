@@ -45,7 +45,26 @@ public struct RoomKey: Sendable, Equatable {
     }
 }
 
+/// ルーム一覧の 1 段（見出しか行）。一覧は 1 本の ForEach で描く。
+public enum RoomListEntry: Sendable, Equatable, Identifiable {
+    case header(RoomPhase, count: Int)
+    case row(String)
+
+    /// 見出しと行で名前空間を分け、行はグループをまたいでも同じ id のままにする。
+    public var id: String {
+        switch self {
+        case .header(let phase, _): return "h-\(phase.rawValue)"
+        case .row(let key): return "r-\(key)"
+        }
+    }
+}
+
 public enum RoomGrouping {
+    /// グループを見出し + 行の 1 列に平らにする（入れ子の ForEach だと遅延スタックがグループ間を移った行を描き直さないことがある）。
+    public static func entries(_ groups: [(phase: RoomPhase, ids: [String])]) -> [RoomListEntry] {
+        groups.flatMap { group in [.header(group.phase, count: group.ids.count)] + group.ids.map { .row($0) } }
+    }
+
     /// 要対応 → 稼働中 → 待機 の順に、各グループ内は新しく動いた順（同時刻は名前順）。空のグループは返さない。
     public static func group(_ rooms: [RoomKey], query: String = "") -> [(phase: RoomPhase, ids: [String])] {
         let filtered = rooms.filter { matches($0, query: query) }

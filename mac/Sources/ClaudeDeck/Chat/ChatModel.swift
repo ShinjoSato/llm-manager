@@ -53,6 +53,17 @@ struct RoomGroup: Identifiable {
     var id: RoomPhase { phase }
 }
 
+/// ルーム一覧の 1 段。id は `RoomListEntry.id`（行はグループを移っても同じ）。
+struct RoomListItem: Identifiable {
+    enum Kind {
+        case header(RoomPhase, count: Int)
+        case row(Room)
+    }
+
+    let id: String
+    let kind: Kind
+}
+
 /// チャット画面の状態。monitor のストアと、アプリがホストするセッションを束ねる。
 @MainActor
 @Observable
@@ -75,6 +86,8 @@ final class ChatModel {
     /// ルーム一覧。feed・セッション・ホスト中のセッションが変わった時だけ作り直す（描画のたびに feed を走査しない）。
     private(set) var rooms: [Room] = []
     private(set) var groupedRooms: [RoomGroup] = []
+    /// 一覧に描く順の見出しと行。
+    private(set) var listItems: [RoomListItem] = []
 
     /// sessionId → 最後に開いた時刻（epoch ミリ秒）。未読数の起点。
     private var lastSeen: [String: Double] = [:]
@@ -88,6 +101,10 @@ final class ChatModel {
     /// 送信中の権限確認（monitor の key か "pty:<ルーム>"）。二度押しさせない。
     private(set) var busyPermissionKeys: Set<String> = []
     var alertMessage: String?
+    /// ルーム → 見出しの「VS Code / Xcode / 閉じる」の結果。数秒で消す。
+    private(set) var editorNotes: [RoomID: EditorNote] = [:]
+    /// Xcode に閉じるよう頼んでいる最中のルーム。二度押しさせない。
+    private(set) var closingXcode: Set<RoomID> = []
 
     @ObservationIgnored private var boards: [String: GitHubBoardView] = [:]
     @ObservationIgnored private var appStoreViews: [String: AppStoreView] = [:]
@@ -105,7 +122,7 @@ final class ChatModel {
 
     /// 一覧を作り直し、読んだ値（feed・sessions・ホスト中のセッション・検索語・既読）が変わったら次の周回でもう一度作る。
     private func refreshRooms() {
-        let (all, groups) = withObservationTracking {
+        let (all, grouped) = withObservationTracking {
             let all = buildRooms()
             return (all, group(all))
         } onChange: { [weak self] in
@@ -113,7 +130,8 @@ final class ChatModel {
             Task { @MainActor [weak self] in self?.refreshRooms() }
         }
         rooms = all
-        groupedRooms = groups
+        groupedRooms = grouped.groups
+        listItems = grouped.items
     }
 
     private func buildRooms() -> [Room] {
@@ -164,15 +182,23 @@ final class ChatModel {
         return result
     }
 
-    private func group(_ all: [Room]) -> [RoomGroup] {
+    private func group(_ all: [Room]) -> (groups: [RoomGroup], items: [RoomListItem]) {
         let byKey = Dictionary(all.map { (key(of: $0.id), $0) }, uniquingKeysWith: { a, _ in a })
         let keys = all.map { room in
             RoomKey(id: key(of: room.id), name: room.name, status: room.status, activityAt: room.activityAt,
                     searchText: [room.branch, room.snapshot?.title, room.line, room.cwd].compactMap { $0 }.joined(separator: " "))
         }
-        return RoomGrouping.group(keys, query: query).map { group in
+        let grouped = RoomGrouping.group(keys, query: query)
+        let groups = grouped.map { group in
             RoomGroup(phase: group.phase, rooms: group.ids.compactMap { byKey[$0] })
         }
+        let items = RoomGrouping.entries(grouped).compactMap { entry -> RoomListItem? in
+            switch entry {
+            case .header(let phase, let count): return RoomListItem(id: entry.id, kind: .header(phase, count: count))
+            case .row(let key): return byKey[key].map { RoomListItem(id: entry.id, kind: .row($0)) }
+            }
+        }
+        return (groups, items)
     }
 
     var selectedRoom: Room? {
@@ -587,14 +613,56 @@ final class ChatModel {
     func openInVSCode(_ room: Room) {
         let folder = URL(fileURLWithPath: room.cwd, isDirectory: true)
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.microsoft.VSCode") else {
-            alertMessage = "Visual Studio Code が見つかりません。"
+            showEditorNote(.failed("Visual Studio Code が見つかりません"), for: room.id)
             return
         }
-        NSWorkspace.shared.open([folder], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        open(folder, with: app, for: room.id)
     }
 
     func openInXcode(_ room: Room) {
         guard let url = xcodeProject(for: room) else { return }
-        NSWorkspace.shared.open(url)
+        guard let app = NSWorkspace.shared.urlForApplication(toOpen: url) else {
+            showEditorNote(.failed("Xcode が見つかりません"), for: room.id)
+            return
+        }
+        open(url, with: app, for: room.id)
     }
+
+    /// Xcode 本体は終了させず、このルームのワークスペースだけを閉じる。
+    func closeInXcode(_ room: Room) {
+        guard let url = xcodeProject(for: room), !closingXcode.contains(room.id) else { return }
+        let roomId = room.id
+        closingXcode.insert(roomId)
+        editorNotes[roomId] = nil
+        Task { @MainActor [weak self] in
+            let outcome = await XcodeClose.close(path: url.path)
+            guard let self else { return }
+            self.closingXcode.remove(roomId)
+            self.showEditorNote(outcome, for: roomId)
+        }
+    }
+
+    private func open(_ url: URL, with app: URL, for roomId: RoomID) {
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+            let outcome: EditorOutcome = error.map { .failed("開けませんでした: \($0.localizedDescription)") } ?? .opened
+            Task { @MainActor [weak self] in self?.showEditorNote(outcome, for: roomId) }
+        }
+    }
+
+    private func showEditorNote(_ outcome: EditorOutcome, for roomId: RoomID) {
+        let note = EditorNote(outcome: outcome)
+        editorNotes[roomId] = note
+        // 失敗は読み切れるよう長めに残す。
+        let delay: Duration = outcome.isFailure ? .seconds(8) : .seconds(4)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            // 後から出した結果を古いタイマーで消さない。
+            if self?.editorNotes[roomId]?.id == note.id { self?.editorNotes[roomId] = nil }
+        }
+    }
+}
+
+struct EditorNote: Equatable {
+    let id = UUID()
+    let outcome: EditorOutcome
 }

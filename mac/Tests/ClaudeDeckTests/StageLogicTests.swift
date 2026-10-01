@@ -82,11 +82,11 @@ final class StageLogicTests: XCTestCase {
 
     func testEmbedURL() {
         let base = URL(string: "http://127.0.0.1:8799")!
-        let url = StageLogic.embedURL(base: base, sessionId: "abc-123", mode: .solid, background: 0x0b111d)
+        let url = StageLogic.embedURL(base: base, sessionId: "abc-123", background: 0x0b111d)
         XCTAssertEqual(url.absoluteString, "http://127.0.0.1:8799/?embed=stage&session=abc-123&mode=3d&bg=0b111d")
-        let clear = StageLogic.embedURL(base: URL(string: "http://127.0.0.1:8766/x?y=1#z")!, sessionId: "s", mode: .flat, background: nil)
-        XCTAssertEqual(clear.absoluteString, "http://127.0.0.1:8766/?embed=stage&session=s&mode=2d&bg=transparent")
-        let plus = StageLogic.embedURL(base: base, sessionId: "a+b", mode: .flat, background: nil)
+        let clear = StageLogic.embedURL(base: URL(string: "http://127.0.0.1:8766/x?y=1#z")!, sessionId: "s", background: nil)
+        XCTAssertEqual(clear.absoluteString, "http://127.0.0.1:8766/?embed=stage&session=s&mode=3d&bg=transparent")
+        let plus = StageLogic.embedURL(base: base, sessionId: "a+b", background: nil)
         XCTAssertTrue(plus.absoluteString.contains("session=a%2Bb"))
     }
 

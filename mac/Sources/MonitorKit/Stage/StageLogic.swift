@@ -1,13 +1,5 @@
 import Foundation
 
-/// ステージパネルの表示モード（monitor の埋め込み表示の `mode`）。
-public enum StageMode: String, CaseIterable, Sendable {
-    case flat = "2d"
-    case solid = "3d"
-
-    public var title: String { self == .flat ? "2D" : "3D" }
-}
-
 /// サブエージェント種別に対応する職業（monitor UI の `pixel/kit.ts` の JOBS と同じ呼び名）。
 public struct StageJob: Sendable, Equatable {
     public var label: String
@@ -166,14 +158,14 @@ public enum StageLogic {
 
     // MARK: - 埋め込み表示
 
-    /// `/?embed=stage&session=<id>&mode=2d|3d&bg=<hex>`。bg は 16 進 6 桁で渡す（無ければ透過）。
-    public static func embedURL(base: URL, sessionId: String, mode: StageMode, background: UInt32?) -> URL {
+    /// `/?embed=stage&session=<id>&mode=3d&bg=<hex>`。bg は 16 進 6 桁で渡す（無ければ透過）。
+    public static func embedURL(base: URL, sessionId: String, background: UInt32?) -> URL {
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
         components.path = "/"
         var items = [
             URLQueryItem(name: "embed", value: "stage"),
             URLQueryItem(name: "session", value: sessionId),
-            URLQueryItem(name: "mode", value: mode.rawValue),
+            URLQueryItem(name: "mode", value: "3d"),
         ]
         items.append(URLQueryItem(name: "bg", value: background.map { String(format: "%06x", $0) } ?? "transparent"))
         components.queryItems = items

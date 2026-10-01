@@ -247,6 +247,29 @@ export const HOP = {
   kidStagger: 0.31,
 } as const;
 
+/** 頭上マークの 1 マス。2D より大きめに親と同じ倍率で描く。遠目でも記号として読ませる。 */
+export const MARK_VOXEL = VOXEL;
+
+/** マークの縦マス数。! も ? も 5 マスで描いてある。 */
+export const MARK_ROWS = 5;
+
+/** マークを置く親の右肩。2D と同じ位置にして、2 つの表示で印の場所を揃える。 */
+export const MARK_X = 0.86;
+
+/** マークの上端は頭より 1 マス上。真上に積むと全高が伸びて、キャラが小さく写る。 */
+export const MARK_TOP = SKYLINE + VOXEL;
+
+/** マークの下端。 */
+export const MARK_BOTTOM = MARK_TOP - MARK_ROWS * MARK_VOXEL;
+
+/** 画角に入れる高さ。跳ねたマークの先まで入れないと、要対応の印が切れる。 */
+export const HEADROOM = MARK_TOP + HOP.rise * MARK_VOXEL;
+
+/** 要対応の基か。マークを出し、足元の光を強めて他の基と見分けさせる。 */
+export function beckons(status: SessionStatus): boolean {
+  return status === "permission" || status === "waiting" || status === "error";
+}
+
 /** 2 コマの跳ね。周期の前半は地に足を付け、後半だけ浮かせる。 */
 export function hop(t: number, period: number, rise: number): number {
   if (!(period > 0) || !(rise > 0) || !Number.isFinite(t)) return 0;

@@ -10,9 +10,9 @@ import {
   FOOTPRINT_X,
   FOOTPRINT_Z,
   gridLayout,
+  HEADROOM,
   KID_HEIGHT,
   KID_Y,
-  SKYLINE,
 } from "./blueprint.js";
 
 export const FOV = 34;
@@ -35,7 +35,7 @@ export function World({ sessions }: { sessions: SessionSnapshot[] }) {
   );
 
   const fit = useMemo(
-    () => cameraFit(layout, FOOTPRINT_X, FOOTPRINT_Z, SKYLINE, aspect, FOV, ELEVATION),
+    () => cameraFit(layout, FOOTPRINT_X, FOOTPRINT_Z, HEADROOM, aspect, FOV, ELEVATION),
     [layout, aspect],
   );
 

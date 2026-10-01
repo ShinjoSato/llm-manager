@@ -6,15 +6,27 @@ export function StatCard({
   value,
   sub,
   accent = "text-emerald-300",
+  onClick,
+  hint,
 }: {
   icon: ReactNode;
   label: string;
   value: ReactNode;
   sub?: ReactNode;
   accent?: string;
+  /** 渡すと押せるカードになる。 */
+  onClick?: () => void;
+  hint?: string;
 }) {
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className="glass flex items-center gap-3.5 p-4">
+    <Tag
+      {...(onClick ? { type: "button" as const, onClick } : {})}
+      title={hint}
+      className={`glass flex items-center gap-3.5 p-4 text-left ${
+        onClick ? "cursor-pointer transition hover:bg-white/[0.07]" : ""
+      }`}
+    >
       <div
         className={`grid h-11 w-11 place-items-center rounded-xl border border-white/10 bg-white/5 ${accent}`}
       >
@@ -29,7 +41,7 @@ export function StatCard({
           {sub && <span className="truncate text-[12px] text-slate-400">{sub}</span>}
         </div>
       </div>
-    </div>
+    </Tag>
   );
 }
 

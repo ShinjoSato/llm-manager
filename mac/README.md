@@ -35,7 +35,7 @@ mac/
       AppKitHosts.swift           既存の端末ビュー / GitHub ボード / App Store 表示を SwiftUI に差し込む
       ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
     Stage/                      右側のステージパネル（画面案B の右 360px）
-      StagePanel.swift            見出し（2D / 3D・開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
+      StagePanel.swift            見出し（開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
       StageWebView.swift          monitor の埋め込み表示を出す WKWebView（直近 3 枚を保持して切替）とウィンドウ幅の監視
     ProjectStore.swift              プロジェクト一覧の永続化（Application Support の JSON）
     GitHubProjectPrompt.swift       プロジェクトに GitHub Project（owner/number）を紐づける入力ダイアログ
@@ -61,6 +61,7 @@ mac/
     MonitorStore.swift          @Observable ストア（接続状態・セッション・フィード・残量・権限確認・pid 対応付け）
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
     LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
+    EditorActions.swift         見出しの「VS Code / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       TranscriptBuffer.swift      会話履歴の GET と SSE の統合（id で重複除去・reset で置換）
       ChatTimeline.swift          発話の下にツールを畳む・実行中ツールの判定・送った伝言の差し込み
@@ -151,8 +152,11 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 - monitor が見つけたセッション + アプリでホスト中のセッションを **要対応（権限待ち・入力待ち）/ 稼働中 / 待機** に分けて並べる。
   各グループ内は最後に動いた順。状態は monitor の `SessionSnapshot.status`。monitor 未接続のときは、ホスト中のセッションだけ
   端末画面からのローカル判定（作業中 / 権限プロンプト / 待機）で代わりに出す。
-- 各行: 頭文字アイコン（色はプロジェクト名から決まる）・状態ドット・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
+- 各行: ドット絵キャラのアイコン・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
   （開いていない間に届いた応答の数）。アプリの外で動いているセッションには「外部」タグ（伝言・引き継ぎは下記「外部セッション」）。
+  - キャラは monitor の 2D と同じ絵と配色（`monitor/ui/src/pixel/sprites.ts`・`look.ts` を `Sources/MonitorKit/Pixel/PixelCharacter.swift` に移植。変えるときは両方そろえる。ただしマークの大きさ・位置・跳ね幅は小さいアイコンで読めるよう monitor の 2D とは変えている）。稼働中=立ち・緑で跳ねる / 権限待ち=立ち・amber で「!」が点滅 / 入力待ち=立ち・青で「?」が点滅 / エラー=うずくまり・赤 / 待機=座り・灰で Zz が浮き沈み / 終了=座り・暗い灰 / 状態不明=座り・灰（マーク無し）
+  - SwiftUI の Canvas で整数ポイントのマスを補間なしに塗る。動く状態だけ、画面に出ている間だけ `TimelineView(.periodic)` で 4fps で描き直す（起点を固定時刻にして全行が同じ境目でコマを切り替える）。「動きを減らす」設定では止める。行と見出しでは状態名を隣の文字が読むので、アイコン自体は読み上げない
+  - 会話の見出しのアイコンも同じキャラ。「+」のプロジェクト一覧はセッションを持たないので頭文字アイコンのまま
 - 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。
   一覧の追加・削除・取り込み・GitHub の紐づけもここ）。右クリック → 「ルームを閉じる（claude を終了）」。
 - 下部: 5 時間 / 7 日間の残り% と取得からの経過（statusLine 未設定なら未取得と出す）。monitor 未接続ならその旨を出す。
@@ -162,8 +166,8 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 選択中のルームのセッションを、monitor のステージ（アニメーション）と monitor クライアントのデータで見せる。
 文言・URL・判定は `Sources/MonitorKit/Stage/StageLogic.swift`（テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
 
-- **見出し**: 「ステージ」・**2D / 3D 切替**（既定は 3D。UserDefaults `stagePanel.mode`）・畳むボタン。
-- **ステージ**: WKWebView で monitor の埋め込み表示 `/?embed=stage&session=<id>&mode=2d|3d&bg=transparent` を読む。
+- **見出し**: 「ステージ」・畳むボタン。ステージは 3D 表示だけ（以前の 2D / 3D の保存値 `stagePanel.mode` はパネル表示時に消す）。
+- **ステージ**: WKWebView で monitor の埋め込み表示 `/?embed=stage&session=<id>&mode=3d&bg=transparent` を読む（monitor 側の `mode=2d` は monitor の UI 用に残っているが、アプリからは使わない）。
   接続先は `MonitorConfiguration`（`CLAUDE_DECK_MONITOR_URL` / `CLAUDE_DECK_MONITOR_PORT`）。ルームを切り替えると URL を差し替える。
   埋め込み表示は URL を読み込み時にしか見ないので切替は読み直しになるが、直近 3 枚の WKWebView を生かしておき、行き来した時は読み直さない。
   monitor に繋ぎ直した（`connectionEpoch` が増えた）時は保持分を捨てて読み直す。読み込みに失敗したら 2 秒後にやり直す。
@@ -183,7 +187,12 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・VS Code / Xcode で開く・**チャット / ターミナル / GitHub / App Store** 切替。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「Xcode」「閉じる」・**チャット / ターミナル / GitHub / App Store** 切替。
+  「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`findXcodeProject`）。「閉じる」は確認ダイアログの後、
+  monitor の `close.ts` と同じ AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
+  （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。monitor 未接続でも、ホスト中のルームでも使える。
+  結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。
+  初回は macOS が「claude-deck が Xcode を操作する」許可（オートメーション）を求める。拒否するとエラー（-1743）になる。
   ターミナルは既存の端末ビュー、GitHub は既存のボード表示、App Store は既存の `AppStoreView`（`appstore.tsv` に登録のあるプロジェクトだけ出す）。
   切り替えても、ルームを移っても、各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
 - 会話は monitor の会話履歴 API（`/api/sessions/:id/transcript` + SSE `transcript`）から組み立てる。
