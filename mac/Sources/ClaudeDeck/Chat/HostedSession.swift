@@ -25,6 +25,8 @@ final class HostedSession: Identifiable {
     private(set) var permissionPrompt: PermissionPrompt?
     /// 入力欄への送信を止める状態（権限プロンプト・選択メニュー）。
     private(set) var inputBlock: InputBlock?
+    /// 端末に出ている選択メニューの中身（読み取れなければ nil。inputBlock が .menu でも nil はありうる）。
+    private(set) var menuPrompt: MenuPrompt?
     private(set) var end: End?
     /// 最後に解決できた sessionId。終了して monitor の対応表から消えた後も会話を出すために持ち続ける。
     @ObservationIgnored var lastSessionId: String?
@@ -49,6 +51,7 @@ final class HostedSession: Identifiable {
         }
         terminal.onPermissionPromptChanged = { [weak self] in self?.permissionPrompt = $0 }
         terminal.onInputBlockChanged = { [weak self] in self?.inputBlock = $0 }
+        terminal.onMenuPromptChanged = { [weak self] in self?.menuPrompt = $0 }
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
     }
@@ -92,11 +95,22 @@ final class HostedSession: Identifiable {
         return terminal.answerPermission(expected, allow: allow)
     }
 
+    func answerMenu(_ expected: MenuPrompt, choice: Int?, completion: @escaping (ClaudeTerminalView.MenuAnswerOutcome) -> Void) {
+        guard isRunning else { return completion(.failed(.gone)) }
+        terminal.answerMenu(expected, choice: choice, completion: completion)
+    }
+
+    func cancelUnreadableMenu() -> Bool {
+        guard isRunning else { return false }
+        return terminal.cancelUnreadableMenu()
+    }
+
     private func handleLimitReached() {
         guard end == nil else { return }
         end = .limitReached
         permissionPrompt = nil
         inputBlock = nil
+        menuPrompt = nil
         terminal.stopStatusMonitoring()
         terminal.terminate()
         release()
@@ -108,6 +122,7 @@ final class HostedSession: Identifiable {
         if end == nil { end = .exited(code) }
         permissionPrompt = nil
         inputBlock = nil
+        menuPrompt = nil
         release()
     }
 

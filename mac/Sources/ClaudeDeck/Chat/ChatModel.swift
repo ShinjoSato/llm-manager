@@ -248,7 +248,7 @@ final class ChatModel {
             alertMessage = "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"
             return false
         case .blocked:
-            alertMessage = "端末側で選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。"
+            alertMessage = "選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。上のカードで答えてください。"
             return false
         case .empty, nil: return false
         }
@@ -275,7 +275,7 @@ final class ChatModel {
             if session.pid == nil { return "起動中…" }
             switch session.inputBlock {
             case .permission: return "権限の確認に答えると送れます"
-            case .menu: return "端末側で選択肢が出ているため送れません"
+            case .menu: return "上の選択肢に答えると送れます"
             case nil: return nil
             }
         }
@@ -403,7 +403,7 @@ final class ChatModel {
     private static func blockName(_ block: InputBlock) -> String {
         switch block {
         case .permission: return "権限の確認"
-        case .menu: return "端末側の選択肢"
+        case .menu: return "選択肢"
         }
     }
 
@@ -454,6 +454,46 @@ final class ChatModel {
         }
         busyPermissionKeys.insert(key)
         // キーを送ってからプロンプトが消えるまで少し掛かるので、その間は押せないままにする。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+    }
+
+    static func ptyMenuKey(_ session: HostedSession) -> String { "menu:\(session.id.uuidString)" }
+
+    /// `menu` はカードに出していたもの。`choice` はその選択肢の位置、nil なら取り消し（Esc）。
+    /// 端末の今のメニューと違えば何も送らない（別の問いに答えないため）。
+    func answerMenu(_ session: HostedSession, menu: MenuPrompt, choice: Int?) {
+        let key = Self.ptyMenuKey(session)
+        guard !busyPermissionKeys.contains(key) else { return }
+        busyPermissionKeys.insert(key)
+        session.answerMenu(menu, choice: choice) { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .confirmed, .cancelled:
+                // キーを送ってからメニューが消えるまで少し掛かるので、その間は押せないままにする。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+                return
+            case .failed(.gone):
+                self.alertMessage = "端末に選択肢が見当たりません。既に答え終わっている可能性があります。"
+            case .failed(.changed):
+                self.alertMessage = "選択肢の内容が替わったため送りませんでした（矢印で ❯ を動かしていた場合は Enter を押していません）。カードの内容を確かめてから答えてください。"
+            case .failed(.stuck):
+                self.alertMessage = "選択肢の位置を合わせられなかったため、Enter を押さずにやめました。カードの内容を確かめてからもう一度答えてください。"
+            case .unavailable:
+                self.alertMessage = "この選択肢はここからは選べません。"
+            }
+            self.busyPermissionKeys.remove(key)
+        }
+    }
+
+    /// 中身を読み取れない選択メニューを閉じる。
+    func cancelUnreadableMenu(_ session: HostedSession) {
+        let key = Self.ptyMenuKey(session)
+        guard !busyPermissionKeys.contains(key) else { return }
+        guard session.cancelUnreadableMenu() else {
+            alertMessage = "端末に選択肢が見当たりません。既に答え終わっている可能性があります。"
+            return
+        }
+        busyPermissionKeys.insert(key)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
     }
 

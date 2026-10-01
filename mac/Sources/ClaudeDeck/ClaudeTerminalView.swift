@@ -31,8 +31,14 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 入力欄への送信を止める状態が変わったときに呼ばれる（メインスレッド）。
     var onInputBlockChanged: ((InputBlock?) -> Void)?
 
+    /// 画面に出ている選択メニューの中身が変わったときに呼ばれる（メインスレッド）。
+    var onMenuPromptChanged: ((MenuPrompt?) -> Void)?
+
     private(set) var permissionPrompt: PermissionPrompt?
     private(set) var inputBlock: InputBlock?
+    private(set) var menuPrompt: MenuPrompt?
+    /// 選択肢へ ❯ を動かしている最中。重ねて動かすと互いのキーで行き先がずれる。
+    private(set) var isNavigatingMenu = false
 
     private var limitHandled = false
     private var limitCheckPending = false
@@ -134,6 +140,11 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
             inputBlock = block
             onInputBlockChanged?(block)
         }
+        let menu = block == .menu ? ChoiceMenu.parse(screen: screen) : nil
+        if menu != menuPrompt {
+            menuPrompt = menu
+            onMenuPromptChanged?(menu)
+        }
         guard newStatus != currentStatus else { return }
         currentStatus = newStatus
         onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
@@ -219,6 +230,79 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         }
         send(txt: allow ? PTYInput.allowKey : PTYInput.denyKey)
         return .sent
+    }
+
+    enum MenuAnswerOutcome: Equatable {
+        case confirmed
+        case cancelled
+        case failed(MenuNavigator.Failure)
+        /// 押せない選択肢（自由入力）か、別の選択肢へ動かしている最中。
+        case unavailable
+    }
+
+    /// 今の画面の選択メニュー（権限プロンプトが出ていれば nil）。
+    private func currentMenu() -> MenuPrompt? {
+        let screen = screenLines()
+        guard InputBlock.detect(screen: screen) == .menu else { return nil }
+        return ChoiceMenu.parse(screen: screen)
+    }
+
+    /// 選択メニューに答える。`choice` は `expected`（カードに出していたもの）の選択肢の位置、nil なら Esc で取り消す。
+    /// 今の画面のメニューが `expected` と同じ時だけキーを送り、❯ を矢印で 1 行ずつ動かして着いたのを確かめてから Enter を送る。
+    func answerMenu(_ expected: MenuPrompt, choice: Int?, completion: @escaping (MenuAnswerOutcome) -> Void) {
+        guard !isNavigatingMenu else { return completion(.unavailable) }
+        guard let choice else {
+            guard let current = currentMenu() else {
+                evaluateStatus()
+                return completion(.failed(.gone))
+            }
+            guard current.sameMenu(as: expected) else {
+                evaluateStatus()
+                return completion(.failed(.changed))
+            }
+            send(txt: PTYInput.cancelMenuKey)
+            return completion(.cancelled)
+        }
+        guard let navigator = MenuNavigator(expected: expected, target: choice) else { return completion(.unavailable) }
+        isNavigatingMenu = true
+        stepMenu(navigator, completion: completion)
+    }
+
+    private func stepMenu(_ navigator: MenuNavigator, completion: @escaping (MenuAnswerOutcome) -> Void) {
+        var navigator = navigator
+        guard process?.running == true else {
+            isNavigatingMenu = false
+            return completion(.failed(.gone))
+        }
+        switch navigator.next(currentMenu()) {
+        case .confirm:
+            send(txt: PTYInput.confirmMenuKey)
+            isNavigatingMenu = false
+            completion(.confirmed)
+            return
+        case .abort(let failure):
+            isNavigatingMenu = false
+            evaluateStatus()
+            completion(.failed(failure))
+            return
+        case .press(let direction):
+            send(txt: PTYInput.arrowKey(direction, applicationCursor: getTerminal().applicationCursor))
+        case .wait:
+            break
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.menuStepInterval) { [weak self] in
+            self?.stepMenu(navigator, completion: completion)
+        }
+    }
+
+    /// 中身を読み取れない選択メニューを Esc で閉じる。メニューが出ている時だけ送る。
+    func cancelUnreadableMenu() -> Bool {
+        guard !isNavigatingMenu, currentInputBlock() == .menu else {
+            evaluateStatus()
+            return false
+        }
+        send(txt: PTYInput.cancelMenuKey)
+        return true
     }
 
     /// 画面の下から `lines` 行を、小文字化して連結した文字列で返す。

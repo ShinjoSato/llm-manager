@@ -198,6 +198,16 @@ struct MessageList: View {
                             model.answerOnTerminal(session, prompt: prompt, allow: allow)
                         }
                     }
+                    if permissions.isEmpty, let session = room.hosted, session.permissionPrompt == nil, session.inputBlock == .menu {
+                        let busy = model.busyPermissionKeys.contains(ChatModel.ptyMenuKey(session))
+                        if let menu = session.menuPrompt {
+                            MenuCard(menu: menu, busy: busy) { choice in
+                                model.answerMenu(session, menu: menu, choice: choice)
+                            }
+                        } else {
+                            UnreadableMenuCard(busy: busy) { model.cancelUnreadableMenu(session) }
+                        }
+                    }
                     Color.clear.frame(height: 1).id(Self.bottomId)
                 }
                 .padding(.horizontal, 28)
@@ -222,7 +232,8 @@ struct MessageList: View {
     private func scrollKey(entries: [ChatEntry], permissions: Int) -> String {
         let last = entries.last
         let prompt = room.hosted?.permissionPrompt != nil || room.status == .permission
-        return "\(entries.count):\(last?.tools.count ?? 0):\(last?.text.count ?? 0):\(permissions):\(prompt)"
+        let menu = room.hosted?.inputBlock == .menu
+        return "\(entries.count):\(last?.tools.count ?? 0):\(last?.text.count ?? 0):\(permissions):\(prompt):\(menu)"
     }
 
     @ViewBuilder
@@ -452,6 +463,147 @@ struct PermissionCard: View {
             }
             .disabled(busy)
             .opacity(busy ? 0.6 : 1)
+        }
+        .padding(14)
+        .frame(maxWidth: 640, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
+    }
+}
+
+/// 端末に出ている選択メニュー（plan の承認・選択式の質問・trust 確認など）のカード。権限カードと同じ位置に出す。
+struct MenuCard: View {
+    let menu: MenuPrompt
+    let busy: Bool
+    /// 選択肢の位置。nil は取り消し（Esc）。
+    let onChoose: (Int?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "list.bullet.circle.fill").foregroundStyle(ChatTheme.permission)
+                Text("選択肢").font(.system(size: 13, weight: .bold)).foregroundStyle(ChatTheme.heading)
+            }
+            if !menu.context.isEmpty {
+                Text(menu.context.joined(separator: "\n"))
+                    .font(ChatTheme.mono)
+                    .foregroundStyle(ChatTheme.text)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.codeSurface))
+            }
+            if !menu.question.isEmpty {
+                Text(menu.question).font(ChatTheme.body.weight(.semibold)).foregroundStyle(ChatTheme.heading)
+                    .textSelection(.enabled)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(menu.options.enumerated()), id: \.offset) { index, option in
+                    MenuOptionRow(option: option, isCursor: index == menu.cursor) { onChoose(index) }
+                }
+            }
+            if menu.options.contains(where: \.isFreeText) {
+                Text("文字を入力する選択肢はここからは選べません。「キャンセル」で閉じてから、下の入力欄で伝えてください。")
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.secondary)
+            }
+            HStack(spacing: 8) {
+                Button { onChoose(nil) } label: {
+                    Text("キャンセル（Esc）")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ChatTheme.text)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+                }
+                .buttonStyle(.plain)
+                if busy {
+                    ProgressView().controlSize(.small)
+                    Text("送信中…").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
+                }
+            }
+        }
+        .disabled(busy)
+        .opacity(busy ? 0.6 : 1)
+        .padding(14)
+        .frame(maxWidth: 640, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
+    }
+}
+
+private struct MenuOptionRow: View {
+    let option: MenuPrompt.Option
+    /// 端末で今 ❯ が付いている行（Enter だけで決まる行）。
+    let isCursor: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let disabled = option.isFreeText
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(option.number.map { "\($0)." } ?? "•")
+                    .font(ChatTheme.mono.weight(.semibold))
+                    .foregroundStyle(ChatTheme.permission)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.label)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(disabled ? ChatTheme.tertiary : ChatTheme.text)
+                    ForEach(Array(option.detail.enumerated()), id: \.offset) { _, line in
+                        Text(line).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                if disabled {
+                    Text("入力は対象外").font(ChatTheme.caption).foregroundStyle(ChatTheme.tertiary)
+                } else if isCursor {
+                    Text("選択中").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(isCursor && !disabled ? ChatTheme.permission.opacity(0.6) : ChatTheme.inputBorder))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(disabled ? "文字の入力に移る選択肢はカードからは選べません" : option.label)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// 選択メニューは出ているが中身を読み取れない時のカード。閉じる（Esc）ことだけはできる。
+struct UnreadableMenuCard: View {
+    let busy: Bool
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "list.bullet.circle.fill").foregroundStyle(ChatTheme.permission)
+                Text("選択肢").font(.system(size: 13, weight: .bold)).foregroundStyle(ChatTheme.heading)
+            }
+            Text("端末に選択肢が出ていますが、内容を読み取れませんでした。閉じると Claude Code は取り消しとして扱います。")
+                .font(ChatTheme.caption)
+                .foregroundStyle(ChatTheme.secondary)
+            HStack(spacing: 8) {
+                Button(action: onCancel) {
+                    Text("キャンセル（Esc）")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ChatTheme.text)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+                }
+                .buttonStyle(.plain)
+                if busy { ProgressView().controlSize(.small) }
+            }
+            .disabled(busy)
         }
         .padding(14)
         .frame(maxWidth: 640, alignment: .leading)
