@@ -1,27 +1,57 @@
 import AppKit
+import MonitorKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        MonitorBridge.store.start()
+        // チャット画面は全セッションの transcript を SSE で受ける（ルームを選ぶたびに張り直さないため）。
+        MonitorBridge.store.setTranscriptSubscription(.all)
+        MonitorBridge.start()
 
-        let split = MainSplitViewController()
+        let main = MainViewController()
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "claude-deck"
-        window.contentViewController = split
-        window.setFrameAutosaveName("ClaudeDeckMainWindow")
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(hex: 0x0a0f1a)
+        window.titlebarAppearsTransparent = true
+        window.contentViewController = main
+        window.contentMinSize = NSSize(width: 860, height: 520)
+        window.setFrameAutosaveName("ClaudeDeckChatWindow")
         window.center()
         window.makeKeyAndOrderFront(nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    private let terminationGate = MonitorTerminationGate()
+
+    /// 自分が起動した monitor を止め終えてから終了する（同期で待つと main が止まるため遅延終了にする）。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        switch terminationGate.decide(needsShutdown: MonitorBridge.needsShutdown) {
+        case .terminateNow:
+            return .terminateNow
+        case .terminateLater(let startShutdown):
+            if startShutdown {
+                MonitorBridge.shutdown {
+                    // 終了確認中の main は modalPanel モードで回り main actor のタスクが進まないので、モードを指定して返す。
+                    RunLoop.main.perform(inModes: [.default, .modalPanel]) {
+                        MainActor.assumeIsolated { NSApp.reply(toApplicationShouldTerminate: true) }
+                    }
+                    CFRunLoopWakeUp(CFRunLoopGetMain())
+                }
+            }
+            return .terminateLater
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) { MonitorBridge.shutdownImmediately() }
 
     // MARK: - メニュー（最小構成: アプリ / 編集）
 

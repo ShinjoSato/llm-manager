@@ -57,7 +57,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     /// iOS リポジトリは `ios/` 等のサブディレクトリに `.xcodeproj` を置くことが多いので直下だけでは足りない。
     /// 最も浅い階層のものを選び、同階層なら `.xcworkspace`（CocoaPods/SPM）を `.xcodeproj` より優先する。
     /// 見つからなければ nil（SPM のみ等。ボタンを出さない）。
-    private static func findXcodeProject(in directory: String) -> URL? {
+    static func findXcodeProject(in directory: String) -> URL? {
         let fm = FileManager.default
         // 探索しても無駄／誤検出のもと（バンドル内含む）になるディレクトリは除外する。
         let skip: Set<String> = [".git", "Pods", "node_modules", ".build", "DerivedData", "build", ".swiftpm"]

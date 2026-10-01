@@ -5,7 +5,7 @@ import MonitorKit
 /// Claude Code の作業状態（ペイン見出しのバッジ表示に使う）。
 enum ClaudeStatus: Equatable {
     case working        // 出力が流れている（生成中）
-    case waitingInput   // 出力停止 かつ 権限確認/質問プロンプトを検出（要応答）
+    case waitingInput   // 権限確認・選択メニュー・質問プロンプトを検出（要応答）
     case idle           // 出力停止 かつ プロンプト無し（待機/完了）
 }
 
@@ -25,13 +25,22 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 作業ステータスが変化したときに呼ばれる（メインスレッド）。
     var onStatusChanged: ((ClaudeStatus) -> Void)?
 
+    /// 画面に出ている権限プロンプトが変わったときに呼ばれる（メインスレッド）。
+    var onPermissionPromptChanged: ((PermissionPrompt?) -> Void)?
+
+    /// 入力欄への送信を止める状態が変わったときに呼ばれる（メインスレッド）。
+    var onInputBlockChanged: ((InputBlock?) -> Void)?
+
+    private(set) var permissionPrompt: PermissionPrompt?
+    private(set) var inputBlock: InputBlock?
+
     private var limitHandled = false
     private var limitCheckPending = false
 
     // MARK: - ステータス検知（ハイブリッド: 活動量 + プロンプト文言）
     private var statusTimer: Timer?
     private var lastDataTime = Date()
-    private var currentStatus: ClaudeStatus = .idle
+    private(set) var currentStatus: ClaudeStatus = .idle
 
     /// 「最後の出力からこの秒数以内」なら出力が流れている＝作業中とみなす（活動量ベース）。
     private static let busyThreshold: TimeInterval = 1.0
@@ -41,16 +50,6 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// ⚠️ Claude Code の TUI 文言に合わせて要・実機検証。
     private static let busyMarkers: [String] = [
         "esc to interrupt"
-    ]
-
-    /// 応答待ち（入力待ち）を示す文言の候補（大文字小文字無視・部分一致）。
-    /// 通常の回答本文との誤検知を避けるため、権限プロンプト固有の言い回しに絞る。
-    /// ⚠️ 実際の Claude Code の権限確認/質問プロンプト文言に合わせて要・実機検証。
-    private static let waitingPhrases: [String] = [
-        "do you want to proceed",
-        "yes, and don't ask again",
-        "no, and tell claude",
-        "❯ 1. yes"
     ]
 
     /// 指定プロジェクトのディレクトリで `claude` を起動する。
@@ -100,35 +99,127 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 判定は端末の「現在画面の下数行」を直接読む（履歴が累積する scanBuffer は使わない）ため、
     /// プロンプト応答後に古い文言が残って誤判定する問題が起きない。
     /// dataReceived も Timer も SwiftTerm 既定キュー（main）上で動くので端末バッファ参照は安全。
-    private func evaluateStatus() {
-        let tail = visibleTailText(lines: 8)
+    func evaluateStatus() {
+        let screen = screenLines()
+        let tail = Self.tailText(screen, lines: 8)
         let quiet = Date().timeIntervalSince(lastDataTime)
+        // 権限プロンプト・選択メニュー表示中も点滅表示で出力が流れ続けるので、活動量より先に見る。
+        let prompt = PermissionPrompt.parse(screen: screen)
+        let block = InputBlock.detect(screen: screen)
         let newStatus: ClaudeStatus
-        if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
+        if block != nil {
+            newStatus = .waitingInput
+        } else if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
             newStatus = .working
-        } else if Self.waitingPhrases.contains(where: { tail.contains($0) }) {
+        } else if InputBlock.looksWaiting(tail: tail) {
+            // 文言だけの判定は返答本文と取り違えうるので、バッジにだけ使い送信は止めない。
             newStatus = .waitingInput
         } else {
             newStatus = .idle
+        }
+        if prompt != permissionPrompt {
+            permissionPrompt = prompt
+            onPermissionPromptChanged?(prompt)
+        }
+        if block != inputBlock {
+            inputBlock = block
+            onInputBlockChanged?(block)
         }
         guard newStatus != currentStatus else { return }
         currentStatus = newStatus
         onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
     }
 
-    /// 現在表示中の画面の下から `lines` 行を、小文字化して連結した文字列で返す。
-    private func visibleTailText(lines: Int) -> String {
+    /// アプリが今いじっている実画面の全行（上から順・右端の空白は除く）。
+    /// ターミナル表示で上にスクロールしていても、表示位置（yDisp）ではなく末尾の `rows` 行を読む。
+    /// SwiftTerm は `lines.count == yBase + rows` を保つが yBase を公開していないので、行数を探って求める。
+    func screenLines() -> [String] {
         let term = getTerminal()
         let rows = term.rows
-        guard rows > 0 else { return "" }
-        var text = ""
-        for r in max(0, rows - lines)..<rows {
-            if let line = term.getLine(row: r) {
-                text += line.translateToString(trimRight: true)
-                text += "\n"
+        guard rows > 0 else { return [] }
+        let top = term.buffer.totalLinesTrimmed
+        let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
+        let base = max(0, count - rows)
+        return (base..<count).compactMap { term.getScrollInvariantLine(row: top + $0).map(Self.text(of:)) }
+    }
+
+    /// 送信を止めるべき状態か。タイマーを待たず今の画面で判定する。
+    func currentInputBlock() -> InputBlock? {
+        InputBlock.detect(screen: screenLines())
+    }
+
+    /// 送信を途中で取りやめ、端末の入力欄に本文を残したかもしれない。
+    private(set) var mayHaveLeftover = false
+
+    // MARK: - 入力（本人のキー入力として PTY に書く）
+
+    enum SendResult: Equatable {
+        case sent
+        case empty
+        /// 権限プロンプト・選択メニューの表示中。Enter がその選択になってしまうので送らない。
+        case blocked(InputBlock)
+        /// 取りやめた送信の本文が端末の入力欄に残っている。続けて貼ると前回の本文とくっつくので送らない。
+        case leftover
+    }
+
+    /// チャット欄の本文を入力欄に貼り付けてから Enter で送る。作業中でも Claude Code 側でキューに積まれる。
+    /// 貼り付けの前に必ず判定するので、止める時は入力欄に何も入れない。
+    /// `onAborted` は貼り付けから Enter までの間に止めるべき状態になり、Enter を押さずにやめた時に呼ばれる（本文は入力欄に残る）。
+    func sendMessage(_ text: String, onAborted: ((InputBlock) -> Void)? = nil) -> SendResult {
+        let screen = screenLines()
+        if let block = InputBlock.detect(screen: screen) { return .blocked(block) }
+        if mayHaveLeftover {
+            // 入力欄が読めない時は残りを確かめられないが、くっつく害は小さいので送る（印は残す）。
+            if let boxText = InputBox.text(screen: screen) {
+                mayHaveLeftover = false
+                // 警告は 1 回だけ。未知の薄字表示を本文と誤認しても、もう一度送れば送れるようにする。
+                guard boxText.isEmpty else { return .leftover }
             }
         }
-        return text.lowercased()
+        guard let body = PTYInput.messageBody(text, bracketedPaste: getTerminal().bracketedPasteMode) else { return .empty }
+        send(txt: body)
+        DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.submitDelay) { [weak self] in
+            guard let self else { return }
+            if let block = self.currentInputBlock() {
+                self.mayHaveLeftover = true
+                onAborted?(block)
+                return
+            }
+            self.send(txt: PTYInput.submitKey)
+        }
+        return .sent
+    }
+
+    enum AnswerResult: Equatable {
+        case sent
+        /// 権限プロンプトが出ていない。入力欄へ文字が入るのを避けて何もしない。
+        case noPrompt
+        /// 押した時に見ていたものと別のプロンプトに替わっている。
+        case changed(PermissionPrompt)
+    }
+
+    /// 権限プロンプトに答える。`expected`（カードに出していたもの）と今の画面のプロンプトが一致する時だけキーを送る。
+    func answerPermission(_ expected: PermissionPrompt, allow: Bool) -> AnswerResult {
+        guard let current = PermissionPrompt.parse(screen: screenLines()) else {
+            evaluateStatus()
+            return .noPrompt
+        }
+        guard current == expected else {
+            evaluateStatus()
+            return .changed(current)
+        }
+        send(txt: allow ? PTYInput.allowKey : PTYInput.denyKey)
+        return .sent
+    }
+
+    /// 画面の下から `lines` 行を、小文字化して連結した文字列で返す。
+    private static func tailText(_ screen: [String], lines: Int) -> String {
+        screen.suffix(lines).joined(separator: "\n").lowercased()
+    }
+
+    /// 1 行の文字列。TUI は空白を書かずにカーソル移動で桁を飛ばすので、未記入のセル（NUL）を空白に戻す（全角の後半セルは除く）。
+    private static func text(of line: BufferLine) -> String {
+        line.translateToString(trimRight: true, skipNullCellsFollowingWide: true).replacingOccurrences(of: "\u{0}", with: " ")
     }
 
     /// 親プロセスの環境を引き継ぎつつ、課金経路となる API キーを除去した環境を作る。
@@ -136,6 +227,11 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         var dict = ProcessInfo.processInfo.environment
         dict.removeValue(forKey: "ANTHROPIC_API_KEY")
         dict.removeValue(forKey: "ANTHROPIC_AUTH_TOKEN")
+        // Claude Code の中から起動された時の子セッション印（transcript 保存オフ・SDK 扱い等）を持ち込まないため。
+        for key in dict.keys where key.hasPrefix("CLAUDE_CODE_") || key.hasPrefix("CLAUDE_AGENT_SDK")
+            || ["CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT"].contains(key) {
+            dict.removeValue(forKey: key)
+        }
         dict["TERM"] = "xterm-256color"
         dict["COLORTERM"] = "truecolor"
         return dict.map { "\($0.key)=\($0.value)" }
