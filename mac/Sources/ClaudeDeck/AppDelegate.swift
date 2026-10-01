@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        MonitorBridge.store.start()
+        MonitorBridge.start()
 
         let split = MainSplitViewController()
         window = NSWindow(
@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ notification: Notification) { MonitorBridge.shutdown() }
 
     // MARK: - メニュー（最小構成: アプリ / 編集）
 
