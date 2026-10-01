@@ -17,13 +17,13 @@ struct StagePanel: View {
     var launcher: MonitorLauncher = MonitorBridge.launcher
     var baseURL: URL = MonitorBridge.configuration.baseURL
 
-    @AppStorage("stagePanel.mode") private var modeRaw = StageMode.flat.rawValue
+    @AppStorage("stagePanel.mode") private var modeRaw = StageMode.solid.rawValue
     @AppStorage("stagePanel.open") private var preferOpen = true
     @State private var windowWidth: CGFloat?
     @State private var openedWhileNarrow = false
 
     private var store: MonitorStore { model.store }
-    private var mode: StageMode { StageMode(rawValue: modeRaw) ?? .flat }
+    private var mode: StageMode { StageMode(rawValue: modeRaw) ?? .solid }
     private var expanded: Bool {
         StageLogic.isExpanded(preference: preferOpen, windowWidth: windowWidth, openedWhileNarrow: openedWhileNarrow)
     }

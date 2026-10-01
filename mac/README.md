@@ -158,7 +158,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 選択中のルームのセッションを、monitor のステージ（アニメーション）と monitor クライアントのデータで見せる。
 文言・URL・判定は `Sources/MonitorKit/Stage/StageLogic.swift`（テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
 
-- **見出し**: 「ステージ」・**2D / 3D 切替**（UserDefaults `stagePanel.mode`）・畳むボタン。
+- **見出し**: 「ステージ」・**2D / 3D 切替**（既定は 3D。UserDefaults `stagePanel.mode`）・畳むボタン。
 - **ステージ**: WKWebView で monitor の埋め込み表示 `/?embed=stage&session=<id>&mode=2d|3d&bg=transparent` を読む。
   接続先は `MonitorConfiguration`（`CLAUDE_DECK_MONITOR_URL` / `CLAUDE_DECK_MONITOR_PORT`）。ルームを切り替えると URL を差し替える。
   埋め込み表示は URL を読み込み時にしか見ないので切替は読み直しになるが、直近 3 枚の WKWebView を生かしておき、行き来した時は読み直さない。
