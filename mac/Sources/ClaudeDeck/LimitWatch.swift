@@ -23,6 +23,12 @@ final class LimitWatch {
         evaluate()
     }
 
+    /// 公式の残量で上限到達中か（覚えている到達のリセット前も含む）。新しい起動を始めない判断に使う。
+    var isLimitReached: Bool {
+        var copy = latch
+        return copy.update(with: MonitorBridge.store.usage)
+    }
+
     private func observe() {
         withObservationTracking {
             _ = MonitorBridge.store.usage

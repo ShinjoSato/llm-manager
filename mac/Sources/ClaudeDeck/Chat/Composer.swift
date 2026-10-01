@@ -5,16 +5,44 @@ import AppKit
 struct Composer: View {
     @Binding var text: String
     let disabledReason: String?
+    /// 外部セッション向けの「伝言」モード。本人の入力ではなく別セッションからのメッセージとして届く。
+    var relay = false
     /// 送れたら true（入力欄を空にする）。
     let onSend: (String) -> Bool
     @State private var height: CGFloat = 20
 
     var body: some View {
         let enabled = disabledReason == nil
+        VStack(alignment: .leading, spacing: 6) {
+            if relay {
+                HStack(spacing: 6) {
+                    Text("伝言")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(ChatTheme.background)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(ChatTheme.permission))
+                    Text("受け手には別セッションからのメッセージとして届きます")
+                        .font(ChatTheme.caption)
+                        .foregroundStyle(ChatTheme.secondary)
+                    if let disabledReason, !text.isEmpty {
+                        Text(disabledReason).font(ChatTheme.caption).foregroundStyle(ChatTheme.permission)
+                    }
+                }
+                .padding(.leading, 4)
+            }
+            field(enabled: enabled)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 8)
+        .padding(.bottom, 18)
+    }
+
+    private func field(enabled: Bool) -> some View {
         HStack(alignment: .bottom, spacing: 10) {
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text(disabledReason ?? "メッセージを送信（⏎ 送信 / ⇧⏎ 改行）")
+                    Text(disabledReason ?? (relay ? "伝言を送信（⏎ 送信 / ⇧⏎ 改行）" : "メッセージを送信（⏎ 送信 / ⇧⏎ 改行）"))
                         .font(ChatTheme.body)
                         .foregroundStyle(ChatTheme.tertiary)
                         .allowsHitTesting(false)
@@ -28,7 +56,7 @@ struct Composer: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(ChatTheme.onAccent)
                     .frame(width: 32, height: 32)
-                    .background(Circle().fill(ChatTheme.accent))
+                    .background(Circle().fill(relay ? ChatTheme.permission : ChatTheme.accent))
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
@@ -39,20 +67,19 @@ struct Composer: View {
         .padding(.trailing, 8)
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 14).fill(ChatTheme.inputSurface))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChatTheme.inputBorder))
+        .overlay(RoundedRectangle(cornerRadius: 14)
+            .stroke(relay ? ChatTheme.permission.opacity(0.6) : ChatTheme.inputBorder,
+                    style: StrokeStyle(lineWidth: 1, dash: relay ? [5, 4] : [])))
         .opacity(enabled ? 1 : 0.7)
         .overlay(alignment: .topLeading) {
-            // 書きかけがあると欄内の案内が隠れるので、無効の理由を欄の上にも出す。
-            if let disabledReason, !text.isEmpty {
+            // 書きかけがあると欄内の案内が隠れるので、無効の理由を欄の上にも出す（伝言モードは見出し行に出す）。
+            if !relay, let disabledReason, !text.isEmpty {
                 Text(disabledReason)
                     .font(ChatTheme.caption)
                     .foregroundStyle(ChatTheme.permission)
                     .offset(x: 4, y: -18)
             }
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 8)
-        .padding(.bottom, 18)
     }
 
     private var canSend: Bool {

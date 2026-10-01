@@ -6,6 +6,16 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
     public var sessionId: String
     public var cwd: String?
     public var startedAt: Double?
+    /// プロセスの起動時刻（`ps -o lstart` と同じ形・UTC）。pid の再利用を見分けるのに使う。
+    public var procStart: String?
+
+    public init(pid: Int32, sessionId: String, cwd: String? = nil, startedAt: Double? = nil, procStart: String? = nil) {
+        self.pid = pid
+        self.sessionId = sessionId
+        self.cwd = cwd
+        self.startedAt = startedAt
+        self.procStart = procStart
+    }
 }
 
 /// Claude Code のセッションレジストリを pid から引く。

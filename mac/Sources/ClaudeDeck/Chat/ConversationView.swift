@@ -10,6 +10,7 @@ struct ConversationView: View {
         let mode = model.mode(for: room.id)
         VStack(spacing: 0) {
             ConversationHeader(model: model, room: room, mode: mode)
+            if room.isExternal { ExternalBanner(model: model, room: room) }
             switch mode {
             case .chat:
                 ChatPane(model: model, room: room)
@@ -60,7 +61,7 @@ struct ConversationHeader: View {
                         .foregroundStyle(ChatTheme.heading)
                         .lineLimit(1)
                     StatusBadge(status: room.status)
-                    if room.isExternal { ExternalTag() }
+                    if room.isExternal { ExternalTag(label: "外部セッション") }
                 }
                 HStack(spacing: 4) {
                     if let branch = room.branch, !branch.isEmpty {
@@ -180,8 +181,9 @@ struct ChatPane: View {
         VStack(spacing: 0) {
             MessageList(model: model, room: room, items: items)
             Composer(text: Binding(get: { model.drafts[room.id] ?? "" }, set: { model.drafts[room.id] = $0 }),
-                     disabledReason: ChatModel.inputDisabledReason(for: room)) { text in
-                model.send(text, to: room)
+                     disabledReason: model.inputDisabledReason(for: room),
+                     relay: room.isExternal) { text in
+                room.isExternal ? model.sendRelay(text, to: room) : model.send(text, to: room)
             }
         }
         .background(ChatTheme.background)
@@ -195,7 +197,7 @@ struct MessageList: View {
     @State private var pinnedToBottom = true
 
     var body: some View {
-        let entries = ChatTimeline.entries(from: items)
+        let entries = ChatTimeline.entries(from: items, notes: model.notes(for: room.sessionId))
         let runningId = ChatTimeline.runningToolId(items: items, status: room.status)
         let permissions = model.monitorPermissions(for: room)
         ScrollViewReader { proxy in
@@ -212,6 +214,9 @@ struct MessageList: View {
                                        busy: model.busyPermissionKeys.contains(permission.key)) { allow in
                             model.decide(permission, allow ? .allow : .deny)
                         }
+                    }
+                    if permissions.isEmpty, room.isExternal, room.status == .permission {
+                        ChannelsMissingCard(toolName: room.snapshot?.currentTool)
                     }
                     if permissions.isEmpty, let session = room.hosted, let prompt = session.permissionPrompt {
                         PermissionCard(toolName: room.snapshot?.currentTool ?? prompt.title,
@@ -244,7 +249,7 @@ struct MessageList: View {
     /// 末尾が伸びた時だけ変わる値（発話の追加・ツールの追加・権限カードの出入り）。
     private func scrollKey(entries: [ChatEntry], permissions: Int) -> String {
         let last = entries.last
-        let prompt = room.hosted?.permissionPrompt != nil
+        let prompt = room.hosted?.permissionPrompt != nil || room.status == .permission
         return "\(entries.count):\(last?.tools.count ?? 0):\(last?.text.count ?? 0):\(permissions):\(prompt)"
     }
 
@@ -272,7 +277,7 @@ struct MessageList: View {
         }
         if model.loadingTranscripts.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…") }
         if let error = model.transcriptErrors[sessionId] { return ("exclamationmark.triangle", error) }
-        return ("bubble.left.and.bubble.right", room.hosted != nil ? "下の入力欄から指示を送れます。" : "まだ会話がありません。")
+        return ("bubble.left.and.bubble.right", room.hosted != nil ? "下の入力欄から指示を送れます。" : "まだ会話がありません。下の入力欄から伝言を送れます。")
     }
 }
 
@@ -298,7 +303,8 @@ struct EntryView: View {
     let runningToolId: String?
 
     var body: some View {
-        VStack(alignment: entry.role == .user ? .trailing : .leading, spacing: 6) {
+        let trailing = entry.role == .user || entry.role == .relay
+        VStack(alignment: trailing ? .trailing : .leading, spacing: 6) {
             switch entry.role {
             case .user:
                 HStack {
@@ -310,6 +316,11 @@ struct EntryView: View {
                     ClaudeBubble(text: entry.text)
                     Spacer(minLength: 96)
                 }
+            case .relay:
+                HStack {
+                    Spacer(minLength: 96)
+                    RelayBubble(text: entry.text, state: entry.relay?.state ?? .sent)
+                }
             case .toolsOnly:
                 EmptyView()
             }
@@ -318,7 +329,7 @@ struct EntryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(maxWidth: .infinity, alignment: entry.role == .user ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
     }
 }
 

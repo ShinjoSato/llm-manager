@@ -173,8 +173,10 @@ struct RoomRow: View {
 }
 
 struct ExternalTag: View {
+    var label = "外部"
+
     var body: some View {
-        Text("外部")
+        Text(label)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(ChatTheme.secondary)
             .padding(.horizontal, 5)

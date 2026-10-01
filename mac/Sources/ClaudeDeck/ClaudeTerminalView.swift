@@ -54,19 +54,28 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
 
     /// 指定プロジェクトのディレクトリで `claude` を起動する。
     /// ログインシェル経由で PATH（~/.local/bin など）を継承しつつ、API キーは二重に遮断する。
-    func launchClaude(in directory: String) {
+    /// `resumeSessionId` があれば対話起動のまま `claude --resume <id>` で会話を再開する。不正な id なら起動せず false。
+    @discardableResult
+    func launchClaude(in directory: String, resumeSessionId: String? = nil) -> Bool {
+        var command = "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec claude"
+        if let resumeSessionId {
+            // シェルのコマンド行に埋め込むので、英数字とハイフン以外を含む値は通さない。
+            guard SessionHandover.isValidSessionId(resumeSessionId) else { return false }
+            command += " --resume \(resumeSessionId)"
+        }
         let env = Self.buildSafeEnvironment()
         startProcess(
             executable: "/bin/zsh",
             // -l ログインシェルで PATH を取得、-i 対話、-c コマンド。
             // 渡す環境からは既に API キーを抜いてあるが、念のためシェル側でも unset してから exec。
-            args: ["-lic", "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec claude"],
+            args: ["-lic", command],
             environment: env,
             execName: nil,
             currentDirectory: directory
         )
         startStatusMonitoring()
         LimitWatch.shared.register(self)
+        return true
     }
 
     /// 起動した claude の pid。`exec claude` で zsh を置き換えるので PTY の子 pid がそのまま claude になる。

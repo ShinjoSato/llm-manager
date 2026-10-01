@@ -29,7 +29,8 @@ mac/
       HostedSession.swift         アプリが PTY でホストする claude 1 つ（ルームを切り替えても端末とプロセスを保持）
       RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・残量
       ConversationView.swift      見出し・吹き出し・ツール行・権限カード・チャット / ターミナル / GitHub / App Store 切替
-      Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行）
+      Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード）
+      ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
       AppKitHosts.swift           既存の端末ビュー / GitHub ボード / App Store 表示を SwiftUI に差し込む
       ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
     ProjectStore.swift              プロジェクト一覧の永続化（Application Support の JSON）
@@ -58,7 +59,9 @@ mac/
     LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       TranscriptBuffer.swift      会話履歴の GET と SSE の統合（id で重複除去・reset で置換）
-      ChatTimeline.swift          発話の下にツールを畳む・実行中ツールの判定
+      ChatTimeline.swift          発話の下にツールを畳む・実行中ツールの判定・送った伝言の差し込み
+      RelayNotes.swift            外部セッションへ送った伝言（transcript の写しとの重複排除・送信失敗の理由）
+      SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
       RoomGrouping.swift          要対応 / 稼働中 / 待機 のグループ化・並び順・検索・未読数・アイコン色
       ChatMarkdown.swift          吹き出しの最低限の Markdown（太字・コード・改行・コードブロック）
       PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの読み取り
@@ -142,7 +145,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   各グループ内は最後に動いた順。状態は monitor の `SessionSnapshot.status`。monitor 未接続のときは、ホスト中のセッションだけ
   端末画面からのローカル判定（作業中 / 権限プロンプト / 待機）で代わりに出す。
 - 各行: 頭文字アイコン（色はプロジェクト名から決まる）・状態ドット・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
-  （開いていない間に届いた応答の数）。アプリの外で動いているセッションには「外部」タグ（入力欄は無効。伝言・引き継ぎは #70）。
+  （開いていない間に届いた応答の数）。アプリの外で動いているセッションには「外部」タグ（伝言・引き継ぎは下記「外部セッション」）。
 - 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。
   一覧の追加・削除・取り込み・GitHub の紐づけもここ）。右クリック → 「ルームを閉じる（claude を終了）」。
 - 下部: 5 時間 / 7 日間の残り% と取得からの経過（statusLine 未設定なら未取得と出す）。monitor 未接続ならその旨を出す。
@@ -191,6 +194,33 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   キーは Claude Code v2.1.251 / v2.1.286 の実際の TUI で確認した。画面にプロンプトが無ければ何も送らない。
   押した時のカードの内容と今の画面のプロンプトが違う（別の確認に替わった）場合も何も送らず、カードを今の内容に更新する。
 - 押してから結果が出るまでは、そのカードのボタンを無効にして二度押しを防ぐ。
+
+### 外部セッション（ターミナル等で起動したもの）
+
+アプリの外で起動した claude には本人の入力として届く経路が無い。ここから出来るのは **伝言** と **権限の許可・拒否（Channels のみ）**、
+そして **アプリに引き継ぐ**（アプリの PTY で同じ会話を再開して、以降は通常のルームとして操作する）の 3 つ。
+
+- 見出しに「外部セッション」タグ、その下にバナー（制約の説明と「アプリに引き継ぐ」ボタン）。
+- **伝言**: 入力欄が黄色の「伝言」モードになり（注記「受け手には別セッションからのメッセージとして届きます」）、monitor の
+  `POST /api/sessions/:id/message`（`MonitorStore.sendMessage`）で送る。受け手には `Another Claude session sent a message:` に続けて
+  届き、**本人の指示にはならない**（権限承認・スラッシュコマンド・設定変更は不可。v2.1.286 で確認）。
+  - 受け手は伝言を `isMeta: true` の user 行として jsonl に残すので、monitor の transcript には出ない（実機で確認）。そのため
+    送った伝言はアプリ側で sessionId ごとに覚え、送信時刻の位置に**点線の吹き出し**で差し込む（アプリを終了すると消える）。
+    transcript に写しが出た場合（monitor の仕様が変わった時）は、`RelayNotes.removingEchoes` が 1 通につき 1 件だけ取り除いて二重に並べない
+    （書き出し付きはいつでも、素の同文は送信の 5 秒前〜10 分後のものだけ。届かなかった伝言では消さない）。
+  - 送信失敗は吹き出しの下とダイアログに理由を出す（`not_found` / `not_alive` / `no_socket` / `unreachable`・monitor 未接続）。
+- **権限**: monitor の `permissions`（Channels を載せたセッションのみ）があれば許可 / 拒否カードを出して `store.decide` で返す（二度押し不可）。
+  状態が権限待ちなのに permissions が無い時は「このセッションは Channels を載せていないので、ここからは答えられません（ターミナルで答えてください）」を出す。
+- **アプリに引き継ぐ**: 確認ダイアログ（終了する pid・中断されること・再開すること・元のウィンドウは閉じないこと）→ キャンセルなら何もしない。
+  1. 終了対象を確かめる（`SessionHandover.verify`）: 自分の uid / プロセスが claude（argv[0] か実行ファイルの場所）/ `~/.claude/sessions/<pid>.json` が
+     その pid で同じ sessionId / レジストリの `procStart`（無い版は `startedAt`）とカーネルの起動時刻が一致（pid の再利用を見分ける）。
+     どれかが外れたら何も送らずに中止する。
+  2. SIGINT → 最大 5 秒待つ → 残っていて**同じプロセスのまま**（起動時刻と実行ファイルが同じ）なら SIGTERM → 最大 3 秒待つ。
+     終了を確認できなければ再開しない（同じ会話の二重起動を避ける）。
+  3. 同じ cwd で `claude --resume <sessionId>` を PTY で起動する（`launchClaude(in:resumeSessionId:)`。sessionId は `^[A-Za-z0-9-]+$`
+     のものしかコマンド行に入れない。API キーの除去と `unset` はそのまま。`--resume` は対話起動の引数で headless ではない）。
+     再開しても sessionId は変わらないので、会話はそのまま続き、ルームは通常のホストルームに切り替わる。
+  - 上限到達中（`LimitWatch.isLimitReached`）は引き継がない（終了待ちの間に到達した場合も再開しない）。
 
 ### GitHub 切替
 
@@ -273,4 +303,6 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - 権限プロンプト・選択メニューの読み取りは端末画面の文言（`Do you want to …?` と `1. Yes`、`❯ n.` の選択肢、`Enter to confirm` 等の操作案内）に依る。
   **Claude Code の TUI の更新で判定を見直す必要がある**: `PTYInput.swift` の `InputBlock` / `ChoiceMenu` / `PermissionPrompt` / `InputBox`
   （v2.1.286 の trust 確認・AskUserQuestion・plan 承認・入力欄の例文と NBSP で確認）。文言・配置（罫線と ❯ の位置関係、操作案内の有無）に依存している。
-- ステージパネル（#69）・外部セッションへの伝言 / 引き継ぎ（#70）は別 Issue。
+- ステージパネル（#69）は別 Issue。
+- 送った伝言の吹き出しはアプリのメモリにだけ持つ（再起動で消える）。
+- 外部セッションの権限カード（Channels 経由の許可 / 拒否）は既存の monitor permissions の経路をそのまま使っており、外部ルームでの実機確認はしていない。
