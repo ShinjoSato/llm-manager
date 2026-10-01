@@ -9,8 +9,10 @@ SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Termina
 
 - **料金事故ゼロ**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路が存在しないため、Max 枠の上限に達しても「待つ」だけで課金は発生しない。さらにログインシェル側でも `unset` してから `exec claude` する二重防御。
 - **headless 不採用**: `claude -p` / Agent SDK の起動口は一切設けない（別枠課金や非対話実行を避ける）。
-- **上限到達で強制終了**: PTY 出力を監視し、Claude Code が出す「上限到達」文言を検知したら、そのセッションを `terminate()` で強制終了し、警告ダイアログを出す。
-  - ⚠️ **要・実機検証**: 検知文言は `Sources/ClaudeDeck/ClaudeTerminalView.swift` の `limitPhrases` に暫定で複数並べてある。実際の Claude Code の上限メッセージ文言を確認し、最小限に絞ること。正確な「残り何%」を返すクリーンな公開 API は無いため、本実装は「100%到達の文言検知 → 強制終了」という事後トリガー方式。
+- **上限到達で強制終了**: 次のどちらかで上限到達とみなし、アプリでホストしている全セッションを `terminate()` で強制終了して警告ダイアログを出す。判定は `Sources/MonitorKit/LimitGuard.swift`（テストあり）、残量の購読は `Sources/ClaudeDeck/LimitWatch.swift`。
+  1. **公式の残量（主）**: statusLine の `rate_limits` を monitor 経由で受けた `MonitorStore.usage` で、5 時間 / 7 日間のどちらかが 100% 以上、かつ取得から 10 分以内。古い値・未取得では落とさない（statusLine 未設定なら この経路は働かない）。一度到達したらそのウィンドウのリセット時刻まで覚えておき、その間に起動したセッションも起動直後に止める（新しい値で 100% 未満になれば解除）。
+  2. **画面の上限表示（補助）**: 生の出力ではなく端末の実画面の末尾だけを見る。入力欄より下（フッター）、入力欄直上の最後の `⎿` 行（API エラー表示）、上限到達時に自動で開くメニューの「Stop and wait for limit to reset」。会話本文に同じ文言が出ても落ちない。文言は Claude Code v2.1.286 のバイナリ内で上限判定に使われている書き出し（`You've hit your` / `You've reached your` / `You're out of usage credits` / `You're now using usage credits` 等の課金枠切替 / `Usage limit reached`）に絞っている。
+  - 起動直後（対話 zsh が `claude` に exec する前）は SIGTERM が効かないので、1.5 秒後に残っていれば SIGKILL する。
 
 ## 構成
 
@@ -29,7 +31,8 @@ mac/
     GitHubBoardView.swift           Issue をステータス別にグループ表示（クリックで GitHub を開く）
     AppStoreClient.swift            appstore.tsv 読込 + server HTTP API（/api/appstore）の取得
     AppStoreView.swift              審査/提出/ビルド/評価サマリ表示（Web の AppStoreCard 相当）
-    ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 上限文言監視
+    ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面末尾の上限表示の監視
+    LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
     ProjectRegistry.swift       projects/registry.tsv のパーサ
     AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも TSV / monitor を引ける）
     MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（SSE 接続は 1 本）
@@ -41,6 +44,7 @@ mac/
     MonitorClient.swift         SSE 購読（自動再接続）+ REST / 書き込み系ラッパー
     MonitorStore.swift          @Observable ストア（接続状態・セッション・フィード・残量・権限確認・pid 対応付け）
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
+    LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
   Sources/MonitorProbe/         GUI 無しで接続を確かめるデバッグ用エントリ（swift run monitor-probe）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）
   Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
@@ -165,7 +169,7 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 ## 現状の制約 / TODO
 
 - `.app` は ad-hoc 署名のローカル起動のみ。配布時は Developer ID 署名・公証を検討。
-- 上限検知の文言は要・実機検証（上記）。
+- 上限到達の画面表示は実際の上限で出たものを未確認（文言はバイナリから、`⎿` の位置は TUI の描画コードから推定）。表示の形が違えば補助経路だけ効かない（主経路の残量判定は効く）。
 - 削除しても、開いているタブは閉じない（タブ側は手動で対応）。サイドバーとタブの連動は将来拡張。
 - 追加時の表示名はフォルダ名固定（リネーム UI は未実装）。
 - タブのウィンドウ分割・レイアウト保存・GitHub ステータスバッジ等は将来拡張。
