@@ -71,6 +71,10 @@ final class ChatModel {
     private(set) var transcripts: [String: TranscriptBuffer] = [:]
     private(set) var loadingTranscripts: Set<String> = []
     @ObservationIgnored private var staleTranscripts: Set<String> = []
+    /// 開いた順（末尾が新しい）。会話を持ち・追記を購読するのは直近のこれだけ。
+    @ObservationIgnored private var recentTranscripts: [String] = []
+    /// 手元に会話を持っておくルームの数。行き来の多い数件だけ取り直しを省く。
+    static let keptTranscripts = 4
 
     /// ルーム一覧。feed・セッション・ホスト中のセッションが変わった時だけ作り直す（描画のたびに feed を走査しない）。
     private(set) var rooms: [Room] = []
@@ -715,17 +719,24 @@ final class ChatModel {
         return transcripts[sessionId]?.items ?? []
     }
 
-    /// 選択中のルームの履歴を揃える。未取得・監視の開始し直し後なら取得する（追記は `.all` の購読で常に届く）。
+    /// 選択中のルームの履歴を揃える。未取得・監視の開始し直し後なら、追記の購読を張ってから全件を取得する。
     /// 取り直しも常に全件で置き換える（止まっていた間の発話は手元の末尾より前に入りうるので `after=` では埋まらない）。
     func ensureTranscript(for sessionId: String?) {
-        guard let sessionId, store.connection.isConnected, !loadingTranscripts.contains(sessionId) else { return }
+        guard let sessionId, store.connection.isConnected else { return }
+        recentTranscripts.removeAll { $0 == sessionId }
+        recentTranscripts.append(sessionId)
+        guard !loadingTranscripts.contains(sessionId) else { return }
         guard transcripts[sessionId] == nil || staleTranscripts.contains(sessionId) else { return }
         var buffer = transcripts[sessionId] ?? TranscriptBuffer()
         buffer.beginFetch()
         transcripts[sessionId] = buffer
         staleTranscripts.remove(sessionId)
         loadingTranscripts.insert(sessionId)
+        forgetOldTranscripts()
+        let watched = Set(transcripts.keys)
         Task {
+            // 先に購読を張る。取得の後に張ると、その間の追記が既読扱いになって抜ける。
+            await store.watchTranscripts(watched)
             // 最初の発話前はログが無い（nil）。以降は購読で届くので空のまま待つ。
             if let response = await store.fetchTranscript(sessionId: sessionId) {
                 transcripts[sessionId]?.apply(response, fullReplace: true)
@@ -737,6 +748,16 @@ final class ChatModel {
         }
     }
 
+    /// 直近に開いたもの以外の会話を手放す（開き直せば取り直す）。
+    private func forgetOldTranscripts() {
+        let keep = Set(recentTranscripts.suffix(Self.keptTranscripts)).union(loadingTranscripts)
+        recentTranscripts.removeAll { !keep.contains($0) }
+        for id in transcripts.keys where !keep.contains(id) {
+            transcripts[id] = nil
+            staleTranscripts.remove(id)
+        }
+    }
+
     /// 監視を始め直した。止まっていた間の分を取り直す。
     func reconnected() {
         staleTranscripts = Set(transcripts.keys)
@@ -744,7 +765,7 @@ final class ChatModel {
     }
 
     private func receive(_ event: TranscriptEvent) {
-        // 一度も開いていないセッションは、開いた時に GET でまとめて取る。
+        // 手元に持っていないセッションは、開いた時に GET でまとめて取る。
         guard transcripts[event.sessionId] != nil else { return }
         transcripts[event.sessionId]?.append(event.items)
         if event.items.contains(where: { !$0.images.isEmpty }) { pruneSentImages(sessionId: event.sessionId) }

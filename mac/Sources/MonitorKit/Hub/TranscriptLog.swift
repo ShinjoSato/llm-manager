@@ -181,13 +181,13 @@ final class TranscriptLog {
     private var lineStart = 0
     private var parentId: String?
 
-    struct ImageLineRef: Equatable {
+    struct ImageLineRef: Equatable, Sendable {
         var offset: Int
         var length: Int
         var uuid: String?
     }
 
-    struct DecodedImages {
+    struct DecodedImages: Sendable {
         var images: [TranscriptImageData?]
         var bytes: Int
     }
@@ -278,32 +278,56 @@ final class TranscriptLog {
         }
     }
 
-    /// 発話 `itemId` の `index` 枚目の画像。行を読み直して取り出す。見つからなければ nil。
-    func image(itemId: String, index: Int) -> TranscriptImageData? {
+    /// 画像の引き当て。読み直しが要る時は、その材料（ファイルの位置）を返す。
+    enum ImageLookup {
+        case cached(TranscriptImageData?)
+        case load(path: String, ref: ImageLineRef)
+        case missing
+    }
+
+    func lookupImage(itemId: String, index: Int) -> ImageLookup {
         if let hit = decoded[itemId] {
             decodedOrder.removeAll { $0 == itemId }
             decodedOrder.append(itemId)
-            return hit.images.indices.contains(index) ? hit.images[index] : nil
+            return .cached(hit.images.indices.contains(index) ? hit.images[index] : nil)
         }
-        guard let loaded = load(itemId) else { return nil }
+        guard let ref = imageLines[itemId] else { return .missing }
+        lineReads += 1
+        return .load(path: path, ref: ref)
+    }
+
+    /// 発話 `itemId` の `index` 枚目の画像。行を読み直して取り出す。見つからなければ nil。
+    func image(itemId: String, index: Int) -> TranscriptImageData? {
+        switch lookupImage(itemId: itemId, index: index) {
+        case .cached(let hit): return hit
+        case .missing: return nil
+        case .load(let path, let ref):
+            guard let (loaded, found) = Self.loadImages(path: path, ref: ref) else { return nil }
+            return storeLoaded(itemId: itemId, loaded, ref: found, index: index)
+        }
+    }
+
+    /// 読み直した結果を覚えて、`index` 枚目を返す。
+    func storeLoaded(itemId: String, _ loaded: DecodedImages, ref: ImageLineRef, index: Int) -> TranscriptImageData? {
+        // 読んでいる間に読み直し（reset）が入っていれば、位置は覚え直さない。
+        if imageLines[itemId] != nil { imageLines[itemId] = ref }
+        remember(itemId, loaded)
         return loaded.images.indices.contains(index) ? loaded.images[index] : nil
     }
 
-    private func load(_ itemId: String) -> DecodedImages? {
-        guard let ref = imageLines[itemId] else { return nil }
-        lineReads += 1
-        var o = lineAt(offset: ref.offset, length: ref.length)
+    /// 画像付きの行を読み直す。位置が合わなければ uuid で探し直す（ファイル全体を走査しうるので actor の外で呼ぶ）。
+    static func loadImages(path: String, ref: ImageLineRef) -> (DecodedImages, ImageLineRef)? {
+        var o = lineAt(path: path, offset: ref.offset, length: ref.length)
+        var found = ref
         if !TranscriptFormat.isImageLine(o, uuid: ref.uuid) {
-            // 位置が合わなければ uuid で探し直し、見つけた位置を覚え直す。uuid が無い行は取り違えを避けて諦める。
-            guard let uuid = ref.uuid, let found = findLine(uuid: uuid) else { return nil }
-            imageLines[itemId] = ImageLineRef(offset: found.offset, length: found.length, uuid: uuid)
-            o = found.object
+            // uuid が無い行は取り違えを避けて諦める。
+            guard let uuid = ref.uuid, let hit = findLine(path: path, uuid: uuid) else { return nil }
+            found = ImageLineRef(offset: hit.offset, length: hit.length, uuid: uuid)
+            o = hit.object
         }
         let content = ((o as? [String: Any])?["message"] as? [String: Any])?["content"]
         let images = TranscriptFormat.imageBlocks(content).map { TranscriptFormat.imageData(of: content, index: $0.index) }
-        let result = DecodedImages(images: images, bytes: images.reduce(0) { $0 + ($1?.data.count ?? 0) })
-        remember(itemId, result)
-        return result
+        return (DecodedImages(images: images, bytes: images.reduce(0) { $0 + ($1?.data.count ?? 0) }), found)
     }
 
     private func remember(_ itemId: String, _ value: DecodedImages) {
@@ -317,14 +341,14 @@ final class TranscriptLog {
         }
     }
 
-    private func lineAt(offset: Int, length: Int) -> Any? {
+    private static func lineAt(path: String, offset: Int, length: Int) -> Any? {
         guard length > 0, length <= TranscriptFormat.maxImageLineBytes,
               let bytes = Bytes.read(path, offset: offset, length: length) else { return nil }
         return JSONLoose.object(bytes)
     }
 
     /// uuid の行をバイト位置付きで探す。
-    private func findLine(uuid: String) -> (object: Any, offset: Int, length: Int)? {
+    private static func findLine(path: String, uuid: String) -> (object: Any, offset: Int, length: Int)? {
         let fd = open(path, O_RDONLY | O_CLOEXEC)
         guard fd >= 0 else { return nil }
         defer { close(fd) }

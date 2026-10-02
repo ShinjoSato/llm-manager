@@ -54,6 +54,12 @@ public final class MonitorStore {
     @ObservationIgnored private var hostedPids: Set<Int32> = []
     @ObservationIgnored private var lastLoggedSessions = ""
     @ObservationIgnored private var running = false
+    /// 開始・停止のたびに増える。止めた後に終わった開始処理が「接続済み」にしないようにする。
+    @ObservationIgnored private var runGeneration = 0
+    /// 監視の開始・停止を順に流す（停止の後始末が次の開始の受け口を外さないように）。
+    @ObservationIgnored private var lifecycle: Task<Void, Never>?
+    /// 購読の張り替えを順に流す（連続して呼ばれても購読を二重に持たない・取りこぼさない）。
+    @ObservationIgnored private var subscriptionChain: Task<Void, Never>?
 
     public init(configuration: MonitorConfiguration = .fromEnvironment(), registry: ClaudeSessionRegistry? = nil) {
         self.configuration = configuration
@@ -69,6 +75,8 @@ public final class MonitorStore {
     public func start() {
         guard !running else { return }
         running = true
+        runGeneration += 1
+        let generation = runGeneration
         connection = .starting
         let (stream, continuation) = AsyncStream<MonitorEvent>.makeStream(bufferingPolicy: .unbounded)
         self.continuation = continuation
@@ -79,33 +87,42 @@ public final class MonitorStore {
             }
         })
         let hub = hub
-        tasks.append(Task { [weak self] in
+        let previous = lifecycle
+        lifecycle = Task { [weak self] in
+            await previous?.value
+            guard self?.runGeneration == generation else { return }
             await hub.setSink { continuation.yield($0) }
             await hub.start()
-            guard let self, self.running else { return }
-            await self.subscribeTranscripts()
+            guard let self, self.running, self.runGeneration == generation else { return }
             self.connection = .connected(since: Date())
             self.connectionEpoch += 1
             self.log("監視を開始しました（\(self.configuration.claudeHome.root.path)）")
-        })
+            // 会話の購読は接続の後に張る（全件の読み込みで入力欄を待たせないため）。
+            self.resubscribeTranscripts()
+        }
         startServer()
     }
 
     public func stop() {
         guard running else { return }
         running = false
+        runGeneration += 1
         tasks.forEach { $0.cancel() }
         tasks = []
         continuation?.finish()
         continuation = nil
         let hub = hub
-        let transcripts = transcripts
-        let subscriber = transcriptSubscriberId
-        transcriptSubscriberId = nil
-        Task {
+        let previous = lifecycle
+        let subscriptions = subscriptionChain
+        lifecycle = Task { [weak self] in
+            await previous?.value
+            await subscriptions?.value
             await hub.stop()
             await hub.setSink(nil)
-            if let subscriber { await transcripts.unsubscribe(subscriber) }
+            if let self, let subscriber = self.transcriptSubscriberId {
+                self.transcriptSubscriberId = nil
+                await self.transcripts.unsubscribe(subscriber)
+            }
         }
         serverRetry?.cancel()
         serverRetry = nil
@@ -116,21 +133,40 @@ public final class MonitorStore {
         permissions = []
     }
 
+    /// 開始・停止の処理が終わるまで待つ（試験用）。
+    func settle() async {
+        await lifecycle?.value
+        await subscriptionChain?.value
+    }
+
     /// 会話の追記を流してもらう対象を変える。
     public func setTranscriptSubscription(_ subscription: TranscriptSubscription) {
         guard subscription != transcriptSubscription else { return }
         transcriptSubscription = subscription
         guard running, connection.isConnected else { return }
-        Task { await subscribeTranscripts() }
+        resubscribeTranscripts()
+    }
+
+    /// 対象を変え、張り替え終わるまで待つ。この後に取得すれば、取得と追記の間に隙間ができない。
+    public func watchTranscripts(_ sessionIds: Set<String>) async {
+        setTranscriptSubscription(sessionIds.isEmpty ? .none : .sessions(sessionIds))
+        await subscriptionChain?.value
+    }
+
+    private func resubscribeTranscripts() {
+        let previous = subscriptionChain
+        let generation = runGeneration
+        subscriptionChain = Task { [weak self] in
+            await previous?.value
+            guard let self, self.running, self.runGeneration == generation else { return }
+            await self.subscribeTranscripts()
+        }
     }
 
     private func subscribeTranscripts() async {
-        if let old = transcriptSubscriberId {
-            transcriptSubscriberId = nil
-            await transcripts.unsubscribe(old)
-        }
         guard let continuation else { return }
-        transcriptSubscriberId = await transcripts.subscribe(transcriptSubscription) { continuation.yield(.transcript($0)) }
+        let old = transcriptSubscriberId
+        transcriptSubscriberId = await transcripts.subscribe(transcriptSubscription, replacing: old) { continuation.yield(.transcript($0)) }
     }
 
     // MARK: - アプリ内サーバー

@@ -190,9 +190,14 @@ final class PermissionRegistry {
 
     /// 時間切れの待ち手を外す。まだ居れば timeout を返す。
     func expireWaiter(_ key: String, id: Int) {
-        guard let index = entries[key]?.waiters.firstIndex(where: { $0.id == id }) else { return }
-        let waiter = entries[key]!.waiters.remove(at: index)
+        guard var entry = entries[key], let index = entry.waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = entry.waiters.remove(at: index)
+        entries[key] = entry
         waiter.fn(.timeout)
+    }
+
+    func waiterCount(_ key: String) -> Int {
+        entries[key]?.waiters.count ?? 0
     }
 
     /// 画面からの判断。知らない鍵なら nil（＝404）。

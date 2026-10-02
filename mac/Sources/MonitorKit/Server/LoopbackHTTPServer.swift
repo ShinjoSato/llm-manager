@@ -62,6 +62,7 @@ public struct HTTPResponse: Sendable, Equatable {
         case 415: return "Unsupported Media Type"
         case 431: return "Request Header Fields Too Large"
         case 501: return "Not Implemented"
+        case 503: return "Service Unavailable"
         default: return "Status"
         }
     }
@@ -95,6 +96,8 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     static let maxHeaderBytes = 64 * 1024
     /// 送り切らない相手で接続を握られ続けないための締め切り。
     static let readTimeout: TimeInterval = 15
+    /// 同時に持つ接続の上限（長ポーリングで待たせている分も数える）。ローカルの暴走で資源を食い尽くさせない。
+    public static let maxConnections = 64
 
     private let queue = DispatchQueue(label: "claude-deck.http-server")
     private let handler: Handler
@@ -102,10 +105,21 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var stateHandler: (@Sendable (LoopbackServerState) -> Void)?
     private var requestedPort: Int = 0
-    private(set) public var boundPort: Int?
+    /// キュー上でだけ触る。
+    private var currentPort: Int?
 
     public init(handler: @escaping Handler) {
         self.handler = handler
+    }
+
+    /// 待ち受け中のポート。
+    public var boundPort: Int? {
+        queue.sync { currentPort }
+    }
+
+    /// 試験用: 持っている接続の数。
+    var connectionCount: Int {
+        queue.sync { connections.count }
     }
 
     /// 待ち受けを始める（既に待ち受けていれば閉じてから）。`port` が 0 なら OS が割り当てる。結果は `onState` に届く（キュー上で呼ぶ）。
@@ -143,7 +157,7 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
         listener?.stateUpdateHandler = nil
         listener?.cancel()
         listener = nil
-        boundPort = nil
+        currentPort = nil
         connections.values.forEach { $0.cancel() }
         connections = [:]
         stateHandler = nil
@@ -154,14 +168,14 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
         switch state {
         case .ready:
             let port = Int(listener.port?.rawValue ?? UInt16(requestedPort))
-            boundPort = port
+            currentPort = port
             stateHandler?(.listening(port: port))
         case .failed(let error), .waiting(let error):
             // 待たせても空かないことが多いので、閉じて呼び出し側に再試行を任せる。
             listener.stateUpdateHandler = nil
             listener.cancel()
             self.listener = nil
-            boundPort = nil
+            currentPort = nil
             stateHandler?(Self.state(for: error, port: requestedPort))
         default:
             break
@@ -174,10 +188,14 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
+        guard connections.count < Self.maxConnections else {
+            connection.cancel()
+            return
+        }
         let id = ObjectIdentifier(connection)
         connections[id] = connection
         let session = ConnectionSession(connection: connection, queue: queue, handler: handler,
-                                        boundPort: { [weak self] in self?.boundPort ?? 0 }) { [weak self] in
+                                        boundPort: { [weak self] in self?.currentPort ?? 0 }) { [weak self] in
             self?.connections[id] = nil
         }
         connection.stateUpdateHandler = { state in
@@ -202,6 +220,9 @@ private final class ConnectionSession: @unchecked Sendable {
     private var head: (method: String, target: String, headers: [String: String], bodyStart: Int, length: Int)?
     private var finished = false
     private var sentContinue = false
+    private var dispatched = false
+    /// 応答を作っている途中の処理。相手が切ったら止める（長ポーリングの待ち手を残さないため）。
+    private var work: Task<Void, Never>?
 
     init(connection: NWConnection, queue: DispatchQueue, handler: @escaping LoopbackHTTPServer.Handler,
          boundPort: @escaping () -> Int, onFinish: @escaping () -> Void) {
@@ -220,11 +241,11 @@ private final class ConnectionSession: @unchecked Sendable {
         receive()
     }
 
-    private var dispatched = false
-
     func finish() {
         guard !finished else { return }
         finished = true
+        work?.cancel()
+        work = nil
         connection.stateUpdateHandler = nil
         connection.cancel()
         onFinish()
@@ -232,9 +253,14 @@ private final class ConnectionSession: @unchecked Sendable {
 
     private func receive() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, isComplete, error in
-            guard let self, !self.finished, !self.dispatched else { return }
+            guard let self, !self.finished else { return }
+            if self.dispatched {
+                // 振り分け後に届く分は読み捨て、切断だけを見張る。
+                if isComplete || error != nil { return self.finish() }
+                return self.receive()
+            }
             if let data { self.buffer.append(data) }
-            if self.process() { return }
+            if self.process() { return self.receive() }
             if isComplete || error != nil { return self.finish() }
             self.receive()
         }
@@ -250,6 +276,11 @@ private final class ConnectionSession: @unchecked Sendable {
                 }
                 return false
             }
+            // 1 回の受信で本文ごと届くと、終端の手前が上限を超えていても上の検査をすり抜ける。
+            if end.lowerBound - buffer.startIndex > LoopbackHTTPServer.maxHeaderBytes {
+                respond(.json(431, ["ok": false, "error": "headers too large"]))
+                return true
+            }
             guard let parsed = Self.parseHead(buffer[buffer.startIndex..<end.lowerBound]) else {
                 respond(.json(400, ["ok": false, "error": "bad request"]))
                 return true
@@ -260,7 +291,7 @@ private final class ConnectionSession: @unchecked Sendable {
             }
             var length = 0
             if let raw = parsed.headers["content-length"] {
-                guard let n = Int(raw.trimmingCharacters(in: .whitespaces)), n >= 0 else {
+                guard let n = Self.contentLength(raw) else {
                     respond(.json(400, ["ok": false, "error": "invalid content-length"]))
                     return true
                 }
@@ -271,35 +302,52 @@ private final class ConnectionSession: @unchecked Sendable {
                 return true
             }
             head = (parsed.method, parsed.target, parsed.headers, end.upperBound - buffer.startIndex, length)
-            // curl は大きめの本文で `Expect: 100-continue` を付け、返事を待ってから本文を送る。
+            // curl は大きめの本文で `Expect: 100-continue` を付け、返事を待ってから本文を送る。弾く相手には本文を送らせない。
             if length > 0, parsed.headers["expect"]?.lowercased() == "100-continue", !sentContinue {
+                if let rejected = MonitorHTTPRoutes.rejection(request(body: Data()), port: boundPort()) {
+                    respond(rejected)
+                    return true
+                }
                 sentContinue = true
                 connection.send(content: Data("HTTP/1.1 100 Continue\r\n\r\n".utf8), completion: .idempotent)
             }
         }
         guard let head, buffer.count >= head.bodyStart + head.length else { return false }
         let start = buffer.startIndex + head.bodyStart
-        let body = buffer.subdata(in: start..<(start + head.length))
-        let (path, query) = Self.splitTarget(head.target)
-        let request = HTTPRequest(method: head.method, path: path, query: query, headers: head.headers, body: body,
-                                  remoteAddress: Self.address(of: connection.endpoint))
+        let request = request(body: buffer.subdata(in: start..<(start + head.length)))
         dispatched = true
+        buffer = Data()
         let handler = handler
         let port = boundPort()
         let queue = queue
         weak let weakSelf = self
-        Task {
+        work = Task {
             let response = await MonitorHTTPRoutes.guarded(request, port: port, handler: handler)
             queue.async { weakSelf?.respond(response) }
         }
         return true
     }
 
+    private func request(body: Data) -> HTTPRequest {
+        let head = head!
+        let (path, query) = Self.splitTarget(head.target)
+        return HTTPRequest(method: head.method, path: path, query: query, headers: head.headers, body: body,
+                           remoteAddress: Self.address(of: connection.endpoint))
+    }
+
     private func respond(_ response: HTTPResponse) {
         guard !finished else { return }
         dispatched = true
+        work = nil
         connection.send(content: response.serialized(), contentContext: .finalMessage, isComplete: true,
                         completion: .contentProcessed { [weak self] _ in self?.finish() })
+    }
+
+    /// 数字だけを通す（`Int("+5")` は通ってしまう）。
+    static func contentLength(_ raw: String) -> Int? {
+        let digits = raw.trimmingCharacters(in: .whitespaces)
+        guard !digits.isEmpty, digits.utf8.allSatisfy({ (0x30...0x39).contains($0) }) else { return nil }
+        return Int(digits)
     }
 
     static func parseHead(_ data: Data) -> (method: String, target: String, headers: [String: String])? {
@@ -311,9 +359,11 @@ private final class ConnectionSession: @unchecked Sendable {
         var headers: [String: String] = [:]
         for line in lines where !line.isEmpty {
             guard let colon = line.firstIndex(of: ":") else { return nil }
-            let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+            // 名前の前後の空白（継続行を含む）は経路によって解釈が分かれるので受け付けない。
+            let rawName = line[..<colon]
+            guard !rawName.isEmpty, !rawName.contains(where: { $0 == " " || $0 == "\t" }) else { return nil }
+            let name = rawName.lowercased()
             let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            guard !name.isEmpty else { return nil }
             // 同名が重なるのは詐称の手口になりうるので、Host 等は最初の 1 つだけでなく食い違いを弾く。
             if let existing = headers[name], existing != value, ["host", "origin", "content-length", "content-type"].contains(name) {
                 return nil

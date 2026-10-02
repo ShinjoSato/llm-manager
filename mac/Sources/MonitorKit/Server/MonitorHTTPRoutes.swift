@@ -12,6 +12,12 @@ public enum MonitorHTTPRoutes {
     /// 全ての口に先に掛ける検査。外れたら handler を呼ばずに返す。
     public static func guarded(_ request: HTTPRequest, port: Int,
                                handler: @Sendable (HTTPRequest) async -> HTTPResponse) async -> HTTPResponse {
+        if let rejected = rejection(request, port: port) { return rejected }
+        return await handler(request)
+    }
+
+    /// 本文を読む前にも掛けられる検査（ヘッダーと接続元だけを見る）。通れば nil。
+    public static func rejection(_ request: HTTPRequest, port: Int) -> HTTPResponse? {
         // DNS リバインディング対策。CORS は付けない（任意のサイトから作業内容を読ませないため）。
         guard LoopbackGuard.isAllowedHost(request.header("host"), port: port) else {
             return .json(403, ["ok": false, "error": "invalid host header"])
@@ -21,7 +27,7 @@ public enum MonitorHTTPRoutes {
         }
         // 承認を受け付ける口なので、Host は詐称できる前提で接続元でも確かめる。ループバック以外には存在ごと伏せる。
         guard LoopbackGuard.isLoopbackAddress(request.remoteAddress) else { return notFound }
-        return await handler(request)
+        return nil
     }
 
     static let notFound = HTTPResponse.json(404, ["ok": false, "error": "not found"])
@@ -51,7 +57,7 @@ public enum MonitorHTTPRoutes {
         guard request.header("content-type")?.lowercased().hasPrefix("application/json") == true else {
             return .rejected(.json(415, ["ok": false, "error": "content-type must be application/json"]))
         }
-        guard let object = try? JSONSerialization.jsonObject(with: request.body, options: [.fragmentsAllowed]) else {
+        guard let object = JSONLoose.object(request.body) else {
             return .rejected(.json(400, ["ok": false, "error": "invalid json"]))
         }
         return .object(object)
@@ -63,14 +69,9 @@ public enum MonitorHTTPRoutes {
         case .rejected(let response): return response
         case .object(let object): body = object
         }
-        let applied: Bool
-        if let o = body as? [String: Any] {
-            applied = await hub.applyHook(HookPayload(json: o))
-        } else {
-            applied = false
-        }
-        // 未知のセッションでも 200 を返す（フック側を失敗させないため）。
-        return .json(200, ["ok": true, "applied": applied])
+        // フック側の curl は短い時間で諦めるので、反映を待たずに返す（反映は届いた順に後で流す）。
+        if let o = body as? [String: Any] { hub.enqueueHook(HookPayload(json: o)) }
+        return .json(200, ["ok": true])
     }
 
     static func channelPermission(_ request: HTTPRequest, hub: SessionHub) async -> HTTPResponse {

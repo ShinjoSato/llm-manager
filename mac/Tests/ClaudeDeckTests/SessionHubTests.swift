@@ -195,7 +195,7 @@ final class SessionHubTests: XCTestCase {
         XCTAssertEqual(s.entrypoint, "cli")
         XCTAssertNil(s.attentionSince)
         XCTAssertTrue(feedTexts(events).contains("セッション検出: proj-a"))
-        XCTAssertTrue(feedTexts(events).contains("Bash"))
+        XCTAssertFalse(feedTexts(events).contains("Bash"), "起動前に書かれた行は新着としてフィードに積まない")
 
         // 無音が 10 分を超えたら稼働中とみなさない（中断の保険）。
         clock.advance(SessionHub.staleBusy)
@@ -368,6 +368,104 @@ final class SessionHubTests: XCTestCase {
         let afterLog = await hub.pendingPermissions()
         XCTAssertTrue(afterLog.isEmpty)
         XCTAssertTrue(feedTexts(events).contains("権限の確認は端末側で答えられたようです: Bash"))
+    }
+
+    /// 起動後に書かれた行は、初回の末尾読みでもフィードに積む（ログの時刻で見分ける）。
+    func testInitialTailOnlyFeedsLinesWrittenAfterStart() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        try append(F.assistant("a0", [["type": "text", "text": "起動前の応答"]]),
+                   F.assistant("a1", [["type": "text", "text": "起動後の応答"]], timestamp: iso(clock.now + 500)))
+        let (hub, events) = try await started()
+        let texts = feedTexts(events)
+        XCTAssertFalse(texts.contains("起動前の応答"))
+        XCTAssertTrue(texts.contains("起動後の応答"))
+        let feed = await hub.recentFeed()
+        XCTAssertEqual(feed.filter { $0.kind == .message }.count, 1, "未読数の元になる応答は起動後の分だけ")
+    }
+
+    /// フックは届いた順に反映する（待ち行列）。
+    func testQueuedHooksAreAppliedInOrder() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, _) = try await started()
+        hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "UserPromptSubmit"))
+        hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                    notificationType: "permission_prompt"))
+        hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Stop"))
+        await hub.flushHooks()
+        do { let v = await snap(hub); XCTAssertEqual(v?.status, .idle) }
+        hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Stop"))
+        hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                    notificationType: "permission_prompt"))
+        await hub.flushHooks()
+        do { let v = await snap(hub); XCTAssertEqual(v?.status, .permission) }
+    }
+
+    /// 初回走査の await 中に start が重なっても、止めても、ループを二重に立てない・止めた後に立てない。
+    func testStartIsNotReentrantAndStopWins() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let gate = DispatchSemaphore(value: 0)
+        let entered = Box(false)
+        let clock = clock!
+        let hub = SessionHub(home: home.home, usageFile: nil, now: { clock.now }, isAlive: { _ in
+            if !entered.value {
+                entered.mutate { $0 = true }
+                gate.wait()
+            }
+            return true
+        })
+        let first = Task { await hub.start() }
+        while !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+        // 在庫の走査で actor が塞がっている間に、2 回目の start と stop を積む。
+        let second = Task { await hub.start() }
+        let stopping = Task { await hub.stop() }
+        try await Task.sleep(for: .milliseconds(50))
+        gate.signal()
+        await first.value
+        await second.value
+        await stopping.value
+        let loops = await hub.loopCount
+        XCTAssertEqual(loops, 0, "止めた後に初回走査が終わってもループを立てない")
+
+        await hub.start()
+        await hub.start()
+        let restarted = await hub.loopCount
+        XCTAssertEqual(restarted, 3, "二重に立てない")
+        await hub.stop()
+    }
+
+    /// 長ポーリングの呼び手が居なくなったら待ち手を外し、判断は取り直しに渡せるよう取り置く。
+    func testCancelledPermissionWaitIsRemoved() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, _) = try await started()
+        let input = PermissionRequestInput(requestId: "abcde", toolName: "Bash", description: "ls", inputPreview: "ls",
+                                           pid: pid, cwd: cwd)
+        let waiting = Task { await hub.awaitPermission(input, waitMillis: 60_000) }
+        var count = 0
+        for _ in 0..<200 where count == 0 {
+            count = await hub.waiterCount(input.key)
+            if count == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        XCTAssertEqual(count, 1)
+        waiting.cancel()
+        let outcome = await waiting.value
+        XCTAssertEqual(outcome, .timeout)
+        for _ in 0..<200 where count > 0 {
+            count = await hub.waiterCount(input.key)
+            if count > 0 { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        XCTAssertEqual(count, 0)
+        await hub.decidePermission(key: input.key, decision: .allow)
+        let retried = await hub.awaitPermission(input, waitMillis: 1_000)
+        XCTAssertEqual(retried, .allow, "待ち手が残っていないので判断は取り置かれ、取り直しに渡る")
+
+        let cancelledEarly = Task { () -> PermissionOutcome in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await hub.awaitPermission(input, waitMillis: 60_000)
+        }
+        let early = await cancelledEarly.value
+        XCTAssertEqual(early, .timeout, "取り消し済みなら待ち手を登録しない")
+        let left = await hub.waiterCount(input.key)
+        XCTAssertEqual(left, 0)
     }
 
     func testSendMessageFailuresAndDelivery() async throws {

@@ -12,7 +12,28 @@ let pids = args.dropFirst().compactMap { Int32($0) }
 
 var env = ProcessInfo.processInfo.environment
 if env["CLAUDE_DECK_SERVER_PORT"] == nil { env["CLAUDE_DECK_SERVER_PORT"] = "off" }
-var config = MonitorConfiguration.fromEnvironment(env)
+/// アプリと同じ残量ファイル（`<ai-manager>/data/claude-usage.json`）を読む。ルートは `AI_MANAGER_ROOT` か cwd・実行ファイルから遡って探す。
+func defaultUsageFile(_ env: [String: String]) -> URL? {
+    let fm = FileManager.default
+    let isRoot = { (url: URL) in fm.fileExists(atPath: url.appendingPathComponent("projects/registry.tsv").path) }
+    if let raw = env["AI_MANAGER_ROOT"], !raw.isEmpty, isRoot(URL(fileURLWithPath: raw)) {
+        return URL(fileURLWithPath: raw).appendingPathComponent("data/claude-usage.json")
+    }
+    var starts = [URL(fileURLWithPath: fm.currentDirectoryPath)]
+    if let exe = Bundle.main.executableURL { starts.append(exe.resolvingSymlinksInPath().deletingLastPathComponent()) }
+    for start in starts {
+        var dir = start.standardizedFileURL
+        while true {
+            if isRoot(dir) { return dir.appendingPathComponent("data/claude-usage.json") }
+            let parent = dir.deletingLastPathComponent()
+            if parent.path == dir.path { break }
+            dir = parent
+        }
+    }
+    return nil
+}
+
+var config = MonitorConfiguration.fromEnvironment(env, defaultUsageFile: defaultUsageFile(env))
 config.debugLogging = true
 let probeConfig = config
 

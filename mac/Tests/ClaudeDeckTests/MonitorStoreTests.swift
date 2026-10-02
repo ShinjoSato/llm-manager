@@ -127,6 +127,63 @@ final class MonitorStoreTests: XCTestCase {
         XCTAssertFalse(appended.contains { $0.items.contains { $0.id == "u1:0" } }, "購読前の分は追記として流さない")
     }
 
+    /// 止めてすぐ始め直しても、前回の後始末が新しい受け口を外さない。
+    func testStopThenStartKeepsTheNewSink() async throws {
+        let home = try FakeClaudeHome()
+        defer { home.remove() }
+        let sessionId = "11111111-2222-3333-4444-555555555555"
+        try home.writeSession(pid: getpid(), sessionId: sessionId, cwd: "/tmp/proj-a")
+        let store = makeStore(home: home.root)
+        store.start()
+        try await waitUntil { store.connection.isConnected }
+        store.stop()
+        store.start()
+        defer { store.stop() }
+        try await waitUntil { store.connection.isConnected }
+        await store.settle()
+        XCTAssertEqual(store.connectionEpoch, 2)
+        store.hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                          notificationType: "permission_prompt"))
+        try await waitUntil { store.session(id: sessionId)?.status == .permission }
+        let loops = await store.hub.loopCount
+        XCTAssertEqual(loops, 3)
+    }
+
+    /// 購読を続けて張り替えても、購読者は 1 つだけ残り、最後の指定が効く。
+    func testRapidSubscriptionChangesKeepOneSubscriber() async throws {
+        let home = try FakeClaudeHome()
+        defer { home.remove() }
+        let ids = ["11111111-2222-3333-4444-555555555551", "11111111-2222-3333-4444-555555555552"]
+        for (i, id) in ids.enumerated() {
+            try home.writeSession(pid: getpid(), sessionId: id, cwd: "/tmp/proj-\(i)")
+            try home.appendTranscript(sessionId: id, cwd: "/tmp/proj-\(i)", lines: [FakeClaudeHome.user("u\(i)", "最初")])
+        }
+        let store = makeStore(home: home.root)
+        var appended: [TranscriptEvent] = []
+        store.onTranscript = { appended.append($0) }
+        store.start()
+        defer { store.stop() }
+        try await waitUntil { store.connection.isConnected }
+        store.setTranscriptSubscription(.sessions([ids[0]]))
+        store.setTranscriptSubscription(.all)
+        store.setTranscriptSubscription(.none)
+        await store.watchTranscripts([ids[1]])
+        let count = await store.transcripts.subscriberCount
+        XCTAssertEqual(count, 1)
+
+        // 購読の後に取得すれば、その間の追記も含めて揃う。
+        let fetched = await store.fetchTranscript(sessionId: ids[1])
+        XCTAssertEqual(fetched?.items.map(\.id), ["u1:0"])
+        try home.appendTranscript(sessionId: ids[0], cwd: "/tmp/proj-0", lines: [FakeClaudeHome.user("x0", "購読外")])
+        try home.appendTranscript(sessionId: ids[1], cwd: "/tmp/proj-1", lines: [FakeClaudeHome.user("x1", "購読中")])
+        try await waitUntil { appended.contains { $0.sessionId == ids[1] } }
+        XCTAssertFalse(appended.contains { $0.sessionId == ids[0] }, "開いていないセッションの会話は読まない")
+
+        await store.watchTranscripts([])
+        let none = await store.transcripts.subscriberCount
+        XCTAssertEqual(none, 0)
+    }
+
     private func waitUntil(timeout: TimeInterval = 5, _ condition: @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {

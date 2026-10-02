@@ -6,9 +6,69 @@ enum JSONLoose {
     static func object(_ bytes: some Collection<UInt8>) -> Any? {
         let data = Data(bytes)
         if let o = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) { return o }
-        let repaired = Data(String(decoding: data, as: UTF8.self).utf8)
+        // JSONSerialization は対になっていないサロゲートのエスケープを弾くが、JSON.parse は通すので置換文字にして読む。
+        let repaired = replacingLoneSurrogates(Data(String(decoding: data, as: UTF8.self).utf8))
         guard repaired != data else { return nil }
         return try? JSONSerialization.jsonObject(with: repaired, options: [.fragmentsAllowed])
+    }
+
+    /// `\uD800`〜`\uDFFF` のうち対になっていないエスケープを `\uFFFD` に置き換える。
+    static func replacingLoneSurrogates(_ data: Data) -> Data {
+        let bytes = [UInt8](data)
+        guard bytes.contains(0x5C) else { return data }
+        func hex(_ at: Int) -> UInt16? {
+            guard at + 4 <= bytes.count else { return nil }
+            var value: UInt16 = 0
+            for b in bytes[at..<(at + 4)] {
+                let digit: UInt8
+                switch b {
+                case 0x30...0x39: digit = b - 0x30
+                case 0x41...0x46: digit = b - 0x41 + 10
+                case 0x61...0x66: digit = b - 0x61 + 10
+                default: return nil
+                }
+                value = value << 4 | UInt16(digit)
+            }
+            return value
+        }
+        func unicodeEscape(_ at: Int) -> UInt16? {
+            guard at + 1 < bytes.count, bytes[at] == 0x5C, bytes[at + 1] == 0x75 else { return nil }
+            return hex(at + 2)
+        }
+        let replacement = Array("\\uFFFD".utf8)
+        var out: [UInt8] = []
+        out.reserveCapacity(bytes.count)
+        var i = 0
+        while i < bytes.count {
+            guard bytes[i] == 0x5C, i + 1 < bytes.count else {
+                out.append(bytes[i])
+                i += 1
+                continue
+            }
+            guard let unit = unicodeEscape(i) else {
+                // `\\` 等は 2 バイトで 1 つ。後ろの `u` を別のエスケープと読み違えないよう一緒に送る。
+                out.append(contentsOf: bytes[i...(i + 1)])
+                i += 2
+                continue
+            }
+            switch unit {
+            case 0xD800...0xDBFF:
+                if let low = unicodeEscape(i + 6), (0xDC00...0xDFFF).contains(low) {
+                    out.append(contentsOf: bytes[i..<(i + 12)])
+                    i += 12
+                } else {
+                    out.append(contentsOf: replacement)
+                    i += 6
+                }
+            case 0xDC00...0xDFFF:
+                out.append(contentsOf: replacement)
+                i += 6
+            default:
+                out.append(contentsOf: bytes[i..<(i + 6)])
+                i += 6
+            }
+        }
+        return Data(out)
     }
 
     static func string(_ v: Any?) -> String? { v as? String }
@@ -34,6 +94,19 @@ enum JSONLoose {
         if let d = number(v) { return d }
         if let s = v as? String, let d = Double(s.trimmingCharacters(in: .whitespaces)), d.isFinite { return d }
         return 0
+    }
+
+    /// 有限の数を Int に丸める。範囲外は端に寄せる（`Int(Double)` は範囲外でトラップするため）。
+    static func clampedInt(_ d: Double) -> Int {
+        guard d.isFinite else { return 0 }
+        if d >= Double(Int.max) { return Int.max }
+        if d <= Double(Int.min) { return Int.min }
+        return Int(d)
+    }
+
+    /// 個数として読む（負・数でないものは 0）。
+    static func count(_ v: Any?) -> Int {
+        max(0, clampedInt(coerceNumber(v)))
     }
 
     static func dict(_ v: Any?) -> [String: Any]? { v as? [String: Any] }

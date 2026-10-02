@@ -11,8 +11,8 @@ public enum TranscriptSubscription: Sendable, Hashable {
 /// 監視（SessionHub）とは別の actor にして、画像の読み直しで状態の更新を待たせない。
 public actor TranscriptStore {
     public static let pollInterval: Duration = .milliseconds(250)
-    /// 手元に保持するログの上限。購読中のものは数に関わらず残す。
-    static let maxLogs = 32
+    /// 手元に保持するログの上限。購読中のものは数に関わらず残す（ログは会話を丸ごと持つので多くしない）。
+    static let maxLogs = 8
 
     public struct Known: Sendable, Equatable {
         public var sessionId: String
@@ -96,9 +96,19 @@ public actor TranscriptStore {
     }
 
     /// 発話に添えられた画像の本体。履歴・発話・画像が見つからなければ nil。
-    public func image(sessionId: String, itemId: String, index: Int) -> TranscriptImageData? {
-        guard TranscriptFormat.isValidSessionId(sessionId), TranscriptFormat.isValidItemId(itemId), index >= 0 else { return nil }
-        return refresh(sessionId)?.image(itemId: itemId, index: index)
+    public func image(sessionId: String, itemId: String, index: Int) async -> TranscriptImageData? {
+        guard TranscriptFormat.isValidSessionId(sessionId), TranscriptFormat.isValidItemId(itemId), index >= 0,
+              let log = refresh(sessionId) else { return nil }
+        switch log.lookupImage(itemId: itemId, index: index) {
+        case .cached(let hit): return hit
+        case .missing: return nil
+        case .load(let path, let ref):
+            // 行の読み直しはファイル全体の走査になりうるので、その間も追記の配信を止めない。
+            guard let (loaded, found) = await Task.detached(priority: .userInitiated, operation: {
+                TranscriptLog.loadImages(path: path, ref: ref)
+            }).value else { return nil }
+            return log.storeLoaded(itemId: itemId, loaded, ref: found, index: index)
+        }
     }
 
     private func watchedIds() -> Set<String> {
@@ -112,22 +122,29 @@ public actor TranscriptStore {
     }
 
     /// 追記の購読。登録時点までの内容は既読として扱い、以降の追記だけを届ける。解除用の番号を返す（購読しなければ nil）。
+    /// `replacing` を渡すと、その購読を同じ呼び出しの中で差し替える（間に届いた追記を取りこぼさない）。
     @discardableResult
-    public func subscribe(_ subscription: TranscriptSubscription, _ fn: @escaping @Sendable (TranscriptEvent) -> Void) -> Int? {
+    public func subscribe(_ subscription: TranscriptSubscription, replacing previous: Int? = nil,
+                          _ fn: @escaping @Sendable (TranscriptEvent) -> Void) -> Int? {
         let ids: Set<String>?
         switch subscription {
-        case .none: return nil
+        case .none: ids = []
         case .all: ids = nil
-        case .sessions(let set):
-            let valid = set.filter(TranscriptFormat.isValidSessionId)
-            guard !valid.isEmpty else { return nil }
-            ids = valid
+        case .sessions(let set): ids = set.filter(TranscriptFormat.isValidSessionId)
         }
         // 既読の基準線を先に引く。登録後に読むと過去の全件が「追記」として届いてしまう。
+        // 差し替え前の購読はまだ残っているので、ここで読んだ追記はそちらに届く。
         for id in ids.map(Array.init) ?? known.map(\.sessionId) { refresh(id) }
+        if let previous { subscribers[previous] = nil }
+        guard ids?.isEmpty != true else {
+            if subscribers.isEmpty { stop() }
+            evict()
+            return nil
+        }
         subscriberSeq += 1
         subscribers[subscriberSeq] = Subscriber(ids: ids, fn: fn)
         startPolling()
+        evict()
         return subscriberSeq
     }
 
@@ -156,6 +173,10 @@ public actor TranscriptStore {
         pollTask?.cancel()
         pollTask = nil
     }
+
+    /// 試験用: 購読者と保持しているログの数。
+    var subscriberCount: Int { subscribers.count }
+    var logCount: Int { logs.count }
 
     /// 試験用: 保持しているログ。
     func log(for sessionId: String) -> TranscriptLog? { logs[sessionId] }

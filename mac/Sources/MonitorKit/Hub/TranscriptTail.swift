@@ -119,9 +119,9 @@ public enum TranscriptTail {
             if !trimmed.isEmpty { ev.text = trimmed }
 
             if let u = message["usage"] as? [String: Any] {
-                ev.usage = TokenUsage(input: Int(JSONLoose.coerceNumber(u["input_tokens"])),
-                                      output: Int(JSONLoose.coerceNumber(u["output_tokens"])),
-                                      cacheRead: Int(JSONLoose.coerceNumber(u["cache_read_input_tokens"])))
+                ev.usage = TokenUsage(input: JSONLoose.count(u["input_tokens"]),
+                                      output: JSONLoose.count(u["output_tokens"]),
+                                      cacheRead: JSONLoose.count(u["cache_read_input_tokens"]))
             }
         }
         return ev
@@ -160,7 +160,8 @@ public final class TranscriptReader {
     private var offset = 0
     /// 書き込み途中の行。バイトのまま持ち越すので、境界を跨いだマルチバイト文字も壊れない。
     private var carry: [UInt8] = []
-    private var primed = false
+    /// 初回の末尾読みを済ませたか。
+    public private(set) var primed = false
 
     public init(path: String) {
         self.path = path

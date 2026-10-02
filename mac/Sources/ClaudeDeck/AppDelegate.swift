@@ -6,8 +6,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        // チャット画面は全セッションの会話の追記を受ける（ルームを選ぶたびに張り直さないため）。
-        MonitorBridge.store.setTranscriptSubscription(.all)
         MonitorBridge.start()
 
         let main = MainViewController()

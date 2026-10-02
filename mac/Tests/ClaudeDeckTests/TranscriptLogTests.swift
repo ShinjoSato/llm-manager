@@ -265,6 +265,91 @@ final class TranscriptLogTests: XCTestCase {
     }
 }
 
+/// 壊れ気味の値でも落ちない・行を失わない。
+final class TranscriptRobustnessTests: XCTestCase {
+    typealias F = FakeClaudeHome
+
+    func testTokenCountsOutOfRangeDoNotTrap() {
+        let ev = TranscriptTail.parse(["type": "assistant", "message": ["content": [] as [Any], "usage": [
+            "input_tokens": 1e20, "output_tokens": Double.nan, "cache_read_input_tokens": -3,
+        ] as [String: Any]]])
+        XCTAssertEqual(ev.usage, TokenUsage(input: Int.max, output: 0, cacheRead: 0))
+        let strings = TranscriptTail.parse(["type": "assistant", "message": ["content": [] as [Any], "usage": [
+            "input_tokens": "1e400", "output_tokens": "-1e30", "cache_read_input_tokens": "12",
+        ] as [String: Any]]])
+        XCTAssertEqual(strings.usage, TokenUsage(input: 0, output: 0, cacheRead: 12))
+        XCTAssertEqual(JSONLoose.clampedInt(-1e300), Int.min)
+        XCTAssertEqual(JSONLoose.clampedInt(.infinity), 0)
+        XCTAssertEqual(JSONLoose.clampedInt(.nan), 0)
+        XCTAssertEqual(JSONLoose.clampedInt(42.9), 42)
+        // ログの数値は JSON の上でも範囲外になりうる。
+        let line = #"{"type":"assistant","message":{"content":[],"usage":{"input_tokens":1e20,"output_tokens":-5,"cache_read_input_tokens":99999999999999999999999}}}"#
+        XCTAssertEqual(TranscriptTail.parseLine(Array(line.utf8))?.usage, TokenUsage(input: Int.max, output: 0, cacheRead: Int.max))
+    }
+
+    func testLoneSurrogatesAreReplacedInsteadOfDroppingTheLine() throws {
+        func text(_ json: String) -> String? { (JSONLoose.object(Array(json.utf8)) as? [String: Any])?["a"] as? String }
+        XCTAssertEqual(text(#"{"a":"x\ud83dy"}"#), "x\u{FFFD}y")
+        XCTAssertEqual(text(#"{"a":"\udc00"}"#), "\u{FFFD}")
+        XCTAssertEqual(text(#"{"a":"\ud83d\ud83d"}"#), "\u{FFFD}\u{FFFD}")
+        XCTAssertEqual(text(#"{"a":"\uD83DA"}"#), "\u{FFFD}A")
+        XCTAssertEqual(text(#"{"a":"😀"}"#), "😀", "対になっていればそのまま")
+        XCTAssertEqual(text(#"{"a":"\\ud83d"}"#), #"\ud83d"#, "エスケープされた \\ の後ろはただの文字")
+        XCTAssertNil(JSONLoose.object(Array(#"{"a":"\ud83d"#.utf8)), "壊れた JSON は救わない")
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sur-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("s.jsonl")
+        let cut = #"{"type":"assistant","uuid":"a1","timestamp":"2026-06-01T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"途中で切れた\ud83d"}]}}"#
+        try Data((cut + "\n").utf8).write(to: url)
+        let log = TranscriptLog(path: url.path)
+        XCTAssertEqual(log.read().map(\.text), ["途中で切れた\u{FFFD}"], "その行を会話から落とさない")
+        XCTAssertEqual(TranscriptTail.parseLine(Array(cut.utf8))?.text, "途中で切れた\u{FFFD}")
+    }
+
+    /// 購読の差し替えは 1 回の呼び出しで行い、間に書かれた追記を落とさない。
+    func testReplacingSubscriptionKeepsAppends() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sub-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let urls = ["s1", "s2"].map { dir.appendingPathComponent("\($0).jsonl") }
+        for (i, url) in urls.enumerated() { try Data("\(F.user("u0-\(i)", "最初"))\n".utf8).write(to: url) }
+        let store = TranscriptStore(resolve: { id, _ in urls.first { $0.lastPathComponent == "\(id).jsonl" }?.path })
+        let events = Box<[TranscriptEvent]>([])
+        let first = await store.subscribe(.sessions(["s1"])) { e in events.mutate { $0.append(e) } }
+        let handle = try FileHandle(forWritingTo: urls[0])
+        handle.seekToEndOfFile()
+        handle.write(Data("\(F.user("u1", "差し替えの直前"))\n".utf8))
+        try handle.close()
+        let second = await store.subscribe(.sessions(["s1", "s2"]), replacing: first) { e in events.mutate { $0.append(e) } }
+        XCTAssertEqual(events.value.flatMap { $0.items.map(\.id) }, ["u1:0"], "差し替え前の購読に届く")
+        XCTAssertFalse(events.value.contains { $0.sessionId == "s2" }, "新しく加えた分の既存の行は既読扱い")
+        let count = await store.subscriberCount
+        XCTAssertEqual(count, 1)
+        let cleared = await store.subscribe(.none, replacing: second) { _ in }
+        XCTAssertNil(cleared)
+        let none = await store.subscriberCount
+        XCTAssertEqual(none, 0)
+        await store.stop()
+    }
+
+    /// 購読していないログは上限を超えたら手放す。
+    func testUnwatchedLogsAreBounded() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lru-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TranscriptStore(resolve: { id, _ in dir.appendingPathComponent("\(id).jsonl").path })
+        for i in 0..<(TranscriptStore.maxLogs + 4) {
+            let id = "s\(i)"
+            try Data("\(F.user("u\(i)", "x"))\n".utf8).write(to: dir.appendingPathComponent("\(id).jsonl"))
+            _ = await store.get(id)
+        }
+        let count = await store.logCount
+        XCTAssertEqual(count, TranscriptStore.maxLogs)
+    }
+}
+
 /// 試験で非同期の受け口から値を集める箱。
 final class Box<T>: @unchecked Sendable {
     private let lock = NSLock()

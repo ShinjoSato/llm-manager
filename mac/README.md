@@ -108,9 +108,12 @@ mac/
 
 - **在庫層**（3 秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)`。**実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl`
   の末尾差分（初回は末尾 512KB・`ai-title` / `last-prompt` は初回だけ最大 32MB 遡る `primeMeta`）。サブエージェントは 2 秒ごと。
-  状態の合成・終了後 5 分の保持・要対応の時刻（`attentionSince`）・権限待ちの説明・未知の通知のフィード化は monitor と同じ（`SessionHub`）
-- **会話**: `TranscriptStore`（250ms で追記を読む actor）。起動時に `.all` を購読し、ルームを開いた時に `fetchTranscript` で全件、
-  以降は追記を id で重複除去して足す。画像は `imageSource`（行の位置を覚えて読み直す。base64 の PNG / JPEG / GIF / WebP のみ）
+  状態の合成・終了後 5 分の保持・要対応の時刻（`attentionSince`）・権限待ちの説明・未知の通知のフィード化は monitor と同じ（`SessionHub`）。
+  `primeMeta` と Xcode プロジェクトの走査は actor の外で行い、結果だけ戻す。初回の末尾読みのうちアプリ起動前に書かれた行は
+  フィードに積まない（起動のたびに未読数が膨らまないように）
+- **会話**: `TranscriptStore`（250ms で追記を読む actor）。購読するのは直近に開いたルームだけ（`watchTranscripts`）で、
+  開いていないセッションのログは読まない・持たない。ルームを開いたら購読を張ってから `fetchTranscript` で全件、
+  以降は追記を id で重複除去して足す。購読の張り替えは 1 回の呼び出しで行い、間の追記を落とさない。画像は `imageSource`（行の位置を覚えて読み直す。base64 の PNG / JPEG / GIF / WebP のみ）
 - **使用量**: `<ai-manager ルート>/data/claude-usage.json`（statusline.sh が書く）を 3 秒ごとに読む（`MONITOR_USAGE_FILE` で差し替え）
 - **伝言**: 受信箱ソケット（自分が所有する Unix ソケットだけ）へ行区切りの JSON を 1 行書く。失敗は `HubFailure`（`not_found` / `not_alive` / `no_socket` / `unreachable`）
 - 読み取り元は `CLAUDE_HOME`（既定 `~/.claude`）。読むだけで書かない。デバッグ出力は `CLAUDE_DECK_MONITOR_DEBUG=1`
@@ -126,12 +129,17 @@ mac/
 | メソッド | パス | 用途 |
 |---|---|---|
 | GET | `/api/health` | 疎通確認（`{"ok":true,"sessions":N,"server":"claude-deck"}`） |
-| POST | `/hook` | フックの JSON を受けて状態に反映（未知のセッションでも 200） |
+| POST | `/hook` | フックの JSON を受けて 200 を返し、反映は届いた順に後から流す（未知のセッションでも 200） |
 | POST | `/api/channel/permissions` | チャネルからの権限確認。判断が出るまで最大 60 秒待たせる（`allow` / `deny` / `timeout` / `dropped`） |
 
 - `127.0.0.1` でだけ待ち受け、全口で `Host`（ループバック名 + 待ち受けポート）・`Origin`（付いている時は自分自身のみ）・
   接続元アドレス（ループバック以外は 404）を確かめる。CORS は付けない。POST は `content-type: application/json` 必須（415）。
-  本文は 8MB まで（413）、`Transfer-Encoding: chunked` は受けない（501）、`Expect: 100-continue` には応える
+  本文は 8MB まで（413）、ヘッダーは 64KB まで（431）、`Content-Length` は数字だけ・ヘッダー名に空白があれば 400、
+  `Transfer-Encoding: chunked` は受けない（501）、`Expect: 100-continue` には Host / Origin / 接続元を確かめてから応える。
+  同時接続は 64 まで（超えた分は即切断。長ポーリング中の接続も数える）。長ポーリング中に相手が切ったら待ち手を外す
+  （判断はチャネルの取り直しに渡るよう取り置く）
+- `allowLocalEndpointReuse` は付けたまま。0.0.0.0 / `[::]` で待ち受ける別プロセス（SO_REUSEADDR の有無とも）が居ても
+  127.0.0.1 では bind できず「使用中」になることを試験で確かめている
 - ポートは `CLAUDE_DECK_SERVER_PORT`（既定 8766。`off` で待ち受けない）
 - **ポートが使われている時**（旧 monitor が動いている等）: 奪わない・止めない。ルーム一覧の検索欄の下に
   「ポート 8766 を別のプロセス（旧 monitor 等）が使っているため、フック（権限待ち・入力待ち）が届きません」と出し、
@@ -225,8 +233,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   ルームを移っても各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
 - 端末ビュー（`ClaudeTerminalView`）は画面に載せない。PTY の受信は main キューで端末バッファに流れ、状態・権限プロンプト・選択待ち・上限表示は
   0.3 秒ごとのタイマーと受信時にバッファ末尾の `rows` 行を読むので、ビュー階層に無くても動く。桁数は作成時の 960×640pt のまま固定。
-- 会話はアプリ内の `TranscriptStore` から組み立てる。追記の購読は起動時に `.all` で 1 つ張り（ルームを選ぶたびに張り直さない）、
-  ルームを開いた時に `fetchTranscript` で全件、以降は追記を id で重複除去して足す。
+- 会話はアプリ内の `TranscriptStore` から組み立てる。ルームを開いた時に、直近に開いた 4 ルームを対象に追記の購読を張り直してから
+  `fetchTranscript` で全件、以降は追記を id で重複除去して足す（それより前に開いたルームの会話は手放し、開き直した時に取り直す）。
   監視を始め直した（`connectionEpoch` の増加）後は**全件を取り直して置き換える**。最初の発話前でログが無い時は空のまま追記を待つ。
 - 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し。Claude の応答は Markdown を描く（見出し・表・箇条書き / 番号付きリスト（入れ子）・引用・区切り線・コードブロック、インラインの太字・斜体・コード・リンク）。リンクは http / https だけ開き、`file://` やカスタムスキームは開かない（会話ビュー全体で判定は `ChatMarkdown.isOpenableLink`）。コードブロック内のタブはそのまま保つ。表は寄せ指定に従い、列幅は中身に合わせて長いセルは折り返し、吹き出しより広い時だけ横スクロール。解析は自前（`ChatMarkdown`・外部ライブラリなし）で本文ごとにキャッシュし、描画は `Chat/MarkdownView.swift`。自分の発話と伝言はインライン装飾のみ。
   ツール呼び出しは直前の発話の下に「ツール N件 ▸」の 1 行に畳み、開くとツール名と対象を並べる。実行中のものは緑で強調。

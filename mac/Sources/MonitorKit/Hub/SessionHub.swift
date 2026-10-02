@@ -50,6 +50,17 @@ public struct HubFailure: Error, Sendable, Equatable, LocalizedError {
     public var errorDescription: String? { message }
 }
 
+/// 長ポーリングの待ち手の番号。登録（actor 上）と取り消し（任意のスレッド）の間で受け渡す。
+final class WaiterTicket: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int?
+
+    var id: Int? {
+        get { lock.withLock { value } }
+        set { lock.withLock { value = newValue } }
+    }
+}
+
 /// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: monitor/src/hub.ts）。
 /// 受け手は `MonitorEvent` を 1 本の流れで受け取る（以前の SSE と同じ単位）。
 public actor SessionHub {
@@ -97,6 +108,8 @@ public actor SessionHub {
         var socketPath: String?
         /// cwd は変わらないのでセッション生成時に一度だけ調べる。
         var xcodeProject: String?
+        /// メタ情報（ai-title 等）の遡り読みを、この位置のログについて始めたか。
+        var metaRequestedFor: String?
         var endedAt: Double?
         var turnState: TurnState?
 
@@ -123,7 +136,20 @@ public actor SessionHub {
     private var usageRead = false
     private var locator: TranscriptLocator
     private var tasks: [Task<Void, Never>] = []
+    /// `start` の途中（初回走査の await 中）に再び呼ばれても二重に回さないため。
+    private var starting = false
+    /// 開始・停止のたびに増える。止めた後に終わった初回走査がループを立てないようにする。
+    private var generation = 0
     private var sink: (@Sendable (MonitorEvent) -> Void)?
+    /// これより前のログ行はフィードに積まない（起動前の履歴を「新着」として数えないため）。
+    private let startedAt: Double
+
+    private enum HookMessage: Sendable {
+        case hook(HookPayload)
+        case flush(CheckedContinuation<Void, Never>)
+    }
+    /// フックは届いた順に 1 本の流れで反映する。HTTP の応答は反映を待たない。
+    private nonisolated let hookInbox: AsyncStream<HookMessage>.Continuation
 
     public init(home: ClaudeHome,
                 usageFile: URL?,
@@ -136,6 +162,33 @@ public actor SessionHub {
         self.now = now
         self.isAlive = isAlive
         locator = TranscriptLocator(home: home)
+        startedAt = now()
+        let (stream, inbox) = AsyncStream<HookMessage>.makeStream(bufferingPolicy: .bufferingNewest(4096))
+        hookInbox = inbox
+        Task { [weak self] in
+            for await message in stream {
+                switch message {
+                case .hook(let payload): await self?.applyHook(payload)
+                case .flush(let done): done.resume()
+                }
+            }
+        }
+    }
+
+    deinit {
+        hookInbox.finish()
+    }
+
+    /// フックを反映の待ち行列に積む。届いた順に `applyHook` へ流す。
+    public nonisolated func enqueueHook(_ payload: HookPayload) {
+        hookInbox.yield(.hook(payload))
+    }
+
+    /// それまでに積んだフックが反映し終わるまで待つ。
+    public nonisolated func flushHooks() async {
+        await withCheckedContinuation { done in
+            if case .terminated = hookInbox.yield(.flush(done)) { done.resume() }
+        }
     }
 
     /// 変化の受け口を差し替える（`start` 前に呼ぶ）。
@@ -146,8 +199,14 @@ public actor SessionHub {
     // MARK: - ループ
 
     public func start() async {
-        guard tasks.isEmpty else { return }
+        guard tasks.isEmpty, !starting else { return }
+        starting = true
+        generation += 1
+        let mine = generation
         await scanInventory()
+        starting = false
+        // 初回走査の間に止められた。
+        guard mine == generation else { return }
         pollTranscripts()
         pollUsage()
         emitUpdate()
@@ -159,7 +218,11 @@ public actor SessionHub {
         tasks.append(loop(every: Self.snapshotInterval) { hub in await hub.emitUpdate() })
     }
 
+    /// 試験用: 回っているループの数。
+    var loopCount: Int { tasks.count }
+
     public func stop() {
+        generation += 1
         tasks.forEach { $0.cancel() }
         tasks = []
     }
@@ -180,11 +243,13 @@ public actor SessionHub {
         var seen = Set<String>()
         let now = now()
         var changed = false
+        var created: [String] = []
 
         for raw in SessionInventory.scan(directory: home.sessionsDirectory, isAlive: isAlive) {
             seen.insert(raw.sessionId)
             guard let existing = sessions[raw.sessionId] else {
                 sessions[raw.sessionId] = createState(raw)
+                created.append(raw.sessionId)
                 changed = true
                 push(raw.sessionId, .session, "セッション検出: \(Self.basename(raw.cwd))")
                 continue
@@ -222,21 +287,59 @@ public actor SessionHub {
             emitUpdate()
             await transcripts?.setKnown(sessions.values.map { TranscriptStore.Known(sessionId: $0.raw.sessionId, cwd: $0.raw.cwd) })
         }
+        if !created.isEmpty { await loadMeta(created) }
     }
 
+    /// 重い読み（ログの遡り・Xcode の走査）は `loadMeta` に回し、ここでは軽いものだけ埋める。
     private func createState(_ raw: RawSession) -> State {
         let state = State(raw: raw)
         state.transcriptPath = locator.resolve(sessionId: raw.sessionId, cwd: raw.cwd)
-        if let path = state.transcriptPath {
-            state.reader = TranscriptReader(path: path)
-            let meta = TranscriptTail.primeMeta(path: path)
-            state.title = meta.title
-            state.lastPrompt = meta.lastPrompt
-        }
+        if let path = state.transcriptPath { state.reader = TranscriptReader(path: path) }
+        state.metaRequestedFor = state.transcriptPath
         state.socketPath = socketFor(raw)
-        state.xcodeProject = XcodeFinder.find(in: raw.cwd)
         state.endedAt = raw.alive ? nil : now()
         return state
+    }
+
+    /// 新しく見つけたセッションのメタ情報と Xcode プロジェクトを actor の外で調べ、結果だけ戻す（その間もフック等を受けられるように）。
+    private func loadMeta(_ ids: [String]) async {
+        let jobs = ids.compactMap { id -> (id: String, cwd: String, path: String?)? in
+            guard let state = sessions[id] else { return nil }
+            return (id, state.raw.cwd, state.transcriptPath)
+        }
+        let results = await Task.detached(priority: .utility) {
+            jobs.map { job in
+                (job.id, job.path, job.path.map(TranscriptTail.primeMeta(path:)), XcodeFinder.find(in: job.cwd))
+            }
+        }.value
+        for (id, path, meta, xcode) in results {
+            guard let state = sessions[id] else { continue }
+            state.xcodeProject = xcode
+            if let meta, path == state.transcriptPath { applyMeta(meta, to: state) }
+        }
+        emitUpdate()
+    }
+
+    /// 後から見つかったログのメタ情報を読む。結果を待たない（実況のポーリングを止めないため）。
+    private func loadTranscriptMeta(_ id: String, path: String) {
+        Task.detached(priority: .utility) { [weak self] in
+            let meta = TranscriptTail.primeMeta(path: path)
+            await self?.receiveTranscriptMeta(id, path: path, meta: meta)
+        }
+    }
+
+    private func receiveTranscriptMeta(_ id: String, path: String, meta: (title: String?, lastPrompt: String?)) {
+        guard let state = sessions[id], state.transcriptPath == path else { return }
+        if applyMeta(meta, to: state) { emitUpdate() }
+    }
+
+    /// 末尾読みで既に新しい値を拾っていればそちらを残す。
+    @discardableResult
+    private func applyMeta(_ meta: (title: String?, lastPrompt: String?), to state: State) -> Bool {
+        let before = (state.title, state.lastPrompt)
+        state.title = state.title ?? meta.title
+        state.lastPrompt = state.lastPrompt ?? meta.lastPrompt
+        return before != (state.title, state.lastPrompt)
     }
 
     // MARK: - 実況層
@@ -251,16 +354,23 @@ public actor SessionHub {
                 guard let path = locator.resolve(sessionId: state.raw.sessionId, cwd: state.raw.cwd) else { continue }
                 state.transcriptPath = path
                 state.reader = TranscriptReader(path: path)
-                let meta = TranscriptTail.primeMeta(path: path)
-                state.title = state.title ?? meta.title
-                state.lastPrompt = state.lastPrompt ?? meta.lastPrompt
             }
             guard let reader = state.reader else { continue }
+            if let path = state.transcriptPath, state.metaRequestedFor != path {
+                state.metaRequestedFor = path
+                loadTranscriptMeta(id, path: path)
+            }
 
+            // 初回は末尾を遡って読むので、起動前に書かれた行を新着としてフィードに積まない。
+            let initial = !reader.primed
             let events = reader.read()
             if !events.isEmpty { changed = true }
 
             for ev in events {
+                let quiet = initial && (ev.at ?? 0) < startedAt
+                func push(_ sessionId: String, _ kind: FeedKind, _ text: String, tool: String? = nil) {
+                    if !quiet { self.push(sessionId, kind, text, tool: tool) }
+                }
                 if let branch = ev.branch { state.branch = branch }
                 if let title = ev.title, title != state.title {
                     state.title = title
@@ -287,7 +397,7 @@ public actor SessionHub {
                     state.currentAction = ev.toolDetail?.description
                     for tool in tools { push(id, .tool, tool, tool: tool) }
                     // フックより新しい行を読んだ時だけ「待ち」を解く。古い行で権限待ちを消さない。
-                    if ev.at == nil || ev.at! > state.hookAt {
+                    if (ev.at ?? .infinity) > state.hookAt {
                         state.hookStatus = nil
                         state.hookDetail = nil
                         state.hookTool = nil
@@ -503,20 +613,38 @@ public actor SessionHub {
         }
         if reg.created || reg.changed { emitPermissions() }
 
-        return await withCheckedContinuation { continuation in
-            guard let waiterId = permissions.addWaiter(key, { continuation.resume(returning: $0) }) else {
-                continuation.resume(returning: .dropped)
-                return
+        let ticket = WaiterTicket()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                // 切断済みの申請に待ち手を残すと、判断が取り置かれずに捨てられる。
+                guard !Task.isCancelled,
+                      let waiterId = permissions.addWaiter(key, { continuation.resume(returning: $0) }) else {
+                    continuation.resume(returning: Task.isCancelled ? .timeout : .dropped)
+                    return
+                }
+                ticket.id = waiterId
+                Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(JSONLoose.clampedInt(waitMillis)))
+                    await self?.expireWaiter(key, id: waiterId)
+                }
             }
-            Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(Int(waitMillis)))
-                await self?.expireWaiter(key, id: waiterId)
-            }
+        } onCancel: {
+            // 登録はこの actor の上で同期に済むので、ここから後に回せば必ず id が入っている。
+            Task { [weak self] in await self?.expireWaiter(key, ticket: ticket) }
         }
     }
 
     private func expireWaiter(_ key: String, id: Int) {
         permissions.expireWaiter(key, id: id)
+    }
+
+    private func expireWaiter(_ key: String, ticket: WaiterTicket) {
+        if let id = ticket.id { permissions.expireWaiter(key, id: id) }
+    }
+
+    /// 試験用: その申請に残っている待ち手の数。
+    func waiterCount(_ key: String) -> Int {
+        permissions.waiterCount(key)
     }
 
     /// 画面からの判断。知らない鍵なら nil。
@@ -637,7 +765,7 @@ public actor SessionHub {
         if app == .xcode && state.xcodeProject == nil {
             throw HubFailure(code: "no_project", message: "Xcode プロジェクトが見つかりません")
         }
-        let target = app == .xcode ? state.xcodeProject! : state.raw.cwd
+        let target = app == .xcode ? (state.xcodeProject ?? state.raw.cwd) : state.raw.cwd
         let name = EditorOpen.appName(app)
         let error = await EditorOpen.open(app, target: target)
         push(sessionId, .status, error == nil ? "\(name) で開きました" : "\(name) を開けません: \(Self.truncate(error!, 120))")
