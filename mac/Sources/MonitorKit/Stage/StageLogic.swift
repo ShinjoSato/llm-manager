@@ -6,6 +6,8 @@ public struct StageJob: Sendable, Equatable {
     public var role: String
     /// 頭・上半身の明色（0xRRGGBB）。
     public var light: UInt32
+    /// 胴・脚の濃色。
+    public var dark: UInt32
 }
 
 /// 随伴するサブエージェントの今の様子。
@@ -20,7 +22,7 @@ public enum StageContent: Sendable, Equatable {
     case placeholder(String)
 }
 
-/// ステージパネルの文言・URL・開閉の判定（UI 非依存。monitor UI の言い回しにそろえる）。
+/// ステージパネルの文言・開閉の判定（UI 非依存。monitor UI の言い回しにそろえる）。
 public enum StageLogic {
     // MARK: - いまの動き
 
@@ -66,25 +68,25 @@ public enum StageLogic {
     // MARK: - サブエージェント
 
     private static let jobs: [String: StageJob] = [
-        "developer-plugin:code-reviewer": StageJob(label: "監査役", role: "差分を静的にレビューする", light: 0xfbbf24),
-        "developer-plugin:swiftui-implementer": StageJob(label: "iOS職人", role: "iOS（SwiftUI）を実装する", light: 0x60a5fa),
-        "developer-plugin:go-api-implementer": StageJob(label: "サーバ職人", role: "Go の API と DB 層を実装する", light: 0x22d3ee),
-        "developer-plugin:ios-sim-tester": StageJob(label: "試験官", role: "シミュレータで操作して確かめる", light: 0x4ade80),
-        "developer-plugin:ios-context-scout": StageJob(label: "斥候", role: "既存構成を調べて地図を返す", light: 0xc084fc),
-        "developer-plugin:pr-verifier": StageJob(label: "検証官", role: "PR を実際に動かして検証する", light: 0xf472b6),
-        "developer-plugin:agent-scout": StageJob(label: "斥候", role: "agents / skills 構成を診断する", light: 0xc084fc),
-        "developer-plugin:prompt-analyst": StageJob(label: "記録係", role: "プロンプト履歴を分析する", light: 0xa3e635),
-        "appstore-plugin:appstore-review": StageJob(label: "審査官", role: "App Store 審査観点で点検する", light: 0xfb923c),
-        "appstore-plugin:appstore-meta-inspector": StageJob(label: "調査役", role: "App Store Connect の登録内容を読む", light: 0xfb923c),
-        "fable-mode-plugin:fable-verifier": StageJob(label: "検証官", role: "実装への反証を試みる", light: 0xf472b6),
-        "fable-mode-plugin:fable-judge": StageJob(label: "審判", role: "複数案を採点して順位づける", light: 0xfacc15),
-        "fable-mode-plugin:fable-ui-reviewer": StageJob(label: "意匠番", role: "UI の見た目を審査する", light: 0xe879f9),
-        "Explore": StageJob(label: "斥候", role: "広く探索して場所を特定する", light: 0xc084fc),
-        "Plan": StageJob(label: "軍師", role: "実装の計画を立てる", light: 0x818cf8),
-        "general-purpose": StageJob(label: "何でも屋", role: "汎用の調査・作業", light: 0x94a3b8),
+        "developer-plugin:code-reviewer": StageJob(label: "監査役", role: "差分を静的にレビューする", light: 0xfbbf24, dark: 0xb45309),
+        "developer-plugin:swiftui-implementer": StageJob(label: "iOS職人", role: "iOS（SwiftUI）を実装する", light: 0x60a5fa, dark: 0x1d4ed8),
+        "developer-plugin:go-api-implementer": StageJob(label: "サーバ職人", role: "Go の API と DB 層を実装する", light: 0x22d3ee, dark: 0x0e7490),
+        "developer-plugin:ios-sim-tester": StageJob(label: "試験官", role: "シミュレータで操作して確かめる", light: 0x4ade80, dark: 0x15803d),
+        "developer-plugin:ios-context-scout": StageJob(label: "斥候", role: "既存構成を調べて地図を返す", light: 0xc084fc, dark: 0x7e22ce),
+        "developer-plugin:pr-verifier": StageJob(label: "検証官", role: "PR を実際に動かして検証する", light: 0xf472b6, dark: 0xbe185d),
+        "developer-plugin:agent-scout": StageJob(label: "斥候", role: "agents / skills 構成を診断する", light: 0xc084fc, dark: 0x7e22ce),
+        "developer-plugin:prompt-analyst": StageJob(label: "記録係", role: "プロンプト履歴を分析する", light: 0xa3e635, dark: 0x4d7c0f),
+        "appstore-plugin:appstore-review": StageJob(label: "審査官", role: "App Store 審査観点で点検する", light: 0xfb923c, dark: 0xc2410c),
+        "appstore-plugin:appstore-meta-inspector": StageJob(label: "調査役", role: "App Store Connect の登録内容を読む", light: 0xfb923c, dark: 0xc2410c),
+        "fable-mode-plugin:fable-verifier": StageJob(label: "検証官", role: "実装への反証を試みる", light: 0xf472b6, dark: 0xbe185d),
+        "fable-mode-plugin:fable-judge": StageJob(label: "審判", role: "複数案を採点して順位づける", light: 0xfacc15, dark: 0xa16207),
+        "fable-mode-plugin:fable-ui-reviewer": StageJob(label: "意匠番", role: "UI の見た目を審査する", light: 0xe879f9, dark: 0xa21caf),
+        "Explore": StageJob(label: "斥候", role: "広く探索して場所を特定する", light: 0xc084fc, dark: 0x7e22ce),
+        "Plan": StageJob(label: "軍師", role: "実装の計画を立てる", light: 0x818cf8, dark: 0x4338ca),
+        "general-purpose": StageJob(label: "何でも屋", role: "汎用の調査・作業", light: 0x94a3b8, dark: 0x475569),
     ]
 
-    public static let unknownJob = StageJob(label: "従者", role: "種別が判別できないサブエージェント", light: 0x94a3b8)
+    public static let unknownJob = StageJob(label: "従者", role: "種別が判別できないサブエージェント", light: 0x94a3b8, dark: 0x475569)
 
     public static func job(for type: String?) -> StageJob {
         guard let type else { return unknownJob }
@@ -156,24 +158,7 @@ public enum StageLogic {
         }
     }
 
-    // MARK: - 埋め込み表示
-
-    /// `/?embed=stage&session=<id>&mode=3d&bg=<hex>`。bg は 16 進 6 桁で渡す（無ければ透過）。
-    public static func embedURL(base: URL, sessionId: String, background: UInt32?) -> URL {
-        var components = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
-        components.path = "/"
-        var items = [
-            URLQueryItem(name: "embed", value: "stage"),
-            URLQueryItem(name: "session", value: sessionId),
-            URLQueryItem(name: "mode", value: "3d"),
-        ]
-        items.append(URLQueryItem(name: "bg", value: background.map { String(format: "%06x", $0) } ?? "transparent"))
-        components.queryItems = items
-        // URLQueryItem は + を残し、ページ側の URLSearchParams で空白と読まれるので明示的に符号化する。
-        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
-        components.fragment = nil
-        return components.url ?? base
-    }
+    // MARK: - プレースホルダー
 
     /// 接続・起動・選択の状態から、ステージかプレースホルダーかを決める。
     public static func content(connected: Bool,
@@ -185,7 +170,6 @@ public enum StageLogic {
             switch launchPhase {
             case .checking: return .placeholder("monitor を確認しています…")
             case .installing: return .placeholder("monitor を準備しています（npm install）…")
-            case .building: return .placeholder("monitor を準備しています（UI をビルド中）…")
             case .starting: return .placeholder("monitor を起動しています…")
             case .failed: return .placeholder("monitor を起動できませんでした")
             default: return .placeholder("monitor に接続していません（自動で再接続します）")

@@ -78,18 +78,6 @@ final class StageLogicTests: XCTestCase {
         XCTAssertEqual(StageLogic.feed(items, sessionId: nil), [])
     }
 
-    // MARK: - 埋め込み URL
-
-    func testEmbedURL() {
-        let base = URL(string: "http://127.0.0.1:8799")!
-        let url = StageLogic.embedURL(base: base, sessionId: "abc-123", background: 0x0b111d)
-        XCTAssertEqual(url.absoluteString, "http://127.0.0.1:8799/?embed=stage&session=abc-123&mode=3d&bg=0b111d")
-        let clear = StageLogic.embedURL(base: URL(string: "http://127.0.0.1:8766/x?y=1#z")!, sessionId: "s", background: nil)
-        XCTAssertEqual(clear.absoluteString, "http://127.0.0.1:8766/?embed=stage&session=s&mode=3d&bg=transparent")
-        let plus = StageLogic.embedURL(base: base, sessionId: "a+b", background: nil)
-        XCTAssertTrue(plus.absoluteString.contains("session=a%2Bb"))
-    }
-
     func testToolVerbIgnoresEmptyTool() {
         XCTAssertNil(StageLogic.toolVerb(""))
         XCTAssertNil(StageLogic.toolVerb(nil))
@@ -104,7 +92,7 @@ final class StageLogicTests: XCTestCase {
             StageLogic.content(connected: connected, launchPhase: phase, hasRoom: room, sessionId: id, sessionKnown: known)
         }
         XCTAssertEqual(content(), .stage(sessionId: "s"))
-        XCTAssertEqual(content(connected: false, phase: .building), .placeholder("monitor を準備しています（UI をビルド中）…"))
+        XCTAssertEqual(content(connected: false, phase: .installing), .placeholder("monitor を準備しています（npm install）…"))
         XCTAssertEqual(content(connected: false, phase: .starting(pid: 1)), .placeholder("monitor を起動しています…"))
         XCTAssertEqual(content(connected: false, phase: .failed(.nodeNotFound)), .placeholder("monitor を起動できませんでした"))
         XCTAssertEqual(content(connected: false), .placeholder("monitor に接続していません（自動で再接続します）"))
