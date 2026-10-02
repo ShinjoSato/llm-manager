@@ -1,4 +1,4 @@
-# 秘密情報（monitor のトークン等）はここに集約。README 以外は追跡しない。
+# 秘密情報はここに集約。README 以外は追跡しない。
 secrets/*
 !secrets/README.md
 
@@ -7,8 +7,9 @@ data/claude-usage.json*
 
 # Node / ビルド成果物
 node_modules/
-monitor/ui/dist/
 mac/dist/
+# 削除済みの UI の残骸（手元に残るビルド成果物）を拾わないため
+monitor/ui/
 *.tsbuildinfo
 
 # Swift Package Manager（どの階層でも）

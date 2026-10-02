@@ -25,7 +25,7 @@ export interface AgentInfo {
   lastActivityAt: number;
 }
 
-/** UI に配る 1 セッション分のスナップショット。 */
+/** クライアントに配る 1 セッション分のスナップショット。 */
 export interface SessionSnapshot {
   sessionId: string;
   pid: number;

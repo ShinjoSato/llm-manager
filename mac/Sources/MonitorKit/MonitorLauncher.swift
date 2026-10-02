@@ -13,8 +13,6 @@ public enum MonitorLaunchPhase: Sendable, Equatable {
     case skippedRemote(host: String)
     /// `npm install` 中。
     case installing
-    /// `npm run build`（ui/dist の生成）中。
-    case building
     /// 起動して health を待っている。
     case starting(pid: Int32)
     /// 自分が起動した monitor が応答している。
@@ -23,10 +21,10 @@ public enum MonitorLaunchPhase: Sendable, Equatable {
     case stopped
     case failed(MonitorLaunchFailure)
 
-    /// 長くかかる準備中か（install / build / 起動待ち）。
+    /// 長くかかる準備中か（install / 起動待ち）。
     public var isBusy: Bool {
         switch self {
-        case .checking, .installing, .building, .starting: return true
+        case .checking, .installing, .starting: return true
         default: return false
         }
     }
@@ -40,7 +38,7 @@ public enum MonitorLaunchFailure: Sendable, Equatable, LocalizedError {
     case nodeNotFound
     /// ポートは使われているが monitor の health に応答しない。
     case portInUse(port: Int)
-    /// `npm install` / `npm run build` が失敗した。
+    /// `npm install` が失敗した。
     case stepFailed(step: String, exitCode: Int32)
     /// 起動したが一定時間内に health が上がらなかった。
     case healthTimeout(seconds: Int)
@@ -178,12 +176,10 @@ public final class MonitorLauncher {
             .appendingPathComponent("Library/Logs/claude-deck/monitor.log")
     }
 
-    /// install / build の途中で止まったことを示す印（npm は node_modules 直下のドットファイルを消さない）。
+    /// install の途中で止まったことを示す印（npm は node_modules 直下のドットファイルを消さない）。
     public nonisolated static let installIncompleteMarker = "node_modules/.claude-deck-install-incomplete"
-    public nonisolated static let buildIncompleteMarker = "node_modules/.claude-deck-build-incomplete"
     /// npm が install の最後に書く。これが無ければ install は終わっていない。
     public nonisolated static let installCompleteFile = "node_modules/.package-lock.json"
-    public nonisolated static let buildOutputFile = "ui/dist/index.html"
 
     /// 自分が起動して今も動いている monitor の pid。
     public var ownedPid: Int32? {
@@ -206,10 +202,10 @@ public final class MonitorLauncher {
         return ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
     }
 
-    /// 子プロセスに渡す環境。API キーは課金経路になり、MONITOR_LAN は LAN 公開になるので渡さない。
+    /// 子プロセスに渡す環境。API キーは課金経路になるので渡さない。
     public nonisolated static func childEnvironment(from base: [String: String], port: Int) -> [String: String] {
         var env = base
-        for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "MONITOR_LAN", "MONITOR_TOKEN"] {
+        for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] {
             env.removeValue(forKey: key)
         }
         env["PORT"] = String(port)
@@ -218,7 +214,7 @@ public final class MonitorLauncher {
 
     /// ログインシェルで読んだ設定が戻さないよう、シェル側でも消してから exec する。
     public nonisolated static func shellScript(_ command: String, port: Int) -> String {
-        "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN MONITOR_LAN MONITOR_TOKEN; export PORT=\(port); exec \(command)"
+        "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; export PORT=\(port); exec \(command)"
     }
 
     public func start() {
@@ -340,13 +336,6 @@ public final class MonitorLauncher {
             guard let code = await runStep("npm install", in: dir, gen) else { return }
             if code != 0 { return fail(.stepFailed(step: "npm install", exitCode: code), gen) }
             environment.removeFile(path(Self.installIncompleteMarker))
-        }
-        if !environment.fileExists(path(Self.buildOutputFile)) || environment.fileExists(path(Self.buildIncompleteMarker)) {
-            phase = .building
-            environment.createFile(path(Self.buildIncompleteMarker))
-            guard let code = await runStep("npm run build", in: dir, gen) else { return }
-            if code != 0 { return fail(.stepFailed(step: "npm run build", exitCode: code), gen) }
-            environment.removeFile(path(Self.buildIncompleteMarker))
         }
 
         // 準備の間に他所で monitor が立ち上がっていればそれを使う。

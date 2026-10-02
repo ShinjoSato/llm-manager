@@ -36,7 +36,7 @@ mac/
       ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
     Stage/                      右側のステージパネル（画面案B の右 360px）
       StagePanel.swift            見出し（開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
-      StageWebView.swift          monitor の埋め込み表示を出す WKWebView（直近 3 枚を保持して切替）とウィンドウ幅の監視
+      StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
     ProjectStore.swift              プロジェクト一覧の永続化（Application Support の JSON）
     GitHubProjectPrompt.swift       プロジェクトに GitHub Project（owner/number）を紐づける入力ダイアログ
     SidebarViewController.swift     旧: プロジェクト一覧（メインウィンドウからは外した）
@@ -58,6 +58,9 @@ mac/
     MonitorLauncher.swift       monitor の自動起動・停止（@Observable の phase で状態を公開）
     MonitorStore.swift          @Observable ストア（接続状態・セッション・フィード・残量・権限確認・pid 対応付け）
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
+    Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
+                                SceneKit のノードへの起こし（StageSceneRig）
+    Pixel/PixelCharacter.swift  キャラ・持ち物・マークのドット絵と配色（ルーム一覧のアイコンとステージの 3D で共有）
     LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
     EditorActions.swift         見出しの「VS Code / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
@@ -103,10 +106,10 @@ mac/
 
 1. 接続先がループバック以外（`CLAUDE_DECK_MONITOR_URL` で別ホスト）なら起動しない（`.skippedRemote`）
 2. `GET /api/health` が応答すれば既存の monitor を使う（`.usingExisting`。アプリ終了時も止めない）
-3. 応答が無ければ `<ai-manager ルート>/monitor` で、install が済んでいなければ `npm install`（`.installing`）、
-   `ui/dist` が無ければ `npm run build`（`.building`）を済ませてから `npm start`（`.starting` → `.running`）。
-   済んだかは `node_modules/.package-lock.json` / `ui/dist/index.html` と、実行中だけ置く
-   `node_modules/.claude-deck-{install,build}-incomplete` で判定する（途中で止めた install / build は次回やり直す）
+3. 応答が無ければ `<ai-manager ルート>/monitor` で、install が済んでいなければ `npm install`（`.installing`）を
+   済ませてから `npm start`（`.starting` → `.running`）。monitor は画面を持たないのでビルドの手順は無い。
+   済んだかは `node_modules/.package-lock.json` と、実行中だけ置く `node_modules/.claude-deck-install-incomplete`
+   で判定する（途中で止めた install は次回やり直す）
 4. 自分が起動した monitor だけを、アプリ終了時に止める。`applicationShouldTerminate` で `.terminateLater` を返し、
    バックグラウンドで止め終えてから終了する（main を止めない）。SIGTERM / SIGINT も通常の終了経路に乗せる
 
@@ -117,13 +120,13 @@ mac/
   `SIG_IGN` は exec を越えて子に残り、端末ペインの claude（SwiftTerm の forkpty 経路）が SIGTERM を無視して
   上限到達時の `terminate()` が効かなくなるため。ハンドラは exec で既定に戻るので子に漏れない（`TerminationSignalsTests`）
 - 停止要求の後は何も起動しない（start / stop ごとの世代番号で、古い実行が新しい実行の状態を書き換えない）
-- 環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `MONITOR_LAN` / `MONITOR_TOKEN` を除去し、シェル側でも unset する。
-  `PORT` は接続先のポートに合わせる（LAN 公開モードでは起動しない）
+- 環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を除去し、シェル側でも unset する。
+  `PORT` は接続先のポートに合わせる（monitor は常にループバックだけで待ち受ける）
 - 標準出力 / 標準エラーは `~/Library/Logs/claude-deck/monitor.log`（追記・`O_CLOEXEC`）。launcher 自身の起動・失敗・停止の記録も同じファイルに残る。
   起動時に 5MB を超えていれば `monitor.log.1` に回す（1 世代）
 - ポート使用中の判定は 127.0.0.1 と ::1 の両方を見る。URL にポートが無ければ scheme の既定（http 80 / https 443）
 - 失敗理由は `MonitorLaunchFailure`（monitor ディレクトリが無い・node が無い・ポートが別プロセスに使用中・
-  install/build 失敗・45 秒で health が上がらない・起動後に終了）。`launcher.phase` が `.failed` になり、NSAlert でも知らせる
+  install 失敗・45 秒で health が上がらない・起動後に終了）。`launcher.phase` が `.failed` になり、NSAlert でも知らせる
 - 画面表示は `MonitorBridge.launcher.phase`（`@Observable`。`isBusy` で準備中か分かる）と `ownedPid` / `logURL` を使う
 - アプリが強制終了（クラッシュ・SIGKILL）した場合は monitor が残る。次回起動時は health が応答するのでそれを使う
 
@@ -149,7 +152,6 @@ MONITOR_TEST_URL=http://127.0.0.1:8799 swift test
 
 Claude Code のセッションを**チャットアプリの操作感**で扱う。セッション 1 つ = トークルーム 1 つ。
 右側はステージパネル（`MainViewController` で `ChatRootView(model:) { StagePanel(model:) }` として差し込む）。
-埋め込み表示の URL は monitor の接続先のホスト・ポートだけを使い、`CLAUDE_DECK_MONITOR_URL` に付けたパスやクエリ（LAN のトークン等）は引き継がない（ループバックの monitor を前提にしている）。
 
 ### ルーム一覧（左 312px）
 
@@ -158,7 +160,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   端末画面からのローカル判定（作業中 / 権限プロンプト / 待機）で代わりに出す。
 - 各行: ドット絵キャラのアイコン・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
   （開いていない間に届いた応答の数）。アプリの外で動いているセッションには「外部」タグ（伝言・引き継ぎは下記「外部セッション」）。
-  - キャラは monitor の 2D と同じ絵と配色（`monitor/ui/src/pixel/sprites.ts`・`look.ts` を `Sources/MonitorKit/Pixel/PixelCharacter.swift` に移植。変えるときは両方そろえる。ただしマークの大きさ・位置・跳ね幅は小さいアイコンで読めるよう monitor の 2D とは変えている）。稼働中=立ち・緑で跳ねる / 権限待ち=立ち・amber で「!」が点滅 / 入力待ち=立ち・青で「?」が点滅 / エラー=うずくまり・赤 / 待機=座り・灰で Zz が浮き沈み / 終了=座り・暗い灰 / 状態不明=座り・灰（マーク無し）
+  - キャラはステージの 3D と同じ絵と配色（`Sources/MonitorKit/Pixel/PixelCharacter.swift`。出典は削除済みの monitor UI の `pixel/sprites.ts`・`look.ts`。マークの大きさ・位置・跳ね幅だけは小さいアイコンで読めるよう変えている）。稼働中=立ち・緑で跳ねる / 権限待ち=立ち・amber で「!」が点滅 / 入力待ち=立ち・青で「?」が点滅 / エラー=うずくまり・赤 / 待機=座り・灰で Zz が浮き沈み / 終了=座り・暗い灰 / 状態不明=座り・灰（マーク無し）
   - SwiftUI の Canvas で整数ポイントのマスを補間なしに塗る。動く状態だけ、画面に出ている間だけ `TimelineView(.periodic)` で 4fps で描き直す（起点を固定時刻にして全行が同じ境目でコマを切り替える）。「動きを減らす」設定では止める。行と見出しでは状態名を隣の文字が読むので、アイコン自体は読み上げない
   - 会話の見出しのアイコンも同じキャラ。「+」のプロジェクト一覧はセッションを持たないので頭文字アイコンのまま
 - 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。
@@ -169,21 +171,30 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 
 ### ステージパネル（右 360px）
 
-選択中のルームのセッションを、monitor のステージ（アニメーション）と monitor クライアントのデータで見せる。
-文言・URL・判定は `Sources/MonitorKit/Stage/StageLogic.swift`（テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
+選択中のルームのセッションを、アプリが SceneKit で描くステージ（3D）と monitor クライアントのデータで見せる。
+文言・判定は `Sources/MonitorKit/Stage/StageLogic.swift`、ステージの組み立ては `StageBlueprint.swift`・`StageScene.swift`、
+SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
 
 - **見出し**: 「ステージ」・畳むボタン。ステージは 3D 表示だけ（以前の 2D / 3D の保存値 `stagePanel.mode` はパネル表示時に消す）。
-- **ステージ**: WKWebView で monitor の埋め込み表示 `/?embed=stage&session=<id>&mode=3d&bg=transparent` を読む（monitor 側の `mode=2d` は monitor の UI 用に残っているが、アプリからは使わない）。
-  接続先は `MonitorConfiguration`（`CLAUDE_DECK_MONITOR_URL` / `CLAUDE_DECK_MONITOR_PORT`）。ルームを切り替えると URL を差し替える。
-  埋め込み表示は URL を読み込み時にしか見ないので切替は読み直しになるが、直近 3 枚の WKWebView を生かしておき、行き来した時は読み直さない。
-  monitor に繋ぎ直した（`connectionEpoch` が増えた）時は保持分を捨てて読み直す。読み込みに失敗したら 2 秒後にやり直す。
-  - 背景は透過（`drawsBackground = false`）。monitor 側の `html { color-scheme: dark }` があっても地は塗られない（WKWebView のスナップショットで透過を確認）。
-    透けない環境が出たら `StageTheme.embedBackground` に `0x0b111d` を入れると monitor が同色で塗る。
-  - http のループバックは ATS で弾かれない（`swift run` と `.app` の両方で読み込みを確認。Info.plist の変更は不要）。
-  - 埋め込み表示の外へのナビゲーション（別オリジン）は止める。
-- **プレースホルダー**: monitor 未接続（自動起動の準備中は `launcher.phase` に応じて「npm install」「UI をビルド中」「起動しています」、失敗時はその旨）・
+- **ステージ**: セッション 1 つ分の段々のピラミッド（議事堂）を描く。出典は削除済みの monitor UI の `three/`（`blueprint.ts`・
+  `World.tsx`・`Ziggurat.tsx`）と `pixel/`（`sprites.ts`・`look.ts`・`kit.ts`・`voxelize.ts`）で、寸法・色・ボクセルの厚み・
+  カメラの画角（縦 34°・見下ろし 0.42rad）と収め方・跳ね・脈・光り方の数値はそのまま移植した。
+  - 親エージェントは最上段に立つ（状態で姿勢と色が変わる: 稼働中=立ち・緑 / 権限待ち=立ち・amber / 入力待ち=立ち・青 /
+    エラー=うずくまり・赤 / 待機=座り・灰 / 終了=座り・暗い灰）。稼働中は 2 コマで跳ね、使っているツールの持ち物
+    （端末・本・槌・巻物・望遠鏡・問いかけ・画布・紙）を右手に持って緑の光を添える。
+  - サブエージェントは 1 つ下の段に最大 4 体、職業の色（Explore=紫 など）で並び、1 体ずつずらして跳ねる。
+  - 要対応（権限待ち・入力待ち・エラー）は右肩に「!」/「?」のマークを立てて跳ねさせ、光を添え、足元の光の輪を強める。
+  - 段の縁取りは状態の色で光り、要対応ほど強く速く脈打つ。待機・終了は脈打たず暗く光るだけ。
+  - three.js（react-three-fiber）の見え方に合わせ、全材質に ACES のトーンマッピングを掛け、光の強さは物理単位（÷π）から直す。
+    半透明の光の輪と足し算の光は three.js が sRGB のまま重ねるので、その結果に合わせて塗る（`StageSceneRig` のシェーダー）。
+  - 中身（`StageSceneModel`）が変わった時だけノードを組み直す。描画は表示中・ウィンドウが見えている（隠れていない・
+    しまわれていない）・動くものがある時だけ 30fps で回し、それ以外は止める。「動きを減らす」設定では静止の姿勢で止める。
+  - 背景は透過（`SCNView.backgroundColor = .clear`）で、パネルの地色が地平線の上に見える。
+  - 見た目の確認: `STAGE_SNAPSHOT_DIR=<dir> swift test --filter StageSceneTests/testRigRendersOffscreen` で
+    状態ごとの画像をオフスクリーン（`SCNRenderer`）で書き出せる。
+- **プレースホルダー**: monitor 未接続（自動起動の準備中は `launcher.phase` に応じて「npm install」「起動しています」、失敗時はその旨）・
   ルーム未選択・ホスト中で sessionId 未解決（「セッションを確認しています…」）・monitor がまだそのセッションを見つけていない、の各状態で文言を出す。
-- **いまの動き**: monitor UI の `SessionCard` の `actionLine` と同じ順（スキル『…』> `currentAction` > ツールの動作「端末を叩いている」等）。
+- **いまの動き**: 削除済みの monitor UI の `SessionCard` の `actionLine` と同じ順（スキル『…』> `currentAction` > ツールの動作「端末を叩いている」等）。
   作業中でなければ `statusDetail` か状態名。下に「最終活動 N秒前 · 稼働 N分」（1 秒ごとに更新）と作業タイトル。
 - **随伴するサブエージェント**: `agents` を id 順で、職業名（`pixel/kit.ts` の JOBS と同じ。例: Explore → 斥候）・種別・状態
   （ログ更新が 15 秒以内なら「作業中」、それ以外は最終更新からの経過）。
@@ -455,4 +466,6 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
   （文言が変わって選択肢の数が読めなくなれば Enter を押さずにやめる）。
 - 送った伝言の吹き出しはアプリのメモリにだけ持つ（再起動で消える）。
 - 外部セッションの権限カード（Channels 経由の許可 / 拒否）は既存の monitor permissions の経路をそのまま使っており、外部ルームでの実機確認はしていない。
-- ステージの 3D（WebGL）表示とキャラの動きは、WKWebView 内での描画を目視では未確認（canvas と WebGL2 の生成までは確認）。
+- ステージの 3D は、オフスクリーン描画（`SCNRenderer`）の画像を monitor UI の 3D（ヘッドレスブラウザで撮影）と状態ごとに見比べて合わせた。
+  アプリの画面上での動き（跳ね・脈・表示中だけ回ること）は目視では未確認。足し算の光は明るい面の上では three.js より控えめに見える
+  （three.js は sRGB のまま足すが、SceneKit は線形で足すため。暗い地の上は合わせてある）。

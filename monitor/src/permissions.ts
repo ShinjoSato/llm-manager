@@ -30,8 +30,7 @@ export function isDecision(value: unknown): value is PermissionDecision {
 
 /**
  * 承認を受け付けてよい相手か。ループバック以外は常に false。
- * LAN は平文 HTTP なので、トークンを持つ端末にも任意コマンドの承認を許さない
- * （スマホからの承認は `claude --remote-control` が担う）。
+ * サーバーはループバックでしか待ち受けないが、任意コマンドの承認口なので接続元でも確かめる。
  */
 export function isLocalActor(remoteAddress: string | undefined): boolean {
   return isLoopbackAddress(remoteAddress);

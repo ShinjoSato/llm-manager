@@ -3,19 +3,15 @@ import MonitorKit
 
 /// 画面案B のステージパネルの配色（他は ChatTheme を使う）。
 enum StageTheme {
-    static let panelHex: UInt32 = 0x0b111d
-    static let panel = Color(hex: panelHex)
+    static let panel = Color(hex: 0x0b111d)
     static let label = Font.system(size: 11, weight: .bold)
     static let width: CGFloat = 360
-    /// monitor の埋め込み表示に塗ってもらう地色。nil は透過（drawsBackground=false なら html の color-scheme: dark でも地は付かない）。
-    static let embedBackground: UInt32? = nil
 }
 
-/// 右側のステージパネル: ステージ（monitor の埋め込み表示）・いまの動き・随伴するサブエージェント・ライブフィード。
+/// 右側のステージパネル: ステージ（3D）・いまの動き・随伴するサブエージェント・ライブフィード。
 struct StagePanel: View {
     let model: ChatModel
     var launcher: MonitorLauncher = MonitorBridge.launcher
-    var baseURL: URL = MonitorBridge.configuration.baseURL
 
     @AppStorage("stagePanel.open") private var preferOpen = true
     @State private var windowWidth: CGFloat?
@@ -94,7 +90,7 @@ struct StagePanel: View {
         let snapshot = sessionId.flatMap { store.session(id: $0) }
         return VStack(alignment: .leading, spacing: 0) {
             header
-            stage(room: room, sessionId: sessionId, known: snapshot != nil)
+            stage(room: room, sessionId: sessionId, snapshot: snapshot)
                 .frame(height: 230)
                 .frame(maxWidth: .infinity)
                 .background(StageTheme.panel)
@@ -134,18 +130,18 @@ struct StagePanel: View {
     }
 
     @ViewBuilder
-    private func stage(room: Room?, sessionId: String?, known: Bool) -> some View {
+    private func stage(room: Room?, sessionId: String?, snapshot: SessionSnapshot?) -> some View {
         let content = StageLogic.content(connected: store.connection.isConnected,
                                          launchPhase: launcher.phase,
                                          hasRoom: room != nil,
                                          sessionId: sessionId,
-                                         sessionKnown: known)
-        switch content {
-        case .stage(let id):
-            StageWebView(url: StageLogic.embedURL(base: baseURL, sessionId: id,
-                                                  background: StageTheme.embedBackground),
-                         epoch: store.connectionEpoch)
-        case .placeholder(let text):
+                                         sessionKnown: snapshot != nil)
+        switch (content, snapshot) {
+        case (.stage, let snapshot?):
+            StageSceneView(model: StageSceneModel(session: snapshot))
+        case (.stage, nil):
+            EmptyView()
+        case (.placeholder(let text), _):
             VStack(spacing: 8) {
                 if launcher.phase.isBusy && !store.connection.isConnected {
                     ProgressView().controlSize(.small)

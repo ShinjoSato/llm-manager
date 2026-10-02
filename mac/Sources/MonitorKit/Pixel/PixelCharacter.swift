@@ -1,6 +1,6 @@
 import Foundation
 
-// 絵と配色は monitor UI の `pixel/sprites.ts`・`look.ts`・`kit.ts`（SKIN）と同じものを持つ（変えるときは両方そろえる）。マークの大きさ・位置・跳ね幅は小さいアイコンで読めるよう monitor の 2D とは変えている。
+// 絵と配色の出典は monitor UI の `pixel/sprites.ts`・`look.ts`・`kit.ts`（SKIN）。一覧のアイコンはマークの大きさ・位置・跳ね幅だけ小さい表示で読めるよう変えている（ステージの 3D は出典どおり）。
 
 /// 文字列で持つドット絵。"." は透明で、他の 1 文字がパレットのキーになる。
 public struct PixelSprite: Sendable, Equatable {
@@ -91,6 +91,122 @@ public enum PixelSprites {
     public static let markBang = PixelSprite(["A", "A", "A", ".", "A"])
     public static let markQuestion = PixelSprite(["AAA", "..A", ".A.", "...", ".A."])
     public static let markSleep = PixelSprite(["AAA", "..A", ".A.", "A..", "AAA"])
+
+    // 以下はステージ（3D）で使う（出典 sprites.ts の KID_STAND・ITEM_*）。
+
+    /// サブエージェント。C=明色 E=濃色 S=肌 K=目 F=脚
+    public static let kidStand = PixelSprite([
+        "..CCCCCC..",
+        ".CCCCCCCC.",
+        ".CCSSSSCC.",
+        ".CSKSSKSC.",
+        ".CSSSSSSC.",
+        "..SSSSSS..",
+        "..EEEEEE..",
+        ".EEEEEEEE.",
+        ".EEEEEEEE.",
+        "..EEEEEE..",
+        "..FF..FF..",
+        ".FFF..FFF.",
+    ])
+
+    // 持ち物。K=枠 G=光る面 W=白 L=線 M=金属 T=柄 P=縁
+
+    /// 端末（Bash）。
+    public static let itemTerminal = PixelSprite([
+        "........",
+        ".KKKKKK.",
+        ".KGGGGK.",
+        ".KGKGGK.",
+        ".KGGKGK.",
+        ".KGGGGK.",
+        ".KKKKKK.",
+        "..K..K..",
+    ])
+
+    /// 本（Read / Grep / Glob）。
+    public static let itemBook = PixelSprite([
+        "........",
+        ".WWWWWW.",
+        ".WLLLLW.",
+        ".WLWWLW.",
+        ".WLLLLW.",
+        ".WLWWLW.",
+        ".WWWWWW.",
+        "..KKKK..",
+    ])
+
+    /// 巻物（Skill）。
+    public static let itemScroll = PixelSprite([
+        "..PPPP..",
+        ".PWWWWP.",
+        ".PWLLWP.",
+        ".PWWWWP.",
+        ".PWLLWP.",
+        ".PWWWWP.",
+        "..PPPP..",
+        "........",
+    ])
+
+    /// 槌（Edit / Write）。
+    public static let itemHammer = PixelSprite([
+        ".MMMMM..",
+        ".MMMMM..",
+        ".MMMMM..",
+        "...TT...",
+        "...TT...",
+        "...TT...",
+        "...TT...",
+        "........",
+    ])
+
+    /// 望遠鏡（WebFetch / WebSearch）。
+    public static let itemScope = PixelSprite([
+        "......MM",
+        ".....MM.",
+        "....MM..",
+        "...MM...",
+        "..MM....",
+        ".MM.....",
+        "MM......",
+        "........",
+    ])
+
+    /// 問いかけ（AskUserQuestion）。
+    public static let itemQuestion = PixelSprite([
+        "..GGGG..",
+        ".GG..GG.",
+        ".....GG.",
+        "....GG..",
+        "...GG...",
+        "...GG...",
+        "........",
+        "...GG...",
+    ])
+
+    /// 画布（Artifact）。
+    public static let itemCanvas = PixelSprite([
+        ".KKKKKK.",
+        ".KWWWWK.",
+        ".KWGGWK.",
+        ".KWGGWK.",
+        ".KWWWWK.",
+        ".KKKKKK.",
+        "...TT...",
+        "..TTTT..",
+    ])
+
+    /// 巻いた紙（TodoWrite / 汎用）。
+    public static let itemNote = PixelSprite([
+        "........",
+        ".WWWWWW.",
+        ".WLLLLW.",
+        ".WLLLLW.",
+        ".WLLLLW.",
+        ".WWWWWW.",
+        "........",
+        "........",
+    ])
 
     /// 透明でないマスを、パレットで色が引けるものだけ横に連結して返す。
     public static func runs(_ sprite: PixelSprite, palette: PixelPalette) -> [PixelRun] {
