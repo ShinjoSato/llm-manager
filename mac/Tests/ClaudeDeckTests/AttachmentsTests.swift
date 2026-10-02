@@ -38,6 +38,7 @@ final class AttachmentFormatTests: XCTestCase {
         ], pasteImages: true)
         XCTAssertEqual(m.imagePaste, "/c/a.png /c/d.jpg")
         XCTAssertEqual(m.imageCount, 2)
+        XCTAssertEqual(m.imagePaths, ["/c/a.png", "/c/d.jpg"])
         XCTAssertEqual(m.body, "見て\n\n添付:\n/docs/b.pdf")
         XCTAssertEqual(tuiImagePaths(m.imagePaste!), ["/c/a.png", "/c/d.jpg"])
     }
@@ -52,6 +53,7 @@ final class AttachmentFormatTests: XCTestCase {
     func testWithoutPasteEverythingIsListed() {
         let m = AttachmentFormat.outgoing(text: "伝言", attachments: [image("/c/a.png"), file("/My Docs/b.txt")], pasteImages: false)
         XCTAssertNil(m.imagePaste)
+        XCTAssertEqual(m.imagePaths, [])
         XCTAssertEqual(m.body, "伝言\n\n添付:\n/c/a.png\n\"/My Docs/b.txt\"")
     }
 

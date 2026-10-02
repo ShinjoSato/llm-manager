@@ -39,7 +39,7 @@ const assistant = (uuid: string, content: unknown[]) =>
   const ctx: ParseContext = { parentId: null };
   const p = itemsFromLine(JSON.parse(user("u1", "こんにちは")), "line1", ctx);
   t("プロンプトは user", p, [
-    { id: "u1:0", kind: "user", at: AT, text: "こんにちは", tool: null, parentId: null },
+    { id: "u1:0", kind: "user", at: AT, text: "こんにちは", tool: null, parentId: null, images: [] },
   ]);
   t("プロンプトが以降の親になる", ctx.parentId, "u1:0");
 
