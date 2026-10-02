@@ -2,26 +2,34 @@ import AppKit
 import SceneKit
 
 /// `StageSceneModel` を SceneKit のノードに起こして動かす。描画面（SCNView / SCNRenderer）はこれを読むだけ。
-/// ノードの組み替えは呼び出し側のスレッド、動きは描画スレッド（`renderer(_:updateAtTime:)`）から触るので鍵で守る。
+/// ノードの組み替えは呼び出し側のスレッド、動きは描画スレッド（`renderer(_:updateAtTime:)`）から触る。
 public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked Sendable {
     public let scene = SCNScene()
     public let cameraNode = SCNNode()
 
+    /// 描画スレッドと分け合う状態（動かすノードの参照）。
+    private struct Moving {
+        var model: StageSceneModel?
+        var still = false
+        var parent: SCNNode?
+        var mark: SCNNode?
+        var item: SCNNode?
+        var kids: [SCNNode] = []
+        var cap: SCNMaterial?
+        var halo: [SCNMaterial] = []
+        var markGlow: SCNMaterial?
+    }
+
+    // 描画スレッドはシーンの鍵を持って delegate を呼びうる。この鍵の中で SceneKit を触ると順序が逆転しうるので、
+    // 参照の読み書きだけに使い、シーングラフの付け外しは鍵の外で SCNTransaction.lock の中で行う。
     private let lock = NSLock()
-    private var model: StageSceneModel?
+    private var moving = Moving()
+    // 以下は呼び出し側のスレッドだけが触る。
     private var view: StageView
-    private var still = false
+    private var ziggurat: SCNNode?
     private let world = SCNNode()
     private let ground = SCNNode()
     private let grid = SCNNode()
-    private var ziggurat: SCNNode?
-    private var parentNode: SCNNode?
-    private var markNode: SCNNode?
-    private var itemNode: SCNNode?
-    private var kidNodes: [SCNNode] = []
-    private var capMaterial: SCNMaterial?
-    private var haloMaterial: SCNMaterial?
-    private var markGlowMaterial: SCNMaterial?
 
     // three.js の光は物理単位（拡散は 1/π 倍）なので、出典の強さ（0.85 / 1.7 / 0.5）を SceneKit の 1000 = 1 に直す。
     static let ambientIntensity = CGFloat(0.85 / Double.pi * 1000)
@@ -68,54 +76,48 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         view = StageView(aspect: aspect)
         super.init()
         buildWorld()
-        applyView()
+        applyView(lines: Self.gridNodes(size: view.groundWidth, divisions: view.gridDivisions))
     }
 
     // MARK: - 外から
 
     /// 動きを減らす設定。止めた時は静止の姿勢で描く。
     public func setStill(_ value: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        still = value
+        lock.withLock { moving.still = value }
     }
 
     public func setAspect(_ aspect: Double) {
         let next = StageView(aspect: aspect)
-        lock.lock(); defer { lock.unlock() }
         guard next != view else { return }
         view = next
-        applyView()
+        let lines = Self.gridNodes(size: next.groundWidth, divisions: next.gridDivisions)
+        Self.withSceneLock { applyView(lines: lines) }
     }
 
     /// 中身が変わった時だけ組み直す。nil なら何も立てない。
     public func show(_ next: StageSceneModel?) {
-        lock.lock(); defer { lock.unlock() }
-        guard next != model else { return }
-        model = next
-        ziggurat?.removeFromParentNode()
-        ziggurat = nil
-        parentNode = nil
-        markNode = nil
-        itemNode = nil
-        kidNodes = []
-        capMaterial = nil
-        haloMaterial = nil
-        markGlowMaterial = nil
-        guard let next else { return }
-        let node = buildZiggurat(next)
-        world.addChildNode(node)
+        guard next != lock.withLock({ moving.model }) else { return }
+        var built = Moving(model: next)
+        let node = next.map { buildZiggurat($0, into: &built) }
+        let old = ziggurat
         ziggurat = node
+        lock.withLock {
+            built.still = moving.still
+            moving = built
+        }
+        Self.withSceneLock {
+            old?.removeFromParentNode()
+            if let node { world.addChildNode(node) }
+        }
         applyFrame(at: 0)
     }
 
     public var isAnimated: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return (model?.isAnimated ?? false) && !still
+        lock.withLock { (moving.model?.isAnimated ?? false) && !moving.still }
     }
 
     /// 時刻 `time`（秒）の姿勢にする。
     public func apply(time: TimeInterval) {
-        lock.lock(); defer { lock.unlock() }
         applyFrame(at: time)
     }
 
@@ -128,17 +130,20 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         guard let device = MTLCreateSystemDefaultDevice() else { return nil }
         apply(time: time)
         let renderer = SCNRenderer(device: device, options: nil)
-        lock.lock()
         let previous = scene.background.contents
-        scene.background.contents = background
-        lock.unlock()
+        Self.withSceneLock { scene.background.contents = background }
         renderer.scene = scene
         renderer.pointOfView = cameraNode
         let image = renderer.snapshot(atTime: time, with: size, antialiasingMode: .multisampling4X)
-        lock.lock()
-        scene.background.contents = previous
-        lock.unlock()
+        Self.withSceneLock { scene.background.contents = previous }
         return image
+    }
+
+    /// シーングラフの変更を描画と同じ鍵（SceneKit の transaction lock）の中で行う。
+    static func withSceneLock<T>(_ body: () throws -> T) rethrows -> T {
+        SCNTransaction.lock()
+        defer { SCNTransaction.unlock() }
+        return try body()
     }
 
     // MARK: - 組み立て
@@ -187,7 +192,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         return node
     }
 
-    private func applyView() {
+    private func applyView(lines: [SCNNode]) {
         let fit = view.camera
         cameraNode.position = SCNVector3(fit.position.x, fit.position.y, fit.position.z)
         cameraNode.look(at: SCNVector3(fit.target.x, fit.target.y, fit.target.z))
@@ -195,23 +200,23 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         (ground.geometry as? SCNPlane)?.width = width
         (ground.geometry as? SCNPlane)?.height = width
         grid.childNodes.forEach { $0.removeFromParentNode() }
-        Self.gridNodes(size: view.groundWidth, divisions: view.gridDivisions).forEach(grid.addChildNode)
+        lines.forEach(grid.addChildNode)
         scene.fogStartDistance = CGFloat(view.fogStart)
         scene.fogEndDistance = CGFloat(view.fogEnd)
     }
 
-    private func buildZiggurat(_ model: StageSceneModel) -> SCNNode {
+    private func buildZiggurat(_ model: StageSceneModel, into parts: inout Moving) -> SCNNode {
         typealias B = StageBlueprint
         let root = SCNNode()
 
         let halo = Self.halo(color: model.glow)
         halo.position.y = 0.02
         root.addChildNode(halo)
-        haloMaterial = halo.geometry?.firstMaterial
+        parts.halo = Self.haloMaterials(halo)
 
         let cap = Self.lambert(B.capColor)
         cap.emission.contents = Self.color(model.glow)
-        capMaterial = cap
+        parts.cap = cap
         let stone = Self.lambert(B.stoneColor)
         let shade = Self.lambert(B.shadeColor)
         for step in B.stepList {
@@ -230,21 +235,21 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
 
         let parent = Self.figureNode(model.parent)
         root.addChildNode(parent)
-        parentNode = parent
+        parts.parent = parent
 
         if let mark = model.mark {
             let node = Self.figureNode(mark)
-            markGlowMaterial = node.childNode(withName: "glow", recursively: false)?.geometry?.firstMaterial
+            parts.markGlow = node.childNode(withName: "glow", recursively: false)?.geometry?.firstMaterial
             root.addChildNode(node)
-            markNode = node
+            parts.mark = node
         }
         if let item = model.item {
             let node = Self.figureNode(item)
             Self.setGlowOpacity(node.childNode(withName: "glow", recursively: false)?.geometry?.firstMaterial, 0.9)
             root.addChildNode(node)
-            itemNode = node
+            parts.item = node
         }
-        kidNodes = model.kids.map { kid in
+        parts.kids = model.kids.map { kid in
             let node = Self.figureNode(kid)
             root.addChildNode(node)
             return node
@@ -253,15 +258,16 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
     }
 
     private func applyFrame(at time: TimeInterval) {
-        guard let model else { return }
-        let frame = model.frame(at: time, still: still)
-        parentNode?.position.y = CGFloat(frame.parentY)
-        if let y = frame.itemY { itemNode?.position.y = CGFloat(y) }
-        if let y = frame.markY { markNode?.position.y = CGFloat(y) }
-        for (node, y) in zip(kidNodes, frame.kidYs) { node.position.y = CGFloat(y) }
-        capMaterial?.emission.intensity = CGFloat(frame.capGlow)
-        haloMaterial?.setValue(NSNumber(value: Float(frame.haloOpacity)), forKey: "haloOpacity")
-        Self.setGlowOpacity(markGlowMaterial, frame.markGlowOpacity)
+        let m = lock.withLock { moving }
+        guard let model = m.model else { return }
+        let frame = model.frame(at: time, still: m.still)
+        m.parent?.position.y = CGFloat(frame.parentY)
+        if let y = frame.itemY { m.item?.position.y = CGFloat(y) }
+        if let y = frame.markY { m.mark?.position.y = CGFloat(y) }
+        for (node, y) in zip(m.kids, frame.kidYs) { node.position.y = CGFloat(y) }
+        m.cap?.emission.intensity = CGFloat(frame.capGlow)
+        for material in m.halo { material.setValue(NSNumber(value: Float(frame.haloOpacity)), forKey: "haloOpacity") }
+        Self.setGlowOpacity(m.markGlow, frame.markGlowOpacity)
     }
 
     // MARK: - 部品
@@ -327,42 +333,59 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
     }
 
     /// 足元の影と光の輪（出典 Ziggurat.tsx の shadow / halo）。three.js は半透明を sRGB のまま重ねるので、
-    /// 線形で重ねる SceneKit で同じ板を使うと明るく出る。地面は一様なので、重ねた結果の色を不透明に塗る。
-    static let haloShading = """
-    #pragma arguments
-    float3 haloColor;
-    float haloOpacity;
-    #pragma body
-    float r = length(_surface.diffuseTexcoord - float2(0.5)) * 2.0;
-    float3 c = haloColor;
-    \(aces)
-    c = saturate(c);
-    float3 halo = select(1.055 * pow(c, float3(1.0 / 2.4)) - 0.055, 12.92 * c, c <= float3(0.0031308));
-    float3 ground = float3(\(groundUnderHalo.r), \(groundUnderHalo.g), \(groundUnderHalo.b));
-    float3 under = r < \(StageBlueprint.shadowRadius / StageBlueprint.groundRadius) ? ground * 0.65 : ground;
-    float3 mixed = mix(under, halo, haloOpacity);
-    _output.color = float4(select(pow((mixed + 0.055) / 1.055, float3(2.4)), mixed / 12.92, mixed <= float3(0.04045)), 1.0);
-    """
+    /// 線形で重ねる SceneKit で同じ板を使うと明るく出る。地面の上で sRGB の重ね結果になるよう、
+    /// 下を残す割合を掛ける板と足りない分を足す板の 2 枚に分ける（下のグリッドの線も同じ割合で透ける）。
+    static func haloShading(adding: Bool) -> String {
+        """
+        #pragma arguments
+        float3 haloColor;
+        float haloOpacity;
+        #pragma body
+        float r = length(_surface.diffuseTexcoord - float2(0.5)) * 2.0;
+        float3 c = haloColor;
+        \(aces)
+        c = saturate(c);
+        float3 halo = select(1.055 * pow(c, float3(1.0 / 2.4)) - 0.055, 12.92 * c, c <= float3(0.0031308));
+        float3 ground = float3(\(groundUnderHalo.r), \(groundUnderHalo.g), \(groundUnderHalo.b));
+        float remain = (r < \(StageBlueprint.shadowRadius / StageBlueprint.groundRadius) ? 0.65 : 1.0) * (1.0 - haloOpacity);
+        float3 mixed = ground * remain + halo * haloOpacity;
+        float3 wanted = select(pow((mixed + 0.055) / 1.055, float3(2.4)), mixed / 12.92, mixed <= float3(0.04045));
+        float3 groundLinear = select(pow((ground + 0.055) / 1.055, float3(2.4)), ground / 12.92, ground <= float3(0.04045));
+        _output.color = float4(\(adding ? "max(wanted - groundLinear * remain, float3(0.0))" : "float3(remain)"), 1.0);
+        """
+    }
 
     /// 光の輪の下に見える地面の色（sRGB）。比べ撮りで測った地面の色に合わせる。
     static let groundUnderHalo = (r: 0x0a / 255.0, g: 0x14 / 255.0, b: 0x26 / 255.0)
 
+    /// 掛ける板と足す板を持つノード。どちらも深度を書かず、地面とグリッドの後にこの順で描く。
     static func halo(color hex: UInt32) -> SCNNode {
-        let radius = StageBlueprint.groundRadius
-        let plane = SCNPlane(width: radius * 2, height: radius * 2)
-        plane.cornerRadius = radius
-        plane.cornerSegmentCount = 7
-        let material = SCNMaterial()
-        material.lightingModel = .constant
-        material.diffuse.contents = NSColor.white
-        material.shaderModifiers = [.fragment: haloShading]
-        let c = rgb(hex).map(decodeSRGB)
-        material.setValue(NSValue(scnVector3: SCNVector3(c[0], c[1], c[2])), forKey: "haloColor")
-        material.setValue(NSNumber(value: Float(0.1)), forKey: "haloOpacity")
-        plane.firstMaterial = material
-        let node = SCNNode(geometry: plane)
+        let node = SCNNode()
         node.eulerAngles.x = -.pi / 2
+        let c = rgb(hex).map(decodeSRGB)
+        for (order, adding) in [(1, false), (2, true)] {
+            let radius = StageBlueprint.groundRadius
+            let plane = SCNPlane(width: radius * 2, height: radius * 2)
+            plane.cornerRadius = radius
+            plane.cornerSegmentCount = 7
+            let material = SCNMaterial()
+            material.lightingModel = .constant
+            material.diffuse.contents = NSColor.white
+            material.blendMode = adding ? .add : .multiply
+            material.writesToDepthBuffer = false
+            material.shaderModifiers = [.fragment: haloShading(adding: adding)]
+            material.setValue(NSValue(scnVector3: SCNVector3(c[0], c[1], c[2])), forKey: "haloColor")
+            material.setValue(NSNumber(value: Float(0.1)), forKey: "haloOpacity")
+            plane.firstMaterial = material
+            let pass = SCNNode(geometry: plane)
+            pass.renderingOrder = order
+            node.addChildNode(pass)
+        }
         return node
+    }
+
+    static func haloMaterials(_ node: SCNNode) -> [SCNMaterial] {
+        node.childNodes.compactMap { $0.geometry?.firstMaterial }
     }
 
     static func decodeSRGB(_ x: Float) -> Float {

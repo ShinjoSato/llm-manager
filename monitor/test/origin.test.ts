@@ -48,21 +48,24 @@ t("80 番でも外部ドメインは弾く", isAllowedHost("evil.com", 80), fals
 t("実ポートで判定できる", isAllowedHost("localhost:49152", 49152), true);
 
 // ── Origin ──
-t("同一オリジン", isAllowedOrigin("http://localhost:8766"), true);
-t("手元の別ポート", isAllowedOrigin("http://localhost:5174"), true);
-t("127.0.0.1", isAllowedOrigin("http://127.0.0.1:8766"), true);
-t("IPv6", isAllowedOrigin("http://[::1]:8766"), true);
-t("外部ドメイン", isAllowedOrigin("https://evil.example.com"), false);
+t("同一オリジン", isAllowedOrigin("http://localhost:8766", PORT), true);
+t("手元の別ポートは弾く", isAllowedOrigin("http://localhost:5174", PORT), false);
+t("ポート無しは弾く", isAllowedOrigin("http://localhost", PORT), false);
+t("80 番で待つ時はポート無しを通す", isAllowedOrigin("http://localhost", 80), true);
+t("https は弾く", isAllowedOrigin("https://localhost:8766", PORT), false);
+t("127.0.0.1", isAllowedOrigin("http://127.0.0.1:8766", PORT), true);
+t("IPv6", isAllowedOrigin("http://[::1]:8766", PORT), true);
+t("外部ドメイン", isAllowedOrigin("https://evil.example.com", PORT), false);
 // ユーザー情報部はホスト名ではない
-t("localhost@evil.com は弾く", isAllowedOrigin("http://localhost@evil.com"), false);
-t("localhost.evil.com は弾く", isAllowedOrigin("http://localhost.evil.com"), false);
-t("Origin: null は弾く", isAllowedOrigin("null"), false);
-t("空文字は弾く", isAllowedOrigin(""), false);
-t("http/https 以外は弾く", isAllowedOrigin("chrome-extension://abcdef"), false);
-t("file: は弾く", isAllowedOrigin("file:///etc/passwd"), false);
+t("localhost@evil.com は弾く", isAllowedOrigin("http://localhost@evil.com", PORT), false);
+t("localhost.evil.com は弾く", isAllowedOrigin("http://localhost.evil.com", PORT), false);
+t("Origin: null は弾く", isAllowedOrigin("null", PORT), false);
+t("空文字は弾く", isAllowedOrigin("", PORT), false);
+t("http 以外は弾く", isAllowedOrigin("chrome-extension://abcdef", PORT), false);
+t("file: は弾く", isAllowedOrigin("file:///etc/passwd", PORT), false);
 // 待ち受けはループバックだけなので、同じ機械の LAN 側アドレスも外部として扱う
 t("LAN IP の Host は弾く", isAllowedHost("192.168.0.11:8766", PORT), false);
-t("LAN IP の Origin は弾く", isAllowedOrigin("http://192.168.0.11:8766"), false);
+t("LAN IP の Origin は弾く", isAllowedOrigin("http://192.168.0.11:8766", PORT), false);
 
 // ── 接続元アドレスの判定（Host は詐称できるのでこちらで手元かを見る） ──
 t("127.0.0.1 は手元", isLoopbackAddress("127.0.0.1"), true);

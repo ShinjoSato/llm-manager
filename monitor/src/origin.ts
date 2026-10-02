@@ -27,16 +27,16 @@ export function isAllowedHost(value: string | undefined, port: number): boolean 
   return hostPort === String(port) || (hostPort === "" && port === 80);
 }
 
-export function isAllowedOrigin(value: string): boolean {
+export function isAllowedOrigin(value: string, port: number): boolean {
   let url: URL;
   try {
     url = new URL(value); // Origin: null（sandbox iframe 等）はここで弾かれる。
   } catch {
     return false;
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-  // 手元のページだけ通す。書き込み口は content-type: application/json 必須なので、別ポートのページからもプリフライトで止まる。
-  return LOOPBACK_HOSTS.has(url.hostname);
+  // 画面を持たないので、自分自身（手元の同じポート）のページ以外から来る理由が無い。
+  if (url.protocol !== "http:" || !LOOPBACK_HOSTS.has(url.hostname)) return false;
+  return url.port === String(port) || (url.port === "" && port === 80);
 }
 
 /** 接続元が手元かどうか。Host は詐称できるのでソケットのアドレスで判定する。 */

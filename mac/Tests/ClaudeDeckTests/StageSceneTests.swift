@@ -1,4 +1,5 @@
 import AppKit
+import SceneKit
 import XCTest
 @testable import MonitorKit
 
@@ -198,5 +199,70 @@ final class StageSceneTests: XCTestCase {
         }
         rig.show(nil)
         XCTAssertFalse(rig.isAnimated)
+    }
+    /// 描画スレッドの更新と組み替えを並べて走らせても固まらない（描画はシーンの鍵を持って delegate を呼ぶ）。
+    func testRigSurvivesConcurrentRenderAndRebuild() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal が使えない環境") }
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let rig = StageSceneRig(aspect: 1.4)
+        let counter = FrameCounter(rig)
+        let renderer = SCNRenderer(device: device, options: nil)
+        renderer.scene = rig.scene
+        renderer.pointOfView = rig.cameraNode
+        renderer.delegate = counter
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 128, height: 96,
+                                                                  mipmapped: false)
+        descriptor.usage = [.renderTarget]
+        descriptor.storageMode = .private
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = device.makeTexture(descriptor: descriptor)
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        let models: [StageSceneModel?] = [
+            StageSceneModel(session: session(.working, tool: "Bash")),
+            StageSceneModel(session: session(.permission)),
+            nil,
+            StageSceneModel(session: session(.working, tool: "Agent", agents: [AgentInfo(id: "a1", type: "Explore", lastActivityAt: 0)])),
+        ]
+        let deadline = Date().addingTimeInterval(1.5)
+        let rendered = expectation(description: "描画")
+        let rebuilt = expectation(description: "組み替え")
+        Thread {
+            while Date() < deadline {
+                autoreleasepool {
+                    guard let buffer = queue.makeCommandBuffer() else { return }
+                    renderer.render(atTime: CACurrentMediaTime(), viewport: CGRect(x: 0, y: 0, width: 128, height: 96),
+                                    commandBuffer: buffer, passDescriptor: pass)
+                    buffer.commit()
+                    buffer.waitUntilCompleted()
+                }
+            }
+            rendered.fulfill()
+        }.start()
+        Thread {
+            var i = 0
+            while Date() < deadline {
+                rig.show(models[i % models.count])
+                rig.setAspect(i % 2 == 0 ? 1.4 : 0.8)
+                rig.setStill(i % 3 == 0)
+                i += 1
+            }
+            rebuilt.fulfill()
+        }.start()
+        wait(for: [rendered, rebuilt], timeout: 20)
+        XCTAssertGreaterThan(counter.frames, 0)
+    }
+}
+
+/// 描画スレッドから呼ばれた回数を数えて rig に渡す。
+private final class FrameCounter: NSObject, SCNSceneRendererDelegate, @unchecked Sendable {
+    private let rig: StageSceneRig
+    private let lock = NSLock()
+    private var count = 0
+    init(_ rig: StageSceneRig) { self.rig = rig }
+    var frames: Int { lock.withLock { count } }
+    func renderer(_ renderer: any SCNSceneRenderer, updateAtTime time: TimeInterval) {
+        lock.withLock { count += 1 }
+        rig.renderer(renderer, updateAtTime: time)
     }
 }

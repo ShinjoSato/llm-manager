@@ -41,7 +41,7 @@ app.use("*", async (c, next) => {
     return c.json({ ok: false, error: "invalid host header" }, 403);
   }
   const origin = c.req.header("origin");
-  if (origin !== undefined && !isAllowedOrigin(origin)) {
+  if (origin !== undefined && !isAllowedOrigin(origin, boundPort)) {
     return c.json({ ok: false, error: "invalid origin header" }, 403);
   }
   await next();
