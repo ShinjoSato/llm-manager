@@ -166,6 +166,47 @@ final class ChatImageTimelineTests: XCTestCase {
         XCTAssertEqual(PendingImageMessages.unrecorded([second, first], in: items).map(\.id), ["2"])
     }
 
+    func testImagesSentAsPathsShowNoOutgoingBubble() {
+        // パスとして本文に回った画像は記録に画像が付かないので、仮の吹き出しを出さない。
+        let m = AttachmentFormat.outgoing(text: "見て", attachments: [
+            Attachment(kind: .image, path: "/a /b.png", name: "b.png", sourcePath: nil),
+        ], pasteImages: true)
+        XCTAssertNil(PendingImageMessages.outgoing(text: "見て", sentBody: m.body, pastedImagePaths: m.imagePaths, sentAt: 1))
+        let pasted = PendingImageMessages.outgoing(id: "m", text: " 見て ", sentBody: "見て",
+                                                   pastedImagePaths: ["/c/a.png"], sentAt: 1)
+        XCTAssertEqual(pasted?.text, "見て")
+        XCTAssertEqual(pasted?.imagePaths, ["/c/a.png"])
+    }
+
+    func testRecordedOnlyWhenTextAndImageCountMatch() {
+        let message = PendingImageMessage(id: "m", text: "見て", sentBody: "見て\n\n添付:\n/docs/b.pdf",
+                                          imagePaths: ["/c/a.png", "/c/b.png"], sentAt: 100_000)
+        // ターミナルから直接送った別の画像付きの発話では消し込まない。
+        let other = user("u:0", "[Image #1] 別の話\n[画像]", at: 101_000, images: 1)
+        let otherSameCount = user("u:1", "[Image #1] [Image #2] 別の話\n[画像]\n[画像]", at: 101_500, images: 2)
+        let fewer = user("u:2", "[Image #1] 見て\n\n添付:\n/docs/b.pdf\n[画像]", at: 102_000, images: 1)
+        XCTAssertEqual(PendingImageMessages.unrecorded([message], in: [other, otherSameCount, fewer]), [message])
+        // 印・空白の違いは無視して本文と枚数で合わせる。
+        let record = user("u:3", "[Image #1] [Image #2] 見て\n\n添付:\n/docs/b.pdf\n[画像]\n[画像]", at: 103_000, images: 2)
+        XCTAssertTrue(PendingImageMessages.isRecorded(record, of: message))
+        XCTAssertEqual(PendingImageMessages.unrecorded([message], in: [other, record]), [])
+        // 少し前（時計のずれ）は許し、それより前の発話は記録とみなさない。
+        var early = record
+        early.at = 96_000
+        XCTAssertTrue(PendingImageMessages.isRecorded(early, of: message))
+        early.at = 90_000
+        XCTAssertFalse(PendingImageMessages.isRecorded(early, of: message))
+    }
+
+    func testOutgoingExpiresWhenNeverRecorded() {
+        let message = PendingImageMessage(id: "m", text: "見て", imagePaths: ["/c/a.png"], sentAt: 100_000)
+        let justBefore = 100_000 + PendingImageMessages.lifetime - 1
+        XCTAssertEqual(PendingImageMessages.unrecorded([message], in: [], now: justBefore), [message])
+        XCTAssertFalse(PendingImageMessages.isExpired(message, now: justBefore))
+        XCTAssertEqual(PendingImageMessages.unrecorded([message], in: [], now: 100_000 + PendingImageMessages.lifetime), [])
+        XCTAssertTrue(PendingImageMessages.isExpired(message, now: 100_000 + PendingImageMessages.lifetime))
+    }
+
     func testRelayNoteCarriesImages() {
         let note = RelayNote(id: "n", text: "添付:\n/c/a.png", sentAt: 5, state: .sent, imagePaths: ["/c/a.png"])
         let entries = ChatTimeline.entries(from: [], notes: [note])

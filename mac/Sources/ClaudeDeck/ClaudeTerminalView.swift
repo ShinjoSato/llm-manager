@@ -246,8 +246,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     // MARK: - 入力（本人のキー入力として PTY に書く）
 
     enum SendResult: Equatable {
-        /// 送り始めた。結末は `completion` で返る。
-        case started
+        /// 送り始めた。結末は `completion` で返る。`pastedImages` は画像として貼った添付のパス、`body` は貼る本文。
+        case started(pastedImages: [String], body: String)
         case empty
         /// 前の送信がまだ終わっていない。
         case busy
@@ -284,7 +284,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         }
         guard let imagePaste else {
             if let body { pasteAndSubmit(body, finish: finish) }
-            return .started
+            return .started(pastedImages: [], body: message.body)
         }
         // 画像のパスだけを先に 1 回で貼る（本文と同じ貼り付けだと TUI が本文を空白 + / や改行で割って繋ぎ直すため）。
         let before = InputBox.text(screen: screen).map(AttachmentFormat.imageTokenCount)
@@ -306,7 +306,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
                 finish(.submitted)
             }
         }
-        return .started
+        return .started(pastedImages: message.imagePaths, body: message.body)
     }
 
     private func pasteAndSubmit(_ body: String, finish: @escaping (SendCompletion) -> Void) {

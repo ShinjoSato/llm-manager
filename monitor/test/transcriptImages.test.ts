@@ -93,44 +93,131 @@ try {
   t("追記分の目録", log.read().map((i) => [i.id, i.images.length]), [["u1:0", 2]]);
   appendFileSync(path, `${half.slice(40)}\n${assistant("a1", "了解 ✅")}\n`);
   log.read();
-  t("1 枚目", log.image("u1:0", 0)?.data.equals(PNG), true);
-  t("2 枚目は形式も返す", [log.image("u1:0", 1)?.mediaType, log.image("u1:0", 1)?.data.equals(JPEG)], ["image/jpeg", true]);
-  t("書きかけを跨いだ行も取り出せる", log.image("u2:0", 0)?.data.equals(PNG), true);
-  t("画像の無い発話は null", log.image("u0:0", 0), null);
-  t("知らない id は null", log.image("zz:0", 0), null);
+  t("1 枚目", (await log.image("u1:0", 0))?.data.equals(PNG), true);
+  t("2 枚目は形式も返す", [(await log.image("u1:0", 1))?.mediaType, (await log.image("u1:0", 1))?.data.equals(JPEG)], ["image/jpeg", true]);
+  t("書きかけを跨いだ行も取り出せる", (await log.image("u2:0", 0))?.data.equals(PNG), true);
+  t("画像の無い発話は null", (await log.image("u0:0", 0)), null);
+  t("知らない id は null", (await log.image("zz:0", 0)), null);
 
   // 位置がずれていたら（不正な UTF-8 等）uuid で探し直す。
   const broken = new TranscriptLog(path);
   broken.read();
   (broken as any).imageLines.set("u2:0", { offset: 0, length: 10, uuid: "u2" });
-  t("位置がずれても uuid で探し直す", broken.image("u2:0", 0)?.data.equals(PNG), true);
+  t("位置がずれても uuid で探し直す", (await broken.image("u2:0", 0))?.data.equals(PNG), true);
+  t("探し直した位置を覚え直す", (broken as any).imageLines.get("u2:0").offset > 0, true);
+  (broken as any).decoded.clear();
+  const before = broken.lineReads;
+  await broken.image("u2:0", 0);
+  t("覚え直した位置なら走査しない", [broken.lineReads - before, (broken as any).imageLines.get("u2:0").length > 10], [1, true]);
 
-  // ルート
-  const store = new TranscriptStore(
-    () => [{ sessionId: "s1", cwd: dir }],
-    (id) => (id === "s1" ? path : null),
-  );
-  const app = new Hono();
-  registerTranscriptRoutes(app, store);
-  const list = (await (await app.request("/api/sessions/s1/transcript")).json()) as TranscriptResponse;
-  t("GET の目録", list.items.filter((i) => i.images.length).map((i) => i.id), ["u1:0", "u2:0"]);
-
-  const res = await app.request("/api/sessions/s1/transcript/u1:0/images/0");
-  t("画像は 200 と content-type", [res.status, res.headers.get("content-type")], [200, "image/png"]);
-  t("中身はバイナリのまま", Buffer.from(await res.arrayBuffer()).equals(PNG), true);
-  t("型を推測させない", res.headers.get("x-content-type-options"), "nosniff");
-  t("共有キャッシュに置かせない", res.headers.get("cache-control"), "private, max-age=86400");
-  const encoded = await app.request("/api/sessions/s1/transcript/u1%3A0/images/1");
-  t("区切りを符号化した id も通る", [encoded.status, encoded.headers.get("content-type")], [200, "image/jpeg"]);
-  t("範囲外は 404", (await app.request("/api/sessions/s1/transcript/u1:0/images/5")).status, 404);
-  t("画像の無い発話は 404", (await app.request("/api/sessions/s1/transcript/a1:0/images/0")).status, 404);
-  t("知らないセッションは 404", (await app.request("/api/sessions/s9/transcript/u1:0/images/0")).status, 404);
-  t("不正な要素 id は 400", (await app.request("/api/sessions/s1/transcript/u1/images/0")).status, 400);
-  t("不正な番号は 400", (await app.request("/api/sessions/s1/transcript/u1:0/images/-1")).status, 400);
-  t("不正なセッション id は 400", (await app.request("/api/sessions/a..b/transcript/u1:0/images/0")).status, 400);
-  store.stop();
+  // 同じ発話の複数枚は 1 回の読み込みで返す（並んで求められても同じ）。
+  const multi = new TranscriptLog(path);
+  multi.read();
+  const both = await Promise.all([multi.image("u1:0", 0), multi.image("u1:0", 1), multi.image("u1:0", 0)]);
+  t("並んだ取り出しは 1 回の読み込み", [multi.lineReads, both.map((b) => b?.mediaType)], [1, ["image/png", "image/jpeg", "image/png"]]);
+  await multi.image("u1:0", 1);
+  t("2 回目以降は読み直さない", multi.lineReads, 1);
 } finally {
   rmSync(dir, { recursive: true, force: true });
+}
+
+// ── 解析済みの行の上限（LRU） ──
+{
+  const dir2 = mkdtempSync(join(tmpdir(), "monitor-transcript-lru-"));
+  try {
+    const path = join(dir2, "s.jsonl");
+    const rows = Array.from({ length: 6 }, (_, i) => user(`r${i}`, [image("image/png", PNG)]));
+    writeFileSync(path, `${rows.join("\n")}\n`);
+    const log = new TranscriptLog(path);
+    log.read();
+    for (let i = 0; i < 6; i++) await log.image(`r${i}:0`, 0);
+    t("持つのは 4 行まで", [...(log as any).decoded.keys()], ["r2:0", "r3:0", "r4:0", "r5:0"]);
+    await log.image("r3:0", 0);
+    await log.image("r0:0", 0);
+    t("最近使ったものを残し古いものから捨てる", [...(log as any).decoded.keys()], ["r4:0", "r5:0", "r3:0", "r0:0"]);
+    t("読み直したのは追い出した行だけ", log.lineReads, 7);
+    t("合計バイト数を数える", (log as any).decodedBytes, PNG.length * 4);
+  } finally {
+    rmSync(dir2, { recursive: true, force: true });
+  }
+}
+
+// ── 不正な UTF-8 が前にあっても位置がずれない ──
+{
+  const dir3 = mkdtempSync(join(tmpdir(), "monitor-transcript-utf8-"));
+  try {
+    const path = join(dir3, "s.jsonl");
+    // 0xff は UTF-8 として不正（文字列に戻すと U+FFFD の 3 バイトに化ける）。
+    const bad = Buffer.concat([Buffer.from('{"type":"attachment","x":"'), Buffer.from([0xff, 0xfe, 0xc3]), Buffer.from('"}\n')]);
+    writeFileSync(path, Buffer.concat([bad, Buffer.from(`${user("v1", [image("image/png", PNG)])}\n`)]));
+    const log = new TranscriptLog(path);
+    log.read();
+    t("行の位置はバイトで数える", (log as any).imageLines.get("v1:0").offset, bad.length);
+    t("走査せずに取り出せる", [(await log.image("v1:0", 0))?.data.equals(PNG), log.lineReads], [true, 1]);
+    // uuid の無い行は位置がずれたら取り違えを避けて返さない。
+    writeFileSync(path, Buffer.concat([bad, Buffer.from(`${JSON.stringify({ type: "user", message: { role: "user", content: [image("image/png", PNG)] } })}\n`)]));
+    const noUuid = new TranscriptLog(path);
+    noUuid.read();
+    t("uuid の無い行も取り出せる", (await noUuid.image("line2:0", 0))?.data.equals(PNG), true);
+    (noUuid as any).decoded.clear();
+    (noUuid as any).imageLines.set("line2:0", { offset: 0, length: bad.length - 1, uuid: null });
+    t("uuid の無い行は位置がずれたら null", await noUuid.image("line2:0", 0), null);
+  } finally {
+    rmSync(dir3, { recursive: true, force: true });
+  }
+}
+
+{
+  const dir4 = mkdtempSync(join(tmpdir(), "monitor-transcript-nostore-"));
+  try {
+    const path = join(dir4, "s.jsonl");
+    writeFileSync(path, `${JSON.stringify({ type: "user", message: { role: "user", content: [image("image/png", PNG)] } })}\n`);
+    const store = new TranscriptStore(() => [{ sessionId: "s1", cwd: dir4 }], () => path);
+    const app = new Hono();
+    registerTranscriptRoutes(app, store);
+    const res = await app.request("/api/sessions/s1/transcript/line1:0/images/0");
+    t("uuid の無い行の画像は持たせない", [res.status, res.headers.get("cache-control")], [200, "no-store"]);
+    store.stop();
+  } finally {
+    rmSync(dir4, { recursive: true, force: true });
+  }
+}
+
+{
+  const dir = mkdtempSync(join(tmpdir(), "monitor-transcript-routes-"));
+  try {
+    const path = join(dir, "s1.jsonl");
+    writeFileSync(path, `${user("u0", "前置き 🎉 日本語")}\n${JSON.stringify({ type: "attachment" })}\n`);
+    appendFileSync(path, `${user("u1", [image("image/png", PNG), { type: "text", text: "見て" }, image("image/jpeg", JPEG)])}\n`);
+    appendFileSync(path, `${user("u2", [image("image/png", PNG)])}\n${assistant("a1", "了解 ✅")}\n`);
+
+    // ルート
+    const store = new TranscriptStore(
+      () => [{ sessionId: "s1", cwd: dir }],
+      (id) => (id === "s1" ? path : null),
+    );
+    const app = new Hono();
+    registerTranscriptRoutes(app, store);
+    const list = (await (await app.request("/api/sessions/s1/transcript")).json()) as TranscriptResponse;
+    t("GET の目録", list.items.filter((i) => i.images.length).map((i) => i.id), ["u1:0", "u2:0"]);
+
+    const res = await app.request("/api/sessions/s1/transcript/u1:0/images/0");
+    t("画像は 200 と content-type", [res.status, res.headers.get("content-type")], [200, "image/png"]);
+    t("中身はバイナリのまま", Buffer.from(await res.arrayBuffer()).equals(PNG), true);
+    t("型を推測させない", res.headers.get("x-content-type-options"), "nosniff");
+    t("共有キャッシュに置かせない", res.headers.get("cache-control"), "private, max-age=86400");
+    const encoded = await app.request("/api/sessions/s1/transcript/u1%3A0/images/1");
+    t("区切りを符号化した id も通る", [encoded.status, encoded.headers.get("content-type")], [200, "image/jpeg"]);
+    t("範囲外は 404", (await app.request("/api/sessions/s1/transcript/u1:0/images/5")).status, 404);
+    t("画像の無い発話は 404", (await app.request("/api/sessions/s1/transcript/a1:0/images/0")).status, 404);
+    t("知らないセッションは 404", (await app.request("/api/sessions/s9/transcript/u1:0/images/0")).status, 404);
+    t("不正な要素 id は 400", (await app.request("/api/sessions/s1/transcript/u1/images/0")).status, 400);
+    t("不正な番号は 400", (await app.request("/api/sessions/s1/transcript/u1:0/images/-1")).status, 400);
+    t("不正なセッション id は 400", (await app.request("/api/sessions/a..b/transcript/u1:0/images/0")).status, 400);
+    store.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log(`transcriptImages: ${ok} OK / ${ng} NG`);

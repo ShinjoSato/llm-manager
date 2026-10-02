@@ -152,7 +152,9 @@ struct ChatImageThumbnail: View {
         .overlay(shape.stroke(ChatTheme.border))
         .contentShape(shape)
         .task(id: "\(source.sessionId ?? "")|\(image.id)") {
-            guard loaded == nil else { return }
+            // id が替わったら前の絵を出し続けない（読み直しは NSCache に当たる）。
+            loaded = nil
+            failed = false
             loaded = await source.loader.thumbnail(image, sessionId: source.sessionId)
             failed = loaded == nil
         }

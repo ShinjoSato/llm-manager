@@ -60,6 +60,8 @@ public enum AttachmentFormat {
         /// 画像のパスを空白で区切ったもの（貼り付け用・括弧なし）。無ければ nil。
         public var imagePaste: String?
         public var imageCount: Int
+        /// 画像として貼る添付のパス（`imagePaste` に入れた順）。
+        public var imagePaths: [String] = []
         /// 本文（ファイルのパスの一覧を含む）。空なら送らない。
         public var body: String
 
@@ -69,10 +71,12 @@ public enum AttachmentFormat {
     /// `pasteImages` が false（貼り付けモードでない端末・伝言）なら画像もパスの一覧に入れる。
     public static func outgoing(text: String, attachments: [Attachment], pasteImages: Bool) -> Outgoing {
         var tokens: [String] = []
+        var pasted: [String] = []
         var listed: [String] = []
         for attachment in attachments {
             if pasteImages, attachment.kind == .image, let token = pasteToken(attachment.path) {
                 tokens.append(token)
+                pasted.append(attachment.path)
             } else {
                 listed.append(attachment.path)
             }
@@ -83,6 +87,7 @@ public enum AttachmentFormat {
         if !listed.isEmpty { parts.append(([listHeader] + listed.map(quoted)).joined(separator: "\n")) }
         return Outgoing(imagePaste: tokens.isEmpty ? nil : tokens.joined(separator: " "),
                         imageCount: tokens.count,
+                        imagePaths: pasted,
                         body: parts.joined(separator: "\n\n"))
     }
 

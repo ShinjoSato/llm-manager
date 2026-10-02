@@ -242,8 +242,10 @@ GET /api/sessions/<sessionId>/transcript?after=<id> → その id より後だ�
 
 **画像の本体**は `GET /api/sessions/<sessionId>/transcript/<itemId>/images/<index>`（`itemId` の `:` は `%3A` でもよい）。
 `content-type` に画像の形式を付けたバイナリで返す（`x-content-type-options: nosniff`・`content-security-policy: default-src 'none'`・
-`cache-control: private, max-age=86400`。発話の uuid ごとに中身は変わらない）。monitor は画像を手元に持たず、画像付きの行の
-ファイル上の位置だけを覚えておき、求められた時にその行を読み直して取り出す（位置がずれていたら uuid で探し直す）。
+`cache-control: private, max-age=86400`。発話の uuid ごとに中身は変わらない。uuid の無い行（`line<N>:<k>`）は `no-store`）。
+monitor は画像を常には持たず、画像付きの行のファイル上の位置（バイト数で数える）だけを覚えておき、求められた時にその行を
+非同期に読み直して取り出す（位置がずれていたら uuid で探し直して位置を覚え直す。uuid の無い行は探し直さず 404）。
+直近に解析した 4 行分（合計 32MB まで）は取り出した画像を持っておき、同じ発話の複数枚は 1 回の読み込みで返す。
 目録に無い番号・ログや発話が見つからなければ 404、id や番号の形が不正なら 400。Host / Origin 検証・LAN トークンは他の API と同じ。
 
 **追記は SSE で届く。** `/events?transcripts=<id>[,<id>…]`（全セッションなら `*`）で接続すると、

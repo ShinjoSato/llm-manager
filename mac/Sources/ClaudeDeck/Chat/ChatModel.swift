@@ -268,15 +268,20 @@ final class ChatModel {
         guard let session = room.hosted, sendBlockedReason(for: room) == nil else { return false }
         let roomId = room.id
         let sending = attachments[roomId] ?? []
-        let outgoing = Self.outgoingImageMessage(text: text, attachments: sending)
+        let outgoingId = UUID().uuidString
+        let sentAt = Date().timeIntervalSince1970 * 1000
         let result = session.send(text, attachments: sending) { [weak self] completion in
-            self?.finishSend(completion, text: text, attachments: sending, outgoing: outgoing, in: roomId)
+            self?.finishSend(completion, text: text, attachments: sending, outgoingId: outgoingId, in: roomId)
         }
         switch result {
-        case .started:
+        case .started(let pastedImages, let body):
             // サムネイルは結末が出るまで残す（本文を貼る前にやめたら入力欄へ戻すため）。
             attachments[roomId] = nil
-            if let outgoing { sentImages[roomId, default: []].append(outgoing) }
+            if let outgoing = PendingImageMessages.outgoing(id: outgoingId, text: text, sentBody: body,
+                                                            pastedImagePaths: pastedImages, sentAt: sentAt) {
+                sentImages[roomId, default: []].append(outgoing)
+                scheduleSentImagesExpiry()
+            }
             return true
         case .leftover:
             alertMessage = "端末側の入力欄に前回の本文や画像が残っているようです。"
@@ -292,20 +297,12 @@ final class ChatModel {
         }
     }
 
-    /// 画像を添えた送信なら、記録されるまで吹き出しに出す発話。
-    static func outgoingImageMessage(text: String, attachments: [Attachment]) -> PendingImageMessage? {
-        let paths = attachments.filter { $0.kind == .image }.map(\.path)
-        guard !paths.isEmpty else { return nil }
-        return PendingImageMessage(text: text.trimmingCharacters(in: .whitespacesAndNewlines), imagePaths: paths,
-                                   sentAt: Date().timeIntervalSince1970 * 1000)
-    }
-
     private func finishSend(_ completion: SendCompletion, text: String, attachments sent: [Attachment],
-                            outgoing: PendingImageMessage?, in roomId: RoomID) {
+                            outgoingId: String, in roomId: RoomID) {
         let roomExists = hosted.contains { RoomID.hosted($0.id) == roomId }
         // Enter まで届かなかった送信は記録されないので、仮の吹き出しを下げる。
-        if let outgoing, completion != .submitted {
-            sentImages[roomId]?.removeAll { $0.id == outgoing.id }
+        if completion != .submitted {
+            sentImages[roomId]?.removeAll { $0.id == outgoingId }
             if sentImages[roomId]?.isEmpty == true { sentImages[roomId] = nil }
         }
         if completion.restoresDraft, roomExists {
@@ -361,13 +358,30 @@ final class ChatModel {
 
     func pendingImages(for roomId: RoomID) -> [PendingImageMessage] { sentImages[roomId] ?? [] }
 
-    /// transcript に載った分の仮の吹き出しを片付ける（表示側でも重ねないよう除いているが、溜め込まないため）。
+    /// transcript に載った分と期限切れの仮の吹き出しを片付ける（表示側でも重ねないよう除いているが、溜め込まないため）。
     private func pruneSentImages(sessionId: String) {
         guard !sentImages.isEmpty, let items = transcripts[sessionId]?.items else { return }
+        let now = Date().timeIntervalSince1970 * 1000
         for room in rooms where room.sessionId == sessionId {
             guard let messages = sentImages[room.id] else { continue }
-            let rest = PendingImageMessages.unrecorded(messages, in: items)
+            let rest = PendingImageMessages.unrecorded(messages, in: items, now: now)
             if rest.count != messages.count { sentImages[room.id] = rest.isEmpty ? nil : rest }
+        }
+    }
+
+    /// 記録が来ないまま期限を過ぎたものを下げる（transcript の更新が止まっていても下げるため時刻で起こす）。
+    private func expireSentImages() {
+        let now = Date().timeIntervalSince1970 * 1000
+        for (roomId, messages) in sentImages {
+            let rest = messages.filter { !PendingImageMessages.isExpired($0, now: now) }
+            if rest.count != messages.count { sentImages[roomId] = rest.isEmpty ? nil : rest }
+        }
+    }
+
+    private func scheduleSentImagesExpiry() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(PendingImageMessages.lifetime + 1000))
+            self?.expireSentImages()
         }
     }
 
