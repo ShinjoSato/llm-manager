@@ -174,7 +174,7 @@ final class MonitorLauncherTests: XCTestCase {
     }
 
     private var ready: Set<String> {
-        [path("package.json"), path(MonitorLauncher.installCompleteFile), path(MonitorLauncher.buildOutputFile)]
+        [path("package.json"), path(MonitorLauncher.installCompleteFile)]
     }
 
     /// 条件が満たされるまで待つ。期限を過ぎたら失敗にして抜ける。
@@ -237,34 +237,31 @@ final class MonitorLauncherTests: XCTestCase {
         XCTAssertEqual(runner.commands.count, 1)
     }
 
-    func testInstallsAndBuildsBeforeStartingThenStopsOwnProcess() async {
+    func testInstallsBeforeStartingThenStopsOwnProcess() async {
         let runner = FakeRunner()
         let files = FakeFiles([path("package.json")])
-        let launcher = makeLauncher(health: HealthScript([false, false, false, true]), files: files, runner: runner,
-                                    env: ["ANTHROPIC_API_KEY": "x", "ANTHROPIC_AUTH_TOKEN": "y", "MONITOR_LAN": "1", "HOME": "/h"])
+        let launcher = makeLauncher(health: HealthScript([false, false, true]), files: files, runner: runner,
+                                    env: ["ANTHROPIC_API_KEY": "x", "ANTHROPIC_AUTH_TOKEN": "y", "HOME": "/h"])
         let task = Task { await launcher.run() }
-        await waitUntil("running") { launcher.phase == .running(pid: 1003) }
+        await waitUntil("running") { launcher.phase == .running(pid: 1002) }
 
-        XCTAssertEqual(runner.commands.count, 4)
+        XCTAssertEqual(runner.commands.count, 3)
         XCTAssertTrue(runner.commands[1].hasSuffix("exec npm install"))
-        XCTAssertTrue(runner.commands[2].hasSuffix("exec npm run build"))
-        XCTAssertTrue(runner.commands[3].hasSuffix("exec npm start"))
-        XCTAssertTrue(runner.commands[3].hasPrefix("unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN MONITOR_LAN"))
+        XCTAssertTrue(runner.commands[2].hasSuffix("exec npm start"), "UI のビルドは無い")
+        XCTAssertTrue(runner.commands[2].hasPrefix("unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN;"))
         for env in runner.environments {
             XCTAssertNil(env["ANTHROPIC_API_KEY"])
             XCTAssertNil(env["ANTHROPIC_AUTH_TOKEN"])
-            XCTAssertNil(env["MONITOR_LAN"])
             XCTAssertEqual(env["PORT"], "8766")
             XCTAssertEqual(env["HOME"], "/h")
         }
-        XCTAssertEqual(launcher.ownedPid, 1003)
+        XCTAssertEqual(launcher.ownedPid, 1002)
         XCTAssertFalse(files.exists(path(MonitorLauncher.installIncompleteMarker)), "完了したら印を消す")
-        XCTAssertFalse(files.exists(path(MonitorLauncher.buildIncompleteMarker)))
 
         await launcher.stop()
         await task.value
         XCTAssertEqual(launcher.phase, .stopped)
-        XCTAssertTrue(runner.spawned[3].terminated)
+        XCTAssertTrue(runner.spawned[2].terminated)
         XCTAssertNil(launcher.ownedPid)
     }
 
@@ -289,29 +286,15 @@ final class MonitorLauncherTests: XCTestCase {
         XCTAssertTrue(runner.spawned[1].terminated)
         XCTAssertEqual(launcher.phase, .stopped)
 
-        // npm が途中まで書いた状態（.package-lock.json と ui/dist はある）を再現する。
+        // npm が途中まで書いた状態（.package-lock.json はある）を再現する。
         files.create(path(MonitorLauncher.installCompleteFile))
-        files.create(path(MonitorLauncher.buildOutputFile))
         let next = FakeRunner()
         let relaunched = makeLauncher(health: HealthScript([false, false, true]), files: files, runner: next)
         relaunched.start()
         await waitUntil("running") { relaunched.ownedPid != nil && relaunched.phase == .running(pid: relaunched.ownedPid!) }
         XCTAssertEqual(next.count("npm install"), 1, "中断された install はやり直す")
-        XCTAssertEqual(next.count("npm run build"), 0)
         XCTAssertFalse(files.exists(path(MonitorLauncher.installIncompleteMarker)))
         await relaunched.stop()
-    }
-
-    func testInterruptedBuildIsRerun() async {
-        let runner = FakeRunner()
-        let files = FakeFiles(ready.union([path(MonitorLauncher.buildIncompleteMarker)]))
-        let launcher = makeLauncher(health: HealthScript([false, false, true]), files: files, runner: runner)
-        launcher.start()
-        await waitUntil("npm start") { runner.count("npm start") == 1 }
-        XCTAssertEqual(runner.count("npm install"), 0)
-        XCTAssertEqual(runner.count("npm run build"), 1)
-        XCTAssertFalse(files.exists(path(MonitorLauncher.buildIncompleteMarker)))
-        await launcher.stop()
     }
 
     /// 準備後の health 確認の最中に止められたら npm start を起動しない。
@@ -474,7 +457,7 @@ final class MonitorLauncherTests: XCTestCase {
     }
 
     func testChildEnvironmentAndLoopback() {
-        let env = MonitorLauncher.childEnvironment(from: ["ANTHROPIC_API_KEY": "k", "MONITOR_LAN": "1", "PATH": "/bin"], port: 8799)
+        let env = MonitorLauncher.childEnvironment(from: ["ANTHROPIC_API_KEY": "k", "ANTHROPIC_AUTH_TOKEN": "t", "PATH": "/bin"], port: 8799)
         XCTAssertEqual(env, ["PATH": "/bin", "PORT": "8799"])
         XCTAssertTrue(MonitorLauncher.isLoopback(URL(string: "http://localhost:8766")!))
         XCTAssertTrue(MonitorLauncher.isLoopback(URL(string: "http://127.0.0.1:8799")!))

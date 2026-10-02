@@ -5,10 +5,5 @@
 
 ## 置くもの
 
-| ファイル | 内容 |
-|---|---|
-| `monitor-token` | monitor を同じ Wi-Fi の別端末から見る時（`MONITOR_LAN=1 npm start`）のアクセストークン。無ければ monitor が起動時に生成する |
-
-トークンを持つ端末だけが LAN から monitor を開ける（`?t=<token>` で一度開くと cookie が付く）。
-ループバック（手元）からの接続はトークン不要。漏れた時はこのファイルを消して monitor を起動し直せば作り直される。
-詳細は `monitor/README.md` を参照。
+いまは無い。monitor はループバックでしか待ち受けず、トークン等を持たない。
+以前の LAN 公開用の `monitor-token` が残っていれば、もう使われないので消してよい。
