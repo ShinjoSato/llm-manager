@@ -56,6 +56,8 @@ struct ExternalBanner: View {
 struct RelayBubble: View {
     let text: String
     let state: RelayNote.State
+    var images: [ChatImage] = []
+    var imageSource: ChatImageSource?
 
     var body: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
@@ -67,6 +69,9 @@ struct RelayBubble: View {
             }
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(ChatTheme.permission)
+            if !images.isEmpty, let imageSource {
+                ChatImageGrid(images: images, source: imageSource)
+            }
             Text(ChatMarkdown.inline(text))
                 .font(ChatTheme.body)
                 .foregroundStyle(ChatTheme.text)

@@ -1,12 +1,13 @@
 // 会話履歴 API: 1 セッションの jsonl を最初から読み、チャット表示の単位（発話・応答・ツール）に整形する。
 //   GET /api/sessions/:sessionId/transcript[?after=<id>]
+//   GET /api/sessions/:sessionId/transcript/:itemId/images/:index  → 発話に添えられた画像の本体（バイナリ）
 //   SSE /events?transcripts=<id>[,<id>...]|*  → `transcript` イベントで追記分を配る
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { Hono } from "hono";
 import { resolveTranscript } from "./paths.js";
 import { isInjected } from "./transcript.js";
-import type { TranscriptEvent, TranscriptItem, TranscriptResponse, TranscriptTool } from "./types.js";
+import type { TranscriptEvent, TranscriptImage, TranscriptItem, TranscriptResponse, TranscriptTool } from "./types.js";
 
 /** 1 回に読む量。数十 MB のログでも巨大なバッファを一度に確保しない。 */
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -16,9 +17,53 @@ const MAX_LOGS = 32;
 /** ツールの要約 1 項目の上限。コマンドやパターンは長くなりうる。 */
 const MAX_SUMMARY_CHARS = 300;
 
+/** 画像の取り出しで 1 行として読む上限。壊れた位置情報で巨大な読み込みをしない。 */
+const MAX_IMAGE_LINE_BYTES = 64 * 1024 * 1024;
+/** 返してよい画像の形式。SVG 等の文書型はブラウザで開かれた時にスクリプトが動きうるので通さない。 */
+export const IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
 /** パスに埋め込むので、UUID 相当の文字だけを通す（`..` や `/` を入れさせない）。 */
 export function isValidSessionId(id: string): boolean {
   return /^[A-Za-z0-9-]{1,128}$/.test(id);
+}
+
+/** 履歴の要素 id（`<uuid>:<ブロック番号>` / `line<N>:<ブロック番号>`）。 */
+export function isValidItemId(id: string): boolean {
+  return /^[A-Za-z0-9-]{1,128}:\d{1,6}$/.test(id);
+}
+
+/** content の画像ブロックを順に返す（`index` は形式を問わず数えた位置）。 */
+function imageBlocks(content: unknown): { index: number; block: any }[] {
+  if (!Array.isArray(content)) return [];
+  const out: { index: number; block: any }[] = [];
+  for (const c of content) if (c && typeof c === "object" && (c as any).type === "image") out.push({ index: out.length, block: c });
+  return out;
+}
+
+function isServableImage(block: any): boolean {
+  const source = block?.source;
+  return (
+    !!source &&
+    source.type === "base64" &&
+    typeof source.data === "string" &&
+    typeof source.media_type === "string" &&
+    IMAGE_MEDIA_TYPES.has(source.media_type)
+  );
+}
+
+/** 発話に添えられた画像の目録。取り出せる形式（base64 の PNG / JPEG / GIF / WebP）だけを載せる。 */
+export function imagesOf(content: unknown): TranscriptImage[] {
+  return imageBlocks(content)
+    .filter(({ block }) => isServableImage(block))
+    .map(({ index, block }) => ({ index, mediaType: block.source.media_type as string }));
+}
+
+/** `index` 枚目の画像の本体。取り出せない形式・範囲外なら null。 */
+export function imageDataOf(content: unknown, index: number): { mediaType: string; data: Buffer } | null {
+  const found = imageBlocks(content).find((b) => b.index === index);
+  if (!found || !isServableImage(found.block)) return null;
+  const data = Buffer.from(found.block.source.data as string, "base64");
+  return data.length ? { mediaType: found.block.source.media_type as string, data } : null;
 }
 
 /** tool がどの発話にぶら下がるかを行をまたいで覚えておく。 */
@@ -94,7 +139,7 @@ export function itemsFromLine(o: any, lineKey: string, ctx: ParseContext): Trans
     if (!text) return [];
     const id = `${base}:0`;
     ctx.parentId = id;
-    return [{ id, kind: "user", at, text, tool: null, parentId: null }];
+    return [{ id, kind: "user", at, text, tool: null, parentId: null, images: imagesOf(content) }];
   }
 
   if (o.type !== "assistant" || !Array.isArray(content)) return [];
@@ -103,7 +148,7 @@ export function itemsFromLine(o: any, lineKey: string, ctx: ParseContext): Trans
     if (!c || typeof c !== "object") return;
     const id = `${base}:${i}`;
     if (c.type === "text" && typeof c.text === "string" && c.text.trim()) {
-      out.push({ id, kind: "assistant", at, text: c.text.trim(), tool: null, parentId: null });
+      out.push({ id, kind: "assistant", at, text: c.text.trim(), tool: null, parentId: null, images: [] });
       ctx.parentId = id;
     } else if (c.type === "tool_use" && typeof c.name === "string") {
       out.push({
@@ -113,6 +158,7 @@ export function itemsFromLine(o: any, lineKey: string, ctx: ParseContext): Trans
         text: null,
         tool: summarizeTool(c.name, c.input),
         parentId: ctx.parentId,
+        images: [],
       });
     }
   });
@@ -126,6 +172,10 @@ export class TranscriptLog {
   private offset = 0;
   private carry = "";
   private lineNo = 0;
+  /** 持ち越し中の行（`carry`）がファイルの何バイト目から始まるか。 */
+  private lineStart = 0;
+  /** 画像付きの発話 id → その行の位置。画像の本体は手元に持たず、求められた時に読み直す。 */
+  private imageLines = new Map<string, { offset: number; length: number; uuid: string | null }>();
   private ctx: ParseContext = { parentId: null };
   // 読み取り境界に跨がったマルチバイト文字を持ち越す。
   private decoder = new StringDecoder("utf8");
@@ -135,7 +185,9 @@ export class TranscriptLog {
   private reset(): void {
     this.items = [];
     this.index.clear();
+    this.imageLines.clear();
     this.offset = 0;
+    this.lineStart = 0;
     this.carry = "";
     this.lineNo = 0;
     this.ctx = { parentId: null };
@@ -168,7 +220,11 @@ export class TranscriptLog {
         this.offset += n;
         const lines = (this.carry + this.decoder.write(buf.subarray(0, n))).split("\n");
         this.carry = lines.pop() ?? ""; // 書き込み途中の行は次回に回す
-        for (const line of lines) this.parseLine(line, fresh);
+        for (const line of lines) {
+          const length = Buffer.byteLength(line, "utf8");
+          this.parseLine(line, fresh, this.lineStart, length);
+          this.lineStart += length + 1;
+        }
       }
     } catch {
       // 読めた分までは返す。
@@ -178,7 +234,7 @@ export class TranscriptLog {
     return fresh;
   }
 
-  private parseLine(line: string, into: TranscriptItem[]): void {
+  private parseLine(line: string, into: TranscriptItem[], offset: number, length: number): void {
     const key = `line${++this.lineNo}`;
     // 対象の行だけ JSON.parse する（ログの大半は添付や履歴スナップショット）。
     if (!line.includes('"user"') && !line.includes('"assistant"')) return;
@@ -193,7 +249,78 @@ export class TranscriptLog {
       this.index.set(item.id, this.items.length);
       this.items.push(item);
       into.push(item);
+      if (item.images.length) {
+        const uuid = typeof (o as any).uuid === "string" ? ((o as any).uuid as string) : null;
+        this.imageLines.set(item.id, { offset, length, uuid });
+      }
     }
+  }
+
+  /** 発話 `itemId` の `index` 枚目の画像。行を読み直して取り出す。見つからなければ null。 */
+  image(itemId: string, index: number): { mediaType: string; data: Buffer } | null {
+    const ref = this.imageLines.get(itemId);
+    if (!ref) return null;
+    const o = this.lineAt(ref.offset, ref.length);
+    // 不正な UTF-8 があると位置がずれうるので、別の行を読んだら uuid で探し直す。
+    const line = o && (ref.uuid === null || o.uuid === ref.uuid) ? o : ref.uuid ? this.findLine(ref.uuid) : null;
+    return line ? imageDataOf(line.message?.content, index) : null;
+  }
+
+  private lineAt(offset: number, length: number): any {
+    if (length <= 0 || length > MAX_IMAGE_LINE_BYTES) return null;
+    let fd: number;
+    try {
+      fd = openSync(this.path, "r");
+    } catch {
+      return null;
+    }
+    try {
+      const buf = Buffer.allocUnsafe(length);
+      const n = readSync(fd, buf, 0, length, offset);
+      return JSON.parse(buf.subarray(0, n).toString("utf8"));
+    } catch {
+      return null;
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  private findLine(uuid: string): any {
+    let fd: number;
+    try {
+      fd = openSync(this.path, "r");
+    } catch {
+      return null;
+    }
+    const needle = `"uuid":"${uuid}"`;
+    const decoder = new StringDecoder("utf8");
+    let carry = "";
+    let position = 0;
+    try {
+      const buf = Buffer.allocUnsafe(CHUNK_BYTES);
+      for (;;) {
+        const n = readSync(fd, buf, 0, buf.length, position);
+        if (n <= 0) break;
+        position += n;
+        const lines = (carry + decoder.write(buf.subarray(0, n))).split("\n");
+        carry = lines.pop() ?? "";
+        if (carry.length > MAX_IMAGE_LINE_BYTES) return null;
+        for (const line of lines) {
+          if (!line.includes(needle)) continue;
+          try {
+            const o = JSON.parse(line);
+            if (o?.uuid === uuid) return o;
+          } catch {
+            // 壊れた行は飛ばす。
+          }
+        }
+      }
+    } catch {
+      return null;
+    } finally {
+      closeSync(fd);
+    }
+    return null;
   }
 
   /** `after` より後の要素。知らない id なら全件を返して reset を立てる。 */
@@ -282,6 +409,12 @@ export class TranscriptStore {
     return { sessionId, ...log.since(after) };
   }
 
+  /** 発話に添えられた画像の本体。履歴・発話・画像が見つからなければ null。 */
+  image(sessionId: string, itemId: string, index: number): { mediaType: string; data: Buffer } | null {
+    if (!isValidSessionId(sessionId) || !isValidItemId(itemId) || !Number.isInteger(index) || index < 0) return null;
+    return this.refresh(sessionId)?.image(itemId, index) ?? null;
+  }
+
   private watchedIds(): Set<string> {
     const ids = new Set<string>();
     let all = false;
@@ -340,5 +473,27 @@ export function registerTranscriptRoutes(app: Hono<any>, store: TranscriptStore)
     const result = store.get(sessionId, c.req.query("after") || undefined);
     if (!result) return c.json({ ok: false, error: "transcript not found" }, 404);
     return c.json(result);
+  });
+
+  app.get("/api/sessions/:sessionId/transcript/:itemId/images/:index", (c) => {
+    const sessionId = c.req.param("sessionId");
+    const itemId = c.req.param("itemId");
+    const index = c.req.param("index");
+    if (!isValidSessionId(sessionId) || !isValidItemId(itemId) || !/^\d{1,4}$/.test(index)) {
+      c.header("cache-control", "no-store");
+      return c.json({ ok: false, error: "invalid image path" }, 400);
+    }
+    const image = store.image(sessionId, itemId, Number(index));
+    if (!image) {
+      c.header("cache-control", "no-store");
+      return c.json({ ok: false, error: "image not found" }, 404);
+    }
+    return c.body(new Uint8Array(image.data), 200, {
+      "content-type": image.mediaType,
+      // 発話の uuid ごとに中身は変わらないので、受け手に持たせてよい（共有キャッシュには置かせない）。
+      "cache-control": "private, max-age=86400",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'",
+    });
   });
 }

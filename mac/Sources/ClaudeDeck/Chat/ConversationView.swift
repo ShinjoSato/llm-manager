@@ -175,7 +175,9 @@ struct MessageList: View {
     @State private var pinnedToBottom = true
 
     var body: some View {
-        let entries = ChatTimeline.entries(from: items, notes: model.notes(for: room.sessionId))
+        let entries = ChatTimeline.entries(from: items, notes: model.notes(for: room.sessionId),
+                                           pending: model.pendingImages(for: room.id))
+        let imageSource = ChatImageSource(loader: model.imageLoader, sessionId: room.sessionId)
         let runningId = ChatTimeline.runningToolId(items: items, status: room.status)
         let permissions = model.monitorPermissions(for: room)
         ScrollViewReader { proxy in
@@ -183,7 +185,7 @@ struct MessageList: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if entries.isEmpty { emptyState }
                     ForEach(entries) { entry in
-                        EntryView(entry: entry, runningToolId: runningId)
+                        EntryView(entry: entry, runningToolId: runningId, imageSource: imageSource)
                     }
                     ForEach(permissions) { permission in
                         PermissionCard(toolName: permission.toolName,
@@ -244,7 +246,7 @@ struct MessageList: View {
         let last = entries.last
         let prompt = room.hosted?.permissionPrompt != nil || room.status == .permission
         let menu = room.hosted?.inputBlock == .menu
-        return "\(entries.count):\(last?.tools.count ?? 0):\(last?.text.count ?? 0):\(permissions):\(prompt):\(menu)"
+        return "\(entries.count):\(last?.id ?? ""):\(last?.tools.count ?? 0):\(last?.text.count ?? 0):\(permissions):\(prompt):\(menu)"
     }
 
     @ViewBuilder
@@ -296,25 +298,31 @@ private struct BottomTracking: ViewModifier {
 struct EntryView: View {
     let entry: ChatEntry
     let runningToolId: String?
+    let imageSource: ChatImageSource
 
     var body: some View {
-        let trailing = entry.role == .user || entry.role == .relay
+        let trailing = entry.role == .user || entry.role == .relay || entry.role == .outgoing
         VStack(alignment: trailing ? .trailing : .leading, spacing: 6) {
             switch entry.role {
             case .user:
                 HStack {
                     Spacer(minLength: 96)
-                    UserBubble(text: entry.text)
+                    UserBubble(text: entry.text, images: entry.images, imageSource: imageSource)
+                }
+            case .outgoing:
+                HStack {
+                    Spacer(minLength: 96)
+                    UserBubble(text: entry.text, images: entry.images, imageSource: imageSource, pending: true)
                 }
             case .assistant:
                 HStack {
-                    ClaudeBubble(text: entry.text)
+                    ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource)
                     Spacer(minLength: 96)
                 }
             case .relay:
                 HStack {
                     Spacer(minLength: 96)
-                    RelayBubble(text: entry.text, state: entry.relay?.state ?? .sent)
+                    RelayBubble(text: entry.text, state: entry.relay?.state ?? .sent, images: entry.images, imageSource: imageSource)
                 }
             case .toolsOnly:
                 EmptyView()
@@ -330,33 +338,57 @@ struct EntryView: View {
 
 struct UserBubble: View {
     let text: String
+    var images: [ChatImage] = []
+    var imageSource: ChatImageSource?
+    /// 画像を添えて送り、まだ transcript に記録されていない発話。
+    var pending = false
 
     var body: some View {
-        Text(ChatMarkdown.inline(text))
-            .font(ChatTheme.body)
-            .foregroundStyle(.white)
-            .textSelection(.enabled)
-            .lineSpacing(3)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
-                                               bottomTrailingRadius: 4, topTrailingRadius: 16)
-                .fill(ChatTheme.userBubble))
+        VStack(alignment: .trailing, spacing: 6) {
+            if !images.isEmpty, let imageSource {
+                ChatImageGrid(images: images, source: imageSource)
+            }
+            if !text.isEmpty {
+                Text(ChatMarkdown.inline(text))
+                    .font(ChatTheme.body)
+                    .foregroundStyle(.white)
+                    .textSelection(.enabled)
+                    .lineSpacing(3)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
+                                                       bottomTrailingRadius: 4, topTrailingRadius: 16)
+                        .fill(ChatTheme.userBubble))
+            }
+            if pending {
+                Text("送信しました（記録を待っています）").font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)
+            }
+        }
+        .opacity(pending ? 0.75 : 1)
     }
 }
 
 struct ClaudeBubble: View {
     let text: String
+    var images: [ChatImage] = []
+    var imageSource: ChatImageSource?
 
     var body: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 4,
                                            bottomTrailingRadius: 16, topTrailingRadius: 16)
-        MarkdownView(text: text)
-        .textSelection(.enabled)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(shape.fill(ChatTheme.claudeBubble))
-        .overlay(shape.stroke(ChatTheme.claudeBubbleBorder))
+        VStack(alignment: .leading, spacing: 6) {
+            if !images.isEmpty, let imageSource {
+                ChatImageGrid(images: images, source: imageSource)
+            }
+            if !text.isEmpty {
+                MarkdownView(text: text)
+                .textSelection(.enabled)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(shape.fill(ChatTheme.claudeBubble))
+                .overlay(shape.stroke(ChatTheme.claudeBubbleBorder))
+            }
+        }
     }
 }
 

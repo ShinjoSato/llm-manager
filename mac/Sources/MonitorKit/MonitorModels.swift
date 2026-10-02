@@ -139,6 +139,18 @@ public struct TranscriptTool: Codable, Sendable, Hashable {
     public var target: String?
 }
 
+/// 発話に添えられた画像 1 枚の目録（types.ts の TranscriptImage）。本体は `MonitorClient.fetchTranscriptImage` で取る。
+public struct TranscriptImage: Codable, Sendable, Hashable {
+    /// 発話の中で何枚目の画像か（取り出しに使う位置）。
+    public var index: Int
+    public var mediaType: String
+
+    public init(index: Int, mediaType: String) {
+        self.index = index
+        self.mediaType = mediaType
+    }
+}
+
 /// 会話履歴の 1 要素（types.ts の TranscriptItem）。
 public struct TranscriptItem: Codable, Sendable, Hashable, Identifiable {
     public var id: String
@@ -147,6 +159,23 @@ public struct TranscriptItem: Codable, Sendable, Hashable, Identifiable {
     public var text: String?
     public var tool: TranscriptTool?
     public var parentId: String?
+    public var images: [TranscriptImage] = []
+}
+
+extension TranscriptItem {
+    private enum CodingKeys: String, CodingKey { case id, kind, at, text, tool, parentId, images }
+
+    /// 画像の目録を返さない古い monitor にも繋がるよう、`images` は無ければ空にする。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(TranscriptItemKind.self, forKey: .kind)
+        at = try c.decodeIfPresent(Double.self, forKey: .at)
+        text = try c.decodeIfPresent(String.self, forKey: .text)
+        tool = try c.decodeIfPresent(TranscriptTool.self, forKey: .tool)
+        parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
+        images = try c.decodeIfPresent([TranscriptImage].self, forKey: .images) ?? []
+    }
 }
 
 /// `GET /api/sessions/:id/transcript` の応答。

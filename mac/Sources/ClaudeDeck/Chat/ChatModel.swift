@@ -63,6 +63,10 @@ final class ChatModel {
     @ObservationIgnored private let attachmentStore = AttachmentStore()
     /// 1 通に添えられる数。
     static let maxAttachments = 20
+    /// ルーム → 画像を添えて送り、まだ transcript に載っていない発話（載るまで送った画像を吹き出しに出す）。
+    private(set) var sentImages: [RoomID: [PendingImageMessage]] = [:]
+    /// 吹き出しの画像の読み込みとキャッシュ。
+    @ObservationIgnored private(set) lazy var imageLoader = ChatImageLoader(client: store.client)
 
     private(set) var transcripts: [String: TranscriptBuffer] = [:]
     private(set) var loadingTranscripts: Set<String> = []
@@ -256,6 +260,7 @@ final class ChatModel {
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         drafts[.hosted(session.id)] = nil
+        sentImages[.hosted(session.id)] = nil
         discardPendingAttachments(of: .hosted(session.id))
     }
 
@@ -263,13 +268,15 @@ final class ChatModel {
         guard let session = room.hosted, sendBlockedReason(for: room) == nil else { return false }
         let roomId = room.id
         let sending = attachments[roomId] ?? []
+        let outgoing = Self.outgoingImageMessage(text: text, attachments: sending)
         let result = session.send(text, attachments: sending) { [weak self] completion in
-            self?.finishSend(completion, text: text, attachments: sending, in: roomId)
+            self?.finishSend(completion, text: text, attachments: sending, outgoing: outgoing, in: roomId)
         }
         switch result {
         case .started:
             // サムネイルは結末が出るまで残す（本文を貼る前にやめたら入力欄へ戻すため）。
             attachments[roomId] = nil
+            if let outgoing { sentImages[roomId, default: []].append(outgoing) }
             return true
         case .leftover:
             alertMessage = "端末側の入力欄に前回の本文や画像が残っているようです。"
@@ -285,8 +292,22 @@ final class ChatModel {
         }
     }
 
-    private func finishSend(_ completion: SendCompletion, text: String, attachments sent: [Attachment], in roomId: RoomID) {
+    /// 画像を添えた送信なら、記録されるまで吹き出しに出す発話。
+    static func outgoingImageMessage(text: String, attachments: [Attachment]) -> PendingImageMessage? {
+        let paths = attachments.filter { $0.kind == .image }.map(\.path)
+        guard !paths.isEmpty else { return nil }
+        return PendingImageMessage(text: text.trimmingCharacters(in: .whitespacesAndNewlines), imagePaths: paths,
+                                   sentAt: Date().timeIntervalSince1970 * 1000)
+    }
+
+    private func finishSend(_ completion: SendCompletion, text: String, attachments sent: [Attachment],
+                            outgoing: PendingImageMessage?, in roomId: RoomID) {
         let roomExists = hosted.contains { RoomID.hosted($0.id) == roomId }
+        // Enter まで届かなかった送信は記録されないので、仮の吹き出しを下げる。
+        if let outgoing, completion != .submitted {
+            sentImages[roomId]?.removeAll { $0.id == outgoing.id }
+            if sentImages[roomId]?.isEmpty == true { sentImages[roomId] = nil }
+        }
         if completion.restoresDraft, roomExists {
             drafts[roomId] = ComposerRestore.draft(restoring: text, current: drafts[roomId] ?? "")
             let restored = ComposerRestore.attachments(restoring: sent, current: attachments[roomId] ?? [])
@@ -337,6 +358,18 @@ final class ChatModel {
     // MARK: - 添付
 
     func pendingAttachments(for roomId: RoomID) -> [Attachment] { attachments[roomId] ?? [] }
+
+    func pendingImages(for roomId: RoomID) -> [PendingImageMessage] { sentImages[roomId] ?? [] }
+
+    /// transcript に載った分の仮の吹き出しを片付ける（表示側でも重ねないよう除いているが、溜め込まないため）。
+    private func pruneSentImages(sessionId: String) {
+        guard !sentImages.isEmpty, let items = transcripts[sessionId]?.items else { return }
+        for room in rooms where room.sessionId == sessionId {
+            guard let messages = sentImages[room.id] else { continue }
+            let rest = PendingImageMessages.unrecorded(messages, in: items)
+            if rest.count != messages.count { sentImages[room.id] = rest.isEmpty ? nil : rest }
+        }
+    }
 
     /// 取り込み中の数（チップの「読み込み中」に出す）。
     func importingCount(for roomId: RoomID) -> Int { importing[roomId]?.count ?? 0 }
@@ -428,7 +461,8 @@ final class ChatModel {
         let message = AttachmentFormat.outgoing(text: text, attachments: attachments[room.id] ?? [], pasteImages: false)
         let body = RelayNotes.normalized(message.body)
         guard !body.isEmpty else { return false }
-        let note = RelayNote(text: body, sentAt: Date().timeIntervalSince1970 * 1000)
+        let imagePaths = (attachments[room.id] ?? []).filter { $0.kind == .image }.map(\.path)
+        let note = RelayNote(text: body, sentAt: Date().timeIntervalSince1970 * 1000, imagePaths: imagePaths)
         relayNotes[sessionId, default: []].append(note)
         clearAttachments(of: room.id)
         Task {
@@ -684,6 +718,7 @@ final class ChatModel {
             do {
                 let response = try await store.client.fetchTranscript(sessionId: sessionId, after: nil)
                 transcripts[sessionId]?.apply(response, fullReplace: true)
+                pruneSentImages(sessionId: sessionId)
                 transcriptErrors[sessionId] = nil
                 transcriptRetries[sessionId] = nil
             } catch MonitorError.http(status: 404, _, _) {
@@ -727,6 +762,7 @@ final class ChatModel {
         // 一度も開いていないセッションは、開いた時に GET でまとめて取る。
         guard transcripts[event.sessionId] != nil else { return }
         transcripts[event.sessionId]?.append(event.items)
+        if event.items.contains(where: { !$0.images.isEmpty }) { pruneSentImages(sessionId: event.sessionId) }
     }
 
     // MARK: - 付随ビュー

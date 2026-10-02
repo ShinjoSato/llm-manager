@@ -146,6 +146,14 @@ export interface TranscriptTool {
   target: string | null;
 }
 
+/** 発話に添えられた画像 1 枚。本体は `GET /api/sessions/:id/transcript/:itemId/images/:index` で取る（本文に base64 は載せない）。 */
+export interface TranscriptImage {
+  /** 発話の content の中で何枚目の画像か（0 始まり）。取り出しの `:index` に使う。 */
+  index: number;
+  /** `image/png` / `image/jpeg` / `image/gif` / `image/webp` のいずれか。 */
+  mediaType: string;
+}
+
 /** 会話履歴の 1 要素。全フィールドが常に存在する（値が無い時は null）。 */
 export interface TranscriptItem {
   /** 安定 ID。`<行の uuid>:<ブロック番号>`（uuid の無い行は `line<行番号>:<ブロック番号>`）。 */
@@ -159,6 +167,8 @@ export interface TranscriptItem {
   tool: TranscriptTool | null;
   /** tool がぶら下がる直前の発話（user / assistant）の id。それ以外は null。 */
   parentId: string | null;
+  /** user の発話に添えられた画像（取り出せる形式のものだけ）。無ければ空。 */
+  images: TranscriptImage[];
 }
 
 /** `GET /api/sessions/:id/transcript` の応答。 */

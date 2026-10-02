@@ -173,6 +173,7 @@ thinking だけの assistant 行では判定を変えない（応答が終わっ
 | GET | `/api/sessions` | 全セッションのスナップショット |
 | GET | `/api/feed` | 直近のライブフィード |
 | GET | `/api/sessions/:id/transcript` | そのセッションの会話履歴（`?after=<id>` で差分。下記） |
+| GET | `/api/sessions/:id/transcript/:itemId/images/:index` | 発話に添えられた画像の本体（バイナリ。下記） |
 | GET | `/api/usage` | 5時間 / 7日間ウィンドウの使用量（未取得なら `null`） |
 | GET | `/api/lan` | LAN 接続用の案内 `{enabled, url}`（**ループバック以外は 404**） |
 | GET | `/api/lan/qr.svg` | その QR の SVG（**ループバック以外・LAN 非公開時は 404**） |
@@ -218,10 +219,11 @@ GET /api/sessions/<sessionId>/transcript?after=<id> → その id より後だ�
   "sessionId": "9c5a73ea-…",
   "reset": false,          // after の id が見つからず全件を返した時 true（手元の履歴を置き換える）
   "items": [
-    { "id": "bac3…:0", "kind": "user",      "at": 1790773952000, "text": "…", "tool": null, "parentId": null },
-    { "id": "40d6…:0", "kind": "assistant", "at": 1790773954648, "text": "…", "tool": null, "parentId": null },
+    { "id": "bac3…:0", "kind": "user",      "at": 1790773952000, "text": "[画像]\n…", "tool": null, "parentId": null,
+      "images": [{ "index": 0, "mediaType": "image/png" }] },
+    { "id": "40d6…:0", "kind": "assistant", "at": 1790773954648, "text": "…", "tool": null, "parentId": null, "images": [] },
     { "id": "9c52…:0", "kind": "tool",      "at": 1790773956269, "text": null,
-      "tool": { "name": "Bash", "description": "…", "target": "ls monitor" }, "parentId": "40d6…:0" }
+      "tool": { "name": "Bash", "description": "…", "target": "ls monitor" }, "parentId": "40d6…:0", "images": [] }
   ]
 }
 ```
@@ -232,7 +234,17 @@ GET /api/sessions/<sessionId>/transcript?after=<id> → その id より後だ�
 - `at`: epoch ミリ秒（無ければ null）。全フィールドが常に存在し、値が無い時は null（Swift の Codable で Optional にすればそのまま読める）
 - `tool`: `target` は対象の要約（file_path / コマンド 1 行目 / パターン / URL / スキル名 / サブエージェント種別の順で 1 つ・300 文字まで）。入力の全文は返さない
 - `parentId`: tool がぶら下がる直前の発話（user / assistant）の id
+- `images`: user の発話に添えられた画像の目録（`index` は発話の中で何枚目の画像か・`mediaType`）。本文には base64 を載せず、
+  画像ブロックの位置には従来どおり `[画像]` の印が入る（目録のある分は受け手が印を外して画像を出す）。載せるのは base64 の
+  `image/png` / `image/jpeg` / `image/gif` / `image/webp` だけ（SVG 等は文書として開かれた時にスクリプトが動きうるので出さない）。
+  ツール結果（Read で画像を開いた等）の画像は対象外。無ければ空配列
 - ログが見つからなければ 404、sessionId の形が不正なら 400。終了済みのセッションも jsonl が残っていれば読める
+
+**画像の本体**は `GET /api/sessions/<sessionId>/transcript/<itemId>/images/<index>`（`itemId` の `:` は `%3A` でもよい）。
+`content-type` に画像の形式を付けたバイナリで返す（`x-content-type-options: nosniff`・`content-security-policy: default-src 'none'`・
+`cache-control: private, max-age=86400`。発話の uuid ごとに中身は変わらない）。monitor は画像を手元に持たず、画像付きの行の
+ファイル上の位置だけを覚えておき、求められた時にその行を読み直して取り出す（位置がずれていたら uuid で探し直す）。
+目録に無い番号・ログや発話が見つからなければ 404、id や番号の形が不正なら 400。Host / Origin 検証・LAN トークンは他の API と同じ。
 
 **追記は SSE で届く。** `/events?transcripts=<id>[,<id>…]`（全セッションなら `*`）で接続すると、
 `event: transcript` / `data: {"sessionId": "…", "items": [ … ]}` が流れる。購読した時点までの内容は流さないので、

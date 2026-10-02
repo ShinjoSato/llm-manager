@@ -13,12 +13,15 @@ public struct RelayNote: Sendable, Equatable, Identifiable {
     /// 送った時刻（epoch ミリ秒）。会話の並びに差し込む位置に使う。
     public var sentAt: Double
     public var state: State
+    /// 添えた画像の一時ファイル（受け手にはパスで渡り、吹き出しには画像で出す）。
+    public var imagePaths: [String]
 
-    public init(id: String = UUID().uuidString, text: String, sentAt: Double, state: State = .sending) {
+    public init(id: String = UUID().uuidString, text: String, sentAt: Double, state: State = .sending, imagePaths: [String] = []) {
         self.id = id
         self.text = text
         self.sentAt = sentAt
         self.state = state
+        self.imagePaths = imagePaths
     }
 }
 

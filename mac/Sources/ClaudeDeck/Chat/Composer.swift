@@ -375,42 +375,8 @@ final class FocusingScrollView: NSScrollView {
     }
 }
 
-final class SubmitTextView: NSTextView {
+final class SubmitTextView: AttachmentPasteTextView {
     var onSubmit: (() -> Void)?
-    var onAttach: (([AttachmentSource]) -> Void)?
-
-    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
-        super.acceptableDragTypes + [.fileURL] + AttachmentPasteboard.imageTypes
-    }
-
-    /// ⌘V: ファイルや画像だけのクリップボードは添付にし、文字を含むものは従来どおり文字として貼る。
-    override func paste(_ sender: Any?) {
-        if isEditable, attach(from: .general) { return }
-        super.paste(sender)
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if isEditable, AttachmentPasteboard.canAttach(sender.draggingPasteboard) { return .copy }
-        return super.draggingEntered(sender)
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if isEditable, AttachmentPasteboard.canAttach(sender.draggingPasteboard) { return .copy }
-        return super.draggingUpdated(sender)
-    }
-
-    /// 文字欄に落としたファイルもパスの文字ではなく添付にする。
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        if isEditable, attach(from: sender.draggingPasteboard) { return true }
-        return super.performDragOperation(sender)
-    }
-
-    private func attach(from pasteboard: NSPasteboard) -> Bool {
-        let sources = AttachmentPasteboard.sources(in: pasteboard)
-        guard !sources.isEmpty, let onAttach else { return false }
-        onAttach(sources)
-        return true
-    }
 
     override func keyDown(with event: NSEvent) {
         let isReturn = event.keyCode == 36 || event.keyCode == 76

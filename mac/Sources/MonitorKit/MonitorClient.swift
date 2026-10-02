@@ -166,6 +166,21 @@ public struct MonitorClient: Sendable {
         return try await get("/api/sessions/\(Self.pathSegment(sessionId))/transcript", query: query, as: TranscriptResponse.self)
     }
 
+    /// 発話に添えられた画像の本体（`TranscriptItem.images` の `index`）。画像でない応答はエラーにする。
+    public func fetchTranscriptImage(sessionId: String, itemId: String, index: Int) async throws -> Data {
+        var request = URLRequest(url: transcriptImageURL(sessionId: sessionId, itemId: itemId, index: index))
+        request.setValue("image/*", forHTTPHeaderField: "Accept")
+        let (data, response) = try await sendWithResponse(request)
+        guard let type = response.value(forHTTPHeaderField: "Content-Type")?.lowercased(), type.hasPrefix("image/") else {
+            throw MonitorError.invalidResponse("画像ではない応答")
+        }
+        return data
+    }
+
+    func transcriptImageURL(sessionId: String, itemId: String, index: Int) -> URL {
+        endpoint("/api/sessions/\(Self.pathSegment(sessionId))/transcript/\(Self.pathSegment(itemId))/images/\(index)")
+    }
+
     // MARK: - 書き込み
 
     /// そのセッションの受信箱へ伝言を送る。受信側で「別セッションからのメッセージ」として扱われる。
@@ -222,6 +237,10 @@ public struct MonitorClient: Sendable {
     }
 
     private func send(_ request: URLRequest) async throws -> Data {
+        try await sendWithResponse(request).0
+    }
+
+    private func sendWithResponse(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
         do {
@@ -235,7 +254,7 @@ public struct MonitorClient: Sendable {
             let failure = try? JSONDecoder().decode(Failure.self, from: data)
             throw MonitorError.http(status: http.statusCode, code: failure?.code, message: failure?.error)
         }
-        return data
+        return (data, http)
     }
 
     /// パスの 1 区間として安全な形にする（`/` や `?` を含む ID でも経路を壊さないため）。
