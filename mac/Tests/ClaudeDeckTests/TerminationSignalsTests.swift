@@ -115,17 +115,4 @@ final class TerminationSignalsTests: XCTestCase {
         while isRunning(pid) && Date() < deadline { usleep(20_000) }
         XCTAssertFalse(isRunning(pid), "terminate() で子が終わらない")
     }
-
-    /// monitor 用の起動口は、親が無視していても子では既定に戻す。
-    func testPosixRunnerResetsIgnoredSignals() throws {
-        for sig in signals { signal(sig, SIG_IGN) }
-        let child = try PosixProcessRunner(shell: ["/bin/sh", "-c"]).spawn(
-            script: "exec sleep 30", directory: URL(fileURLWithPath: "/"),
-            environment: ["PATH": "/usr/bin:/bin"], logURL: nil
-        )
-        defer { child.signalGroup(SIGKILL) }
-        usleep(200_000)
-        let dispositions = try XCTUnwrap(signalDispositions(child.pid))
-        XCTAssertEqual(dispositions.ignored & (bit(SIGTERM) | bit(SIGINT)), 0)
-    }
 }

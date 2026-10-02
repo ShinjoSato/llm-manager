@@ -43,7 +43,7 @@ struct RoomListItem: Identifiable {
     let kind: Kind
 }
 
-/// チャット画面の状態。monitor のストアと、アプリがホストするセッションを束ねる。
+/// チャット画面の状態。監視のストアと、アプリがホストするセッションを束ねる。
 @MainActor
 @Observable
 final class ChatModel {
@@ -66,13 +66,11 @@ final class ChatModel {
     /// ルーム → 画像を添えて送り、まだ transcript に載っていない発話（載るまで送った画像を吹き出しに出す）。
     private(set) var sentImages: [RoomID: [PendingImageMessage]] = [:]
     /// 吹き出しの画像の読み込みとキャッシュ。
-    @ObservationIgnored private(set) lazy var imageLoader = ChatImageLoader(client: store.client)
+    @ObservationIgnored private(set) lazy var imageLoader = ChatImageLoader(source: store.imageSource)
 
     private(set) var transcripts: [String: TranscriptBuffer] = [:]
     private(set) var loadingTranscripts: Set<String> = []
-    private(set) var transcriptErrors: [String: String] = [:]
     @ObservationIgnored private var staleTranscripts: Set<String> = []
-    @ObservationIgnored private var transcriptRetries: [String: Int] = [:]
 
     /// ルーム一覧。feed・セッション・ホスト中のセッションが変わった時だけ作り直す（描画のたびに feed を走査しない）。
     private(set) var rooms: [Room] = []
@@ -89,7 +87,7 @@ final class ChatModel {
     /// 引き継ぎ中の sessionId（終了待ち〜再開まで）。
     private(set) var handingOver: Set<String> = []
 
-    /// 送信中の権限確認（monitor の key か "pty:<ルーム>"）。二度押しさせない。
+    /// 送信中の権限確認（Channels の key か "pty:<ルーム>"）。二度押しさせない。
     private(set) var busyPermissionKeys: Set<String> = []
     /// 選択肢カードに数秒だけ出す結果（"menu:<ルーム>" → 文言）。複数選択でチェックを切り替えた時など。
     private(set) var menuNotices: [String: String] = [:]
@@ -329,7 +327,7 @@ final class ChatModel {
     func inputDisabledReason(for room: Room) -> String? {
         guard room.hosted != nil else {
             if let sessionId = room.sessionId, handingOver.contains(sessionId) { return "引き継ぎ中…" }
-            if !store.connection.isConnected { return "monitor に未接続のため伝言を送れません" }
+            if !store.connection.isConnected { return "セッションの監視を始めています…" }
             if room.snapshot?.alive == false || room.status == .stopped { return "このセッションは終了しています" }
             return nil
         }
@@ -717,8 +715,8 @@ final class ChatModel {
         return transcripts[sessionId]?.items ?? []
     }
 
-    /// 選択中のルームの履歴を揃える。未取得・再接続後なら GET する（SSE は `*` で常に張っている）。
-    /// 取り直しも常に全件で置き換える（切れていた間の発話は手元の末尾より前に入りうるので `after=` では埋まらない）。
+    /// 選択中のルームの履歴を揃える。未取得・監視の開始し直し後なら取得する（追記は `.all` の購読で常に届く）。
+    /// 取り直しも常に全件で置き換える（止まっていた間の発話は手元の末尾より前に入りうるので `after=` では埋まらない）。
     func ensureTranscript(for sessionId: String?) {
         guard let sessionId, store.connection.isConnected, !loadingTranscripts.contains(sessionId) else { return }
         guard transcripts[sessionId] == nil || staleTranscripts.contains(sessionId) else { return }
@@ -728,47 +726,20 @@ final class ChatModel {
         staleTranscripts.remove(sessionId)
         loadingTranscripts.insert(sessionId)
         Task {
-            var failed = false
-            do {
-                let response = try await store.client.fetchTranscript(sessionId: sessionId, after: nil)
+            // 最初の発話前はログが無い（nil）。以降は購読で届くので空のまま待つ。
+            if let response = await store.fetchTranscript(sessionId: sessionId) {
                 transcripts[sessionId]?.apply(response, fullReplace: true)
                 pruneSentImages(sessionId: sessionId)
-                transcriptErrors[sessionId] = nil
-                transcriptRetries[sessionId] = nil
-            } catch MonitorError.http(status: 404, _, _) {
-                // 最初の発話前はログが無い。以降は SSE で届くので空のまま待つ。
-                transcriptErrors[sessionId] = nil
-                transcriptRetries[sessionId] = nil
-            } catch {
-                transcriptErrors[sessionId] = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                staleTranscripts.insert(sessionId)
-                failed = true
             }
             loadingTranscripts.remove(sessionId)
-            if failed {
-                retryTranscript(sessionId)
-            } else if staleTranscripts.contains(sessionId) {
-                // 取得中に繋ぎ直した。その応答は切断前の内容かもしれないので取り直す。
-                ensureTranscript(for: sessionId)
-            }
+            // 取得中に監視を始め直した。その応答は古いかもしれないので取り直す。
+            if staleTranscripts.contains(sessionId) { ensureTranscript(for: sessionId) }
         }
     }
 
-    /// 失敗した取得を間隔を空けて数回だけやり直す（monitor が落ちている間に叩き続けない）。
-    private func retryTranscript(_ sessionId: String) {
-        let attempt = (transcriptRetries[sessionId] ?? 0) + 1
-        guard attempt <= 3 else { return }
-        transcriptRetries[sessionId] = attempt
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Double(attempt) * 2))
-            self?.ensureTranscript(for: sessionId)
-        }
-    }
-
-    /// monitor に繋ぎ直した。切れていた間の分を取り直す。
+    /// 監視を始め直した。止まっていた間の分を取り直す。
     func reconnected() {
         staleTranscripts = Set(transcripts.keys)
-        transcriptRetries = [:]
         ensureTranscript(for: selectedRoom?.sessionId)
     }
 

@@ -87,18 +87,14 @@ final class StageLogicTests: XCTestCase {
     // MARK: - プレースホルダー
 
     func testContentPlaceholders() {
-        func content(connected: Bool = true, phase: MonitorLaunchPhase = .usingExisting, room: Bool = true,
-                     id: String? = "s", known: Bool = true) -> StageContent {
-            StageLogic.content(connected: connected, launchPhase: phase, hasRoom: room, sessionId: id, sessionKnown: known)
+        func content(connected: Bool = true, room: Bool = true, id: String? = "s", known: Bool = true) -> StageContent {
+            StageLogic.content(connected: connected, hasRoom: room, sessionId: id, sessionKnown: known)
         }
         XCTAssertEqual(content(), .stage(sessionId: "s"))
-        XCTAssertEqual(content(connected: false, phase: .installing), .placeholder("monitor を準備しています（npm install）…"))
-        XCTAssertEqual(content(connected: false, phase: .starting(pid: 1)), .placeholder("monitor を起動しています…"))
-        XCTAssertEqual(content(connected: false, phase: .failed(.nodeNotFound)), .placeholder("monitor を起動できませんでした"))
-        XCTAssertEqual(content(connected: false), .placeholder("monitor に接続していません（自動で再接続します）"))
+        XCTAssertEqual(content(connected: false), .placeholder("セッションの監視を始めています…"))
         XCTAssertEqual(content(room: false), .placeholder("ルームを選ぶとステージを表示します"))
         XCTAssertEqual(content(id: nil), .placeholder("セッションを確認しています…"))
-        XCTAssertEqual(content(known: false), .placeholder("monitor がこのセッションをまだ見つけていません"))
+        XCTAssertEqual(content(known: false), .placeholder("このセッションをまだ見つけていません"))
     }
 
     // MARK: - 開閉

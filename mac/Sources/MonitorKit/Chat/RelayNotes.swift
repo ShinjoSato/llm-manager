@@ -38,7 +38,7 @@ public enum RelayNotes {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// transcript の発話が伝言の写しか（monitor が isMeta 行を出すようになっても二重に並べないため）。
+    /// transcript の発話が伝言の写しか（isMeta 行を出すようになっても二重に並べないため）。
     public static func isEcho(_ item: TranscriptItem, of note: RelayNote) -> Bool {
         guard item.kind == .user, let raw = item.text else { return false }
         if let at = item.at, at < note.sentAt - clockSlack { return false }
@@ -68,21 +68,17 @@ public enum RelayNotes {
         return result
     }
 
-    /// 送信失敗の理由（monitor の失敗種別を画面向けの言葉にする）。
+    /// 送信失敗の理由（監視の失敗種別を画面向けの言葉にする）。
     public static func failureReason(_ error: Error) -> String {
-        switch error {
-        case MonitorError.http(_, let code?, let message):
-            switch code {
-            case "not_found": return "monitor がこのセッションを見失っています（終了した可能性）"
-            case "not_alive": return "このセッションは終了しています"
-            case "no_socket": return "このセッションには伝言の受け口がありません（受信箱ソケットが見つかりません）"
-            case "unreachable": return "セッションに届けられませんでした" + (message.map { "（\($0)）" } ?? "")
-            default: return message ?? code
-            }
-        case MonitorError.unreachable:
-            return "monitor に接続できません"
-        default:
+        guard let failure = error as? HubFailure else {
             return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+        switch failure.code {
+        case "not_found": return "このセッションを見失っています（終了した可能性）"
+        case "not_alive": return "このセッションは終了しています"
+        case "no_socket": return "このセッションには伝言の受け口がありません（受信箱ソケットが見つかりません）"
+        case "unreachable": return "セッションに届けられませんでした（\(failure.message)）"
+        default: return failure.message
         }
     }
 }

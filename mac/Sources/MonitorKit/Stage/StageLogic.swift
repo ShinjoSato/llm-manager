@@ -160,24 +160,15 @@ public enum StageLogic {
 
     // MARK: - プレースホルダー
 
-    /// 接続・起動・選択の状態から、ステージかプレースホルダーかを決める。
+    /// 監視・選択の状態から、ステージかプレースホルダーかを決める。
     public static func content(connected: Bool,
-                               launchPhase: MonitorLaunchPhase,
                                hasRoom: Bool,
                                sessionId: String?,
                                sessionKnown: Bool) -> StageContent {
-        if !connected {
-            switch launchPhase {
-            case .checking: return .placeholder("monitor を確認しています…")
-            case .installing: return .placeholder("monitor を準備しています（npm install）…")
-            case .starting: return .placeholder("monitor を起動しています…")
-            case .failed: return .placeholder("monitor を起動できませんでした")
-            default: return .placeholder("monitor に接続していません（自動で再接続します）")
-            }
-        }
+        guard connected else { return .placeholder("セッションの監視を始めています…") }
         guard hasRoom else { return .placeholder("ルームを選ぶとステージを表示します") }
         guard let sessionId else { return .placeholder("セッションを確認しています…") }
-        guard sessionKnown else { return .placeholder("monitor がこのセッションをまだ見つけていません") }
+        guard sessionKnown else { return .placeholder("このセッションをまだ見つけていません") }
         return .stage(sessionId: sessionId)
     }
 

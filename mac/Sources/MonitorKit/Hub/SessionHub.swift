@@ -1,0 +1,686 @@
+import Foundation
+
+/// フック受け口が受け取るペイロード（Claude Code のフック JSON のうち使う分）。
+public struct HookPayload: Sendable, Equatable {
+    public var sessionId: String?
+    public var hookEventName: String?
+    public var toolName: String?
+    public var notificationType: String?
+    public var notificationMessage: String?
+    public var errorType: String?
+    public var errorMessage: String?
+    public var agentType: String?
+
+    public init(sessionId: String? = nil, hookEventName: String? = nil, toolName: String? = nil,
+                notificationType: String? = nil, notificationMessage: String? = nil, errorType: String? = nil,
+                errorMessage: String? = nil, agentType: String? = nil) {
+        self.sessionId = sessionId
+        self.hookEventName = hookEventName
+        self.toolName = toolName
+        self.notificationType = notificationType
+        self.notificationMessage = notificationMessage
+        self.errorType = errorType
+        self.errorMessage = errorMessage
+        self.agentType = agentType
+    }
+
+    /// JSON のオブジェクトから読む。文字列でない値は無いものとして扱う。
+    public init(json o: [String: Any]) {
+        self.init(sessionId: JSONLoose.string(o["session_id"]),
+                  hookEventName: JSONLoose.string(o["hook_event_name"]),
+                  toolName: JSONLoose.string(o["tool_name"]),
+                  notificationType: JSONLoose.string(o["notification_type"]),
+                  notificationMessage: JSONLoose.string(o["notification_message"]),
+                  errorType: JSONLoose.string(o["error_type"]),
+                  errorMessage: JSONLoose.string(o["error_message"]),
+                  agentType: JSONLoose.string(o["agent_type"]))
+    }
+}
+
+/// 伝言・エディタ操作の失敗。`code` は画面の言い換えに使う（not_found / not_alive / no_socket / unreachable / no_project / failed）。
+public struct HubFailure: Error, Sendable, Equatable, LocalizedError {
+    public var code: String
+    public var message: String
+
+    public init(code: String, message: String) {
+        self.code = code
+        self.message = message
+    }
+
+    public var errorDescription: String? { message }
+}
+
+/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: monitor/src/hub.ts）。
+/// 受け手は `MonitorEvent` を 1 本の流れで受け取る（以前の SSE と同じ単位）。
+public actor SessionHub {
+    /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。
+    static let staleBusy: Double = 10 * 60_000
+    /// サブエージェントのログがこの時間内に更新されていれば、そのエージェントは動いているとみなす。
+    static let agentWindow: Double = 3 * 60_000
+    /// 終了したセッションを一覧に残す時間。消えた理由を追えるようにする。
+    static let stoppedRetention: Double = 5 * 60_000
+    public static let inventoryInterval: Duration = .seconds(3)
+    public static let transcriptInterval: Duration = .milliseconds(250)
+    /// 経過時間だけで状態が変わる分（稼働中 → 待機など）も配るための間隔。
+    public static let snapshotInterval: Duration = .seconds(1)
+    /// サブエージェント数の走査は syscall が多いので実況ポーリングより粗くする。
+    static let agentScanInterval: Double = 2_000
+    static let feedLimit = 300
+
+    /// ログの終わり方。busy はモデルの番（ツール実行中・長考中）で、無音でも動いている。
+    enum TurnState { case busy, settled }
+
+    final class State {
+        var raw: RawSession
+        var reader: TranscriptReader?
+        var transcriptPath: String?
+        var branch: String?
+        var title: String?
+        var lastPrompt: String?
+        var lastActivityAt: Double?
+        var currentTool: String?
+        var currentSkill: String?
+        var currentAction: String?
+        var tokens: TokenUsage?
+        var hookStatus: SessionStatus?
+        var hookDetail: String?
+        var hookAt: Double = 0
+        /// 権限待ちで届いた素の値。ログの読み取りが追い付いてから説明を添えるため、組み立ては配信時に行う。
+        var hookTool: String?
+        var hookMessage: String?
+        /// 要対応になった時刻。要対応どうしの移り変わりでは引き継ぐ。
+        var attentionSince: Double?
+        var agents: [AgentInfo] = []
+        var agentsCheckedAt: Double = 0
+        /// サブエージェントのログが最後に動いた時刻。親が Agent 実行中は親ログが無音になるため。
+        var lastAgentActivityAt: Double?
+        var socketPath: String?
+        /// cwd は変わらないのでセッション生成時に一度だけ調べる。
+        var xcodeProject: String?
+        var endedAt: Double?
+        var turnState: TurnState?
+
+        init(raw: RawSession) {
+            self.raw = raw
+        }
+
+        /// 親ログとサブエージェントのうち新しい方。無ければ 0。
+        var lastActivity: Double { max(lastActivityAt ?? 0, lastAgentActivityAt ?? 0) }
+    }
+
+    public let home: ClaudeHome
+    private let usageFile: URL?
+    private let now: @Sendable () -> Double
+    private let isAlive: @Sendable (Int32) -> Bool
+    private let transcripts: TranscriptStore?
+
+    private var sessions: [String: State] = [:]
+    private var permissions = PermissionRegistry()
+    private var feed: [FeedItem] = []
+    private var feedSeq = 0
+    private var agentTypes: [String: String] = [:]
+    private var usage: UsageSnapshot?
+    private var usageRead = false
+    private var locator: TranscriptLocator
+    private var tasks: [Task<Void, Never>] = []
+    private var sink: (@Sendable (MonitorEvent) -> Void)?
+
+    public init(home: ClaudeHome,
+                usageFile: URL?,
+                transcripts: TranscriptStore? = nil,
+                now: @escaping @Sendable () -> Double = epochMillisNow,
+                isAlive: @escaping @Sendable (Int32) -> Bool = SessionInventory.processAlive) {
+        self.home = home
+        self.usageFile = usageFile
+        self.transcripts = transcripts
+        self.now = now
+        self.isAlive = isAlive
+        locator = TranscriptLocator(home: home)
+    }
+
+    /// 変化の受け口を差し替える（`start` 前に呼ぶ）。
+    public func setSink(_ sink: (@Sendable (MonitorEvent) -> Void)?) {
+        self.sink = sink
+    }
+
+    // MARK: - ループ
+
+    public func start() async {
+        guard tasks.isEmpty else { return }
+        await scanInventory()
+        pollTranscripts()
+        pollUsage()
+        emitUpdate()
+        tasks.append(loop(every: Self.inventoryInterval) { hub in
+            await hub.scanInventory()
+            await hub.pollUsage()
+        })
+        tasks.append(loop(every: Self.transcriptInterval) { hub in await hub.pollTranscripts() })
+        tasks.append(loop(every: Self.snapshotInterval) { hub in await hub.emitUpdate() })
+    }
+
+    public func stop() {
+        tasks.forEach { $0.cancel() }
+        tasks = []
+    }
+
+    private func loop(every interval: Duration, _ body: @escaping @Sendable (SessionHub) async -> Void) -> Task<Void, Never> {
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard let self, !Task.isCancelled else { return }
+                await body(self)
+            }
+        }
+    }
+
+    // MARK: - 在庫層
+
+    func scanInventory() async {
+        var seen = Set<String>()
+        let now = now()
+        var changed = false
+
+        for raw in SessionInventory.scan(directory: home.sessionsDirectory, isAlive: isAlive) {
+            seen.insert(raw.sessionId)
+            guard let existing = sessions[raw.sessionId] else {
+                sessions[raw.sessionId] = createState(raw)
+                changed = true
+                push(raw.sessionId, .session, "セッション検出: \(Self.basename(raw.cwd))")
+                continue
+            }
+            if existing.raw.alive != raw.alive {
+                changed = true
+                if !raw.alive { push(raw.sessionId, .session, "セッション終了") }
+            }
+            existing.raw = raw
+            existing.endedAt = raw.alive ? nil : (existing.endedAt ?? now)
+            existing.socketPath = socketFor(raw)
+        }
+
+        // レジストリから消えたセッションは終了済み。しばらく墓標として残してから捨てる。
+        for (id, state) in sessions where !seen.contains(id) {
+            if state.endedAt == nil {
+                state.endedAt = now
+                state.raw.alive = false
+                push(id, .session, "セッション終了")
+                changed = true
+            } else if let ended = state.endedAt, now - ended > Self.stoppedRetention {
+                if let path = state.transcriptPath {
+                    let dir = ClaudeHome.subagentDirectory(forTranscript: path)
+                    for key in agentTypes.keys where key.hasPrefix(dir) { agentTypes[key] = nil }
+                }
+                sessions[id] = nil
+                changed = true
+            }
+        }
+
+        // チャネルが取りに来なくなった保留（セッション終了・取りこぼし）を捨てる。
+        if !permissions.sweep(now: now).isEmpty { emitPermissions() }
+
+        if changed {
+            emitUpdate()
+            await transcripts?.setKnown(sessions.values.map { TranscriptStore.Known(sessionId: $0.raw.sessionId, cwd: $0.raw.cwd) })
+        }
+    }
+
+    private func createState(_ raw: RawSession) -> State {
+        let state = State(raw: raw)
+        state.transcriptPath = locator.resolve(sessionId: raw.sessionId, cwd: raw.cwd)
+        if let path = state.transcriptPath {
+            state.reader = TranscriptReader(path: path)
+            let meta = TranscriptTail.primeMeta(path: path)
+            state.title = meta.title
+            state.lastPrompt = meta.lastPrompt
+        }
+        state.socketPath = socketFor(raw)
+        state.xcodeProject = XcodeFinder.find(in: raw.cwd)
+        state.endedAt = raw.alive ? nil : now()
+        return state
+    }
+
+    // MARK: - 実況層
+
+    func pollTranscripts() {
+        let now = now()
+        var changed = false
+
+        for (id, state) in sessions {
+            if state.reader == nil {
+                // 起動直後はログがまだ無いことがあるので都度あきらめずに探す。
+                guard let path = locator.resolve(sessionId: state.raw.sessionId, cwd: state.raw.cwd) else { continue }
+                state.transcriptPath = path
+                state.reader = TranscriptReader(path: path)
+                let meta = TranscriptTail.primeMeta(path: path)
+                state.title = state.title ?? meta.title
+                state.lastPrompt = state.lastPrompt ?? meta.lastPrompt
+            }
+            guard let reader = state.reader else { continue }
+
+            let events = reader.read()
+            if !events.isEmpty { changed = true }
+
+            for ev in events {
+                if let branch = ev.branch { state.branch = branch }
+                if let title = ev.title, title != state.title {
+                    state.title = title
+                    push(id, .message, "作業内容: \(title)")
+                }
+                if let prompt = ev.lastPrompt, prompt != state.lastPrompt {
+                    state.lastPrompt = prompt
+                    push(id, .prompt, Self.truncate(prompt, 160))
+                }
+                if let at = ev.at { state.lastActivityAt = max(state.lastActivityAt ?? 0, at) }
+                if let usage = ev.usage { state.tokens = usage }
+
+                // thinking だけの assistant 行では判定を変えない（応答が終わったとは限らない）。
+                if ev.type == "assistant" {
+                    if ev.tools?.isEmpty == false { state.turnState = .busy } else if ev.text != nil { state.turnState = .settled }
+                } else if ev.type == "user" {
+                    state.turnState = .busy // プロンプト送信か tool_result。どちらも次はモデルの番
+                }
+
+                if let tools = ev.tools, !tools.isEmpty {
+                    state.currentTool = tools.last
+                    // 配下のツールには skill が無い。nil で塗り潰さず、新しいスキルが来た時だけ差し替える。
+                    if let skill = ev.toolDetail?.skill { state.currentSkill = skill }
+                    state.currentAction = ev.toolDetail?.description
+                    for tool in tools { push(id, .tool, tool, tool: tool) }
+                    // フックより新しい行を読んだ時だけ「待ち」を解く。古い行で権限待ちを消さない。
+                    if ev.at == nil || ev.at! > state.hookAt {
+                        state.hookStatus = nil
+                        state.hookDetail = nil
+                        state.hookTool = nil
+                        state.hookMessage = nil
+                        state.attentionSince = nil
+                    }
+                } else if ev.type == "user" {
+                    // tool_result が返った = ツールは終わっている
+                    state.currentTool = nil
+                    state.currentAction = nil
+                    // スキルは配下のツールが動く間ずっと続く。次の指示が来るまで保持する。
+                    if ev.userKind == .prompt { state.currentSkill = nil }
+                } else if ev.type == "assistant", let text = ev.text {
+                    // スキルは途中で一言述べても続いている。解除は次のユーザー指示だけに任せる。
+                    state.currentTool = nil
+                    state.currentAction = nil
+                    push(id, .message, Self.truncate(text, 160))
+                }
+            }
+
+            // 預かった後に書かれたログ行があれば、その確認は端末側で答えられている。
+            if !events.isEmpty && permissions.count > 0 {
+                let dropped = permissions.dropResolved(sessionId: id, lastActivityAt: state.lastActivityAt ?? 0)
+                for pending in dropped {
+                    push(id, .status, "権限の確認は端末側で答えられたようです: \(pending.toolName)", local: true)
+                }
+                if !dropped.isEmpty { emitPermissions() }
+            }
+
+            if now - state.agentsCheckedAt >= Self.agentScanInterval {
+                state.agentsCheckedAt = now
+                let (agents, newest) = scanAgents(state, now: now)
+                if newest > 0 { state.lastAgentActivityAt = max(state.lastAgentActivityAt ?? 0, newest) }
+                func key(_ list: [AgentInfo]) -> String { list.map { "\($0.id):\($0.type ?? "")" }.sorted().joined(separator: ",") }
+                if key(agents) != key(state.agents) { changed = true }
+                state.agents = agents
+            }
+        }
+
+        if changed { emitUpdate() }
+    }
+
+    /// 稼働中のサブエージェント一覧と、サブエージェント側の最終更新時刻を返す。
+    private func scanAgents(_ state: State, now: Double) -> ([AgentInfo], Double) {
+        guard let path = state.transcriptPath else { return ([], 0) }
+        let dir = ClaudeHome.subagentDirectory(forTranscript: path)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return ([], 0) }
+        var agents: [AgentInfo] = []
+        var newest: Double = 0
+        for file in files where file.hasSuffix(".jsonl") {
+            let full = "\(dir)/\(file)"
+            var st = stat()
+            guard stat(full, &st) == 0 else { continue }
+            let mtime = Double(st.st_mtimespec.tv_sec) * 1000 + Double(st.st_mtimespec.tv_nsec) / 1_000_000
+            newest = max(newest, mtime)
+            if now - mtime >= Self.agentWindow { continue }
+            var id = String(file.dropLast(".jsonl".count))
+            if id.hasPrefix("agent-") { id = String(id.dropFirst("agent-".count)) }
+            agents.append(AgentInfo(id: id, type: agentType(full), lastActivityAt: mtime))
+        }
+        agents.sort { $0.lastActivityAt > $1.lastActivityAt }
+        return (agents, newest)
+    }
+
+    /// サブエージェントの種別。ログと同時に書かれる meta.json に入っている。
+    private func agentType(_ path: String) -> String? {
+        let metaPath = String(path.dropLast(".jsonl".count)) + ".meta.json"
+        if let cached = agentTypes[metaPath] { return cached.isEmpty ? nil : cached }
+        guard let data = FileManager.default.contents(atPath: metaPath),
+              let o = JSONLoose.dict(JSONLoose.object(data)) else { return nil }
+        let type = JSONLoose.string(o["agentType"])
+        // 見つからない場合も覚える。空文字は「読んだが無かった」の意味。
+        agentTypes[metaPath] = type ?? ""
+        return type
+    }
+
+    // MARK: - 使用量
+
+    /// statusline スクリプトが書いたファイルを読み直す。内容が変わった時だけ配る。
+    func pollUsage() {
+        let next = UsageReader.read(usageFile)
+        if usageRead && next == usage { return }
+        usageRead = true
+        usage = next
+        sink?(.usage(next))
+    }
+
+    public func usageSnapshot() -> UsageSnapshot? { usage }
+
+    // MARK: - フック層
+
+    /// Claude Code のフックから届いた状態遷移を反映する。ログには残らない情報はここでしか取れない。
+    @discardableResult
+    public func applyHook(_ payload: HookPayload) async -> Bool {
+        guard let id = payload.sessionId, !id.isEmpty else { return false }
+        var found = sessions[id]
+        if found == nil {
+            // 在庫スキャンより先に hook が来ることがある。取り込んでから拾い直す。
+            await scanInventory()
+            found = sessions[id]
+        }
+        guard let state = found else { return false }
+
+        let now = now()
+        var status: SessionStatus?
+        var detail: String?
+        var tool: String?
+        var message: String?
+        var feedLine: (FeedKind, String)?
+
+        switch payload.hookEventName ?? "" {
+        case "UserPromptSubmit":
+            status = .working
+            feedLine = (.status, "指示を受け取りました")
+        case "Stop":
+            status = .idle
+            feedLine = (.status, "応答完了")
+        case "Notification":
+            let type = payload.notificationType ?? ""
+            if type == "permission_prompt" {
+                status = .permission
+                tool = payload.toolName
+                message = payload.notificationMessage
+                detail = Attention.permissionDetail(toolName: tool, message: message,
+                                                    currentTool: state.currentTool, currentAction: state.currentAction)
+                feedLine = (.status, "権限の確認待ち" + (detail.map { ": \($0)" } ?? ""))
+            } else if type == "idle_prompt" || type == "agent_needs_input" {
+                status = .waiting
+                detail = payload.notificationMessage
+                feedLine = (.status, "入力待ちで停止中")
+            } else {
+                // 未知の種別を握り潰すと、フック層が効いていないことに気づけない。
+                feedLine = (.status, "通知: \(type.isEmpty ? "(種別なし)" : type)")
+            }
+        case "StopFailure":
+            status = .error
+            detail = payload.errorType ?? payload.errorMessage
+            feedLine = (.status, "停止: \(detail ?? "APIエラー")")
+        case "SubagentStart":
+            feedLine = (.agent, "サブエージェント開始: \(payload.agentType ?? "?")")
+        case "SubagentStop":
+            feedLine = (.agent, "サブエージェント完了: \(payload.agentType ?? "?")")
+        case "PreToolUse":
+            status = .working
+            if let name = payload.toolName, !name.isEmpty, name != state.currentTool {
+                state.currentTool = name
+                state.currentAction = nil
+            }
+        default:
+            break
+        }
+
+        if let status {
+            let prev = Attention.heldStatus(state.hookStatus, hookAt: state.hookAt, lastActivityAt: state.lastActivity)
+            state.attentionSince = Attention.nextAttentionSince(prevStatus: prev, prevSince: state.attentionSince,
+                                                                nextStatus: status, now: now)
+            state.hookStatus = status
+            state.hookDetail = detail
+            state.hookTool = tool
+            state.hookMessage = message
+            state.hookAt = now
+            if status == .working { state.lastActivityAt = now }
+        }
+        if let (kind, text) = feedLine { push(id, kind, text) }
+        emitUpdate()
+        return true
+    }
+
+    // MARK: - 配信
+
+    private func push(_ sessionId: String, _ kind: FeedKind, _ text: String, tool: String? = nil, local: Bool = false) {
+        feedSeq += 1
+        let item = FeedItem(id: feedSeq, sessionId: sessionId,
+                            project: sessions[sessionId].map { Self.basename($0.raw.cwd) } ?? "?",
+                            at: now(), kind: kind, text: text, tool: tool, local: local ? true : nil)
+        feed.append(item)
+        if feed.count > Self.feedLimit { feed.removeFirst(feed.count - Self.feedLimit) }
+        sink?(.feed(item))
+    }
+
+    func emitUpdate() {
+        sink?(.sessions(snapshot()))
+    }
+
+    private func emitPermissions() {
+        sink?(.permissions(permissions.list()))
+    }
+
+    public func recentFeed(limit: Int = 80) -> [FeedItem] {
+        Array(feed.suffix(limit))
+    }
+
+    // MARK: - 権限確認の中継
+
+    /// チャネルから届いた確認を預かり、判断が出るまで待つ。timeout ならチャネルが取り直す。
+    public func awaitPermission(_ input: PermissionRequestInput, waitMillis: Double = PermissionRelay.waitMillis) async -> PermissionOutcome {
+        let key = input.key
+        let now = now()
+        // 取り直しの谷間に押された判断は取り置きにある。先に渡さないと確認が出直す。
+        if let settled = permissions.takeDecision(key, toolName: input.toolName, inputPreview: input.inputPreview, now: now) {
+            return PermissionOutcome(settled)
+        }
+        let sessionId = PermissionRelay.matchSession(pid: input.pid, sessions: sessions.values.map(\.raw))
+        let state = sessionId.flatMap { sessions[$0] }
+        // セッションを引けなくても、どのリポジトリの確認かは申請元の cwd から出す。
+        let cwd = state?.raw.cwd ?? input.cwd
+        let reg = permissions.register(input, sessionId: sessionId, project: cwd.map(Self.basename), now: now)
+        if reg.linked, let sessionId {
+            push(sessionId, .status, "権限の確認が届きました: \(reg.pending.toolName)", local: true)
+        }
+        for gone in reg.evicted {
+            if let sid = gone.sessionId { push(sid, .status, "保留が多すぎるので捨てました: \(gone.toolName)", local: true) }
+        }
+        if reg.created || reg.changed { emitPermissions() }
+
+        return await withCheckedContinuation { continuation in
+            guard let waiterId = permissions.addWaiter(key, { continuation.resume(returning: $0) }) else {
+                continuation.resume(returning: .dropped)
+                return
+            }
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(Int(waitMillis)))
+                await self?.expireWaiter(key, id: waiterId)
+            }
+        }
+    }
+
+    private func expireWaiter(_ key: String, id: Int) {
+        permissions.expireWaiter(key, id: id)
+    }
+
+    /// 画面からの判断。知らない鍵なら nil。
+    @discardableResult
+    public func decidePermission(key: String, decision: PermissionDecision) -> PendingPermission? {
+        guard let pending = permissions.decide(key, decision, now: now()) else { return nil }
+        if let sid = pending.sessionId {
+            push(sid, .status, "\(decision == .allow ? "許可" : "拒否")しました: \(pending.toolName)", local: true)
+        }
+        emitPermissions()
+        return pending
+    }
+
+    public func pendingPermissions() -> [PendingPermission] {
+        permissions.list()
+    }
+
+    // MARK: - 状態の合成
+
+    private func statusOf(_ state: State) -> (SessionStatus, StatusSource) {
+        guard state.raw.alive else { return (.stopped, .inventory) }
+        // Agent 実行中は親ログが無音になるので、サブエージェント側の更新も活動として数える。
+        let last = state.lastActivity
+        let since = last == 0 ? Double.infinity : now() - last
+        // 親が応答を終えていても、裏でサブエージェントが動いていれば作業は進んでいる。
+        let busy = !state.agents.isEmpty || (state.turnState == .busy && since < Self.staleBusy)
+        // ログ側の活動がフックより新しければ、実際には動いている。
+        if busy && last > state.hookAt { return (.working, .transcript) }
+        if let hook = state.hookStatus { return (hook, .hook) }
+        return (busy ? .working : .idle, .transcript)
+    }
+
+    public func snapshot() -> [SessionSnapshot] {
+        var out: [SessionSnapshot] = []
+        for state in sessions.values {
+            let (status, source) = statusOf(state)
+            let working = status == .working
+            let detail: String? = status == .permission && state.hookStatus == .permission
+                ? Attention.permissionDetail(toolName: state.hookTool, message: state.hookMessage,
+                                             currentTool: state.currentTool, currentAction: state.currentAction)
+                : state.hookDetail
+            let last = state.lastActivity
+            out.append(SessionSnapshot(
+                sessionId: state.raw.sessionId,
+                pid: state.raw.pid,
+                alive: state.raw.alive,
+                name: state.raw.name ?? Self.basename(state.raw.cwd),
+                project: Self.basename(state.raw.cwd),
+                cwd: state.raw.cwd,
+                branch: state.branch,
+                title: state.title,
+                lastPrompt: state.lastPrompt,
+                status: status,
+                statusSource: source,
+                statusDetail: detail,
+                attentionSince: Attention.needsAttention(status) ? (state.attentionSince ?? state.hookAt) : nil,
+                entrypoint: state.raw.entrypoint,
+                version: state.raw.version,
+                startedAt: state.raw.startedAt,
+                lastActivityAt: last == 0 ? nil : last,
+                currentTool: working ? state.currentTool : nil,
+                currentSkill: working ? state.currentSkill : nil,
+                currentAction: working ? state.currentAction : nil,
+                tokens: state.tokens,
+                // 権限待ちの裏で子が回っていることは隠さない。終了したセッションだけ空にする。
+                agents: status == .stopped ? [] : state.agents,
+                canReceive: state.raw.alive && state.socketPath != nil,
+                xcodeProject: state.xcodeProject
+            ))
+        }
+        return out.sorted {
+            let (ra, rb) = (Self.rank($0.status), Self.rank($1.status))
+            if ra != rb { return ra < rb }
+            return $0.project.localizedCompare($1.project) == .orderedAscending
+        }
+    }
+
+    /// 目を引かせたい状態ほど上に出す。
+    static func rank(_ status: SessionStatus) -> Int {
+        switch status {
+        case .permission: return 0
+        case .waiting: return 1
+        case .error: return 2
+        case .working: return 3
+        case .idle: return 4
+        case .stopped: return 5
+        case .unknown: return 6
+        }
+    }
+
+    // MARK: - 伝言・エディタ
+
+    /// 受信箱ソケットの位置。レジストリの値を優先し、無ければ既定の場所を探す。
+    private func socketFor(_ raw: RawSession) -> String? {
+        if let declared = raw.messagingSocketPath {
+            let path = SessionMessaging.expandHome(declared)
+            if SessionMessaging.isOwnSocket(path) { return path }
+        }
+        return SessionMessaging.defaultSocketPath(pid: raw.pid)
+    }
+
+    /// 指定セッションへ 1 通送る。届いたテキストは「別セッションからのメッセージ」として扱われる。
+    public func sendMessage(sessionId: String, text: String) async throws {
+        guard let state = sessions[sessionId] else { throw HubFailure(code: "not_found", message: "セッションが見つかりません") }
+        guard state.raw.alive else { throw HubFailure(code: "not_alive", message: "セッションは終了しています") }
+        guard let socket = state.socketPath ?? socketFor(state.raw) else {
+            throw HubFailure(code: "no_socket", message: "受信箱ソケットが見つかりません")
+        }
+        let error = await SessionMessaging.send(socketPath: socket, text: text)
+        // 受理されたかまでは分からないので、送ったことだけを記録する。
+        push(sessionId, .status, error == nil ? "伝言を送信: \(Self.truncate(text, 60))" : "送信失敗: \(error!)")
+        if let error { throw HubFailure(code: "unreachable", message: error) }
+    }
+
+    /// そのセッションの作業場所をエディタで開く。開く先はリクエストではなく cwd から引く。
+    public func openInApp(sessionId: String, app: OpenApp) async throws {
+        guard let state = sessions[sessionId] else { throw HubFailure(code: "not_found", message: "セッションが見つかりません") }
+        if app == .xcode && state.xcodeProject == nil {
+            throw HubFailure(code: "no_project", message: "Xcode プロジェクトが見つかりません")
+        }
+        let target = app == .xcode ? state.xcodeProject! : state.raw.cwd
+        let name = EditorOpen.appName(app)
+        let error = await EditorOpen.open(app, target: target)
+        push(sessionId, .status, error == nil ? "\(name) で開きました" : "\(name) を開けません: \(Self.truncate(error!, 120))")
+        if let error { throw HubFailure(code: "failed", message: error) }
+    }
+
+    /// そのセッションのワークスペースだけを閉じる。閉じる先はリクエストではなく cwd から引く。
+    public func closeInApp(sessionId: String, app: CloseApp = .xcode) async throws -> CloseState {
+        guard let state = sessions[sessionId] else { throw HubFailure(code: "not_found", message: "セッションが見つかりません") }
+        guard let project = state.xcodeProject else {
+            throw HubFailure(code: "no_project", message: "Xcode プロジェクトが見つかりません")
+        }
+        let outcome = await XcodeClose.close(path: project)
+        let closeState: CloseState
+        switch outcome {
+        case .closeRequested, .opened: closeState = .closed
+        case .notOpen: closeState = .notOpen
+        case .notRunning: closeState = .notRunning
+        case .failed(let reason):
+            push(sessionId, .status, "Xcode を閉じられません: \(Self.truncate(reason, 120))")
+            throw HubFailure(code: "failed", message: reason)
+        }
+        let note: String
+        switch closeState {
+        case .closed: note = "ワークスペースを閉じました"
+        case .notRunning: note = "起動していませんでした"
+        default: note = "ワークスペースは開かれていませんでした"
+        }
+        push(sessionId, .status, "Xcode: \(note)")
+        return closeState
+    }
+
+    // MARK: - 下請け
+
+    static func basename(_ path: String) -> String {
+        var trimmed = Substring(path)
+        while trimmed.count > 1 && trimmed.hasSuffix("/") { trimmed = trimmed.dropLast() }
+        return trimmed.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? String(trimmed)
+    }
+
+    static func truncate(_ text: String, _ max: Int) -> String {
+        let flat = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        guard flat.utf16.count > max else { return flat }
+        return String(decoding: Array(flat.utf16.prefix(max)), as: UTF16.self) + "…"
+    }
+}

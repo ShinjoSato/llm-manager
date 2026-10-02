@@ -366,10 +366,10 @@ final class RelayNotesTests: XCTestCase {
     }
 
     func testFailureReasons() {
-        XCTAssertEqual(RelayNotes.failureReason(MonitorError.http(status: 409, code: "not_alive", message: "x")), "このセッションは終了しています")
-        XCTAssertTrue(RelayNotes.failureReason(MonitorError.http(status: 409, code: "no_socket", message: nil)).contains("受け口"))
-        XCTAssertTrue(RelayNotes.failureReason(MonitorError.http(status: 404, code: "not_found", message: nil)).contains("見失って"))
-        XCTAssertTrue(RelayNotes.failureReason(MonitorError.http(status: 502, code: "unreachable", message: "timeout")).contains("timeout"))
-        XCTAssertEqual(RelayNotes.failureReason(MonitorError.unreachable("refused")), "monitor に接続できません")
+        XCTAssertEqual(RelayNotes.failureReason(HubFailure(code: "not_alive", message: "x")), "このセッションは終了しています")
+        XCTAssertTrue(RelayNotes.failureReason(HubFailure(code: "no_socket", message: "")).contains("受け口"))
+        XCTAssertTrue(RelayNotes.failureReason(HubFailure(code: "not_found", message: "")).contains("見失って"))
+        XCTAssertTrue(RelayNotes.failureReason(HubFailure(code: "unreachable", message: "timeout")).contains("timeout"))
+        XCTAssertEqual(RelayNotes.failureReason(HubFailure(code: "failed", message: "だめ")), "だめ")
     }
 }
