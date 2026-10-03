@@ -1,8 +1,22 @@
-# monitor — Claude Code セッションのリアルタイム集約
+# monitor — Claude Code セッションのリアルタイム集約（サーバーは mac アプリに移った）
 
-複数リポジトリで同時に走っている Claude Code の状況を集約し、API と SSE で配る**独立したプロセス**。
-読み取り専用で `:8766` で動く。画面は持たず、mac アプリ claude-deck がこれに接続して表示する
-（claude-deck は monitor が動いていなければ自動で起動する）。
+> **サーバーは mac アプリ claude-deck に移った。** セッション監視（在庫・実況・フック）・会話の記録と画像・伝言・
+> 使用量の読み取り・Channels の権限確認の受け口は、いまはアプリの中で動く（`mac/Sources/MonitorKit/Hub`・`Server`）。
+> アプリが `127.0.0.1:8766` で `POST /hook`・`POST /api/channel/permissions`・`GET /api/health` を受けるので、
+> `~/.claude/settings.json` のフックと `src/channel.ts` は**宛先を変えずにそのまま**アプリに届く。claude-deck はこの
+> monitor を起動しない（自動起動もやめた）。
+>
+> このディレクトリで今も使われているのは **`src/channel.ts`（Channels の MCP サーバー）と `scripts/statusline.sh`
+> （使用量を `data/claude-usage.json` に書く）だけ**で、mac 側に作り直すまで（#112）残す。`src/server.ts` ほかのサーバー本体は
+> 移植元として残っているだけで、動かす必要は無い。
+>
+> **旧 monitor を動かしたままにしている時**: `npm start` の monitor が 8766 を使っていると、アプリはポートを奪わずに
+> 「フックが届かない」旨をルーム一覧に出す（一覧・会話は表示される）。monitor を止めれば 5 秒以内にアプリが受け口を引き継ぐ。
+
+以下は移植元（Node 版）の説明。判定の仕様は mac 側も同じ。
+
+複数リポジトリで同時に走っている Claude Code の状況を集約し、API と SSE で配る独立したプロセスだった。
+読み取り専用で `:8766` で動き、画面は持たない。
 
 ```bash
 cd monitor

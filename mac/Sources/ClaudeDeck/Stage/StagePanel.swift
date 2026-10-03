@@ -11,7 +11,6 @@ enum StageTheme {
 /// 右側のステージパネル: ステージ（3D）・いまの動き・随伴するサブエージェント・ライブフィード。
 struct StagePanel: View {
     let model: ChatModel
-    var launcher: MonitorLauncher = MonitorBridge.launcher
 
     @AppStorage("stagePanel.open") private var preferOpen = true
     @State private var windowWidth: CGFloat?
@@ -132,7 +131,6 @@ struct StagePanel: View {
     @ViewBuilder
     private func stage(room: Room?, sessionId: String?, snapshot: SessionSnapshot?) -> some View {
         let content = StageLogic.content(connected: store.connection.isConnected,
-                                         launchPhase: launcher.phase,
                                          hasRoom: room != nil,
                                          sessionId: sessionId,
                                          sessionKnown: snapshot != nil)
@@ -143,7 +141,7 @@ struct StagePanel: View {
             EmptyView()
         case (.placeholder(let text), _):
             VStack(spacing: 8) {
-                if launcher.phase.isBusy && !store.connection.isConnected {
+                if !store.connection.isConnected {
                     ProgressView().controlSize(.small)
                 } else {
                     Image(systemName: "sparkles.tv")
@@ -218,7 +216,7 @@ private struct NowSection: View {
                         .truncationMode(.tail)
                 }
             } else {
-                Text(hasRoom ? "monitor の情報がまだありません" : "—")
+                Text(hasRoom ? "このセッションの情報がまだありません" : "—")
                     .font(ChatTheme.caption)
                     .foregroundStyle(ChatTheme.secondary)
             }

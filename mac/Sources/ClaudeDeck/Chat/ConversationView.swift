@@ -262,7 +262,7 @@ struct MessageList: View {
 
     private var emptyMessage: (String, String) {
         if !model.store.connection.isConnected {
-            return ("bolt.horizontal.circle", "monitor に未接続のため会話を表示できません。"
+            return ("bolt.horizontal.circle", "セッションの監視を始めています…"
                     + (room.hosted?.isRunning == true ? "\n下の入力欄からの送信はできます。" : ""))
         }
         guard let sessionId = room.sessionId else {
@@ -273,7 +273,6 @@ struct MessageList: View {
             return ("hourglass", "セッションの開始を待っています…")
         }
         if model.loadingTranscripts.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…") }
-        if let error = model.transcriptErrors[sessionId] { return ("exclamationmark.triangle", error) }
         return ("bubble.left.and.bubble.right", room.hosted != nil ? "下の入力欄から指示を送れます。" : "まだ会話がありません。下の入力欄から伝言を送れます。")
     }
 }

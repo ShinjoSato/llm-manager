@@ -16,7 +16,7 @@ public enum ChatImage: Sendable, Hashable, Identifiable {
 }
 
 public enum ChatImageText {
-    /// monitor が画像ブロックの代わりに本文へ入れる印。
+    /// 監視が画像ブロックの代わりに本文へ入れる印。
     public static let placeholder = "[画像]"
 
     /// 画像を出せる時は、その枚数ぶんの印の行を本文から外す（印だけの発話は空になる）。

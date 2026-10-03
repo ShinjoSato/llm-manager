@@ -1,7 +1,7 @@
 import Foundation
 
-// monitor（monitor/src/types.ts）のドメイン型を Swift に写したもの。
-// 時刻は monitor と同じく epoch ミリ秒のまま持ち、Date が要る所では *Date の計算プロパティを使う。
+// 監視のドメイン型（移植元: monitor/src/types.ts）。
+// 時刻は epoch ミリ秒のまま持ち、Date が要る所では *Date の計算プロパティを使う。
 
 /// 未知の値が来てもデコード全体を落とさないための文字列 enum の共通処理。
 public protocol MonitorLenientEnum: RawRepresentable, Codable, Sendable, Hashable where RawValue == String {
@@ -56,6 +56,8 @@ public struct SessionSnapshot: Codable, Sendable, Hashable, Identifiable {
     public var status: SessionStatus
     public var statusSource: StatusSource
     public var statusDetail: String?
+    /// 要対応（権限待ち・入力待ち・エラー）になった時刻（epoch ミリ秒）。それ以外の状態では nil。
+    public var attentionSince: Double? = nil
     public var entrypoint: String?
     public var version: String?
     public var startedAt: Double
@@ -139,7 +141,7 @@ public struct TranscriptTool: Codable, Sendable, Hashable {
     public var target: String?
 }
 
-/// 発話に添えられた画像 1 枚の目録（types.ts の TranscriptImage）。本体は `MonitorClient.fetchTranscriptImage` で取る。
+/// 発話に添えられた画像 1 枚の目録（types.ts の TranscriptImage）。本体は `MonitorStore.transcriptImage` で取る。
 public struct TranscriptImage: Codable, Sendable, Hashable {
     /// 発話の中で何枚目の画像か（取り出しに使う位置）。
     public var index: Int
@@ -165,7 +167,7 @@ public struct TranscriptItem: Codable, Sendable, Hashable, Identifiable {
 extension TranscriptItem {
     private enum CodingKeys: String, CodingKey { case id, kind, at, text, tool, parentId, images }
 
-    /// 画像の目録を返さない古い monitor にも繋がるよう、`images` は無ければ空にする。
+    /// `images` は無ければ空にする。
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -178,35 +180,35 @@ extension TranscriptItem {
     }
 }
 
-/// `GET /api/sessions/:id/transcript` の応答。
+/// 会話履歴の取得結果。`reset` は `after` の id が見つからず全件を返した時 true。
 public struct TranscriptResponse: Codable, Sendable, Hashable {
     public var sessionId: String
     public var items: [TranscriptItem]
     public var reset: Bool
 }
 
-/// SSE `transcript` イベントの本体。
+/// 会話の追記分。
 public struct TranscriptEvent: Codable, Sendable, Hashable {
     public var sessionId: String
     public var items: [TranscriptItem]
 }
 
-/// 権限確認への返答。monitor は allow / deny しか受け取らない。
+/// 権限確認への返答。Channels は allow / deny しか返せない。
 public enum PermissionDecision: String, Codable, Sendable {
     case allow, deny
 }
 
-/// `POST /api/sessions/:id/open` で開くアプリ。
+/// 作業場所を開くアプリ。
 public enum OpenApp: String, Codable, Sendable {
     case vscode, xcode
 }
 
-/// `POST /api/sessions/:id/close` で閉じるアプリ。
+/// ワークスペースを閉じるアプリ。
 public enum CloseApp: String, Codable, Sendable {
     case xcode
 }
 
-/// close の結果。閉じたと断定できないので monitor の state をそのまま返す。
+/// close の結果（未保存の変更があると Xcode が確認を出すので、閉じたとは断定しない）。
 public enum CloseState: String, MonitorLenientEnum {
     case closed
     case notOpen = "not_open"

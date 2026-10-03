@@ -212,10 +212,4 @@ final class ChatImageTimelineTests: XCTestCase {
         let entries = ChatTimeline.entries(from: [], notes: [note])
         XCTAssertEqual(entries.first?.images, [.file("/c/a.png")])
     }
-
-    func testImageURLEncodesItemId() {
-        let client = MonitorClient(configuration: MonitorConfiguration(baseURL: URL(string: "http://127.0.0.1:8766")!))
-        XCTAssertEqual(client.transcriptImageURL(sessionId: "s-1", itemId: "u-1:0", index: 2).absoluteString,
-                       "http://127.0.0.1:8766/api/sessions/s-1/transcript/u-1%3A0/images/2")
-    }
 }

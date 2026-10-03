@@ -21,12 +21,12 @@ let package = Package(
                 "MonitorKit"
             ]
         ),
-        // monitor（:8766）のクライアント。UI を持たないのでテストできるよう library に切り出す。
+        // セッション監視・会話・フックの受け口（アプリ内）。UI を持たないのでテストできるよう library に切り出す。
         .target(
             name: "MonitorKit",
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         ),
-        // monitor への接続を GUI 無しで確かめるデバッグ用エントリ（`swift run monitor-probe`）。
+        // アプリ内の監視を GUI 無しで確かめるデバッグ用エントリ（`swift run monitor-probe`）。
         .executableTarget(
             name: "monitor-probe",
             dependencies: ["MonitorKit"],

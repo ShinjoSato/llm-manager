@@ -32,7 +32,7 @@ final class HostedSession: Identifiable {
     /// チャット欄からの送信の途中（画像の取り込み待ち〜Enter）。
     private(set) var isSending = false
     private(set) var end: End?
-    /// 最後に解決できた sessionId。終了して monitor の対応表から消えた後も会話を出すために持ち続ける。
+    /// 最後に解決できた sessionId。終了して監視の対応表から消えた後も会話を出すために持ち続ける。
     @ObservationIgnored var lastSessionId: String?
     /// 最後にローカル判定が変わった時刻（monitor 未接続時の並び順に使う）。
     private(set) var lastChangeAt = Date()
@@ -84,7 +84,7 @@ final class HostedSession: Identifiable {
         MonitorBridge.store.registerHostedProcess(pid: pid)
     }
 
-    /// 今の sessionId（monitor の対応表から引けなければ最後に解決できたもの）。
+    /// 今の sessionId（監視の対応表から引けなければ最後に解決できたもの）。
     func resolveSessionId(_ store: MonitorStore) -> String? {
         if let pid, let id = store.sessionId(forHostedPid: pid) {
             lastSessionId = id

@@ -11,13 +11,14 @@ final class ChatImageLoader {
     /// 拡大表示の長辺。原寸が大きすぎる画像でもメモリを食い過ぎないよう抑える。
     static let previewPixels = 2400
 
-    private let client: MonitorClient
+    typealias Source = @Sendable (String, String, Int) async -> Data?
+    private let source: Source
     private let thumbnails = NSCache<NSString, NSImage>()
     private let previews = NSCache<NSString, NSImage>()
     private var inFlight: [String: Task<NSImage?, Never>] = [:]
 
-    init(client: MonitorClient) {
-        self.client = client
+    init(source: @escaping Source) {
+        self.source = source
         thumbnails.countLimit = 300
         thumbnails.totalCostLimit = 128 * 1024 * 1024
         previews.countLimit = 4
@@ -50,10 +51,10 @@ final class ChatImageLoader {
         if let cached = cache.object(forKey: key as NSString) { return cached }
         // 同じ画像を複数の吹き出し・再描画から同時に頼まれても 1 回だけ取る。
         if let running = inFlight[key] { return await running.value }
-        let client = client
+        let source = source
         let task = Task<NSImage?, Never> {
             let decoded = await Task.detached(priority: .userInitiated) {
-                await Self.decode(image, sessionId: sessionId, maxPixels: maxPixels, client: client)
+                await Self.decode(image, sessionId: sessionId, maxPixels: maxPixels, source: source)
             }.value
             guard let decoded else { return nil }
             return NSImage(cgImage: decoded.image, size: NSSize(width: decoded.image.width, height: decoded.image.height))
@@ -68,14 +69,14 @@ final class ChatImageLoader {
     }
 
     nonisolated private static func decode(_ image: ChatImage, sessionId: String?, maxPixels: Int,
-                                           client: MonitorClient) async -> DecodedImage? {
+                                           source: Source) async -> DecodedImage? {
         let data: Data?
         switch image {
         case .file(let path):
             data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
         case .transcript(let itemId, let index):
             guard let sessionId else { return nil }
-            data = try? await client.fetchTranscriptImage(sessionId: sessionId, itemId: itemId, index: index)
+            data = await source(sessionId, itemId, index)
         }
         guard let data, let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
