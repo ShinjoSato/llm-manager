@@ -400,29 +400,41 @@ final class SessionHubTests: XCTestCase {
         do { let v = await snap(hub); XCTAssertEqual(v?.status, .permission) }
     }
 
+    /// メタ読み込みを止めておける監視（新しいセッションの検出直後を再現する）。
+    private func gatedMetaHub(hookBufferLimit: Int = SessionHub.hookBufferLimit,
+                              isAlive: (@Sendable (Int32) -> Bool)? = nil) -> (SessionHub, MetaGate) {
+        let gate = MetaGate()
+        let clock = clock!
+        let alive = alive!
+        let hub = SessionHub(home: home.home, usageFile: nil, now: { clock.now },
+                             isAlive: isAlive ?? { alive.value.contains($0) },
+                             hookBufferLimit: hookBufferLimit,
+                             metaLoader: { cwd, path in
+                                 gate.pass()
+                                 return SessionHub.loadMetaFromDisk(cwd: cwd, transcriptPath: path)
+                             })
+        return (hub, gate)
+    }
+
+    private func waitUntil(_ condition: () async -> Bool) async throws {
+        for _ in 0..<300 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     /// 初回走査の await 中に start が重なっても、止めても、ループを二重に立てない・止めた後に立てない。
     func testStartIsNotReentrantAndStopWins() async throws {
         try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
-        let gate = DispatchSemaphore(value: 0)
-        let entered = Box(false)
-        let clock = clock!
-        let hub = SessionHub(home: home.home, usageFile: nil, now: { clock.now }, isAlive: { _ in
-            if !entered.value {
-                entered.mutate { $0 = true }
-                gate.wait()
-            }
-            return true
-        })
+        let (hub, gate) = gatedMetaHub()
+        gate.close()
         let first = Task { await hub.start() }
-        while !entered.value { try await Task.sleep(for: .milliseconds(5)) }
-        // 在庫の走査で actor が塞がっている間に、2 回目の start と stop を積む。
-        let second = Task { await hub.start() }
-        let stopping = Task { await hub.stop() }
-        try await Task.sleep(for: .milliseconds(50))
-        gate.signal()
+        try await waitUntil { gate.waiting }
+        // 初回走査のメタ読み込みを待っている間に、2 回目の start と stop を順に呼ぶ。
+        await hub.start()
+        await hub.stop()
+        gate.open()
         await first.value
-        await second.value
-        await stopping.value
         let loops = await hub.loopCount
         XCTAssertEqual(loops, 0, "止めた後に初回走査が終わってもループを立てない")
 
@@ -431,6 +443,191 @@ final class SessionHubTests: XCTestCase {
         let restarted = await hub.loopCount
         XCTAssertEqual(restarted, 3, "二重に立てない")
         await hub.stop()
+    }
+
+    /// 初回走査の間に stop → start と呼ばれたら、最後の start が効いてループが立つ。
+    func testStopThenStartDuringInitialScanKeepsRunning() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, gate) = gatedMetaHub()
+        gate.close()
+        let first = Task { await hub.start() }
+        try await waitUntil { gate.waiting }
+        await hub.stop()
+        await hub.start()
+        gate.open()
+        await first.value
+        let loops = await hub.loopCount
+        XCTAssertEqual(loops, 3)
+        await hub.stop()
+    }
+
+    /// 未知のセッションのフックがメタ読み込みを待っても、後ろの既知のセッションのフックは待たされない。
+    func testUnknownSessionHookDoesNotHoldBackOthers() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, gate) = gatedMetaHub()
+        await hub.scanInventory()
+        gate.close()
+        defer { gate.open() }
+
+        let other = "99999999-2222-3333-4444-555555555555"
+        let otherPid: Int32 = 4343
+        alive.mutate { $0.insert(otherPid) }
+        try home.writeSession(pid: otherPid, sessionId: other, cwd: "/tmp/proj-b")
+        hub.enqueueHook(HookPayload(sessionId: other, hookEventName: "Stop"))
+        hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                    notificationType: "permission_prompt"))
+        let flushed = Box(false)
+        let flushing = Task {
+            await hub.flushHooks()
+            flushed.mutate { $0 = true }
+        }
+        try await waitUntil { flushed.value && gate.waiting }
+        XCTAssertTrue(gate.waiting, "未知のセッションのメタ読み込みは止めたまま")
+        XCTAssertTrue(flushed.value, "メタ読み込みの完了を待たずに後ろのフックまで反映する")
+        let statuses = await hub.snapshot().reduce(into: [String: SessionStatus]()) { $0[$1.sessionId] = $1.status }
+        XCTAssertEqual(statuses[sessionId], .permission)
+        XCTAssertEqual(statuses[other], .idle, "未知のセッションも在庫から取り込んで反映する")
+
+        gate.open()
+        if flushed.value { await flushing.value }
+    }
+
+    /// 検出直後で Xcode プロジェクトを探している間は「無い」と答えず、探し終わるのを待つ。
+    func testXcodeProjectWaitsForMetaLoad() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("xc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("App.xcodeproj"), withIntermediateDirectories: true)
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: root.path)
+        let (hub, gate) = gatedMetaHub()
+        gate.close()
+        defer { gate.open() }
+        // フック経由の取り込みはメタ読み込みを待たない。
+        await hub.applyHook(HookPayload(sessionId: sessionId, hookEventName: "Stop"))
+        try await waitUntil { gate.waiting }
+        let before = await snap(hub)
+        XCTAssertNil(before?.xcodeProject, "まだ探し終わっていない")
+        let resolving = Task { await hub.resolvedXcodeProject(sessionId: sessionId) }
+        try await Task.sleep(for: .milliseconds(50))
+        gate.open()
+        let found = await resolving.value
+        XCTAssertEqual(found.map { URL(fileURLWithPath: $0).lastPathComponent }, "App.xcodeproj")
+    }
+
+    /// 反映が遅れても、フックの時刻は受け口に届いた時刻で数える（その後に書かれたログ行で待ちが解ける）。
+    func testDelayedHookIsJudgedByReceiptTime() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let gate = DispatchSemaphore(value: 0)
+        let blocking = Box(false)
+        let entered = Box(false)
+        let alive = alive!
+        let clock = clock!
+        let hub = SessionHub(home: home.home, usageFile: nil, now: { clock.now }, isAlive: {
+            if blocking.value {
+                entered.mutate { $0 = true }
+                gate.wait()
+            }
+            return alive.value.contains($0)
+        })
+        await hub.scanInventory()
+        await hub.pollTranscripts()
+        blocking.mutate { $0 = true }
+        let scanning = Task { await hub.scanInventory() }
+        try await waitUntil { entered.value }
+
+        let received = clock.now
+        hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                    notificationType: "permission_prompt"))
+        // 監視が塞がっている間に時間が過ぎ、その間にログ行が書かれる。
+        clock.advance(5_000)
+        try append(F.assistant("a1", [["type": "tool_use", "name": "Edit", "input": [:] as [String: Any]]],
+                               timestamp: iso(received + 1_000)))
+        blocking.mutate { $0 = false }
+        gate.signal()
+        await scanning.value
+        await hub.flushHooks()
+        var s = try await required(hub)
+        XCTAssertEqual(s.status, .permission)
+        XCTAssertEqual(s.attentionSince, received, "要対応の始まりも届いた時刻")
+
+        await hub.pollTranscripts()
+        s = try await required(hub)
+        XCTAssertEqual(s.status, .working, "届いた後に書かれたログ行で権限待ちが解ける")
+    }
+
+    /// 待ち行列が溢れたら、押し出したフックの数を知らせ、押し出した flush の待ち手は起こす。
+    func testHookOverflowIsReportedAndFlushIsNotLost() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let gate = DispatchSemaphore(value: 0)
+        let blocking = Box(false)
+        let entered = Box(false)
+        let alive = alive!
+        let clock = clock!
+        let hub = SessionHub(home: home.home, usageFile: nil, now: { clock.now }, isAlive: {
+            if blocking.value {
+                entered.mutate { $0 = true }
+                gate.wait()
+            }
+            return alive.value.contains($0)
+        }, hookBufferLimit: 2)
+        let events = Box<[MonitorEvent]>([])
+        await hub.setSink { e in events.mutate { $0.append(e) } }
+        await hub.scanInventory()
+        blocking.mutate { $0 = true }
+        let scanning = Task { await hub.scanInventory() }
+        try await waitUntil { entered.value }
+
+        let prompt = HookPayload(sessionId: sessionId, hookEventName: "UserPromptSubmit")
+        // 1 件目は流す側が取り出し、塞がった監視の前で待つ。
+        hub.enqueueHook(prompt)
+        try await Task.sleep(for: .milliseconds(50))
+        let flushed = Box(false)
+        let flushing = Task {
+            await hub.flushHooks()
+            flushed.mutate { $0 = true }
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        hub.enqueueHook(prompt) // [flush, h2]
+        hub.enqueueHook(prompt) // flush を押し出す
+        try await waitUntil { flushed.value }
+        XCTAssertTrue(flushed.value, "押し出された flush の待ち手も戻る")
+        XCTAssertEqual(hub.pendingDroppedHookCount, 0)
+        hub.enqueueHook(prompt) // h2 を押し出す
+        XCTAssertEqual(hub.pendingDroppedHookCount, 1)
+
+        blocking.mutate { $0 = false }
+        gate.signal()
+        await scanning.value
+        // ここで flush を積むと残りの 2 件を押し出すので、流れ切るのを待つ。
+        let texts = { events.value.compactMap { if case .feed(let f) = $0 { return f.text } else { return nil } } }
+        try await waitUntil { texts().filter { $0 == "指示を受け取りました" }.count == 3 }
+        XCTAssertEqual(texts().filter { $0.hasPrefix("フックの反映が追い付かず") }, ["フックの反映が追い付かず 1 件を取りこぼしました"])
+        XCTAssertEqual(hub.pendingDroppedHookCount, 0)
+        if flushed.value { await flushing.value }
+    }
+
+    /// 時刻の無い行は、起動前から動いていたセッションの初回読みでだけ古いとみなす（切り詰め後の読み直しは新着）。
+    func testTimelessLinesAreJudgedBySessionDiscovery() async throws {
+        func timeless(_ text: String) -> String {
+            F.json(["type": "assistant", "uuid": UUID().uuidString,
+                    "message": ["role": "assistant", "content": [["type": "text", "text": text]]]])
+        }
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        try append(timeless("起動前の応答（切り詰めを確かめるため長めにしておく）"))
+        let (hub, events) = try await started()
+        XCTAssertFalse(feedTexts(events).contains("起動前の応答（切り詰めを確かめるため長めにしておく）"))
+
+        let other = "99999999-2222-3333-4444-555555555555"
+        let otherPid: Int32 = 4343
+        alive.mutate { $0.insert(otherPid) }
+        try home.writeSession(pid: otherPid, sessionId: other, cwd: "/tmp/proj-b")
+        try home.appendTranscript(sessionId: other, cwd: "/tmp/proj-b", lines: [timeless("起動後のセッションの応答")])
+        await hub.scanInventory()
+        await hub.pollTranscripts()
+        XCTAssertTrue(feedTexts(events).contains("起動後のセッションの応答"), "起動後に見つけたセッションの行は新着")
+
+        try Data((timeless("切り詰め後") + "\n").utf8).write(to: home.transcriptURL(sessionId: sessionId, cwd: cwd))
+        await hub.pollTranscripts()
+        XCTAssertTrue(feedTexts(events).contains("切り詰め後"), "切り詰め後に読み直した行は新着")
     }
 
     /// 長ポーリングの呼び手が居なくなったら待ち手を外し、判断は取り直しに渡せるよう取り置く。
@@ -545,5 +742,31 @@ final class UnixInbox {
             data.append(contentsOf: buf[0..<n])
         }
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .newlines)
+    }
+}
+
+/// メタ読み込みを止めておく関所。
+final class MetaGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var closed = false
+    private var waiters = 0
+
+    func close() { condition.withLock { closed = true } }
+
+    func open() {
+        condition.withLock {
+            closed = false
+            condition.broadcast()
+        }
+    }
+
+    var waiting: Bool { condition.withLock { waiters > 0 } }
+
+    func pass() {
+        condition.withLock {
+            waiters += 1
+            while closed { condition.wait() }
+            waiters -= 1
+        }
     }
 }

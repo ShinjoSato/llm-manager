@@ -256,7 +256,12 @@ private final class ConnectionSession: @unchecked Sendable {
             guard let self, !self.finished else { return }
             if self.dispatched {
                 // 振り分け後に届く分は読み捨て、切断だけを見張る。
-                if isComplete || error != nil { return self.finish() }
+                if error != nil { return self.finish() }
+                if isComplete {
+                    // 送り終えて片側だけ閉じた相手も応答は待っている。長ポーリングは取り消して早めに返させる（全閉じなら送信の失敗で閉じる）。
+                    self.work?.cancel()
+                    return
+                }
                 return self.receive()
             }
             if let data { self.buffer.append(data) }
