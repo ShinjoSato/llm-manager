@@ -98,6 +98,8 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     static let readTimeout: TimeInterval = 15
     /// 同時に持つ接続の上限（長ポーリングで待たせている分も数える）。ローカルの暴走で資源を食い尽くさせない。
     public static let maxConnections = 64
+    /// 閉じた待ち受けがポートを手放すまで待つ上限。取り消しは非同期で、直後に開き直すと塞がっていることがある。
+    static let cancelTimeout: TimeInterval = 2
 
     private let queue = DispatchQueue(label: "claude-deck.http-server")
     private let handler: Handler
@@ -107,6 +109,8 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     private var requestedPort: Int = 0
     /// キュー上でだけ触る。
     private var currentPort: Int?
+    /// start / stop のたびに進める。前の待ち受けの片付けを待つ間に呼び直されたら、古い開き直しを捨てる。
+    private var generation = 0
 
     public init(handler: @escaping Handler) {
         self.handler = handler
@@ -125,42 +129,68 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     /// 待ち受けを始める（既に待ち受けていれば閉じてから）。`port` が 0 なら OS が割り当てる。結果は `onState` に届く（キュー上で呼ぶ）。
     public func start(port: Int, onState: @escaping @Sendable (LoopbackServerState) -> Void) {
         queue.async { [self] in
-            stopLocked()
-            stateHandler = onState
-            requestedPort = port
-            let params = NWParameters.tcp
-            // 閉じた直後の TIME_WAIT で取り直しに失敗しないため（待ち受け中の別プロセスとは重ならないことを試験で確かめている）。
-            params.allowLocalEndpointReuse = true
-            params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: UInt16(port)) ?? .any)
-            let listener: NWListener
-            do {
-                listener = try NWListener(using: params)
-            } catch {
-                onState(Self.state(for: error, port: port))
-                return
+            generation &+= 1
+            let gen = generation
+            let once = Once()
+            let open: @Sendable () -> Void = { [weak self] in
+                guard let self, self.generation == gen, once.claim() else { return }
+                self.openLocked(port: port, onState: onState)
             }
-            self.listener = listener
-            listener.stateUpdateHandler = { [weak self, weak listener] state in
-                guard let self, let listener else { return }
-                self.listenerChanged(listener, state)
+            if stopLocked(onCancelled: open) {
+                queue.asyncAfter(deadline: .now() + Self.cancelTimeout, execute: open)
+            } else {
+                open()
             }
-            listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
-            listener.start(queue: queue)
         }
     }
 
-    public func stop() {
-        queue.sync { stopLocked() }
+    private func openLocked(port: Int, onState: @escaping @Sendable (LoopbackServerState) -> Void) {
+        stateHandler = onState
+        requestedPort = port
+        let params = NWParameters.tcp
+        // 閉じた直後の TIME_WAIT で取り直しに失敗しないため（待ち受け中の別プロセスとは重ならないことを試験で確かめている）。
+        params.allowLocalEndpointReuse = true
+        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: UInt16(port)) ?? .any)
+        let listener: NWListener
+        do {
+            listener = try NWListener(using: params)
+        } catch {
+            onState(Self.state(for: error, port: port))
+            return
+        }
+        self.listener = listener
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+            guard let self, let listener else { return }
+            self.listenerChanged(listener, state)
+        }
+        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+        listener.start(queue: queue)
     }
 
-    private func stopLocked() {
-        listener?.stateUpdateHandler = nil
-        listener?.cancel()
+    /// 待ち受けを閉じ、ポートを手放すまで（上限 `cancelTimeout`）待ってから戻る。キューの上から呼ばない。
+    public func stop() {
+        let released = DispatchSemaphore(value: 0)
+        let waiting = queue.sync {
+            generation &+= 1
+            return stopLocked(onCancelled: { released.signal() })
+        }
+        if waiting { _ = released.wait(timeout: .now() + Self.cancelTimeout) }
+    }
+
+    /// 待ち受けていれば閉じて true（`onCancelled` は手放し終えた時にキュー上で呼ぶ）。
+    @discardableResult
+    private func stopLocked(onCancelled: (@Sendable () -> Void)? = nil) -> Bool {
+        let closing = listener
+        closing?.stateUpdateHandler = { state in
+            if case .cancelled = state { onCancelled?() }
+        }
+        closing?.cancel()
         listener = nil
         currentPort = nil
         connections.values.forEach { $0.cancel() }
         connections = [:]
         stateHandler = nil
+        return closing != nil
     }
 
     private func listenerChanged(_ listener: NWListener, _ state: NWListener.State) {
@@ -207,6 +237,14 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
         connection.start(queue: queue)
         session.begin()
     }
+}
+
+/// 一度だけ通す印（タイムアウトと取り消し完了のどちらが先でも 1 回だけ開き直すため）。
+private final class Once: @unchecked Sendable {
+    private let lock = NSLock()
+    private var used = false
+
+    func claim() -> Bool { lock.withLock { defer { used = true }; return !used } }
 }
 
 /// 1 接続ぶんの読み取りと応答。キュー上でだけ触る。
@@ -256,7 +294,12 @@ private final class ConnectionSession: @unchecked Sendable {
             guard let self, !self.finished else { return }
             if self.dispatched {
                 // 振り分け後に届く分は読み捨て、切断だけを見張る。
-                if isComplete || error != nil { return self.finish() }
+                if error != nil { return self.finish() }
+                if isComplete {
+                    // 送り終えて片側だけ閉じた相手も応答は待っている。長ポーリングは取り消して早めに返させる（全閉じなら送信の失敗で閉じる）。
+                    self.work?.cancel()
+                    return
+                }
                 return self.receive()
             }
             if let data { self.buffer.append(data) }
