@@ -630,6 +630,141 @@ final class SessionHubTests: XCTestCase {
         XCTAssertTrue(feedTexts(events).contains("切り詰め後"), "切り詰め後に読み直した行は新着")
     }
 
+    /// 届いた後のログ行を先に読み終えてから遅れて反映した権限待ちは、応答が落ち着いても出さない（答え済み）。
+    func testLateHookAfterNewerLogIsTreatedAsAnswered() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, events) = try await started()
+        let received = clock.now
+        clock.advance(5_000)
+        try append(F.assistant("a1", [["type": "tool_use", "name": "Edit", "input": [:] as [String: Any]]],
+                               timestamp: iso(received + 1_000)))
+        await hub.pollTranscripts()
+        await hub.applyHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                        notificationType: "permission_prompt"), receivedAt: received)
+        var s = try await required(hub)
+        XCTAssertEqual(s.status, .working)
+
+        try append(F.assistant("a2", [["type": "text", "text": "終わりました"]], timestamp: iso(received + 2_000)))
+        await hub.pollTranscripts()
+        s = try await required(hub)
+        XCTAssertEqual(s.status, .idle, "落ち着いた後に答え済みの権限待ちを戻さない")
+        XCTAssertNil(s.attentionSince)
+        XCTAssertTrue(feedTexts(events).contains("終わりました"))
+    }
+
+    /// 後から反映したフックの受信時刻が古くても、フックの時刻を逆戻りさせない。
+    func testHookTimeDoesNotGoBackwards() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, _) = try await started()
+        let base = clock.now
+        clock.advance(10_000)
+        await hub.applyHook(HookPayload(sessionId: sessionId, hookEventName: "Stop"), receivedAt: base + 2_000)
+        await hub.applyHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                        notificationType: "permission_prompt"), receivedAt: base + 1_000)
+        // 最後のフックより前に書かれたツール行では待ちを解かない。
+        try append(F.assistant("a1", [["type": "tool_use", "name": "Bash", "input": [:] as [String: Any]]],
+                               timestamp: iso(base + 1_500)))
+        await hub.pollTranscripts()
+        let s = try await required(hub)
+        XCTAssertEqual(s.status, .permission)
+    }
+
+    /// 受信時刻の順と待ち行列の順は食い違わない（先に時刻を取った方が先に積まれる）。
+    func testHookQueueOrderFollowsReceiptTime() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let gating = Box(false)
+        let calls = Box(0)
+        let firstInside = DispatchSemaphore(value: 0)
+        let secondCalled = DispatchSemaphore(value: 0)
+        let clock = clock!
+        let alive = alive!
+        let hub = SessionHub(home: home.home, usageFile: nil, now: {
+            var index = 0
+            calls.mutate { $0 += 1; index = $0 }
+            let value = clock.now + Double(index)
+            guard gating.value else { return value }
+            gating.mutate { $0 = false }
+            firstInside.signal()
+            // 2 つ目が時刻を取りに来られるなら、それが積み終わるまで 1 つ目の積み込みを遅らせる。
+            if secondCalled.wait(timeout: .now() + 0.3) == .success { Thread.sleep(forTimeInterval: 0.1) }
+            return value
+        }, isAlive: { alive.value.contains($0) })
+        await hub.scanInventory()
+        await hub.pollTranscripts()
+        clock.advance(10_000)
+
+        let sessionId = sessionId
+        gating.mutate { $0 = true }
+        let first = Thread {
+            hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Stop"))
+        }
+        first.start()
+        firstInside.wait()
+        let second = Thread {
+            secondCalled.signal()
+            hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                        notificationType: "permission_prompt"))
+        }
+        second.start()
+        try await waitUntil { first.isFinished && second.isFinished }
+        await hub.flushHooks()
+        let s = try await required(hub)
+        XCTAssertEqual(s.status, .permission, "後に時刻を取った権限待ちが後に反映される")
+    }
+
+    /// 起動後に見つけた --resume のセッションは、初回読みの古いメタ情報（時刻なし）をフィードに積まない。
+    func testResumedSessionDoesNotFeedOldMeta() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let clock = clock!
+        let alive = alive!
+        // 遡り読みが先に題を埋めると末尾読みの判定を確かめられないので、メタ読み込みは空にする。
+        let hub = SessionHub(home: home.home, usageFile: nil, now: { clock.now }, isAlive: { alive.value.contains($0) },
+                             metaLoader: { _, _ in (nil, nil) })
+        let events = Box<[MonitorEvent]>([])
+        await hub.setSink { e in events.mutate { $0.append(e) } }
+        await hub.scanInventory()
+        await hub.pollTranscripts()
+
+        let other = "99999999-2222-3333-4444-555555555555"
+        let otherPid: Int32 = 4343
+        let otherCwd = "/tmp/proj-b"
+        alive.mutate { $0.insert(otherPid) }
+        try home.writeSession(pid: otherPid, sessionId: other, cwd: otherCwd)
+        let later = clock.now + 500
+        try home.appendTranscript(sessionId: other, cwd: otherCwd, lines: [
+            F.json(["type": "ai-title", "aiTitle": "古い題"]),
+            F.user("u0", "古い指示"),
+            F.assistant("a0", [["type": "text", "text": "古い応答"]]),
+            F.json(["type": "last-prompt", "lastPrompt": "古い指示"]),
+            F.assistant("a1", [["type": "text", "text": "再開後の応答"]], timestamp: iso(later)),
+            F.json(["type": "last-prompt", "lastPrompt": "再開後の指示"]),
+        ])
+        await hub.scanInventory()
+        await hub.pollTranscripts()
+        let texts = feedTexts(events)
+        XCTAssertFalse(texts.contains("作業内容: 古い題"))
+        XCTAssertFalse(texts.contains("古い指示"))
+        XCTAssertFalse(texts.contains("古い応答"))
+        XCTAssertTrue(texts.contains("再開後の応答"), "起動後に書かれた行は新着")
+        XCTAssertTrue(texts.contains("再開後の指示"), "起動後の行に続く時刻の無い行は新着")
+        let s = await hub.snapshot().first { $0.sessionId == other }
+        XCTAssertEqual(s?.title, "古い題", "フィードに積まなくても状態は更新する")
+        XCTAssertEqual(s?.lastPrompt, "再開後の指示")
+    }
+
+    /// セッションの分からないフックは、どのルームにも数えず合計にだけ入れる。
+    func testDroppedHooksWithoutSessionAreOnlyCountedInTotal() {
+        let counter = HookDropCounter()
+        counter.add(sessionId: nil)
+        counter.add(sessionId: "")
+        counter.add(sessionId: "s1")
+        XCTAssertEqual(counter.total, 3)
+        let taken = counter.take()
+        XCTAssertEqual(taken.bySession, ["s1": 1])
+        XCTAssertEqual(taken.total, 3)
+        XCTAssertEqual(counter.total, 0)
+    }
+
     /// 長ポーリングの呼び手が居なくなったら待ち手を外し、判断は取り直しに渡せるよう取り置く。
     func testCancelledPermissionWaitIsRemoved() async throws {
         try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)

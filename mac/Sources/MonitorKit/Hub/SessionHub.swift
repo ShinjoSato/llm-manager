@@ -66,13 +66,24 @@ final class HookDropCounter: @unchecked Sendable {
     private let lock = NSLock()
     /// セッションごとの件数。どのルームの状態が古いままかを知らせるため。
     private var counts: [String: Int] = [:]
+    /// セッションの分からない分。どのルームにも出せないので合計にだけ数える。
+    private var unattributed = 0
 
-    func add(sessionId: String?) { lock.withLock { counts[sessionId ?? "", default: 0] += 1 } }
+    func add(sessionId: String?) {
+        lock.withLock {
+            if let sessionId, !sessionId.isEmpty { counts[sessionId, default: 0] += 1 } else { unattributed += 1 }
+        }
+    }
 
-    var total: Int { lock.withLock { counts.values.reduce(0, +) } }
+    var total: Int { lock.withLock { counts.values.reduce(unattributed, +) } }
 
     /// 溜まった分を取り出して空に戻す。
-    func take() -> [String: Int] { lock.withLock { defer { counts = [:] }; return counts } }
+    func take() -> (bySession: [String: Int], total: Int) {
+        lock.withLock {
+            defer { counts = [:]; unattributed = 0 }
+            return (counts, counts.values.reduce(unattributed, +))
+        }
+    }
 }
 
 /// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: monitor/src/hub.ts）。
@@ -174,6 +185,8 @@ public actor SessionHub {
     /// フックは届いた順に 1 本の流れで反映する。HTTP の応答は反映を待たない。
     private nonisolated let hookInbox: AsyncStream<HookMessage>.Continuation
     private nonisolated let droppedHooks = HookDropCounter()
+    /// 受信時刻の取得と積むことを一続きにする（待ち行列の順を時刻の順にそろえる）。
+    private nonisolated let hookOrder = NSLock()
     public static let hookBufferLimit = 4096
 
     public init(home: ClaudeHome,
@@ -197,7 +210,7 @@ public actor SessionHub {
         Task { [weak self] in
             for await message in stream {
                 let lost = dropped.take()
-                if !lost.isEmpty { await self?.reportDroppedHooks(lost) }
+                if lost.total > 0 { await self?.reportDroppedHooks(lost.bySession, total: lost.total) }
                 switch message {
                 case .hook(let payload, let receivedAt): await self?.applyHook(payload, receivedAt: receivedAt)
                 case .flush(let done): done.resume()
@@ -218,12 +231,12 @@ public actor SessionHub {
 
     /// フックを反映の待ち行列に積む。届いた順に `applyHook` へ流す。
     public nonisolated func enqueueHook(_ payload: HookPayload) {
-        offer(.hook(payload, receivedAt: now()))
+        hookOrder.withLock { offer(.hook(payload, receivedAt: now())) }
     }
 
     /// それまでに積んだフックが反映し終わるまで待つ（溢れて押し出された時は待たずに戻る）。
     public nonisolated func flushHooks() async {
-        await withCheckedContinuation { done in offer(.flush(done)) }
+        await withCheckedContinuation { done in hookOrder.withLock { offer(.flush(done)) } }
     }
 
     /// 溢れて押し出された古い方を黙って捨てない（待ち手は起こし、フックは数えて後で知らせる）。
@@ -237,8 +250,8 @@ public actor SessionHub {
         }
     }
 
-    private func reportDroppedHooks(_ lost: [String: Int]) {
-        NSLog("claude-deck: フックの待ち行列が溢れ、%d 件を捨てました", lost.values.reduce(0, +))
+    private func reportDroppedHooks(_ lost: [String: Int], total: Int) {
+        NSLog("claude-deck: フックの待ち行列が溢れ、%d 件を捨てました", total)
         for (sessionId, count) in lost.sorted(by: { $0.key < $1.key }) {
             push(sessionId, .status, "フックの反映が追い付かず \(count) 件を取りこぼしました", local: true)
         }
@@ -430,10 +443,10 @@ public actor SessionHub {
             let initial = !reader.primed
             let events = reader.read()
             if !events.isEmpty { changed = true }
+            let quietFlags = initial ? initialQuietFlags(events, knownAtStart: state.knownAtStart) : nil
 
-            for ev in events {
-                // 時刻の無い行（ai-title 等）は、起動前から動いていたセッションの分だけ古いとみなす。
-                let quiet = initial && (ev.at.map { $0 < startedAt } ?? state.knownAtStart)
+            for (index, ev) in events.enumerated() {
+                let quiet = quietFlags?[index] ?? false
                 func push(_ sessionId: String, _ kind: FeedKind, _ text: String, tool: String? = nil) {
                     if !quiet { self.push(sessionId, kind, text, tool: tool) }
                 }
@@ -504,6 +517,23 @@ public actor SessionHub {
         }
 
         if changed { emitUpdate() }
+    }
+
+    /// 初回読みの各行を起動前の分（フィードに積まない）とみなすか。
+    /// 時刻の無い行（ai-title 等）は近くの時刻のある行に倣う（--resume で書き直された古いメタ情報を新着にしないため）。
+    /// 読んだ中に時刻のある行が無ければ、起動前から動いていたセッションの分だけ古いとみなす。
+    private func initialQuietFlags(_ events: [ParsedEvent], knownAtStart: Bool) -> [Bool] {
+        var flags = [Bool](repeating: knownAtStart, count: events.count)
+        var previous: Double?
+        for (index, ev) in events.enumerated() {
+            if let at = ev.at { previous = at }
+            if let reference = previous { flags[index] = reference < startedAt }
+        }
+        // 先頭側の時刻の無い行は、後に続く時刻のある行が起動前ならそれより前に書かれている。
+        if let firstTimed = events.firstIndex(where: { $0.at != nil }), let at = events[firstTimed].at, at < startedAt {
+            for index in 0..<firstTimed { flags[index] = true }
+        }
+        return flags
     }
 
     /// 稼働中のサブエージェント一覧と、サブエージェント側の最終更新時刻を返す。
@@ -617,6 +647,8 @@ public actor SessionHub {
             break
         }
 
+        // 届いた後のログ活動を先に読んでいれば、その待ちには既に答えが出ている。
+        if let candidate = status, Attention.needsAttention(candidate), state.lastActivity > now { status = nil }
         if let status {
             let prev = Attention.heldStatus(state.hookStatus, hookAt: state.hookAt, lastActivityAt: state.lastActivity)
             state.attentionSince = Attention.nextAttentionSince(prevStatus: prev, prevSince: state.attentionSince,
@@ -625,7 +657,7 @@ public actor SessionHub {
             state.hookDetail = detail
             state.hookTool = tool
             state.hookMessage = message
-            state.hookAt = now
+            state.hookAt = max(state.hookAt, now)
             if status == .working { state.lastActivityAt = max(state.lastActivityAt ?? 0, now) }
         }
         if let (kind, text) = feedLine { push(id, kind, text) }

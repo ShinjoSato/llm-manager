@@ -321,19 +321,36 @@ final class LoopbackHTTPServerTests: XCTestCase {
         let (status, _) = try await request("GET", "/api/health", contentType: nil)
         XCTAssertEqual(status, 200, "先に待ち受けていた側はそのまま応える")
 
-        // 空いたら引き継げる。
+        // 止めたら、すぐに別の待ち受けが引き継げる（止める側がポートを手放すまで待つ）。
         let taken = port
         server.stop()
-        // 待ち受けの取り消しは非同期で、直後はまだ塞がっていることがある（アプリも 5 秒ごとに取り直す）。
-        for attempt in 0..<20 {
-            do {
-                port = try await listen(second, port: taken)
-                break
-            } catch ServerTestError.portInUse where attempt < 19 {
-                try await Task.sleep(for: .milliseconds(100))
-            }
-        }
+        port = try await listen(second, port: taken)
         XCTAssertEqual(port, taken)
+    }
+
+    /// 止めて別の待ち受けで開き直すのを繰り返しても、毎回すぐに取れる。
+    func testStopThenListenElsewhereRepeatedly() async throws {
+        let taken = port
+        let other = LoopbackHTTPServer { _ in .json(200, ["ok": true]) }
+        defer { other.stop() }
+        var (current, next) = (server!, other)
+        for _ in 0..<50 {
+            current.stop()
+            let bound = try await listen(next, port: taken)
+            XCTAssertEqual(bound, taken)
+            (current, next) = (next, current)
+        }
+    }
+
+    /// 待ち受け中に同じポートで開き直しても、前の待ち受けが手放すのを待ってから取り直す。
+    func testRestartOnSamePortRebinds() async throws {
+        let taken = port
+        for _ in 0..<5 {
+            port = try await listen(server, port: taken)
+            XCTAssertEqual(port, taken)
+            let (status, _) = try await request("GET", "/api/health", contentType: nil)
+            XCTAssertEqual(status, 200)
+        }
     }
 
     /// Node（libuv）の待ち受けと同じく SO_REUSEADDR だけを付けた別プロセス相当のソケットが居ても奪わない。
