@@ -733,10 +733,10 @@ final class ChatModel {
         staleTranscripts.remove(sessionId)
         loadingTranscripts.insert(sessionId)
         forgetOldTranscripts()
-        let watched = Set(transcripts.keys)
         Task {
             // 先に購読を張る。取得の後に張ると、その間の追記が既読扱いになって抜ける。
-            await store.watchTranscripts(watched)
+            // 対象は張る直前に取る（Task が走るまでに他のルームを開閉していることがある）。
+            await store.watchTranscripts(Set(transcripts.keys))
             // 最初の発話前はログが無い（nil）。以降は購読で届くので空のまま待つ。
             if let response = await store.fetchTranscript(sessionId: sessionId) {
                 transcripts[sessionId]?.apply(response, fullReplace: true)

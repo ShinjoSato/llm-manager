@@ -250,6 +250,36 @@ final class LoopbackHTTPServerTests: XCTestCase {
         XCTAssertEqual(json["outcome"] as? String, "allow", "取り直しに判断が渡る")
     }
 
+    /// 送り終えて片側だけ閉じる（shutdown(SHUT_WR)）相手にも応答を返す。
+    func testHalfClosedClientStillGetsResponse() async throws {
+        let body = F.json(["session_id": sessionId, "hook_event_name": "Notification", "notification_type": "permission_prompt",
+                           "tool_name": "Bash"])
+        let hook = try rawRequest("POST /hook HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)",
+                                  halfClose: true)
+        XCTAssertTrue(hook.hasPrefix("HTTP/1.1 200"), hook)
+        await hub.flushHooks()
+        let status = await hub.snapshot().first?.status
+        XCTAssertEqual(status, .permission)
+
+        let health = try rawRequest("GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\n\r\n", halfClose: true)
+        XCTAssertTrue(health.hasPrefix("HTTP/1.1 200"), health)
+        XCTAssertTrue(health.contains(#""server":"claude-deck""#), health)
+
+        // 長ポーリングは待ち続けず、取り直しを促す timeout を返して待ち手を残さない。
+        let permission = F.json(["requestId": "abcde", "toolName": "Bash", "description": "ls", "inputPreview": "ls",
+                                 "pid": Int(getpid()), "cwd": "/tmp/proj-a"])
+        let started = Date()
+        let poll = try rawRequest("POST /api/channel/permissions HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nContent-Type: application/json\r\nContent-Length: \(permission.utf8.count)\r\n\r\n\(permission)",
+                                  halfClose: true)
+        XCTAssertTrue(poll.hasPrefix("HTTP/1.1 200"), poll)
+        XCTAssertTrue(poll.contains(#""outcome":"timeout""#), poll)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        let key = PermissionRequestInput(requestId: "abcde", toolName: "Bash", description: "ls", inputPreview: "ls",
+                                         pid: getpid(), cwd: "/tmp/proj-a").key
+        let waiters = await hub.waiterCount(key)
+        XCTAssertEqual(waiters, 0)
+    }
+
     func testChannelPermissionLongPollIsDecidedInApp() async throws {
         let body = F.json(["requestId": "abcde", "toolName": "Bash", "description": "ls", "inputPreview": "ls",
                            "pid": Int(getpid()), "cwd": "/tmp/proj-a"])
@@ -291,11 +321,36 @@ final class LoopbackHTTPServerTests: XCTestCase {
         let (status, _) = try await request("GET", "/api/health", contentType: nil)
         XCTAssertEqual(status, 200, "先に待ち受けていた側はそのまま応える")
 
-        // 空いたら引き継げる。
+        // 止めたら、すぐに別の待ち受けが引き継げる（止める側がポートを手放すまで待つ）。
         let taken = port
         server.stop()
         port = try await listen(second, port: taken)
         XCTAssertEqual(port, taken)
+    }
+
+    /// 止めて別の待ち受けで開き直すのを繰り返しても、毎回すぐに取れる。
+    func testStopThenListenElsewhereRepeatedly() async throws {
+        let taken = port
+        let other = LoopbackHTTPServer { _ in .json(200, ["ok": true]) }
+        defer { other.stop() }
+        var (current, next) = (server!, other)
+        for _ in 0..<50 {
+            current.stop()
+            let bound = try await listen(next, port: taken)
+            XCTAssertEqual(bound, taken)
+            (current, next) = (next, current)
+        }
+    }
+
+    /// 待ち受け中に同じポートで開き直しても、前の待ち受けが手放すのを待ってから取り直す。
+    func testRestartOnSamePortRebinds() async throws {
+        let taken = port
+        for _ in 0..<5 {
+            port = try await listen(server, port: taken)
+            XCTAssertEqual(port, taken)
+            let (status, _) = try await request("GET", "/api/health", contentType: nil)
+            XCTAssertEqual(status, 200)
+        }
     }
 
     /// Node（libuv）の待ち受けと同じく SO_REUSEADDR だけを付けた別プロセス相当のソケットが居ても奪わない。
@@ -410,7 +465,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
     }
 
     /// 生のソケットで 1 リクエスト送り、応答をすべて読む。
-    private func rawRequest(_ head: String, thenAfterContinue body: String? = nil) throws -> String {
+    private func rawRequest(_ head: String, thenAfterContinue body: String? = nil, halfClose: Bool = false) throws -> String {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(fd) }
         var addr = sockaddr_in()
@@ -432,6 +487,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
             if n > 0 { out.append(contentsOf: buf[0..<n]) }
             _ = body.withCString { write(fd, $0, strlen($0)) }
         }
+        if halfClose { shutdown(fd, SHUT_WR) }
         while true {
             let n = read(fd, &buf, buf.count)
             if n <= 0 { break }
