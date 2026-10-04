@@ -334,6 +334,25 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertEqual(service.connections, [:])
     }
 
+    func testHubSendsStateOnlyOnChangeAndPingsOtherwise() async throws {
+        let hub = RemoteEventHub(controlRef: RemoteControlRef(control), transcripts: transcripts,
+                                 pollInterval: .seconds(3600), heartbeatInterval: 0)
+        let stream = try XCTUnwrap(hub.open(deviceId: "d", transcripts: .none))
+        var chunks = stream.chunks.makeAsyncIterator()
+        let first = await chunks.next().map { String(decoding: $0, as: UTF8.self) }
+        XCTAssertEqual(first?.hasPrefix("event: state\ndata: {"), true)
+        hub.tick()
+        let ping = await chunks.next().map { String(decoding: $0, as: UTF8.self) }
+        XCTAssertEqual(ping, ": ping\n\n", "変わっていなければ状態は送らず生存確認だけ")
+        control.state.monitoring = false
+        hub.tick()
+        let changed = await chunks.next().map { String(decoding: $0, as: UTF8.self) }
+        XCTAssertEqual(changed?.contains("\"monitoring\":false"), true)
+        hub.closeAll()
+        let end = await chunks.next()
+        XCTAssertNil(end)
+    }
+
     func testStreamsPerDeviceAreLimited() async throws {
         let paired = try await pair()
         var open: [URLSession.AsyncBytes] = []

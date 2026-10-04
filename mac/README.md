@@ -50,6 +50,7 @@ mac/
     ProjectRegistry.swift       projects/registry.tsv のパーサ
     AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも TSV / 移行期間の旧 data/claude-usage.json を引ける）
     MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
+    Remote/                     iPhone 連携（設定ウィンドウ・QR・端末一覧・iPhone からの操作を ChatModel の既存の処理へ繋ぐ ChatModel+Remote）
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
     MonitorModels.swift         ドメイン型（移植元: 旧 monitor の src/types.ts）
     MonitorEvent.swift          監視からストアへ流れる変化（sessions / feed / usage / permissions / transcript）
@@ -68,9 +69,15 @@ mac/
       XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探しと `open -a`
       ClaudeHome.swift            ~/.claude のパス・スラッグ・transcript の場所
     Server/                     フック等を受けるアプリ内の HTTP サーバー
-      LoopbackHTTPServer.swift    127.0.0.1 だけで待ち受ける最小の HTTP/1.1（Network.framework・外部ライブラリなし）
+      LoopbackHTTPServer.swift    最小の HTTP/1.1（Network.framework・外部ライブラリなし）。既定は 127.0.0.1・平文。
+                                  `HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限を変えられ、chunked で流し続ける応答（SSE）も出せる
       MonitorHTTPRoutes.swift     /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
       LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定（移植元: 旧 monitor の src/origin.ts）
+    Remote/                     iPhone 向けの口（同じ Wi-Fi・TLS・端末トークン）。仕様は docs/remote-api.md
+      API/                        iOS と共有する型（RemoteAPIModels: リクエスト・応答・状態 / RemotePinning: 指紋のピン留め）
+      Server/                     SelfSignedCertificate（DER で X.509 を組む・鍵と証明書のファイル）・RemotePairingStore・
+                                  RemoteAuthThrottle・RemoteRoutes（/v1 の振り分け）・RemoteEventHub（SSE）・RemoteControl（アプリへ頼む操作と照合）・
+                                  RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces
     Channel/                    チャネル（claude-deck-channel）の中身。実行ファイルからはこれを呼ぶだけ
       ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
@@ -101,6 +108,7 @@ mac/
   Sources/MonitorProbe/         GUI 無しでアプリ内の監視を確かめるデバッグ用エントリ（swift run monitor-probe）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）
+  docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
   scripts/bundle.sh             claude-deck.app を組み立てて ad-hoc 署名する（チャネルの実行ファイルも同梱）
   scripts/statusline.sh         Claude Code の statusLine。表示に加えて使用量を Application Support に残す
@@ -167,6 +175,35 @@ swift run monitor-probe 30 14978
 # 受け口も試す時は別ポートで（:8766 はアプリ / 旧 monitor が使う）
 CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 ```
+
+## iPhone 連携（同じ Wi-Fi・`docs/remote-api.md`）
+
+同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信ができる口。
+**既定は無効**で、メニュー「claude-deck → iPhone 連携…」のウィンドウで有効にした時だけ開く。
+
+- **口**: フック・チャネルの口（127.0.0.1:8766）とは別のサーバー・別のポート（既定 8767・変更可。1024 未満と 8766 は不可）。
+  選んだ LAN のインターフェース（既定は自動: `en*` を優先。VPN（utun）・AirDrop（awdl）等は候補に出さない）の IPv4 アドレスだけで待ち受け、
+  `0.0.0.0` にはしない。10 秒ごとにアドレスを確かめ、替わっていれば開き直す。開けなければ（ポート使用中等）10 秒ごとに取り直す。
+  `/hook` 等はこの口には無い（404）。設定は UserDefaults（`remoteAccess.enabled` / `remoteAccess.port` / `remoteAccess.interface`）。
+- **TLS**: 初回に P-256 の鍵と自己署名の証明書を作り、`~/Library/Application Support/claude-deck/remote/`（0700。`CLAUDE_DECK_REMOTE_DIR` で差し替え）に
+  0600 で置く（キーチェーンは使わない）。証明書は DER を自前で組み（`SelfSignedCertificate`）、CryptoKit で署名、`SecIdentityCreate` で手元に組む。
+  平文の口は出さない。iPhone は QR の SHA-256 指紋でピン留めする（ウィンドウにも指紋を出す）。
+- **ペアリング**: 「QR を出す」で `claude-deck://pair?...`（接続先・一時トークン（5 分・1 回限り）・指紋・Mac の名前・mDNS 名）を出す。
+  iPhone が `POST /v1/pair` で一時トークンを出すと端末トークン（256bit）を返し、mac にはそのハッシュだけを `devices.json`（0600）に残す。
+  ウィンドウに端末一覧（名前・接続中・最後に使った時刻・ペアリング日時）と「取り消す」（確認あり。開いているストリームも切る）。
+- **認証と上限**: 全 API で `Authorization: Bearer`。失敗（認証・ペアリング）は接続元ごとに 5 分で 10 回まで（超えたら 5 分 429）。
+  `Origin` 付きは 403。本文 256KB・ヘッダー 64KB・同時接続 32・読み取り 15 秒・ストリームは端末あたり 4 本 / 全体 16 本。
+- **操作は既存の経路だけ**: iPhone からの許可 / 拒否・選択肢・送信は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理
+  （`MonitorStore.decide`・`answerOnTerminal`・`answerMenu`（`MenuNavigator`）・`HostedSession.send`・伝言）に渡す。
+  端末のプロンプトとメニューは iPhone が見ていたもの（`promptId` / `menuId`）と今のものが一致した時だけ送り、その後の画面との再照合も画面の時と同じ。
+  選択待ちの間は送信しない。iPhone からの失敗は mac に警告を出さず結果で返す。mac の入力欄の書きかけ・添付には触れない。
+  新しい claude を起動する口・headless の口は無い（料金事故ゼロの方針はそのまま）。
+- **実機で確かめること**: 初めて有効にした時の macOS の「受信接続を許可しますか？」（アプリケーションファイアウォールが有効な場合）と
+  ローカルネットワークの許可（`NSLocalNetworkUsageDescription` を Info.plist に入れてある）。ad-hoc 署名のため、`.app` を作り直すと
+  ファイアウォールの許可を取り直すことがある。
+- **テスト**: `RemoteAccessUnitTests`（証明書・DER・ペアリング・回数制限・照合・QR の中身）と `RemoteServerTests`
+  （ループバックの OS 割り当てのポートに TLS で立て、指紋でピン留めした URLSession / NWConnection で叩く。別の指紋・平文は繋がらない・
+  未認証 / 不正 / 取り消し後は 401・回数制限・上限・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること）。LAN には立てない。
 
 ## Claude Code 側の設定（フック・statusLine・Channels）
 
