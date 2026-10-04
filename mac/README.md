@@ -34,30 +34,24 @@ mac/
       ChatImageViews.swift        吹き出しの画像（サムネイルの格子・拡大表示のシート・表示時に読み込んで NSCache に持つ ChatImageLoader）
       MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）
       ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
-      ChatTheme.swift             画面案B の色・文字のトークン（ダーク固定）
-    Stage/                      右側のステージパネル（画面案B の右 360px）
+      ChatTheme.swift             色・文字・時刻の書式のトークン（ダーク固定。AppKit 側の色も）
+    Stage/                      右側のステージパネル（360px）
       StagePanel.swift            見出し（開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    ProjectStore.swift              プロジェクト一覧の永続化（Application Support の JSON）
-    GitHubProjectPrompt.swift       プロジェクトに GitHub Project（owner/number）を紐づける入力ダイアログ
-    SidebarViewController.swift     旧: プロジェクト一覧（メインウィンドウからは外した）
-    TileContainerViewController.swift 旧: タイル状グリッド（メインウィンドウからは外した）
-    TerminalPaneViewController.swift 旧: 1ペイン = Claude Code / GitHub を切替（`findXcodeProject` はチャット画面も使う）
-    GitHubBoard.swift               github-projects.tsv 読込 + gh によるボード取得
-    GitHubBoardView.swift           Issue をステータス別にグループ表示（クリックで GitHub を開く）
-    ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面末尾の上限表示の監視
+    ProjectStore.swift          プロジェクト一覧の永続化（Application Support の JSON）
+    ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面の読み取り（ScreenState）+ 画面末尾の上限表示の監視
     LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
     ProjectRegistry.swift       projects/registry.tsv のパーサ
-    AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも TSV / 移行期間の旧 data/claude-usage.json を引ける）
+    AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも registry.tsv を引ける）
     MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
     Remote/                     iPhone 連携（設定ウィンドウ・QR・端末一覧・iPhone からの操作を ChatModel の既存の処理へ繋ぐ ChatModel+Remote）
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
-    MonitorModels.swift         ドメイン型（移植元: 旧 monitor の src/types.ts）
+    MonitorModels.swift         ドメイン型
     MonitorEvent.swift          監視からストアへ流れる変化（sessions / feed / usage / permissions / transcript）
     MonitorConfiguration.swift  読み取り元（CLAUDE_HOME）・使用量ファイル・受け口のポート・デバッグ出力
     MonitorStore.swift          @Observable ストア（監視の状態・受け口の状態・セッション・フィード・残量・権限確認・pid 対応付け）
-    Hub/                        監視の本体（移植元: 削除済みの旧 monitor の src）
-      SessionHub.swift            在庫層・実況層・フック層を束ねる actor（状態の合成・フィード・要対応・権限の中継・伝言・エディタ）
+    Hub/                        監視の本体
+      SessionHub.swift            在庫層・実況層・フック層を束ねる actor（状態の合成・フィード・要対応・権限の中継・伝言）
       SessionInventory.swift      在庫層: ~/.claude/sessions/<pid>.json + kill(pid,0)
       TranscriptTail.swift        実況層: jsonl の末尾差分（ツール・ブランチ・トークン・ai-title の遡り primeMeta）
       Attention.swift             要対応の判定・待ち始めの時刻・権限待ちの説明
@@ -65,14 +59,14 @@ mac/
       TranscriptLog.swift         会話履歴の整形（発話・応答・ツール）と画像の取り出し（行の位置を覚えて読み直す）
       TranscriptStore.swift       会話履歴の取得と追記の購読（250ms）を持つ actor
       SessionMessaging.swift      受信箱ソケットへの伝言（Unix ソケット・自分の所有のソケットだけ）
-      UsageReader.swift           使用量ファイル（statusline.sh が書く）の読み取り。移行期間は旧 data/claude-usage.json と新しい方を使う
-      XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探しと `open -a`
+      UsageReader.swift           使用量ファイル（statusline.sh が書く）の読み取り
+      XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探し（会話の見出しの「Xcode」「閉じる」と iPhone の API が使う）
       ClaudeHome.swift            ~/.claude のパス・スラッグ・transcript の場所
     Server/                     フック等を受けるアプリ内の HTTP サーバー
-      HTTPServer.swift    最小の HTTP/1.1（Network.framework・外部ライブラリなし）。既定は 127.0.0.1・平文。
+      HTTPServer.swift            最小の HTTP/1.1（Network.framework・外部ライブラリなし）。既定は 127.0.0.1・平文。
                                   `HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限を変えられ、chunked で流し続ける応答（SSE）も出せる
-      HookServerRoutes.swift     /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
-      LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定（移植元: 旧 monitor の src/origin.ts）
+      HookServerRoutes.swift      /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
+      LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定
     Remote/                     iPhone 向けの口（同じ Wi-Fi・TLS・端末トークン）。仕様は docs/remote-api.md
       API/                        iOS と共有する型（RemoteAPIModels: リクエスト・応答・状態 / RemotePinning: 指紋のピン留め）
       Server/                     SelfSignedCertificate（DER で X.509 を組む・鍵と証明書のファイル）・RemotePairingStore・
@@ -82,6 +76,7 @@ mac/
       ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
       ChannelServer.swift         stdin を行で読み、中継して判断を stdout に返す（ログは stderr）
+    Support/                    SecureFile（0600・置き換えで書く）・DeckPaths（Application Support / Caches / Logs の claude-deck）
     TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
@@ -105,9 +100,8 @@ mac/
       ScreenPane.swift            画面の右に縦線で区切って出る別の欄（差分パネル）を除いて左だけにする
     Stage/
       StageLogic.swift            ステージパネルの文言（いまの動き・職業名・フィード）・プレースホルダー・開閉の判定
-  Sources/MonitorProbe/         GUI 無しでアプリ内の監視を確かめるデバッグ用エントリ（swift run monitor-probe）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
-  Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）
+  Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test。共通の補助は TestSupport.swift・FakeClaudeHome.swift）
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
   scripts/bundle.sh             claude-deck.app を組み立てて ad-hoc 署名する（チャネルの実行ファイルも同梱）
@@ -116,24 +110,23 @@ mac/
 
 ## セッション監視とフックの受け口（MonitorKit・アプリ内）
 
-以前は別プロセスの monitor（Node・:8766。削除済み）が担っていた仕事を**アプリの中で行う**。起動時に `MonitorBridge.start()` → `MonitorStore.start()` が
+セッション監視とフックの受け口は**アプリの中で動く**。起動時に `MonitorBridge.start()` → `MonitorStore.start()` が
 監視（`SessionHub` / `TranscriptStore`）と受け口（`HTTPServer`）を動かし、UI は HTTP / SSE を経由せず
 ストアから直接読む。重い I/O は actor 上で行い、メインスレッドには載せない。
 
 - **在庫層**（3 秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)`。**実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl`
   の末尾差分（初回は末尾 512KB・`ai-title` / `last-prompt` は初回だけ最大 32MB 遡る `primeMeta`）。サブエージェントは 2 秒ごと。
-  状態の合成・終了後 5 分の保持・要対応の時刻（`attentionSince`）・権限待ちの説明・未知の通知のフィード化は旧 monitor と同じ（`SessionHub`）。
+  状態の合成・終了後 5 分の保持・要対応の時刻（`attentionSince`）・権限待ちの説明・未知の通知のフィード化は `SessionHub`。
   `primeMeta` と Xcode プロジェクトの走査は actor の外で行い、結果だけ戻す。初回の末尾読みのうちアプリ起動前に書かれた行は
   フィードに積まない（起動のたびに未読数が膨らまないように）
 - **会話**: `TranscriptStore`（250ms で追記を読む actor）。購読するのは直近に開いたルームだけ（`watchTranscripts`）で、
   開いていないセッションのログは読まない・持たない。ルームを開いたら購読を張ってから `fetchTranscript` で全件、
   以降は追記を id で重複除去して足す。購読の張り替えは 1 回の呼び出しで行い、間の追記を落とさない。画像は `imageSource`（行の位置を覚えて読み直す。base64 の PNG / JPEG / GIF / WebP のみ）
-- **使用量**: `~/Library/Application Support/claude-deck/usage.json`（`scripts/statusline.sh` が書く）を 3 秒ごとに読む（`CLAUDE_DECK_USAGE_FILE` で差し替え。スクリプトと同じ変数）。
-  移行期間は旧 statusLine が書く `<ai-manager ルート>/data/claude-usage.json` も読み、取得時刻の新しい方を使う
+- **使用量**: `~/Library/Application Support/claude-deck/usage.json`（`scripts/statusline.sh` が書く）を 3 秒ごとに読む（`CLAUDE_DECK_USAGE_FILE` で差し替え。スクリプトと同じ変数）
 - **伝言**: 受信箱ソケット（自分が所有する Unix ソケットだけ）へ行区切りの JSON を 1 行書く。失敗は `HubFailure`（`not_found` / `not_alive` / `no_socket` / `unreachable`）
 - 読み取り元は `CLAUDE_HOME`（既定 `~/.claude`）。読むだけで書かない。デバッグ出力は `CLAUDE_DECK_MONITOR_DEBUG=1`
 - アプリで起動した claude の pid を `registerHostedProcess(pid:)` で登録し、`~/.claude/sessions/<pid>.json` の
-  sessionId で監視のセッションと対応付ける（`session(forHostedPid:)` / `externalSessions`）。
+  sessionId で監視のセッションと対応付ける（`sessionId(forHostedPid:)` / `hostedSessionIds`）。
   `/clear` で sessionId が替わるので sessions を受けるたびに読み直す
 
 ### アプリ内サーバー（:8766）
@@ -160,21 +153,14 @@ mac/
 - `allowLocalEndpointReuse` は付けたまま。0.0.0.0 / `[::]` で待ち受ける別プロセス（SO_REUSEADDR の有無とも）が居ても
   127.0.0.1 では bind できず「使用中」になることを試験で確かめている
 - ポートは `CLAUDE_DECK_SERVER_PORT`（既定 8766。`off` で待ち受けない）
-- **ポートが使われている時**（旧 monitor が動いている等）: 奪わない・止めない。ルーム一覧の検索欄の下に
+- **ポートが使われている時**（別のプロセスが待ち受けている）: 奪わない・止めない。ルーム一覧の検索欄の下に
   「ポート 8766 を別のプロセスが使っているため、フック（権限待ち・入力待ち）が届きません」と出し、
-  監視（一覧・会話・使用量）は続ける。5 秒ごとに取り直すので、旧 monitor を止めれば自動で引き継ぐ（`MonitorStore.serverState`）
+  監視（一覧・会話・使用量）は続ける。5 秒ごとに取り直すので、そのプロセスを止めれば自動で引き継ぐ（`MonitorStore.serverState`）
 - アプリが起動していない間のフックは届かない（curl は `--max-time 1` で諦めるだけで、Claude Code 側は止まらない）。
   取りこぼしてよい扱いにしている: 権限待ち・入力待ちはフックでしか分からないが、次のフックかログの追記で状態は戻る
 - SIGTERM / SIGINT は `SIG_IGN` ではなく何もしないハンドラ（`TerminationSignals`）で既定動作だけ外し、通常の終了経路に乗せる。
-  `SIG_IGN` は exec を越えて子に残り、端末ペインの claude（SwiftTerm の forkpty 経路）が SIGTERM を無視して
+  `SIG_IGN` は exec を越えて子に残り、ホスト中の claude（SwiftTerm の forkpty 経路）が SIGTERM を無視して
   上限到達時の `terminate()` が効かなくなるため。ハンドラは exec で既定に戻るので子に漏れない（`TerminationSignalsTests`）
-
-```sh
-# GUI 無しでアプリ内の監視を確かめる（30 秒、pid 14978 をホスト中とみなす。受け口は既定で開かない）
-swift run monitor-probe 30 14978
-# 受け口も試す時は別ポートで（:8766 はアプリ / 旧 monitor が使う）
-CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
-```
 
 ## iPhone 連携（同じ Wi-Fi・`docs/remote-api.md`）
 
@@ -245,7 +231,7 @@ CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 ```
 
 - 既に同じイベントにフックがある場合は、同じ `hooks` 配列に要素として足す（マッチしたフックは並列実行される）。
-- 宛先は旧 monitor の頃と同じ `http://localhost:8766/hook`。旧 monitor の設定のままなら書き換えは要らない。
+- 宛先は `http://localhost:8766/hook`。
 - 未知の `notification_type` はライブフィードに「通知: <種別>」として出る。
 
 ### statusLine（上限の残量）
@@ -267,7 +253,6 @@ CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 ```
 
 - 保存先は環境変数 `CLAUDE_DECK_USAGE_FILE` で差し替えられる（アプリ側も同じ変数を読む。Finder から起動したアプリには環境変数が渡らないので、通常は既定の場所のまま使う）。
-- アプリは旧 `data/claude-usage.json` も手元に残っていれば読み、取得時刻の新しい方を使う（もう書かれないので、古い値に引きずられることはない）。
 - **表示を先に出し切ってから書く。** 書き込みに失敗してもステータスラインは出る。値が 1 つも無い入力では記録を上書きしない。
 - `jq` が要る。出すのは `rate_limits` 由来の表示だけなので、他に出したいものがあればスクリプトに足す。
 - statusLine は Claude Code が動いている間しか呼ばれない。全セッションが止まると値が古くなるので、アプリは取得 10 分以内の値だけ使う。
@@ -333,11 +318,10 @@ Claude Code の **Channels**（research preview の permission relay）を使う
 - 追加: 「+」→「フォルダを追加…」（複数可）。選んだディレクトリで `claude` を起動するエントリになる。
 - 削除: 「+」の一覧で各行の「…」（または右クリック）→「一覧から削除」。一覧から外すだけでフォルダは消さない。
 - 取り込み: 「+」の下部「registry.tsv を取り込む」。`projects/registry.tsv` の行を足す（既にあるパスは重複させない）。
-- GitHub Project の紐づけ: 各行の「…」→「GitHub Project を設定…」（URL・`owner/番号`・番号のみを受け付ける。空欄で解除）。
 - 同じプロジェクトを選ぶと、動いているルームがあれば新しく起動せずそのルームに移る（終了済みのルームしか無ければ新しく起動する）。
-- 永続化先・初回の取り込みは下記。
+- 永続化先・初回の取り込みは下記（「プロジェクト一覧の永続化」）。
 
-## メイン画面: チャット（画面案B の左と中央）
+## メイン画面: チャット
 
 Claude Code のセッションを**チャットアプリの操作感**で扱う。セッション 1 つ = トークルーム 1 つ。
 右側はステージパネル（`MainViewController` で `ChatRootView(model:) { StagePanel(model:) }` として差し込む）。
@@ -349,12 +333,12 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   端末画面からのローカル判定（作業中 / 権限プロンプト / 待機）で代わりに出す。
 - 各行: ドット絵キャラのアイコン・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
   （開いていない間に届いた応答の数）。アプリの外で動いているセッションには「外部」タグ（伝言・引き継ぎは下記「外部セッション」）。
-  - キャラはステージの 3D と同じ絵と配色（`Sources/MonitorKit/Pixel/PixelCharacter.swift`。出典は削除済みの monitor UI の `pixel/sprites.ts`・`look.ts`。マークの大きさ・位置・跳ね幅だけは小さいアイコンで読めるよう変えている）。稼働中=立ち・緑で跳ねる / 権限待ち=立ち・amber で「!」が点滅 / 入力待ち=立ち・青で「?」が点滅 / エラー=うずくまり・赤 / 待機=座り・灰で Zz が浮き沈み / 終了=座り・暗い灰 / 状態不明=座り・灰（マーク無し）
+  - キャラはステージの 3D と同じ絵と配色（`Sources/MonitorKit/Pixel/PixelCharacter.swift`。マークの大きさ・位置・跳ね幅だけは小さいアイコンで読めるよう変えている）。稼働中=立ち・緑で跳ねる / 権限待ち=立ち・amber で「!」が点滅 / 入力待ち=立ち・青で「?」が点滅 / エラー=うずくまり・赤 / 待機=座り・灰で Zz が浮き沈み / 終了=座り・暗い灰 / 状態不明=座り・灰（マーク無し）
   - SwiftUI の Canvas で整数ポイントのマスを補間なしに塗る。動く状態だけ、画面に出ている間だけ `TimelineView(.periodic)` で 4fps で描き直す（起点を固定時刻にして全行が同じ境目でコマを切り替える）。「動きを減らす」設定では止める。行と見出しでは状態名を隣の文字が読むので、アイコン自体は読み上げない
   - 会話の見出しのアイコンも同じキャラ。「+」のプロジェクト一覧はセッションを持たないので頭文字アイコンのまま
 - 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。
-  一覧の追加・削除・取り込み・GitHub の紐づけもここ）。右クリック → 「ルームを閉じる（claude を終了）」。
-- 検索欄の下: 監視の開始中はその旨、フックの受け口（:8766）を開けない時（旧 monitor 等が使用中）はフックが届かない旨を出す。
+  一覧の追加・削除・取り込みもここ）。右クリック → 「ルームを閉じる（claude を終了）」。
+- 検索欄の下: 監視の開始中はその旨、フックの受け口（:8766）を開けない時（別のプロセスが使用中）はフックが届かない旨を出す。
 - 上限の残り% は出さない（statusLine はターミナル起動の Claude Code でしか更新されず、VS Code 拡張だけ動いていると古い値が残るため）。
   上限到達の強制終了（`LimitGuard` / `LimitWatch`）は従来どおり `MonitorStore.usage`（取得 10 分以内の値だけ）を使う。
 
@@ -365,9 +349,8 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
 
 - **見出し**: 「ステージ」・畳むボタン。ステージは 3D 表示だけ（以前の 2D / 3D の保存値 `stagePanel.mode` はパネル表示時に消す）。
-- **ステージ**: セッション 1 つ分の段々のピラミッド（議事堂）を描く。出典は削除済みの monitor UI の `three/`（`blueprint.ts`・
-  `World.tsx`・`Ziggurat.tsx`）と `pixel/`（`sprites.ts`・`look.ts`・`kit.ts`・`voxelize.ts`）で、寸法・色・ボクセルの厚み・
-  カメラの画角（縦 34°・見下ろし 0.42rad）と収め方・跳ね・脈・光り方の数値はそのまま移植した。
+- **ステージ**: セッション 1 つ分の段々のピラミッド（議事堂）を描く。寸法・色・ボクセルの厚み・カメラの画角（縦 34°・見下ろし 0.42rad）と
+  収め方・跳ね・脈・光り方の数値は、three.js で描いていた頃の見た目に合わせてある。
   - 親エージェントは最上段に立つ（状態で姿勢と色が変わる: 稼働中=立ち・緑 / 権限待ち=立ち・amber / 入力待ち=立ち・青 /
     エラー=うずくまり・赤 / 待機=座り・灰 / 終了=座り・暗い灰）。稼働中は 2 コマで跳ね、使っているツールの持ち物
     （端末・本・槌・巻物・望遠鏡・問いかけ・画布・紙）を右手に持って緑の光を添える。
@@ -383,9 +366,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
     状態ごとの画像をオフスクリーン（`SCNRenderer`）で書き出せる。
 - **プレースホルダー**: 監視の開始中・ルーム未選択・ホスト中で sessionId 未解決（「セッションを確認しています…」）・
   監視がまだそのセッションを見つけていない、の各状態で文言を出す。
-- **いまの動き**: 削除済みの monitor UI の `SessionCard` の `actionLine` と同じ順（スキル『…』> `currentAction` > ツールの動作「端末を叩いている」等）。
+- **いまの動き**: スキル『…』> `currentAction` > ツールの動作（「端末を叩いている」等）の順で 1 つ。
   作業中でなければ `statusDetail` か状態名。下に「最終活動 N秒前 · 稼働 N分」（1 秒ごとに更新）と作業タイトル。
-- **随伴するサブエージェント**: `agents` を id 順で、職業名（`pixel/kit.ts` の JOBS と同じ。例: Explore → 斥候）・種別・状態
+- **随伴するサブエージェント**: `agents` を id 順で、職業名（例: Explore → 斥候）・種別・状態
   （ログ更新が 15 秒以内なら「作業中」、それ以外は最終更新からの経過）。
 - **ライブフィード**: そのセッションの feed の直近 60 件を新しい順（新着が先頭に入る）。時刻・種別（ツール / 指示 / 応答 / 状態 / セッション / 随伴）・内容を mono で。
 - **開閉**: 見出しのボタンで畳む（幅 36px の帯になり、帯のボタンで開く。UserDefaults `stagePanel.open`）。
@@ -394,8 +377,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 ### 会話（中央）
 
 - 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「Xcode」「閉じる」。表示の切替は無く、どのルームも常にチャット。
-  「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`findXcodeProject`）。「閉じる」は確認ダイアログの後、
-  旧 monitor の `close.ts` と同じ AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
+  「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層）。「閉じる」は確認ダイアログの後、
+  AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
   （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。ホスト中のルームでも使える。
   結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。
   初回は macOS が「claude-deck が Xcode を操作する」許可（オートメーション）を求める。拒否するとエラー（-1743）になる。
@@ -577,14 +560,10 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
     安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。
 
-### GitHub 表示（旧ペインのみ）
-
-会話画面からは外した。`GitHubBoardView`（`gh project item-list` で Issue をステータス別に表示）は、使われていない旧ペイン
-（`TerminalPaneViewController`）にだけ残っている。
-「+」の「GitHub Project を設定…」で保存した owner/number は、一覧の 2 行目（`GH #番号`）に出る。
+### プロジェクト一覧の永続化
 
 **永続化先**: `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。試験用に別の一覧を使うときは環境変数 `CLAUDE_DECK_PROJECTS`（JSON のパス）で差し替える。
-**初回のみ** `registry.tsv` から取り込んで空にしない（以降は完全にユーザー管理）。
+**初回のみ** `registry.tsv` から取り込んで空にしない（以降は完全にユーザー管理）。以前の版が書いた GitHub Project のキー（`ghOwner` / `ghNumber`）は読み込み時に無視し、次に保存した時に消える。
 
 ### registry.tsv の解決順（初回取り込み / 取り込みボタン）
 
@@ -593,7 +572,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 ### ai-manager ルートの解決（`AIManagerRoot.swift`）
 
-`.app` から起動すると cwd が `/` になるため、ai-manager ルート（`projects/registry.tsv` を持つディレクトリ）の解決を `AIManagerRoot` に集約している。TSV や移行期間の旧 `data/claude-usage.json` はこのルートからの相対で引く。
+`.app` から起動すると cwd が `/` になるため、ai-manager ルート（`projects/registry.tsv` を持つディレクトリ）の解決を `AIManagerRoot` に集約している。TSV はこのルートからの相対で引く。
 
 1. 環境変数 `AI_MANAGER_ROOT`
 2. UserDefaults `aiManagerRoot`（`defaults write com.shinjosato.claude-deck aiManagerRoot /path/to/ai-manager`）
@@ -654,6 +633,6 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
   （文言が変わって選択肢の数が読めなくなれば Enter を押さずにやめる）。
 - 送った伝言の吹き出しはアプリのメモリにだけ持つ（再起動で消える）。
 - 外部セッションの権限カード（Channels 経由の許可 / 拒否）は既存の permissions の経路（アプリ内サーバーに移した）をそのまま使っており、外部ルームでの実機確認はしていない。
-- ステージの 3D は、オフスクリーン描画（`SCNRenderer`）の画像を旧 monitor UI の 3D（ヘッドレスブラウザで撮影）と状態ごとに見比べて合わせた。
+- ステージの 3D は、オフスクリーン描画（`SCNRenderer`）の画像を three.js 版の 3D（ヘッドレスブラウザで撮影）と状態ごとに見比べて合わせた。
   アプリの画面上での動き（跳ね・脈・表示中だけ回ること）は目視では未確認。足し算の光は明るい面の上では three.js より控えめに見える
   （three.js は sRGB のまま足すが、SceneKit は線形で足すため。暗い地の上は合わせてある）。
