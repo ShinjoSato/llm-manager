@@ -52,6 +52,52 @@ extension RemotePairingPayload {
         if expiresAt <= now { return "この QR は期限切れです。mac で新しい QR を出してください。" }
         return nil
     }
+
+    /// 接続先が手元の LAN の外を指していないか。外れていれば人に見せる理由（端末トークンを外へ送らせない）。
+    public var addressProblem: String? {
+        if !Self.isLocalNetworkHost(host) {
+            return "接続先（\(host)）が家庭内の LAN のアドレスではないので使えません。Mac の claude-deck で出した QR を読み取ってください。"
+        }
+        if let localHostName, !Self.isLocalHostName(localHostName) {
+            return "予備の接続先（\(localHostName)）が .local の名前ではないので使えません。Mac の claude-deck で出した QR を読み取ってください。"
+        }
+        return nil
+    }
+
+    /// プライベートの IPv4（10/8・172.16/12・192.168/16）とリンクローカル（169.254/16）、`.local` の名前だけを LAN とみなす。
+    public static func isLocalNetworkHost(_ host: String) -> Bool {
+        if let octets = ipv4Octets(host) {
+            switch (octets[0], octets[1]) {
+            case (10, _), (192, 168), (169, 254): return true
+            case (172, let b): return (16...31).contains(b)
+            default: return false
+            }
+        }
+        return isLocalHostName(host)
+    }
+
+    /// `xxx.local` の形の mDNS の名前か（ラベルは英数字とハイフンだけ）。
+    public static func isLocalHostName(_ name: String) -> Bool {
+        let labels = name.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2, labels.last?.lowercased() == "local" else { return false }
+        return labels.dropLast().allSatisfy { label in
+            !label.isEmpty && label.count <= 63 && label.utf8.allSatisfy { $0 == 0x2d || (0x30...0x39).contains($0) || (0x41...0x5a).contains($0) || (0x61...0x7a).contains($0) }
+                && label.first != "-" && label.last != "-"
+        }
+    }
+
+    /// 10 進の 4 つ組だけを IPv4 とみなす（先頭の 0 は 8 進と読まれ得るので認めない）。
+    static func ipv4Octets(_ host: String) -> [Int]? {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        var out: [Int] = []
+        for part in parts {
+            guard (1...3).contains(part.count), part.utf8.allSatisfy({ (0x30...0x39).contains($0) }),
+                  part.count == 1 || part.first != "0", let value = Int(part), value <= 255 else { return nil }
+            out.append(value)
+        }
+        return out
+    }
 }
 
 /// `/v1` の各口の要求を組み立てる。

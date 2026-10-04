@@ -103,13 +103,61 @@ final class RemoteRequestBuilderTests: XCTestCase {
     }
 }
 
+final class RemotePinnedDelegateTests: XCTestCase {
+    func testRedirectIsNotFollowed() {
+        let delegate = RemotePinnedSessionDelegate(pin: TestCertificate.fingerprint)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let task = session.dataTask(with: URL(string: "https://192.168.1.5:8767/v1/rooms")!)
+        let response = HTTPURLResponse(url: URL(string: "https://192.168.1.5:8767/v1/rooms")!, statusCode: 302, httpVersion: nil,
+                                       headerFields: ["Location": "https://example.com/"])!
+        let called = expectation(description: "答える")
+        delegate.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                            newRequest: URLRequest(url: URL(string: "https://example.com/")!)) { next in
+            XCTAssertNil(next, "追わずに 30x をそのまま返す")
+            called.fulfill()
+        }
+        wait(for: [called], timeout: 1)
+        XCTAssertFalse(delegate.hasMismatched)
+    }
+}
+
+final class PairingAddressTests: XCTestCase {
+    private func payload(host: String, local: String? = nil) -> RemotePairingPayload {
+        RemotePairingPayload(host: host, port: 8767, token: "t", fingerprint: TestCertificate.fingerprint, name: "mac", expiresAt: 0,
+                             localHostName: local)
+    }
+
+    func testOnlyLocalNetworkHostsAreAccepted() {
+        for host in ["10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.254", "192.168.1.5", "169.254.10.20",
+                     "shinjo-mac.local", "Shinjo-MacBook.LOCAL", "a.b.local"] {
+            XCTAssertTrue(RemotePairingPayload.isLocalNetworkHost(host), host)
+            XCTAssertNil(payload(host: host).addressProblem, host)
+        }
+        for host in ["8.8.8.8", "172.15.0.1", "172.32.0.1", "192.169.0.1", "127.0.0.1", "0.0.0.0", "100.64.0.1", "example.com",
+                     "evil.local.example.com", ".local", "local", "mac.local.", "010.0.0.1", "10.0.0", "10.0.0.1.2", "256.1.1.1",
+                     "::1", "fe80::1", "", "a_b.local", "-a.local", "mac.local:80", "10.0.0.1/x", "１０.0.0.1"] {
+            XCTAssertFalse(RemotePairingPayload.isLocalNetworkHost(host), host)
+            XCTAssertNotNil(payload(host: host).addressProblem, host)
+        }
+    }
+
+    func testBackupNameMustBeDotLocal() {
+        XCTAssertNil(payload(host: "192.168.1.5", local: "mac.local").addressProblem)
+        XCTAssertNil(payload(host: "192.168.1.5", local: nil).addressProblem)
+        XCTAssertNotNil(payload(host: "192.168.1.5", local: "10.0.0.2").addressProblem, "予備は名前だけ")
+        XCTAssertNotNil(payload(host: "192.168.1.5", local: "example.com").addressProblem)
+        XCTAssertNotNil(payload(host: "192.168.1.5", local: "").addressProblem)
+    }
+}
+
 final class SSEParserTests: XCTestCase {
     private func run(_ text: String) throws -> [SSEParser.Output] {
         var splitter = LineSplitter()
         var parser = SSEParser()
         var out: [SSEParser.Output] = []
         for byte in Array(text.utf8) {
-            if let line = try splitter.feed(byte), let output = parser.feed(line) { out.append(output) }
+            if let line = try splitter.feed(byte), let output = try parser.feed(line) { out.append(output) }
         }
         return out
     }
@@ -138,6 +186,21 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(try SSEParser.decode(.init(event: "transcript", data: tjson)), .transcript(event))
         XCTAssertNil(try SSEParser.decode(.init(event: "future", data: "{}")), "知らないイベントは捨てる")
         XCTAssertThrowsError(try SSEParser.decode(.init(event: "state", data: "{")))
+    }
+
+    func testEventDataIsCapped() throws {
+        var parser = SSEParser()
+        parser.maxEventBytes = 8
+        XCTAssertNil(try parser.feed("event: state"))
+        XCTAssertNil(try parser.feed("data: 1234"))
+        XCTAssertThrowsError(try parser.feed("data: 5678"), "区切りの無いまま積み上がる相手は打ち切る") { error in
+            XCTAssertTrue(error is SSEParser.Overflow)
+        }
+        // 打ち切った分は捨て、次の 1 件からは読める。
+        XCTAssertNil(try parser.feed("data: ok"))
+        XCTAssertEqual(try parser.feed(""), .message(.init(event: "message", data: "ok")))
+        XCTAssertEqual(SSEParser().maxEventBytes, 16 << 20)
+        XCTAssertFalse(RemoteIssue.from(RemoteClientError.streamOverflow).needsPairing, "張り直しへ回す")
     }
 
     func testLineSplitterRejectsHugeLines() {

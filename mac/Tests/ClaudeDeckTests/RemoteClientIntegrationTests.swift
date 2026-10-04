@@ -56,9 +56,11 @@ final class RemoteClientIntegrationTests: XCTestCase {
         let rooms = try await client.rooms()
         XCTAssertEqual(rooms, control.state)
 
-        // ストリームを張ってから会話を全件取る（取りこぼさない順）。
-        var events = client.events(transcripts: ["*"]).makeAsyncIterator()
-        guard case .state(let first)? = try await events.next() else { return XCTFail("最初は state") }
+        // ストリームを張ってから会話を全件取る（取りこぼさない順）。裏で読み続け、待つ側は期限付きで待つ。
+        let stream = StreamRecorder(client.events(transcripts: ["*"]))
+        defer { stream.cancel() }
+        try await waitUntil { !stream.events.isEmpty }
+        guard case .state(let first)? = stream.events.first else { return XCTFail("最初は state") }
         XCTAssertEqual(first.rooms.first?.name, "mirio")
         var buffer = TranscriptBuffer()
         buffer.beginFetch()
@@ -66,22 +68,15 @@ final class RemoteClientIntegrationTests: XCTestCase {
         buffer.apply(try await client.transcript(sessionId: sid), fullReplace: true)
         XCTAssertEqual(buffer.items.map(\.id), ["u1", "a1"])
 
-        for _ in 0..<200 where await transcripts.subscriberCount == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        try await waitUntil { await transcripts.subscriberCount > 0 }
         await transcripts.emit(TranscriptEvent(sessionId: sid, items: [FakeTranscriptSource.item("a1", .assistant, "はい"),
                                                                        FakeTranscriptSource.item("a2", .assistant, "done")]))
-        var appended: TranscriptEvent?
-        while appended == nil, let next = try await events.next() {
-            if case .transcript(let event) = next { appended = event }
-        }
-        buffer.append(try XCTUnwrap(appended).items)
+        try await waitUntil { stream.transcripts.count == 1 }
+        buffer.append(try XCTUnwrap(stream.transcripts.first).items)
         XCTAssertEqual(buffer.items.map(\.id), ["u1", "a1", "a2"], "重複は除く")
 
         control.state.rooms[0].status = .working
-        var changed: RemoteState?
-        while changed == nil, let next = try await events.next() {
-            if case .state(let state) = next { changed = state }
-        }
-        XCTAssertEqual(changed?.rooms.first?.status, .working)
+        try await waitUntil { stream.states.last?.rooms.first?.status == .working }
 
         let image = try await client.image(sessionId: sid, itemId: "u1", index: 0)
         XCTAssertEqual(image, FakeTranscriptSource.png)
@@ -99,7 +94,8 @@ final class RemoteClientIntegrationTests: XCTestCase {
 
         // 取り消されたらストリームは閉じ、以降は登録の取り消しとして分かる。
         service.revoke(pairing.deviceId)
-        while let next = try await events.next() { _ = next }
+        try await waitUntil { stream.ended }
+        XCTAssertNil(stream.failure, "取り消しは相手が閉じるだけ")
         do {
             _ = try await client.rooms()
             XCTFail("取り消し後は通らない")
@@ -121,13 +117,11 @@ final class RemoteClientIntegrationTests: XCTestCase {
             XCTAssertEqual(error as? RemoteClientError, .pinMismatch)
             XCTAssertTrue(RemoteIssue.from(error).needsPairing)
         }
-        var stream = client.events(transcripts: nil).makeAsyncIterator()
-        do {
-            _ = try await stream.next()
-            XCTFail("ストリームも同じ")
-        } catch {
-            XCTAssertEqual(error as? RemoteClientError, .pinMismatch)
-        }
+        let stream = StreamRecorder(client.events(transcripts: nil))
+        defer { stream.cancel() }
+        try await waitUntil { stream.ended }
+        XCTAssertTrue(stream.events.isEmpty)
+        XCTAssertEqual(stream.failure as? RemoteClientError, .pinMismatch, "ストリームも同じ")
     }
 
     func testUsedPairingCodeIsRejected() async throws {
@@ -147,6 +141,33 @@ final class RemoteClientIntegrationTests: XCTestCase {
         }
     }
 
+    /// 30x を返す相手でも追わない（トークンを付けた要求を別の行き先へ運ばせない）。
+    func testRedirectsAreNotFollowed() async throws {
+        let loaded = try TLSIdentityFiles(directory: dir.appendingPathComponent("redirect")).create()
+        let paths = Box<[String]>([])
+        let server = HTTPServer(options: HTTPServerOptions(tls: loaded.serverIdentity, rejection: { _, _ in nil })) { request in
+            paths.mutate { $0.append(request.path) }
+            return HTTPResponse(status: 302, headers: [("Location", "https://127.0.0.1:1/v1/elsewhere")])
+        }
+        let bound = try await startListening(server)
+        defer { server.stop() }
+        let client = RemoteClient(host: "127.0.0.1", port: bound, pin: loaded.fingerprint, token: "secret")
+        defer { client.invalidate() }
+        do {
+            _ = try await client.rooms()
+            XCTFail("30x は失敗として返る")
+        } catch {
+            XCTAssertEqual(error as? RemoteClientError, .http(status: 302, error: nil, message: nil))
+        }
+        let action = try? await client.sendMessage(roomId: "r", text: "hi")
+        XCTAssertNil(action, "操作も追わない")
+        let stream = StreamRecorder(client.events(transcripts: nil))
+        defer { stream.cancel() }
+        try await waitUntil { stream.ended }
+        XCTAssertEqual(stream.failure as? RemoteClientError, .http(status: 302, error: nil, message: nil))
+        XCTAssertEqual(paths.value, ["/v1/rooms", "/v1/rooms/r/messages", "/v1/events"])
+    }
+
     func testUnreachablePortIsUnreachable() async throws {
         await service.stopAndWait()
         let client = RemoteClient(host: "127.0.0.1", port: port, pin: fingerprint, token: "x")
@@ -158,4 +179,32 @@ final class RemoteClientIntegrationTests: XCTestCase {
             XCTAssertEqual(RemoteIssue.from(error).kind, .unreachable)
         }
     }
+}
+
+/// ストリームを裏で読み切り、届いたものと終わり方を貯める。
+final class StreamRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var received: [RemoteStreamEvent] = []
+    private var finished = false
+    private var error: Error?
+    private var task: Task<Void, Never>?
+
+    init(_ stream: AsyncThrowingStream<RemoteStreamEvent, Error>) {
+        task = Task { [self] in
+            do {
+                for try await event in stream { lock.withLock { received.append(event) } }
+                lock.withLock { finished = true }
+            } catch {
+                lock.withLock { self.error = error; finished = true }
+            }
+        }
+    }
+
+    var events: [RemoteStreamEvent] { lock.withLock { received } }
+    var ended: Bool { lock.withLock { finished } }
+    var failure: Error? { lock.withLock { error } }
+    var states: [RemoteState] { events.compactMap { if case .state(let s) = $0 { s } else { nil } } }
+    var transcripts: [TranscriptEvent] { events.compactMap { if case .transcript(let t) = $0 { t } else { nil } } }
+
+    func cancel() { task?.cancel() }
 }

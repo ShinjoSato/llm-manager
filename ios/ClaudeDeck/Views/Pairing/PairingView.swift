@@ -122,14 +122,14 @@ struct PairingConfirmView: View {
 
     var body: some View {
         let payload = offer.payload
-        let problem = payload.problem(now: Date().timeIntervalSince1970 * 1000)
+        let problem = payload.addressProblem ?? payload.problem(now: Date().timeIntervalSince1970 * 1000)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if offer.source == .openedURL {
+                    if let warning = offer.originWarning {
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: "exclamationmark.shield.fill").foregroundStyle(DeckTheme.permission)
-                            Text("他のアプリから開かれたリンクです。自分の Mac の claude-deck で今出した QR のものか、名前と指紋を確かめてください。")
+                            Text(warning)
                                 .font(DeckTheme.caption)
                                 .foregroundStyle(DeckTheme.text)
                                 .fixedSize(horizontal: false, vertical: true)

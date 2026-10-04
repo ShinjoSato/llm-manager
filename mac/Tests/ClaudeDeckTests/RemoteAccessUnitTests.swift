@@ -499,13 +499,13 @@ final class RemoteAccessUnitTests: XCTestCase {
     @MainActor
     func testOperationWaitTimesOutAndIgnoresLateCompletion() async {
         var late: ((RemoteActionResult) -> Void)?
-        let timedOut = await RemoteOperation.wait(timeout: .milliseconds(30)) { done in late = done }
-        XCTAssertEqual(timedOut, RemoteOperation.timedOut)
+        let timedOut = await RemoteOperationWait.wait(timeout: .milliseconds(30)) { done in late = done }
+        XCTAssertEqual(timedOut, RemoteOperationWait.timedOut)
         late?(.success("confirmed"))  // 上限の後の完了は捨てる（二重に戻さない）
 
-        let immediate = await RemoteOperation.wait(timeout: .seconds(5)) { done in done(.failure("busy", "b")) }
+        let immediate = await RemoteOperationWait.wait(timeout: .seconds(5)) { done in done(.failure("busy", "b")) }
         XCTAssertEqual(immediate.code, "busy")
-        let later = await RemoteOperation.wait(timeout: .seconds(5)) { done in
+        let later = await RemoteOperationWait.wait(timeout: .seconds(5)) { done in
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(20))
                 done(.success("confirmed"))

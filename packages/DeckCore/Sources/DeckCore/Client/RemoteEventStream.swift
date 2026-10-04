@@ -22,14 +22,19 @@ public struct SSEParser: Sendable {
 
     private var event = ""
     private var data: [String] = []
+    private var dataBytes = 0
+    /// 1 件分の `data:` の合計の上限。区切りの空行を送らない相手に際限なく溜めさせない。
+    public var maxEventBytes = 16 << 20
 
     public init() {}
 
+    public struct Overflow: Error {}
+
     /// 1 行（改行を除く）を食べる。区切りまで来たら出す。
-    public mutating func feed(_ rawLine: String) -> Output? {
+    public mutating func feed(_ rawLine: String) throws -> Output? {
         let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
         if line.isEmpty {
-            defer { event = ""; data = [] }
+            defer { event = ""; data = []; dataBytes = 0 }
             guard !data.isEmpty else { return nil }
             return .message(Message(event: event.isEmpty ? "message" : event, data: data.joined(separator: "\n")))
         }
@@ -46,7 +51,13 @@ public struct SSEParser: Sendable {
         }
         switch field {
         case "event": event = String(value)
-        case "data": data.append(String(value))
+        case "data":
+            dataBytes += value.utf8.count + 1
+            if dataBytes > maxEventBytes {
+                event = ""; data = []; dataBytes = 0
+                throw Overflow()
+            }
+            data.append(String(value))
         default: break
         }
         return nil

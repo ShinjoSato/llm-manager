@@ -56,6 +56,8 @@ final class AppModel {
     private let keychain: PairingKeychain
     private var client: RemoteClient?
     private var streamTask: Task<Void, Never>?
+    /// 今の接続の世代。止めた・張り直した後に古い接続が状態を書き換えないよう、自分の世代の時だけ書く。
+    private var runGeneration = 0
     private var backoff = RemoteBackoff()
     private var hostIndex = 0
     /// 会話を持つのは直近に開いたルームだけ（他は開き直した時に取り直す）。
@@ -105,22 +107,32 @@ final class AppModel {
             connection = .unpaired
             return
         }
-        streamTask?.cancel()
+        stopStream()
         backoff.reset()
-        streamTask = Task { [weak self] in await self?.run(pairing) }
+        let generation = runGeneration
+        streamTask = Task { [weak self] in await self?.run(pairing, generation: generation) }
+    }
+
+    private func stopStream() {
+        streamTask?.cancel()
+        streamTask = nil
+        runGeneration += 1
+    }
+
+    private func isCurrent(_ generation: Int) -> Bool {
+        generation == runGeneration && !Task.isCancelled
     }
 
     /// 裏に回った時。iOS は裏で接続を保てないので閉じ、前に出たら張り直す。
     func pause() {
         guard !isDemo else { return }
-        streamTask?.cancel()
-        streamTask = nil
+        stopStream()
         if pairing != nil, case .failed = connection { return }
         if pairing != nil { connection = .paused }
     }
 
-    private func run(_ pairing: RemotePairing) async {
-        while !Task.isCancelled {
+    private func run(_ pairing: RemotePairing, generation: Int) async {
+        while isCurrent(generation) {
             let hosts = pairing.hosts
             let host = hosts[hostIndex % hosts.count]
             let client = RemoteClient(pairing: pairing, host: host)
@@ -130,14 +142,15 @@ final class AppModel {
             var issue: RemoteIssue
             do {
                 for try await event in client.events(transcripts: ["*"]) {
+                    guard isCurrent(generation) else { return }
                     handle(event)
                 }
+                // 止めた時もストリームは何事もなく終わるので、閉じられたとみなす前に確かめる。
+                guard isCurrent(generation) else { return }
                 // 相手が閉じた（mac が口を閉じた・同じ端末の新しいストリームに替わった・取り消し）。次の接続で理由が分かる。
                 issue = RemoteIssue(kind: .unreachable, title: "Mac が接続を閉じました", detail: RemoteIssue.unreachableHelp)
-            } catch is CancellationError {
-                return
             } catch {
-                if Task.isCancelled { return }
+                guard isCurrent(generation), !(error is CancellationError) else { return }
                 issue = RemoteIssue.from(error)
                 if issue.needsPairing {
                     connection = .failed(issue)
@@ -208,7 +221,7 @@ final class AppModel {
     /// 確認画面で「ペアリングする」を押した時だけ呼ぶ。
     func confirmPairing(_ offer: PairingOffer) async {
         let payload = offer.payload
-        if let problem = payload.problem(now: Date().timeIntervalSince1970 * 1000) {
+        if let problem = payload.addressProblem ?? payload.problem(now: Date().timeIntervalSince1970 * 1000) {
             pairingError = problem
             return
         }
@@ -232,7 +245,7 @@ final class AppModel {
     }
 
     private func adopt(_ pairing: RemotePairing) {
-        streamTask?.cancel()
+        stopStream()
         self.pairing = pairing
         state = nil
         stateUpdatedAt = nil
@@ -245,24 +258,22 @@ final class AppModel {
         connect()
     }
 
-    /// この iPhone の登録を mac から取り消し、手元の鍵も消す（mac に届かなくても手元は消す）。
+    static let unpairNotDeliveredNote = "Mac で取り消せたか確かめられなかったため、Mac の「iPhone 連携」の端末一覧からも取り消してください。"
+
+    /// この iPhone の登録を mac から取り消し、手元の鍵も消す（mac で取り消せなかった時は案内を返す。手元は必ず消す）。
     func unpair() async -> String? {
-        var failure: String?
+        var revoked = false
         if let client {
-            do {
-                _ = try await client.unpair()
-            } catch {
-                failure = "Mac に届かなかったため、Mac の「iPhone 連携」の端末一覧からも取り消してください。"
-            }
+            let result = try? await client.unpair()
+            revoked = result?.ok == true
         }
         forget()
-        return failure
+        return revoked ? nil : Self.unpairNotDeliveredNote
     }
 
     /// 手元の鍵だけ消す（指紋違い・取り消し済みの時）。
     func forget() {
-        streamTask?.cancel()
-        streamTask = nil
+        stopStream()
         client?.invalidate()
         client = nil
         keychain.delete()
@@ -360,7 +371,8 @@ final class AppModel {
     /// 送れたら（mac が受け付けたら）入力欄を空にする。
     func send(_ room: RemoteRoom) {
         let text = (drafts[room.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        // 送っている最中は送らない（メモだけ残って送信中のままにならないよう、メモを作る前に確かめる）。
+        guard !text.isEmpty, !inFlight.contains(room.id) else { return }
         let relay = room.send.mode == .relay
         let note = RelayNote(text: text, sentAt: Date().timeIntervalSince1970 * 1000)
         if relay, let sid = room.sessionId { relayNotes[sid, default: []].append(note) }
@@ -381,7 +393,7 @@ final class AppModel {
         }
     }
 
-    private func perform(_ room: RemoteRoom, _ operation: RemoteOperation,
+    private func perform(_ room: RemoteRoom, _ operation: RemoteOperationKind,
                          _ call: @escaping @Sendable (RemoteClient) async throws -> RemoteActionResult,
                          completion: ((RemoteActionResult?) -> Void)? = nil) {
         guard !inFlight.contains(room.id) else { return }

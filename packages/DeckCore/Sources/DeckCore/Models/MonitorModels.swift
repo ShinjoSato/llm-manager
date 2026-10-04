@@ -223,7 +223,7 @@ public struct TranscriptTool: Codable, Sendable, Hashable {
     }
 }
 
-/// 発話に添えられた画像 1 枚の目録。本体は `MonitorStore.imageSource` で取る。
+/// 発話に添えられた画像 1 枚の目録。本体は mac では `MonitorStore.imageSource`、iPhone では `RemoteClient.image` で取る。
 public struct TranscriptImage: Codable, Sendable, Hashable {
     /// 発話の中で何枚目の画像か（取り出しに使う位置）。
     public var index: Int

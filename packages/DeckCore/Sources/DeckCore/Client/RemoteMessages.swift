@@ -1,7 +1,7 @@
 import Foundation
 
 /// iPhone から送る操作の種類（結果の言い回しを変えるため）。
-public enum RemoteOperation: Sendable, Equatable {
+public enum RemoteOperationKind: Sendable, Equatable {
     case permission
     case menu
     case menuTab
@@ -13,7 +13,7 @@ public enum RemoteOperation: Sendable, Equatable {
 /// 操作の結果を人に見せる言葉にする。
 public enum RemoteResultText {
     /// 成功で黙ってよいものは nil（カードが消える・吹き出しが出ることで分かる）。
-    public static func text(for result: RemoteActionResult, operation: RemoteOperation) -> String? {
+    public static func text(for result: RemoteActionResult, operation: RemoteOperationKind) -> String? {
         if result.ok {
             switch result.code {
             case "answered": return "既に答えています（同じ確認には送り直していません）。"
@@ -25,7 +25,7 @@ public enum RemoteResultText {
         return failureText(code: result.code, operation: operation) ?? result.message ?? "うまくいきませんでした（\(result.code)）。"
     }
 
-    static func failureText(code: String, operation: RemoteOperation) -> String? {
+    static func failureText(code: String, operation: RemoteOperationKind) -> String? {
         switch code {
         case "gone":
             return operation == .message || operation == .relay

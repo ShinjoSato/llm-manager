@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 /// ペアリング（接続先・ピン留めした指紋・端末トークン）をキーチェーンに置く。
-/// この端末だけ・ロック解除後のみ（iCloud キーチェーンやバックアップで他の端末へ渡さない）。
+/// この端末だけ・起動後に一度ロック解除した後なら読める（裏から戻った時に画面ロック中でも張り直すため。iCloud やバックアップで他の端末へ渡さない）。
 struct PairingKeychain {
     var service = "com.shinjosato.claude-deck.ios.pairing"
     var account = "default"

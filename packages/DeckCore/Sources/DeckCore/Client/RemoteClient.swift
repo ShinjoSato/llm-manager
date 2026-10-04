@@ -89,8 +89,10 @@ public final class RemoteClient: Sendable {
     public func events(transcripts: [String]?) -> AsyncThrowingStream<RemoteStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
+                let probe = self.probe()
                 do {
-                    let (bytes, response) = try await self.mapErrors { try await self.session.bytes(for: self.builder.events(transcripts: transcripts)) }
+                    let request = try self.builder.events(transcripts: transcripts)
+                    let (bytes, response) = try await self.session.bytes(for: request, delegate: probe)
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                     guard status == 200 else {
                         var body = Data()
@@ -104,7 +106,7 @@ public final class RemoteClient: Sendable {
                     var parser = SSEParser()
                     for try await byte in bytes {
                         guard let line = try lines.feed(byte) else { continue }
-                        switch parser.feed(line) {
+                        switch try parser.feed(line) {
                         case .comment?:
                             continuation.yield(.ping)
                         case .message(let message)?:
@@ -116,10 +118,10 @@ public final class RemoteClient: Sendable {
                         }
                     }
                     continuation.finish()
-                } catch is LineSplitter.Overflow {
+                } catch is LineSplitter.Overflow, is SSEParser.Overflow {
                     continuation.finish(throwing: RemoteClientError.streamOverflow)
                 } catch {
-                    continuation.finish(throwing: self.classify(error))
+                    continuation.finish(throwing: self.classify(error, probe: probe))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -139,36 +141,43 @@ public final class RemoteClient: Sendable {
 
     /// 操作は失敗でも `RemoteActionResult` の本文が返る（409 等）。本文が読めない時だけ投げる。
     private func action(_ request: URLRequest) async throws -> RemoteActionResult {
-        let (data, response) = try await mapErrors { try await session.data(for: request) }
+        let (data, response) = try await load { try await session.data(for: request, delegate: $0) }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if let result = try? JSONDecoder().decode(RemoteActionResult.self, from: data) { return result }
         throw Self.httpError(status: status, body: data)
     }
 
     private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await mapErrors { try await session.data(for: request) }
+        let (data, response) = try await load { try await session.data(for: request, delegate: $0) }
         guard let http = response as? HTTPURLResponse else { throw RemoteClientError.transport(.badServerResponse) }
         guard http.statusCode == 200 else { throw Self.httpError(status: http.statusCode, body: data) }
         return (data, http)
     }
 
-    private func mapErrors<T>(_ body: () async throws -> T) async throws -> T {
+    /// 要求ごとに指紋を確かめる delegate を付けて送り、失敗を `RemoteClientError` に読み替える。
+    private func load<T>(_ body: (RemotePinnedSessionDelegate) async throws -> T) async throws -> T {
+        let probe = probe()
         do {
-            return try await body()
+            return try await body(probe)
         } catch {
-            throw classify(error)
+            throw classify(error, probe: probe)
         }
     }
 
-    private func classify(_ error: Error) -> Error {
+    private func probe() -> RemotePinnedSessionDelegate {
+        RemotePinnedSessionDelegate(pin: pin, reportingTo: delegate)
+    }
+
+    private func classify(_ error: Error, probe: RemotePinnedSessionDelegate) -> Error {
         if error is RemoteClientError || error is CancellationError { return error }
         guard let urlError = error as? URLError else { return error }
-        // 指紋の不一致は delegate が取り消すので、取り消しの理由を見分ける。
-        if delegate.hasMismatched, urlError.code == .cancelled || urlError.code == .secureConnectionFailed
-            || Self.certificateErrors.contains(urlError.code) {
-            return RemoteClientError.pinMismatch
-        }
+        // 呼び出し側の取り消しを指紋違いと取り違えない。
         if urlError.code == .cancelled, Task.isCancelled { return CancellationError() }
+        let tlsFailure = urlError.code == .secureConnectionFailed || Self.certificateErrors.contains(urlError.code)
+        // 不一致は delegate が取り消すので、この要求で不一致を見たかで見分ける。
+        if probe.hasMismatched, urlError.code == .cancelled || tlsFailure { return RemoteClientError.pinMismatch }
+        // URLSession が不一致を覚えて delegate を呼ばずに TLS で落とすことがあるので、同じ相手で見た不一致も使う。
+        if delegate.hasMismatched, tlsFailure { return RemoteClientError.pinMismatch }
         return RemoteClientError.transport(urlError.code)
     }
 
