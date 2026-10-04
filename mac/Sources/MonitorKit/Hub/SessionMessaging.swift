@@ -36,7 +36,7 @@ public enum SessionMessaging {
     /// 書く 1 行（認証行は macOS/Linux では任意。他セッションのトークンは持てないので付けない）。
     static func line(for text: String) -> Data {
         let object: [String: Any] = ["type": "user", "message": ["role": "user", "content": text]]
-        var data = (try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])) ?? Data()
+        var data = JSONLoose.data(object, options: [.withoutEscapingSlashes], fallback: Data())
         data.append(0x0A)
         return data
     }

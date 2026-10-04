@@ -3,10 +3,8 @@ import ImageIO
 import Observation
 import MonitorKit
 
-enum RoomID: Hashable {
-    case hosted(UUID)
-    case external(String)
-}
+/// iPhone の API と同じ識別子（`h:<UUID>` / `e:<sessionId>`）。
+typealias RoomID = RemoteRoomID
 
 /// ルーム一覧と会話画面が描く 1 ルーム分の値。
 struct Room: Identifiable {
@@ -188,9 +186,9 @@ final class ChatModel {
     }
 
     private func group(_ all: [Room]) -> (groups: [RoomGroup], items: [RoomListItem]) {
-        let byKey = Dictionary(all.map { (key(of: $0.id), $0) }, uniquingKeysWith: { a, _ in a })
+        let byKey = Dictionary(all.map { ($0.id.string, $0) }, uniquingKeysWith: { a, _ in a })
         let keys = all.map { room in
-            RoomKey(id: key(of: room.id), name: room.name, status: room.status, activityAt: room.activityAt,
+            RoomKey(id: room.id.string, name: room.name, status: room.status, activityAt: room.activityAt,
                     searchText: [room.branch, room.snapshot?.title, room.line, room.cwd].compactMap { $0 }.joined(separator: " "))
         }
         let grouped = RoomGrouping.group(keys, query: query)
@@ -220,13 +218,6 @@ final class ChatModel {
     func markSelectedSeen() {
         guard let sessionId = selectedRoom?.sessionId else { return }
         lastSeen[sessionId] = Date().timeIntervalSince1970 * 1000
-    }
-
-    private func key(of id: RoomID) -> String {
-        switch id {
-        case .hosted(let uuid): return "h:\(uuid.uuidString)"
-        case .external(let sessionId): return "e:\(sessionId)"
-        }
     }
 
     static func status(from local: ClaudeStatus) -> SessionStatus {
@@ -285,15 +276,8 @@ final class ChatModel {
                 scheduleSentImagesExpiry()
             }
             return true
-        case .leftover:
-            alertMessage = "端末側の入力欄に前回の本文や画像が残っているようです。"
-                + "このままもう一度送ると、残っているものの後ろにつながって送られます。"
-            return false
-        case .blocked(.permission):
-            alertMessage = "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"
-            return false
-        case .blocked:
-            alertMessage = "選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。上のカードで答えてください。"
+        case .leftover, .blocked:
+            alertMessage = result?.refusal?.message
             return false
         case .busy, .empty, nil: return false
         }
@@ -658,10 +642,18 @@ final class ChatModel {
         case .changed:
             return failed("changed", "権限の確認の内容が替わったため送りませんでした。カードの内容を確かめてから答えてください。", report: report)
         }
-        busyPermissionKeys.insert(key)
-        // キーを送ってからプロンプトが消えるまで少し掛かるので、その間は押せないままにする。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+        holdBusy(key)
         return .success(allow ? "allowed" : "denied")
+    }
+
+    /// キーを送ってから画面が替わるまで少し掛かるので、その間は押せないままにする。
+    private func holdBusy(_ key: String) {
+        busyPermissionKeys.insert(key)
+        releaseBusyLater(key)
+    }
+
+    private func releaseBusyLater(_ key: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
     }
 
     static func ptyMenuKey(_ session: HostedSession) -> String { "menu:\(session.id.uuidString)" }
@@ -722,8 +714,8 @@ final class ChatModel {
     private func finishMenuOperation(_ key: String, outcome: ClaudeTerminalView.MenuAnswerOutcome, report: Bool) -> RemoteActionResult {
         let result = Self.result(of: outcome)
         if report, !result.ok, let message = result.message { alertMessage = message }
-        // キーを送ってから画面が替わるまで・やめた移動の矢印が遅れて反映されうる間は、すぐには押せるようにしない。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+        // やめた移動の矢印も遅れて反映されうるので、失敗でもすぐには押せるようにしない。
+        releaseBusyLater(key)
         return result
     }
 
@@ -762,8 +754,7 @@ final class ChatModel {
         case .changed:
             return failed("changed", "端末の選択肢が替わったため送りませんでした。カードの内容を確かめてから操作してください。", report: report)
         }
-        busyPermissionKeys.insert(key)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+        holdBusy(key)
         return .success("cancelled")
     }
 
@@ -909,4 +900,25 @@ private struct ImportResult: @unchecked Sendable {
 struct EditorNote: Equatable {
     let id = UUID()
     let outcome: EditorOutcome
+}
+
+extension ClaudeTerminalView.SendResult {
+    /// 送らなかった理由（画面の案内と iPhone への応答で同じ文言を使う）。送り始めたなら nil。
+    var refusal: (code: String, message: String)? {
+        switch self {
+        case .started:
+            return nil
+        case .leftover:
+            return ("leftover", "端末側の入力欄に前回の本文や画像が残っているようです。"
+                + "このままもう一度送ると、残っているものの後ろにつながって送られます。")
+        case .blocked(.permission):
+            return ("blocked_permission", "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。")
+        case .blocked(.menu):
+            return ("blocked_menu", "選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。上のカードで答えてください。")
+        case .busy:
+            return ("busy", "前の送信が終わっていません。少し待ってから送ってください。")
+        case .empty:
+            return ("invalid", "本文が空です。")
+        }
+    }
 }

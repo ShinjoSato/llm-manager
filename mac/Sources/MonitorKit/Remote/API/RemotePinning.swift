@@ -19,7 +19,7 @@ public enum RemotePinning {
     /// 末端の証明書がピン留めした指紋と一致するか（大文字小文字・`:` 区切りは無視）。
     public static func matches(_ trust: SecTrust, pinned: String) -> Bool {
         guard let actual = leafFingerprint(of: trust) else { return false }
-        return constantTimeEqual(actual, normalize(pinned))
+        return constantTimeEqual(Data(actual.utf8), Data(normalize(pinned).utf8))
     }
 
     /// 表示用（`AB:CD:...`）の指紋も受け付ける。
@@ -33,9 +33,9 @@ public enum RemotePinning {
         return stride(from: 0, to: hex.count, by: 2).map { String(hex[$0..<min($0 + 2, hex.count)]) }.joined(separator: ":")
     }
 
-    static func constantTimeEqual(_ a: String, _ b: String) -> Bool {
-        let x = Array(a.utf8), y = Array(b.utf8)
-        guard x.count == y.count else { return false }
-        return zip(x, y).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
+    /// 中身によらず同じ時間で比べる（一致した桁数を時間から推測させない）。
+    static func constantTimeEqual(_ a: Data, _ b: Data) -> Bool {
+        guard a.count == b.count else { return false }
+        return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
 }

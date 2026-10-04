@@ -17,35 +17,13 @@ final class HTTPServerTests: XCTestCase {
         await hub.scanInventory()
         let hub = hub!
         server = HTTPServer { request in await HookServerRoutes.handle(request, hub: hub) }
-        port = try await listen(server, port: 0)
+        port = try await startListening(server, port: 0)
         XCTAssertNotEqual(port, 8766)
     }
 
     override func tearDown() {
         server?.stop()
         home?.remove()
-    }
-
-    private func listen(_ server: HTTPServer, port: Int) async throws -> Int {
-        let states = Box<[HTTPServerState]>([])
-        server.start(port: port) { state in states.mutate { $0.append(state) } }
-        for _ in 0..<200 {
-            if let last = states.value.last {
-                switch last {
-                case .listening(let bound): return bound
-                case .portInUse(let p): throw ServerTestError.portInUse(p)
-                case .failed(let reason): throw ServerTestError.failed(reason)
-                default: break
-                }
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        throw ServerTestError.failed("timeout")
-    }
-
-    enum ServerTestError: Error, Equatable {
-        case portInUse(Int)
-        case failed(String)
     }
 
     private func request(_ method: String, _ path: String, body: String? = nil, contentType: String? = "application/json",
@@ -146,7 +124,7 @@ final class HTTPServerTests: XCTestCase {
         await busyHub.scanInventory()
         let busyServer = HTTPServer { request in await HookServerRoutes.handle(request, hub: busyHub) }
         defer { busyServer.stop() }
-        let busyPort = try await listen(busyServer, port: 0)
+        let busyPort = try await startListening(busyServer, port: 0)
         blocking.mutate { $0 = true }
         let scanning = Task { await busyHub.scanInventory() }
         try await Task.sleep(for: .milliseconds(50))
@@ -313,7 +291,7 @@ final class HTTPServerTests: XCTestCase {
         let second = HTTPServer { _ in .json(200, ["ok": true]) }
         defer { second.stop() }
         do {
-            _ = try await listen(second, port: port)
+            _ = try await startListening(second, port: port)
             XCTFail("同じポートで待ち受けられてしまった")
         } catch ServerTestError.portInUse(let p) {
             XCTAssertEqual(p, port)
@@ -324,7 +302,7 @@ final class HTTPServerTests: XCTestCase {
         // 止めたら、すぐに別の待ち受けが引き継げる（止める側がポートを手放すまで待つ）。
         let taken = port
         server.stop()
-        port = try await listen(second, port: taken)
+        port = try await startListening(second, port: taken)
         XCTAssertEqual(port, taken)
     }
 
@@ -336,7 +314,7 @@ final class HTTPServerTests: XCTestCase {
         var (current, next) = (server!, other)
         for _ in 0..<50 {
             current.stop()
-            let bound = try await listen(next, port: taken)
+            let bound = try await startListening(next, port: taken)
             XCTAssertEqual(bound, taken)
             (current, next) = (next, current)
         }
@@ -346,7 +324,7 @@ final class HTTPServerTests: XCTestCase {
     func testRestartOnSamePortRebinds() async throws {
         let taken = port
         for _ in 0..<5 {
-            port = try await listen(server, port: taken)
+            port = try await startListening(server, port: taken)
             XCTAssertEqual(port, taken)
             let (status, _) = try await request("GET", "/api/health", contentType: nil)
             XCTAssertEqual(status, 200)
@@ -379,7 +357,7 @@ final class HTTPServerTests: XCTestCase {
         let mine = HTTPServer { _ in .json(200, ["ok": true]) }
         defer { mine.stop() }
         do {
-            _ = try await listen(mine, port: foreignPort)
+            _ = try await startListening(mine, port: foreignPort)
             XCTFail("他のプロセスの待ち受けと同じポートで待ち受けられてしまった")
         } catch ServerTestError.portInUse(let p) {
             XCTAssertEqual(p, foreignPort)
@@ -394,7 +372,7 @@ final class HTTPServerTests: XCTestCase {
             let mine = HTTPServer { _ in .json(200, ["ok": true]) }
             defer { mine.stop() }
             do {
-                _ = try await listen(mine, port: foreignPort)
+                _ = try await startListening(mine, port: foreignPort)
                 XCTFail("\(v6 ? "[::]" : "0.0.0.0") SO_REUSEADDR=\(reuse) と同じポートで待ち受けられてしまった")
             } catch ServerTestError.portInUse(let p) {
                 XCTAssertEqual(p, foreignPort)

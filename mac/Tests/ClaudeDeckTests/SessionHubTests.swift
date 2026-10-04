@@ -406,13 +406,6 @@ final class SessionHubTests: XCTestCase {
         return (hub, gate)
     }
 
-    private func waitUntil(_ condition: () async -> Bool) async throws {
-        for _ in 0..<300 {
-            if await condition() { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
     /// 初回走査の await 中に start が重なっても、止めても、ループを二重に立てない・止めた後に立てない。
     func testStartIsNotReentrantAndStopWins() async throws {
         try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)

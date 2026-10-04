@@ -164,9 +164,7 @@ public struct AttachmentStore: Sendable {
     }
 
     public static var defaultDirectory: URL {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches")
-        return caches.appendingPathComponent("claude-deck/attachments", isDirectory: true)
+        DeckPaths.caches.appendingPathComponent("attachments", isDirectory: true)
     }
 
     public enum StoreError: LocalizedError, Equatable {
@@ -335,6 +333,21 @@ public enum SendCompletion: Sendable, Equatable {
             // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
             return "送信の途中で\(Self.blockName(block))が出たため、本文を貼った後、Enter を押さずに取りやめました。"
                 + "端末側の入力欄に本文が残っています。\(Self.answerHint(block))ここから送ると、残っている本文とつながって送られます。"
+        }
+    }
+
+    /// iPhone からの送信の結末（mac の入力欄には戻さないので、戻した旨は書かない）。送れたなら nil。
+    public var remoteNotice: String? {
+        switch self {
+        case .submitted:
+            return nil
+        case .ended:
+            return "claude が終了したため送れませんでした。"
+        case .abortedBeforeBody(let block):
+            return "送信の途中で\(Self.blockName(block))が出たため、本文を貼る前に取りやめました。"
+        case .abortedAfterBody(let block):
+            return "送信の途中で\(Self.blockName(block))が出たため、本文を貼った後、Enter を押さずに取りやめました。"
+                + "端末側の入力欄に本文が残っています。\(Self.answerHint(block))送ると、残っている本文とつながって送られます。"
         }
     }
 

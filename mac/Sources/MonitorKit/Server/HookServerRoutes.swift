@@ -54,7 +54,7 @@ public enum HookServerRoutes {
     }
 
     static func jsonBody(_ request: HTTPRequest) -> Body {
-        guard request.header("content-type")?.lowercased().hasPrefix("application/json") == true else {
+        guard request.isJSONContentType else {
             return .rejected(.json(415, ["ok": false, "error": "content-type must be application/json"]))
         }
         guard let object = JSONLoose.object(request.body) else {

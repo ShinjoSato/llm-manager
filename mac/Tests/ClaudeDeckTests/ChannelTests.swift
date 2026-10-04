@@ -154,16 +154,6 @@ final class ChannelExecutableTests: XCTestCase {
         return products.appendingPathComponent("claude-deck-channel")
     }
 
-    private func listen(_ server: HTTPServer) async throws -> Int {
-        let states = Box<[HTTPServerState]>([])
-        server.start(port: 0) { state in states.mutate { $0.append(state) } }
-        for _ in 0..<300 {
-            if case .listening(let port)? = states.value.last { return port }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        throw NSError(domain: "listen", code: 1)
-    }
-
     func testDoesNotFollowRedirect() async throws {
         let followed = Box(false)
         let server = HTTPServer { request in
@@ -174,7 +164,7 @@ final class ChannelExecutableTests: XCTestCase {
             return HTTPResponse(status: 307, headers: [("Location", "/elsewhere")])
         }
         defer { server.stop() }
-        let port = try await listen(server)
+        let port = try await startListening(server)
         let session = ChannelRelay.makeSession()
         defer { session.invalidateAndCancel() }
         let ask = ChannelRelay.httpAsk(baseURL: "http://127.0.0.1:\(port)", body: Data("{}".utf8), session: session) { _ in }
@@ -197,7 +187,7 @@ final class ChannelExecutableTests: XCTestCase {
             return .json(200, ["ok": true, "outcome": count == 1 ? "timeout" : "allow"])
         }
         defer { server.stop() }
-        let port = try await listen(server)
+        let port = try await startListening(server)
         XCTAssertNotEqual(port, 8766)
 
         let process = Process()

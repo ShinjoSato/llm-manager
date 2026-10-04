@@ -166,29 +166,29 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
     }
 
-    /// アプリが今いじっている実画面の全行（上から順・右端の空白は除く）。右に縦線で区切った別の欄（差分パネル等）は除く。
-    /// ターミナル表示で上にスクロールしていても、表示位置（yDisp）ではなく末尾の `rows` 行を読む。
+    /// 実画面（バッファ末尾の `rows` 行）。ターミナル表示のスクロール位置（yDisp）に依らない。
     /// SwiftTerm は `lines.count == yBase + rows` を保つが yBase を公開していないので、行数を探って求める。
-    func screenLines() -> [String] {
+    private func rawScreenLines() -> [BufferLine] {
         let term = getTerminal()
         let rows = term.rows
         guard rows > 0 else { return [] }
         let top = term.buffer.totalLinesTrimmed
         let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
-        let base = max(0, count - rows)
-        return TerminalScreen.mainPane((base..<count).compactMap { term.getScrollInvariantLine(row: top + $0).map(Self.text(of:)) })
+        return (max(0, count - rows)..<count).compactMap { term.getScrollInvariantLine(row: top + $0) }
+    }
+
+    /// 実画面の全行（右端の空白は除く）。右に縦線で区切った別の欄（差分パネル等）は除く。
+    func screenLines() -> [String] {
+        TerminalScreen.mainPane(rawScreenLines().map(Self.text(of:)))
     }
 
     /// 実画面の行（`screenLines` の添字）の各文字に背景色（か反転）が付いているか。タブ行の今のタブを読むのに使う。
     /// 文字の並びは `screenLines` と同じく全角の後半セルを飛ばして数える。
     private func highlightReader() -> (Int) -> [Bool]? {
-        let term = getTerminal()
-        let rows = term.rows
-        let top = term.buffer.totalLinesTrimmed
-        let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
-        let base = max(0, count - rows)
+        let lines = rawScreenLines()
         return { row in
-            guard rows > 0, let line = term.getScrollInvariantLine(row: top + base + row) else { return nil }
+            guard lines.indices.contains(row) else { return nil }
+            let line = lines[row]
             var flags: [Bool] = []
             var text = ""
             _ = line.translateToString(trimRight: true, skipNullCellsFollowingWide: true) { cell in
@@ -573,17 +573,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         return info.pbi_ppid == UInt32(getpid()) && info.pbi_status != UInt32(SZOMB)
     }
 
-    /// 実画面の全行。表示位置（yDisp）ではなくバッファ末尾の `rows` 行を読む。空白を書かずに飛ばしたセル（NUL）は空白に戻す。
+    /// 上限の検査は右の別の欄も含めて全幅で読む（`screenLines` と違い欄で切らない）。
     private func limitScreenLines() -> [String] {
-        let term = getTerminal()
-        let rows = term.rows
-        guard rows > 0 else { return [] }
-        let top = term.buffer.totalLinesTrimmed
-        let count = LimitGuard.bufferLineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
-        return (max(0, count - rows)..<count).compactMap { row in
-            term.getScrollInvariantLine(row: top + row).map {
-                $0.translateToString(trimRight: true, skipNullCellsFollowingWide: true).replacingOccurrences(of: "\u{0}", with: " ")
-            }
-        }
+        rawScreenLines().map(Self.text(of:))
     }
 }

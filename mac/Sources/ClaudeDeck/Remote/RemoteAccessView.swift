@@ -233,10 +233,7 @@ struct RemoteAccessView: View {
 
     private static func describe(_ millis: Double?) -> String {
         guard let millis else { return "未使用" }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ja_JP")
-        formatter.dateFormat = "M/d HH:mm"
-        return formatter.string(from: Date(epochMillis: millis))
+        return ChatTime.dayTime(Date(epochMillis: millis))
     }
 }
 

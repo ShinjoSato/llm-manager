@@ -60,8 +60,7 @@ final class RemoteAccessController {
 
     static func directory(_ env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         if let path = env["CLAUDE_DECK_REMOTE_DIR"], !path.isEmpty { return URL(fileURLWithPath: path, isDirectory: true) }
-        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("claude-deck/remote", isDirectory: true)
+        return DeckPaths.applicationSupport.appendingPathComponent("remote", isDirectory: true)
     }
 
     /// 操作を受ける画面のモデル（ウィンドウを作った時に渡す）。

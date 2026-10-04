@@ -36,11 +36,7 @@ struct FakeClaudeHome {
 
     func appendRaw(_ data: Data, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        try handle.write(contentsOf: data)
+        try appendToFile(data, at: url)
     }
 
     static let timestamp = "2026-09-30T13:12:32.000Z"

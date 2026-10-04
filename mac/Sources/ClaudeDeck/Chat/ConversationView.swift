@@ -459,8 +459,7 @@ struct PermissionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.shield.fill").foregroundStyle(ChatTheme.permission)
-                Text("権限の確認").font(.system(size: 13, weight: .bold)).foregroundStyle(ChatTheme.heading)
+                CardTitle(symbol: "exclamationmark.shield.fill", title: "権限の確認")
                 Text(toolName)
                     .font(ChatTheme.mono.weight(.semibold))
                     .foregroundStyle(ChatTheme.permission)
@@ -472,13 +471,7 @@ struct PermissionCard: View {
                 Text(description).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
             }
             if !lines.isEmpty {
-                Text(lines.prefix(10).joined(separator: "\n"))
-                    .font(ChatTheme.mono)
-                    .foregroundStyle(ChatTheme.text)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.codeSurface))
+                CardCode(text: lines.prefix(10).joined(separator: "\n"))
             }
             HStack(spacing: 8) {
                 Button { onDecide(true) } label: {
@@ -490,26 +483,15 @@ struct PermissionCard: View {
                 }
                 .buttonStyle(.plain)
                 Button { onDecide(false) } label: {
-                    Text("拒否")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(ChatTheme.text)
-                        .frame(width: 84, height: 30)
-                        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+                    CardButtonLabel(title: "拒否", width: 84)
                 }
                 .buttonStyle(.plain)
-                if busy {
-                    ProgressView().controlSize(.small)
-                    Text("送信中…").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
-                }
+                if busy { SendingIndicator() }
             }
             .disabled(busy)
             .opacity(busy ? 0.6 : 1)
         }
-        .padding(14)
-        .frame(maxWidth: 640, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
+        .cardFrame()
     }
 }
 
@@ -537,23 +519,14 @@ struct MenuCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "list.bullet.circle.fill").foregroundStyle(ChatTheme.permission)
-                Text("選択肢").font(.system(size: 13, weight: .bold)).foregroundStyle(ChatTheme.heading)
-            }
+            CardTitle(symbol: "list.bullet.circle.fill", title: "選択肢")
             if let tabs = menu.tabs, tabs.hasArrows {
                 MenuTabBar(tabs: tabs, onCursorFreeText: menu.options.indices.contains(menu.cursor) && menu.options[menu.cursor].isFreeText) {
                     onMoveTab(menu, $0)
                 }
             }
             if !menu.context.isEmpty {
-                Text(menu.context.joined(separator: "\n"))
-                    .font(ChatTheme.mono)
-                    .foregroundStyle(ChatTheme.text)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.codeSurface))
+                CardCode(text: menu.context.joined(separator: "\n"))
             }
             if !menu.question.isEmpty {
                 Text(menu.question).font(ChatTheme.body.weight(.semibold)).foregroundStyle(ChatTheme.heading)
@@ -589,32 +562,79 @@ struct MenuCard: View {
                 Button {
                     if menu.cancelExits { exitMenu = menu } else { onChoose(menu, nil) }
                 } label: {
-                    Text(menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(ChatTheme.text)
-                        .padding(.horizontal, 12)
-                        .frame(height: 30)
-                        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+                    CardButtonLabel(title: menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
                 }
                 .buttonStyle(.plain)
-                if busy {
-                    ProgressView().controlSize(.small)
-                    Text("送信中…").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
-                }
+                if busy { SendingIndicator() }
             }
         }
         .disabled(busy)
         .opacity(busy ? 0.6 : 1)
-        .padding(14)
-        .frame(maxWidth: 640, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
+        .cardFrame()
         .exitConfirmation(presenting: $exitMenu) { onChoose($0, nil) }
     }
 }
 
+/// カードの見出し（アイコンと題）。
+private struct CardTitle: View {
+    let symbol: String
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol).foregroundStyle(ChatTheme.permission)
+            Text(title).font(.system(size: 13, weight: .bold)).foregroundStyle(ChatTheme.heading)
+        }
+    }
+}
+
+/// カード内の等幅の抜粋（確認するコマンド・plan の本文など）。
+private struct CardCode: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(ChatTheme.mono)
+            .foregroundStyle(ChatTheme.text)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.codeSurface))
+    }
+}
+
+/// 控えめなボタン（拒否・キャンセル）。幅を省くと文字に合わせる。
+private struct CardButtonLabel: View {
+    let title: String
+    var width: CGFloat?
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(ChatTheme.text)
+            .padding(.horizontal, width == nil ? 12 : 0)
+            .frame(width: width, height: 30)
+            .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+    }
+}
+
+private struct SendingIndicator: View {
+    var body: some View {
+        ProgressView().controlSize(.small)
+        Text("送信中…").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
+    }
+}
+
 private extension View {
+    /// 要対応のカードの枠（会話の末尾に amber で出す）。
+    func cardFrame() -> some View {
+        padding(14)
+            .frame(maxWidth: 640, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
+    }
+
     /// Esc が claude の終了になるメニューで、送る前に確かめる。
     /// `presenting` は確認を開いた時のメニューで、送る時の照合にはそれを使う。
     func exitConfirmation<Menu>(presenting: Binding<Menu?>, onExit: @escaping (Menu) -> Void) -> some View {
@@ -741,10 +761,7 @@ struct UnreadableMenuCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "list.bullet.circle.fill").foregroundStyle(ChatTheme.permission)
-                Text("選択肢").font(.system(size: 13, weight: .bold)).foregroundStyle(ChatTheme.heading)
-            }
+            CardTitle(symbol: "list.bullet.circle.fill", title: "選択肢")
             Text(menu.cancelExits
                  ? "端末に選択肢が出ていますが、内容を読み取れませんでした。このメニューで Esc を押すと Claude Code が終了します。"
                  : "端末に選択肢が出ていますが、内容を読み取れませんでした。閉じると Claude Code は取り消しとして扱います。")
@@ -754,23 +771,14 @@ struct UnreadableMenuCard: View {
                 Button {
                     if menu.cancelExits { exitMenu = menu } else { onCancel(menu) }
                 } label: {
-                    Text(menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(ChatTheme.text)
-                        .padding(.horizontal, 12)
-                        .frame(height: 30)
-                        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+                    CardButtonLabel(title: menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
                 }
                 .buttonStyle(.plain)
                 if busy { ProgressView().controlSize(.small) }
             }
             .disabled(busy)
         }
-        .padding(14)
-        .frame(maxWidth: 640, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
+        .cardFrame()
         .exitConfirmation(presenting: $exitMenu, onExit: onCancel)
     }
 }

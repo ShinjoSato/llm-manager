@@ -25,12 +25,6 @@ final class AttachmentPasteTextViewTests: XCTestCase {
         pasteboard.releaseGlobally()
     }
 
-    private func pngData() -> Data {
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8, samplesPerPixel: 4,
-                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        return rep.representation(using: .png, properties: [:])!
-    }
-
     private func pasteItem() -> NSMenuItem {
         NSMenuItem(title: "ペースト", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
     }
@@ -41,12 +35,12 @@ final class AttachmentPasteTextViewTests: XCTestCase {
         plain.isRichText = false
         plain.importsGraphics = false
         pasteboard.declareTypes([.png, .tiff], owner: nil)
-        pasteboard.setData(pngData(), forType: .png)
+        pasteboard.setData(testPNGData(), forType: .png)
         XCTAssertNil(pasteboard.availableType(from: plain.readablePasteboardTypes))
     }
 
     func testScreenshotEnablesPasteAndAttaches() {
-        let png = pngData()
+        let png = testPNGData()
         pasteboard.declareTypes([.png, .tiff], owner: nil)
         pasteboard.setData(png, forType: .png)
         XCTAssertTrue(view.validateMenuItem(pasteItem()))
@@ -57,7 +51,7 @@ final class AttachmentPasteTextViewTests: XCTestCase {
     }
 
     func testTIFFOnlyIsAttached() throws {
-        let tiff = try XCTUnwrap(NSImage(data: pngData())?.tiffRepresentation)
+        let tiff = try XCTUnwrap(NSImage(data: testPNGData())?.tiffRepresentation)
         pasteboard.setData(tiff, forType: .tiff)
         XCTAssertTrue(view.validateMenuItem(pasteItem()))
         view.paste(nil)
@@ -65,7 +59,7 @@ final class AttachmentPasteTextViewTests: XCTestCase {
     }
 
     func testPasteAsPlainTextAlsoAttaches() {
-        pasteboard.setData(pngData(), forType: .png)
+        pasteboard.setData(testPNGData(), forType: .png)
         let item = NSMenuItem(title: "", action: #selector(NSTextView.pasteAsPlainText(_:)), keyEquivalent: "")
         XCTAssertTrue(view.validateMenuItem(item))
         view.pasteAsPlainText(nil)
@@ -88,7 +82,7 @@ final class AttachmentPasteTextViewTests: XCTestCase {
     }
 
     func testDisabledFieldDoesNotAttach() {
-        pasteboard.setData(pngData(), forType: .png)
+        pasteboard.setData(testPNGData(), forType: .png)
         view.isEditable = false
         XCTAssertFalse(view.canAttachPaste)
         XCTAssertFalse(view.attachPaste())
@@ -96,7 +90,7 @@ final class AttachmentPasteTextViewTests: XCTestCase {
     }
 
     func testWithoutHandlerItIsNotEnabled() {
-        pasteboard.setData(pngData(), forType: .png)
+        pasteboard.setData(testPNGData(), forType: .png)
         view.onAttach = nil
         XCTAssertFalse(view.canAttachPaste)
         XCTAssertFalse(view.attachPaste())
@@ -105,13 +99,10 @@ final class AttachmentPasteTextViewTests: XCTestCase {
 
 final class ChatImageTimelineTests: XCTestCase {
     private func user(_ id: String, _ text: String, at: Double?, images: Int = 0) -> TranscriptItem {
-        TranscriptItem(id: id, kind: .user, at: at, text: text, tool: nil, parentId: nil,
-                       images: (0..<images).map { TranscriptImage(index: $0, mediaType: "image/png") })
+        TestItem.user(id, text, at: at, images: images)
     }
 
-    private func assistant(_ id: String, at: Double?) -> TranscriptItem {
-        TranscriptItem(id: id, kind: .assistant, at: at, text: id, tool: nil, parentId: nil)
-    }
+    private func assistant(_ id: String, at: Double?) -> TranscriptItem { TestItem.assistant(id, at: at) }
 
     func testDecodesImagesAndToleratesOldMonitor() throws {
         let json = #"""

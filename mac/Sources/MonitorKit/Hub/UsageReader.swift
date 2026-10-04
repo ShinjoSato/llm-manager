@@ -8,7 +8,7 @@ public enum UsageReader {
             return URL(fileURLWithPath: raw)
         }
         let home = env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
-        return URL(fileURLWithPath: home).appendingPathComponent("Library/Application Support/claude-deck/usage.json")
+        return DeckPaths.applicationSupport(home: home).appendingPathComponent("usage.json")
     }
 
     /// ファイルを読む。未生成・壊れていれば nil（statusLine 未設定でも動くように）。

@@ -33,7 +33,7 @@ public enum RemoteRoomID: Hashable, Sendable {
     public init?(_ raw: String) {
         if raw.hasPrefix("h:"), let id = UUID(uuidString: String(raw.dropFirst(2))) {
             self = .hosted(id)
-        } else if raw.hasPrefix("e:"), TranscriptFormat.isResumableSessionId(String(raw.dropFirst(2))) {
+        } else if raw.hasPrefix("e:"), TranscriptFormat.isValidSessionId(String(raw.dropFirst(2))) {
             self = .external(String(raw.dropFirst(2)))
         } else {
             return nil

@@ -210,7 +210,7 @@ public struct RemoteRoutes: Sendable {
         case "*": subscription = .all
         case let list?:
             let ids = Set(list.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) })
-            guard ids.count <= Self.maxTranscriptSubscriptions, ids.allSatisfy(TranscriptFormat.isResumableSessionId) else {
+            guard ids.count <= Self.maxTranscriptSubscriptions, ids.allSatisfy(TranscriptFormat.isValidSessionId) else {
                 return Self.error(400, "invalid", "transcripts の指定が不正です")
             }
             subscription = .sessions(ids)
@@ -242,7 +242,7 @@ public struct RemoteRoutes: Sendable {
     }
 
     static func decode<T: Decodable>(_ request: HTTPRequest, _ type: T.Type) -> Decoded<T> {
-        guard request.header("content-type")?.lowercased().hasPrefix("application/json") == true else {
+        guard request.isJSONContentType else {
             return .rejected(error(415, "unsupported_media_type", "content-type must be application/json"))
         }
         guard let value = try? JSONDecoder().decode(type, from: request.body) else {

@@ -24,6 +24,9 @@ public struct HTTPRequest: Sendable {
     }
 
     public func header(_ name: String) -> String? { headers[name.lowercased()] }
+
+    /// 本文が JSON と名乗っているか（フォーム送信等で別オリジンから投げさせないため）。
+    var isJSONContentType: Bool { header("content-type")?.lowercased().hasPrefix("application/json") == true }
 }
 
 /// 送り続ける応答の本文（Server-Sent Events 等）。流し終えるか相手が切れば接続を閉じる。
@@ -51,10 +54,9 @@ public struct HTTPResponse: Sendable, Equatable {
 
     /// JSON の応答。キャッシュさせない。
     public static func json(_ status: Int, _ object: Any) -> HTTPResponse {
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes, .sortedKeys])) ?? Data("{}".utf8)
-        return HTTPResponse(status: status,
-                            headers: [("Content-Type", "application/json; charset=utf-8"), ("Cache-Control", "no-store")],
-                            body: data)
+        HTTPResponse(status: status,
+                     headers: [("Content-Type", "application/json; charset=utf-8"), ("Cache-Control", "no-store")],
+                     body: JSONLoose.data(object, options: [.withoutEscapingSlashes, .sortedKeys]))
     }
 
     public static func == (a: HTTPResponse, b: HTTPResponse) -> Bool {

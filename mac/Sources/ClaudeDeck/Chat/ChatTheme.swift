@@ -3,14 +3,22 @@ import MonitorKit
 
 /// 画面案B のトークン（ダーク固定）。
 enum ChatTheme {
-    static let background = Color(hex: 0x0a0f1a)
+    /// AppKit 側（ウィンドウ・入力欄）と共有する色。
+    private enum Hex {
+        static let background: UInt32 = 0x0a0f1a
+        static let text: UInt32 = 0xe6ebf2
+    }
+
+    static let background = Color(hex: Hex.background)
+    static let nsBackground = NSColor(hex: Hex.background)
     static let sidebar = Color(hex: 0x0d1320)
     static let border = Color(hex: 0x1c2433)
     static let inputSurface = Color(hex: 0x121a29)
     static let inputBorder = Color(hex: 0x26324a)
     static let selectedRow = Color(hex: 0x1a2335)
 
-    static let text = Color(hex: 0xe6ebf2)
+    static let text = Color(hex: Hex.text)
+    static let nsText = NSColor(hex: Hex.text)
     static let secondary = Color(hex: 0x97a3b6)
     static let tertiary = Color(hex: 0x7c889b)
     static let heading = Color(hex: 0xf1f5f9)
@@ -27,6 +35,14 @@ enum ChatTheme {
     static let accent = Color(hex: 0x34d399)
     static let onAccent = Color(hex: 0x053321)
     static let codeSurface = Color(hex: 0x0d1320)
+    static let stagePanel = Color(hex: 0x0b111d)
+
+    /// ライブフィードの種類ごとの色。
+    static let feedTool = Color(hex: 0x7dd3fc)
+    static let feedPrompt = Color(hex: 0xc4b5fd)
+    static let feedStatus = Color(hex: 0xfcd34d)
+    static let feedSession = Color(hex: 0x6ee7b7)
+    static let feedAgent = Color(hex: 0xf0abfc)
 
     static let body = Font.system(size: 14)
     static let caption = Font.system(size: 12)
@@ -90,6 +106,9 @@ extension NSColor {
 enum ChatTime {
     private static let timeFormatter = makeFormatter("HH:mm")
     private static let dayFormatter = makeFormatter("M/d")
+    private static let secondsFormatter = makeFormatter("HH:mm:ss")
+    private static let dayTimeFormatter = makeFormatter("M/d HH:mm")
+    private static let stampFormatter = makeFormatter("yyyyMMdd-HHmmss")
 
     private static func makeFormatter(_ format: String) -> DateFormatter {
         let formatter = DateFormatter()
@@ -103,4 +122,11 @@ enum ChatTime {
         let formatter = Calendar.current.isDate(date, inSameDayAs: now) ? timeFormatter : dayFormatter
         return formatter.string(from: date)
     }
+
+    /// 「12:34:56」。
+    static func seconds(_ date: Date) -> String { secondsFormatter.string(from: date) }
+    /// 「6/4 12:34」。
+    static func dayTime(_ date: Date) -> String { dayTimeFormatter.string(from: date) }
+    /// ファイル名用の「20260604-123456」。
+    static func stamp(_ date: Date) -> String { stampFormatter.string(from: date) }
 }

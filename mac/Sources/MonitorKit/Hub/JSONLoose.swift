@@ -12,6 +12,11 @@ enum JSONLoose {
         return try? JSONSerialization.jsonObject(with: repaired, options: [.fragmentsAllowed])
     }
 
+    /// 書き出し。書けない値なら `fallback`。
+    static func data(_ object: Any, options: JSONSerialization.WritingOptions, fallback: Data = Data("{}".utf8)) -> Data {
+        (try? JSONSerialization.data(withJSONObject: object, options: options)) ?? fallback
+    }
+
     /// `\uD800`〜`\uDFFF` のうち対になっていないエスケープを `\uFFFD` に置き換える。
     static func replacingLoneSurrogates(_ data: Data) -> Data {
         let bytes = [UInt8](data)

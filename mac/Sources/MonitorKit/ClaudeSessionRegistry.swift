@@ -31,7 +31,7 @@ public struct ClaudeSessionRegistry: Sendable {
     public var directory: URL
 
     public static var defaultDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/sessions", isDirectory: true)
+        ClaudeHome.fromEnvironment().sessionsDirectory
     }
 
     public init(directory: URL = ClaudeSessionRegistry.defaultDirectory) {

@@ -104,7 +104,6 @@ public enum ChannelProtocol {
 
     /// 改行は区切りなので、JSONSerialization が文字列中の改行をエスケープすることに頼る。
     static func encode(_ object: [String: Any]) -> String {
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes, .sortedKeys])) ?? Data("{}".utf8)
-        return String(decoding: data, as: UTF8.self)
+        String(decoding: JSONLoose.data(object, options: [.withoutEscapingSlashes, .sortedKeys]), as: UTF8.self)
     }
 }

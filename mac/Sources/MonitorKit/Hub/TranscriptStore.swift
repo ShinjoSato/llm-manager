@@ -90,14 +90,14 @@ public actor TranscriptStore {
 
     /// 履歴を返す。ログが見つからなければ nil。
     public func get(_ sessionId: String, after: String? = nil) -> TranscriptResponse? {
-        guard TranscriptFormat.isResumableSessionId(sessionId), let log = refresh(sessionId) else { return nil }
+        guard TranscriptFormat.isValidSessionId(sessionId), let log = refresh(sessionId) else { return nil }
         let (items, reset) = log.since(after)
         return TranscriptResponse(sessionId: sessionId, items: items, reset: reset)
     }
 
     /// 発話に添えられた画像の本体。履歴・発話・画像が見つからなければ nil。
     public func image(sessionId: String, itemId: String, index: Int) async -> TranscriptImageData? {
-        guard TranscriptFormat.isResumableSessionId(sessionId), TranscriptFormat.isValidItemId(itemId), index >= 0,
+        guard TranscriptFormat.isValidSessionId(sessionId), TranscriptFormat.isValidItemId(itemId), index >= 0,
               let log = refresh(sessionId) else { return nil }
         switch log.lookupImage(itemId: itemId, index: index) {
         case .cached(let hit): return hit
@@ -130,7 +130,7 @@ public actor TranscriptStore {
         switch subscription {
         case .none: ids = []
         case .all: ids = nil
-        case .sessions(let set): ids = set.filter(TranscriptFormat.isResumableSessionId)
+        case .sessions(let set): ids = set.filter(TranscriptFormat.isValidSessionId)
         }
         // 既読の基準線を先に引く。登録後に読むと過去の全件が「追記」として届いてしまう。
         // 差し替え前の購読はまだ残っているので、ここで読んだ追記はそちらに届く。

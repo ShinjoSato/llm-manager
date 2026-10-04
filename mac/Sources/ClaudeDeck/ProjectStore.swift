@@ -1,4 +1,5 @@
 import Foundation
+import MonitorKit
 
 /// ユーザーが追加・削除したプロジェクト一覧の永続ストア。
 /// 実体は `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。
@@ -12,9 +13,7 @@ enum ProjectStore {
         if let path = ProcessInfo.processInfo.environment["CLAUDE_DECK_PROJECTS"], !path.isEmpty {
             return URL(fileURLWithPath: path)
         }
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("claude-deck", isDirectory: true)
+        let base = DeckPaths.applicationSupport
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base.appendingPathComponent("projects.json")
     }

@@ -180,12 +180,4 @@ final class MonitorStoreTests: XCTestCase {
         let none = await store.transcripts.subscriberCount
         XCTAssertEqual(none, 0)
     }
-
-    private func waitUntil(timeout: TimeInterval = 5, _ condition: @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition() {
-            if Date() > deadline { return XCTFail("時間内に揃いませんでした") }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-    }
 }
