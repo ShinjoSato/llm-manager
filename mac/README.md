@@ -10,7 +10,7 @@ SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Termina
 - **料金事故ゼロ**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路が存在しないため、Max 枠の上限に達しても「待つ」だけで課金は発生しない。さらにログインシェル側でも `unset` してから `exec claude` する二重防御。
 - **headless 不採用**: `claude -p` / Agent SDK の起動口は一切設けない（別枠課金や非対話実行を避ける）。
 - **上限到達で強制終了**: 次のどちらかで上限到達とみなし、アプリでホストしている全セッションを `terminate()` で強制終了して警告ダイアログを出す。判定は `Sources/MonitorKit/LimitGuard.swift`（テストあり）、残量の購読は `Sources/ClaudeDeck/LimitWatch.swift`。
-  1. **公式の残量（主）**: statusLine の `rate_limits`（`data/claude-usage.json`）をアプリ内の監視が読んだ `MonitorStore.usage` で、5 時間 / 7 日間のどちらかが 100% 以上、かつ取得から 10 分以内。古い値・未取得では落とさない（statusLine 未設定なら この経路は働かない）。一度到達したらそのウィンドウのリセット時刻まで覚えておき、その間に起動したセッションも起動直後に止める（新しい値で 100% 未満になれば解除）。
+  1. **公式の残量（主）**: statusLine の `rate_limits`（`mac/scripts/statusline.sh` が `~/Library/Application Support/claude-deck/usage.json` に書く）をアプリ内の監視が読んだ `MonitorStore.usage` で、5 時間 / 7 日間のどちらかが 100% 以上、かつ取得から 10 分以内。古い値・未取得では落とさない（statusLine 未設定なら この経路は働かない。設定は下の「Claude Code 側の設定」）。一度到達したらそのウィンドウのリセット時刻まで覚えておき、その間に起動したセッションも起動直後に止める（新しい値で 100% 未満になれば解除）。
   2. **画面の上限表示（補助）**: 生の出力ではなく端末の実画面の末尾だけを見る。入力欄より下（フッター）、入力欄直上の最後の `⎿` 行（API エラー表示）、上限到達時に自動で開くメニューの「Stop and wait for limit to reset」。会話本文に同じ文言が出ても落ちない。文言は Claude Code v2.1.286 のバイナリ内で上限判定に使われている書き出し（`You've hit your` / `You've reached your` / `You're out of usage credits` / `You're now using usage credits` 等の課金枠切替 / `Usage limit reached`）に絞っている。
   - 起動直後（対話 zsh が `claude` に exec する前）は SIGTERM が効かないので、1.5 秒後に残っていれば SIGKILL する。
 
@@ -19,6 +19,7 @@ SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Termina
 ```
 mac/
   Package.swift                 SPM。SwiftTerm を依存に持つ実行ファイル "claude-deck"（SwiftTerm はリビジョン固定。更新時は Package.swift の revision を書き換える）
+                                と、チャネルの実行ファイル "claude-deck-channel"
   Sources/ClaudeDeck/
     main.swift                  NSApplication 起動
     AppDelegate.swift           ウィンドウ + メニュー
@@ -47,14 +48,14 @@ mac/
     ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面末尾の上限表示の監視
     LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
     ProjectRegistry.swift       projects/registry.tsv のパーサ
-    AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも TSV / data/claude-usage.json を引ける）
+    AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも TSV / 移行期間の旧 data/claude-usage.json を引ける）
     MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
-    MonitorModels.swift         ドメイン型（移植元: monitor/src/types.ts）
+    MonitorModels.swift         ドメイン型（移植元: 旧 monitor の src/types.ts）
     MonitorEvent.swift          監視からストアへ流れる変化（sessions / feed / usage / permissions / transcript）
     MonitorConfiguration.swift  読み取り元（CLAUDE_HOME）・使用量ファイル・受け口のポート・デバッグ出力
     MonitorStore.swift          @Observable ストア（監視の状態・受け口の状態・セッション・フィード・残量・権限確認・pid 対応付け）
-    Hub/                        監視の本体（移植元: monitor/src）
+    Hub/                        監視の本体（移植元: 削除済みの旧 monitor の src）
       SessionHub.swift            在庫層・実況層・フック層を束ねる actor（状態の合成・フィード・要対応・権限の中継・伝言・エディタ）
       SessionInventory.swift      在庫層: ~/.claude/sessions/<pid>.json + kill(pid,0)
       TranscriptTail.swift        実況層: jsonl の末尾差分（ツール・ブランチ・トークン・ai-title の遡り primeMeta）
@@ -63,13 +64,17 @@ mac/
       TranscriptLog.swift         会話履歴の整形（発話・応答・ツール）と画像の取り出し（行の位置を覚えて読み直す）
       TranscriptStore.swift       会話履歴の取得と追記の購読（250ms）を持つ actor
       SessionMessaging.swift      受信箱ソケットへの伝言（Unix ソケット・自分の所有のソケットだけ）
-      UsageReader.swift           data/claude-usage.json（statusline.sh が書く）の読み取り
+      UsageReader.swift           使用量ファイル（statusline.sh が書く）の読み取り。移行期間は旧 data/claude-usage.json と新しい方を使う
       XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探しと `open -a`
       ClaudeHome.swift            ~/.claude のパス・スラッグ・transcript の場所
     Server/                     フック等を受けるアプリ内の HTTP サーバー
       LoopbackHTTPServer.swift    127.0.0.1 だけで待ち受ける最小の HTTP/1.1（Network.framework・外部ライブラリなし）
       MonitorHTTPRoutes.swift     /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
-      LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定（移植元: monitor/src/origin.ts）
+      LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定（移植元: 旧 monitor の src/origin.ts）
+    Channel/                    チャネル（claude-deck-channel）の中身。実行ファイルからはこれを呼ぶだけ
+      ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
+      ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
+      ChannelServer.swift         stdin を行で読み、中継して判断を stdout に返す（ログは stderr）
     TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
@@ -94,27 +99,29 @@ mac/
     Stage/
       StageLogic.swift            ステージパネルの文言（いまの動き・職業名・フィード）・プレースホルダー・開閉の判定
   Sources/MonitorProbe/         GUI 無しでアプリ内の監視を確かめるデバッグ用エントリ（swift run monitor-probe）
+  Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）
   Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
-  scripts/bundle.sh             claude-deck.app を組み立てて ad-hoc 署名する
+  scripts/bundle.sh             claude-deck.app を組み立てて ad-hoc 署名する（チャネルの実行ファイルも同梱）
+  scripts/statusline.sh         Claude Code の statusLine。表示に加えて使用量を Application Support に残す
 ```
 
 ## セッション監視とフックの受け口（MonitorKit・アプリ内）
 
-以前は別プロセスの monitor（Node・:8766）に SSE で繋ぎ、無ければ自動で起動していた。いまは同じ仕事を
-**アプリの中で行う**（monitor の起動は不要・自動起動もしない）。起動時に `MonitorBridge.start()` → `MonitorStore.start()` が
+以前は別プロセスの monitor（Node・:8766。削除済み）が担っていた仕事を**アプリの中で行う**。起動時に `MonitorBridge.start()` → `MonitorStore.start()` が
 監視（`SessionHub` / `TranscriptStore`）と受け口（`LoopbackHTTPServer`）を動かし、UI は HTTP / SSE を経由せず
 ストアから直接読む。重い I/O は actor 上で行い、メインスレッドには載せない。
 
 - **在庫層**（3 秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)`。**実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl`
   の末尾差分（初回は末尾 512KB・`ai-title` / `last-prompt` は初回だけ最大 32MB 遡る `primeMeta`）。サブエージェントは 2 秒ごと。
-  状態の合成・終了後 5 分の保持・要対応の時刻（`attentionSince`）・権限待ちの説明・未知の通知のフィード化は monitor と同じ（`SessionHub`）。
+  状態の合成・終了後 5 分の保持・要対応の時刻（`attentionSince`）・権限待ちの説明・未知の通知のフィード化は旧 monitor と同じ（`SessionHub`）。
   `primeMeta` と Xcode プロジェクトの走査は actor の外で行い、結果だけ戻す。初回の末尾読みのうちアプリ起動前に書かれた行は
   フィードに積まない（起動のたびに未読数が膨らまないように）
 - **会話**: `TranscriptStore`（250ms で追記を読む actor）。購読するのは直近に開いたルームだけ（`watchTranscripts`）で、
   開いていないセッションのログは読まない・持たない。ルームを開いたら購読を張ってから `fetchTranscript` で全件、
   以降は追記を id で重複除去して足す。購読の張り替えは 1 回の呼び出しで行い、間の追記を落とさない。画像は `imageSource`（行の位置を覚えて読み直す。base64 の PNG / JPEG / GIF / WebP のみ）
-- **使用量**: `<ai-manager ルート>/data/claude-usage.json`（statusline.sh が書く）を 3 秒ごとに読む（`MONITOR_USAGE_FILE` で差し替え）
+- **使用量**: `~/Library/Application Support/claude-deck/usage.json`（`scripts/statusline.sh` が書く）を 3 秒ごとに読む（`CLAUDE_DECK_USAGE_FILE`、旧名 `MONITOR_USAGE_FILE` で差し替え）。
+  移行期間は旧 statusLine が書く `<ai-manager ルート>/data/claude-usage.json` も読み、取得時刻の新しい方を使う
 - **伝言**: 受信箱ソケット（自分が所有する Unix ソケットだけ）へ行区切りの JSON を 1 行書く。失敗は `HubFailure`（`not_found` / `not_alive` / `no_socket` / `unreachable`）
 - 読み取り元は `CLAUDE_HOME`（既定 `~/.claude`）。読むだけで書かない。デバッグ出力は `CLAUDE_DECK_MONITOR_DEBUG=1`
 - アプリで起動した claude の pid を `registerHostedProcess(pid:)` で登録し、`~/.claude/sessions/<pid>.json` の
@@ -123,8 +130,8 @@ mac/
 
 ### アプリ内サーバー（:8766）
 
-`~/.claude/settings.json` のフック（`curl … http://localhost:8766/hook`）と Channels の `monitor/src/channel.ts`
-（`http://127.0.0.1:8766/api/channel/permissions`）は宛先を変えずにそのまま届く。出すのは**外から叩かれる口だけ**。
+`~/.claude/settings.json` のフック（`curl … http://localhost:8766/hook`）と Channels の `claude-deck-channel`
+（`http://127.0.0.1:8766/api/channel/permissions`）の宛先。出すのは**外から叩かれる口だけ**。
 
 | メソッド | パス | 用途 |
 |---|---|---|
@@ -160,6 +167,117 @@ swift run monitor-probe 30 14978
 # 受け口も試す時は別ポートで（:8766 はアプリ / 旧 monitor が使う）
 CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 ```
+
+## Claude Code 側の設定（フック・statusLine・Channels）
+
+どれも任意。入れなくても一覧・会話・ステージは動く。`~/.claude/settings.json` はユーザーの設定なので、アプリやスクリプトは書き換えない（下の手順で手で入れる）。
+
+### フック（権限待ち・入力待ち・API エラー）
+
+**「なぜ止まっているか」はログに一切残らない**ので、フックでしか取れない。`~/.claude/settings.json`（ユーザーレベル）に入れると全プロジェクトに効く。
+**`async: true` を必ず付ける**（付けないとフックが同期実行され、全プロジェクトで Claude Code の応答をブロックする）。
+`--max-time 1` はアプリが動いていない時に各セッションを待たせないための保険（その間のフックは取りこぼす）。
+
+```jsonc
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "command", "async": true,
+      "command": "curl -sS --max-time 1 -X POST http://localhost:8766/hook -H 'content-type: application/json' -d @- >/dev/null 2>&1" }] }],
+    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "async": true,
+      "command": "curl -sS --max-time 1 -X POST http://localhost:8766/hook -H 'content-type: application/json' -d @- >/dev/null 2>&1" }] }],
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "async": true,
+      "command": "curl -sS --max-time 1 -X POST http://localhost:8766/hook -H 'content-type: application/json' -d @- >/dev/null 2>&1" }] }],
+    "StopFailure": [{ "matcher": "", "hooks": [{ "type": "command", "async": true,
+      "command": "curl -sS --max-time 1 -X POST http://localhost:8766/hook -H 'content-type: application/json' -d @- >/dev/null 2>&1" }] }],
+    "SubagentStart": [{ "matcher": "", "hooks": [{ "type": "command", "async": true,
+      "command": "curl -sS --max-time 1 -X POST http://localhost:8766/hook -H 'content-type: application/json' -d @- >/dev/null 2>&1" }] }],
+    "SubagentStop": [{ "matcher": "", "hooks": [{ "type": "command", "async": true,
+      "command": "curl -sS --max-time 1 -X POST http://localhost:8766/hook -H 'content-type: application/json' -d @- >/dev/null 2>&1" }] }]
+  }
+}
+```
+
+- 既に同じイベントにフックがある場合は、同じ `hooks` 配列に要素として足す（マッチしたフックは並列実行される）。
+- 宛先は旧 monitor の頃と同じ `http://localhost:8766/hook`。旧 monitor の設定のままなら書き換えは要らない。
+- 未知の `notification_type` はライブフィードに「通知: <種別>」として出る。
+
+### statusLine（上限の残量）
+
+5 時間 / 7 日間ウィンドウの使用率は Claude Code が `statusLine` の command に渡す JSON（`rate_limits`）にしか入っていない。
+`mac/scripts/statusline.sh` はそれを表示（`セッション: 43% (リセット: 2時間5分後) | 週間: 61%`）したうえで、
+`~/Library/Application Support/claude-deck/usage.json` に**原子的に**書く（同じディレクトリに一時ファイルを作って `mv`。
+作るディレクトリは 0700・ファイルは 0600）。アプリはそれを 3 秒ごとに読み、上限到達の強制終了に使う。
+
+`~/.claude/settings.json` の `statusLine` を次のように差し替える（旧 `monitor/scripts/statusline.sh` を指していたら、このパスに変える）。
+
+```jsonc
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/Users/shinjo/project/ai-manager/mac/scripts/statusline.sh"
+  }
+}
+```
+
+- 保存先は環境変数 `CLAUDE_DECK_USAGE_FILE` で差し替えられる（アプリ側も同じ変数を読む。Finder から起動したアプリには環境変数が渡らないので、通常は既定の場所のまま使う）。
+- 移行期間として、アプリは旧 `data/claude-usage.json` も読み、取得時刻の新しい方を使う。差し替え前でも上限の判定は途切れない。
+- **表示を先に出し切ってから書く。** 書き込みに失敗してもステータスラインは出る。値が 1 つも無い入力では記録を上書きしない。
+- `jq` が要る。出すのは `rate_limits` 由来の表示だけなので、他に出したいものがあればスクリプトに足す。
+- statusLine は Claude Code が動いている間しか呼ばれない。全セッションが止まると値が古くなるので、アプリは取得 10 分以内の値だけ使う。
+
+### Channels（権限確認をアプリから許可 / 拒否）
+
+ツール使用の権限確認（`Bash` / `Write` / `Edit` など）を claude-deck の画面に出し、そこで許可・拒否できる。
+Claude Code の **Channels**（research preview の permission relay）を使う。チャネル本体は `claude-deck-channel`
+（stdio の MCP サーバー。`Sources/ClaudeDeckChannel`・中身は `Sources/MonitorKit/Channel`。外部ライブラリなし）。
+
+1. 実行ファイルを用意する。`.app` を使うなら `./scripts/bundle.sh` で `dist/claude-deck.app/Contents/MacOS/claude-deck-channel` に入る。
+   `.app` を使わないなら `swift build -c release --product claude-deck-channel` → `.build/release/claude-deck-channel`。
+2. セッションを起こす側のリポジトリの `.mcp.json` に、**実行ファイルの絶対パス**で登録する。
+
+   ```json title=".mcp.json"
+   {
+     "mcpServers": {
+       "claude-deck": {
+         "command": "/Users/shinjo/project/ai-manager/mac/dist/claude-deck.app/Contents/MacOS/claude-deck-channel"
+       }
+     }
+   }
+   ```
+
+3. **`--dangerously-load-development-channels`** を付けて起動する（自作チャネルは承認済み一覧に無いため必須）。
+
+   ```bash
+   claude --dangerously-load-development-channels server:claude-deck
+   ```
+
+- 起動時に全画面の警告（`I am using this for local development`）と、`.mcp.json` の初回同意ダイアログが出る。
+- `command` は実行ファイルを直接指す（シェルや `env` を挟まない）。申請元のセッションを**チャネルの親 PID**で引くため、間にプロセスが 1 段増えるとずれる。
+- 宛先は既定 `http://127.0.0.1:8766`。アプリのポートを変えた時だけ `.mcp.json` の `env` に `CLAUDE_DECK_URL` を足す（旧名 `MONITOR_URL` も読む）。
+- **`allow` / `deny` しか返せない。**「常に許可」「今回だけ」は Channels に無い（確認ごとに ID が変わる）。
+- 中継されるのは**ツール使用の承認だけ**。`AskUserQuestion`・プロジェクト信頼・MCP サーバー同意は端末に出る（アプリでホスト中のセッションなら選択肢カードで答えられる）。
+- 端末のダイアログと同時に生きていて**先に答えた方が採用される**。端末側で答えられた分は、そのセッションのログが進んだ時点で保留から消える
+  （Claude Code は取り消しを知らせてこないため）。同じターンで別のツールが先に走ってログを進めると、まだ開いている確認も消えることがある（その時は端末で答える）。
+- MCP の応答は `@modelcontextprotocol/sdk` 1.30 の Server と同じにしてある: `initialize` は求められた版が対応表
+  （`2025-11-25` / `2025-06-18` / `2025-03-26` / `2024-11-05` / `2024-10-07`）にあればそのまま、無ければ `2025-11-25` で答え、
+  capabilities は `experimental` の `claude/channel` と `claude/channel/permission` だけ。`ping` は空の結果、tools / prompts 等の
+  未対応メソッドは `-32601 Method not found`、壊れた行と知らない通知は黙って捨てる。stdin が閉じたら終わる。
+
+#### チャネルとアプリの繋ぎ方
+
+チャネルはアプリの `POST /api/channel/permissions` に申請を預け、**その応答が返るまで待つ**（長ポーリング）。
+チャネル側は待ち受けポートを持たない（セッションごとにチャネルが起動するため、固定ポートでは 2 つ目が衝突する）。
+
+- 1 巡 60 秒で切れ、判断が出ていなければチャネルがすぐ取り直す（1 回の上限は 90 秒）。アプリを再起動しても取り直しで保留が戻る。
+- アプリに繋がらない間は 5 秒ごとに取り直し（ログは初回と約 1 分ごと・stderr）、30 分戻らなければ中継を諦める（以降その確認は端末で答える）。
+  4xx は形が悪い申請なので取り直さずに諦め、5xx は繋がらない扱いで取り直す。
+- 90 秒取りに来なければアプリは保留を捨てる（セッションが終わった・チャネルが落ちた）。
+- 申請元のセッションは**チャネルの親 PID だけ**で引く（`~/.claude/sessions/<pid>.json` と一致する）。cwd では引かない——同じ場所の
+  別セッションに付け替わると、見ていない確認を許可させてしまうため。引けなければ「セッション不明の権限確認」として出す。
+- 保留の鍵は**申請元 PID と `request_id` の対**（`request_id` はセッション内でしか一意でない）。判断は 2 分だけ取り置き、
+  取り直しの谷間に押された分も次の取り直しで渡す。
+- **答えられるのは手元（ループバック）だけ**。受け口は接続元アドレスも確かめ、ループバック以外には 404 で存在ごと伏せる。
+  チャネル経由で返答できる者は誰でもセッションのツール使用を許可・拒否できるため。スマホからの承認は `claude --remote-control` が担う。
 
 ## プロジェクト一覧（ユーザー管理 + 永続化）
 
@@ -230,7 +348,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 - 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「Xcode」「閉じる」。表示の切替は無く、どのルームも常にチャット。
   「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`findXcodeProject`）。「閉じる」は確認ダイアログの後、
-  monitor の `close.ts` と同じ AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
+  旧 monitor の `close.ts` と同じ AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
   （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。ホスト中のルームでも使える。
   結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。
   初回は macOS が「claude-deck が Xcode を操作する」許可（オートメーション）を求める。拒否するとエラー（-1743）になる。
@@ -428,7 +546,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 ### ai-manager ルートの解決（`AIManagerRoot.swift`）
 
-`.app` から起動すると cwd が `/` になるため、ai-manager ルート（`projects/registry.tsv` を持つディレクトリ）の解決を `AIManagerRoot` に集約している。TSV や `data/claude-usage.json` はこのルートからの相対で引く。
+`.app` から起動すると cwd が `/` になるため、ai-manager ルート（`projects/registry.tsv` を持つディレクトリ）の解決を `AIManagerRoot` に集約している。TSV や移行期間の旧 `data/claude-usage.json` はこのルートからの相対で引く。
 
 1. 環境変数 `AI_MANAGER_ROOT`
 2. UserDefaults `aiManagerRoot`（`defaults write com.shinjosato.claude-deck aiManagerRoot /path/to/ai-manager`）
@@ -489,6 +607,6 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
   （文言が変わって選択肢の数が読めなくなれば Enter を押さずにやめる）。
 - 送った伝言の吹き出しはアプリのメモリにだけ持つ（再起動で消える）。
 - 外部セッションの権限カード（Channels 経由の許可 / 拒否）は既存の permissions の経路（アプリ内サーバーに移した）をそのまま使っており、外部ルームでの実機確認はしていない。
-- ステージの 3D は、オフスクリーン描画（`SCNRenderer`）の画像を monitor UI の 3D（ヘッドレスブラウザで撮影）と状態ごとに見比べて合わせた。
+- ステージの 3D は、オフスクリーン描画（`SCNRenderer`）の画像を旧 monitor UI の 3D（ヘッドレスブラウザで撮影）と状態ごとに見比べて合わせた。
   アプリの画面上での動き（跳ね・脈・表示中だけ回ること）は目視では未確認。足し算の光は明るい面の上では three.js より控えめに見える
   （three.js は sRGB のまま足すが、SceneKit は線形で足すため。暗い地の上は合わせてある）。
