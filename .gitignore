@@ -9,11 +9,7 @@ data/claude-usage.json*
 node_modules/
 mac/dist/
 # 削除済みの monitor の残骸（手元に残る node_modules・UI のビルド成果物）を拾わないため。
-# 旧 statusLine のパスに置く転送スクリプトだけは追跡する。
-/monitor/*
-!/monitor/scripts/
-/monitor/scripts/*
-!/monitor/scripts/statusline.sh
+/monitor/
 *.tsbuildinfo
 
 # Swift Package Manager（どの階層でも）

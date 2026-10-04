@@ -5,7 +5,7 @@ import MonitorKit
 @MainActor
 enum MonitorBridge {
     /// 読み取り元は `CLAUDE_HOME`、受け口のポートは `CLAUDE_DECK_SERVER_PORT`、デバッグ出力は `CLAUDE_DECK_MONITOR_DEBUG=1`。
-    /// 使用量は Application Support の usage.json。旧 statusLine のパスは転送スクリプトが新しいスクリプトに渡すので、ここに書かれ続ける。
+    /// 使用量は statusLine（mac/scripts/statusline.sh）が書く Application Support の usage.json。
     /// 旧 `data/claude-usage.json` は手元に残っていれば読むだけ（取得時刻の新しい方を使う）。
     static let configuration = MonitorConfiguration.fromEnvironment(
         legacyUsageFile: AIManagerRoot.url?.appendingPathComponent("data/claude-usage.json")

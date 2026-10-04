@@ -22,13 +22,13 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 | claude-deck（Claude Code 司令塔アプリ） | PoC（Swift/macOS・ビルド可） | `mac/` |
 | Claude Code セッション監視（リアルタイム） | 稼働（mac アプリの中・:8766 でフックを受ける） | `mac/Sources/MonitorKit/Hub`・`Server` |
 | 権限確認の中継（Channels） | 実装済み（実機の claude では未確認） | `mac/Sources/ClaudeDeckChannel`・`mac/Sources/MonitorKit/Channel` |
-| 上限の残量（statusLine） | 稼働（旧パスは転送スクリプトで継続。settings.json の差し替えを推奨） | `mac/scripts/statusline.sh` |
+| 上限の残量（statusLine） | 稼働 | `mac/scripts/statusline.sh` |
 | スプレッドシート勉強管理 | 未着手 | - |
 
 構成は `mac/`（claude-deck）に一本化した。セッション監視・会話の記録・フックの受け口（127.0.0.1:8766）はアプリの中で動き、
-Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts/statusline.sh`）も mac 側にある。旧 `monitor/`（Node）は削除済み（転送スクリプト `monitor/scripts/statusline.sh` だけ残す）。
+Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts/statusline.sh`）も mac 側にある。旧 `monitor/`（Node）は削除済み。
 `projects/*.tsv` は mac アプリが読み、使用量は statusLine が `~/Library/Application Support/claude-deck/usage.json` に書いて mac アプリが読む
-（移行期間は旧パス `monitor/scripts/statusline.sh` に新しいスクリプトへ渡すだけの転送スクリプトを残しているので、settings.json を差し替える前でも記録は途切れない。差し替えたら転送スクリプトは消してよい。旧 `data/claude-usage.json`（未追跡）は残っていれば読み、取得時刻の新しい方を使う）。
+（旧 `data/claude-usage.json`（未追跡）は残っていれば読み、取得時刻の新しい方を使う）。
 
 ## 他プロジェクト管理
 
