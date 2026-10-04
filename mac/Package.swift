@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "claude-deck", targets: ["ClaudeDeck"])
+        .executable(name: "claude-deck", targets: ["ClaudeDeck"]),
+        .executable(name: "claude-deck-channel", targets: ["claude-deck-channel"])
     ],
     dependencies: [
         // VT100/Xterm 端末エミュレータ。PTY ホスト（LocalProcessTerminalView）を提供。上流の変更で挙動が変わらないようリビジョンで固定する。
@@ -33,10 +34,18 @@ let package = Package(
             path: "Sources/MonitorProbe",
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         ),
+        // Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー）。権限確認をアプリの受け口へ中継する。
+        .executableTarget(
+            name: "claude-deck-channel",
+            dependencies: ["MonitorKit"],
+            path: "Sources/ClaudeDeckChannel",
+            swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
+        ),
         .testTarget(
             name: "ClaudeDeckTests",
             // SwiftTerm は端末ペインと同じ起動経路（forkpty）でシグナル設定の漏れを確かめるため。
-            dependencies: ["MonitorKit", .product(name: "SwiftTerm", package: "SwiftTerm")],
+            // チャネルは実行ファイルを stdin/stdout で繋いで確かめるので、先にビルドさせる。
+            dependencies: ["MonitorKit", "claude-deck-channel", .product(name: "SwiftTerm", package: "SwiftTerm")],
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         )
     ]
