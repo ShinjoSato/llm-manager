@@ -26,15 +26,27 @@ public struct HTTPRequest: Sendable {
     public func header(_ name: String) -> String? { headers[name.lowercased()] }
 }
 
+/// 送り続ける応答の本文（Server-Sent Events 等）。流し終えるか相手が切れば接続を閉じる。
+public final class HTTPBodyStream: Sendable {
+    public let chunks: AsyncStream<Data>
+
+    public init(_ chunks: AsyncStream<Data>) {
+        self.chunks = chunks
+    }
+}
+
 public struct HTTPResponse: Sendable, Equatable {
     public var status: Int
     public var headers: [(String, String)]
     public var body: Data
+    /// あれば `body` の代わりに chunked で流す。
+    public var stream: HTTPBodyStream?
 
-    public init(status: Int, headers: [(String, String)] = [], body: Data = Data()) {
+    public init(status: Int, headers: [(String, String)] = [], body: Data = Data(), stream: HTTPBodyStream? = nil) {
         self.status = status
         self.headers = headers
         self.body = body
+        self.stream = stream
     }
 
     /// JSON の応答。キャッシュさせない。
@@ -47,6 +59,7 @@ public struct HTTPResponse: Sendable, Equatable {
 
     public static func == (a: HTTPResponse, b: HTTPResponse) -> Bool {
         a.status == b.status && a.body == b.body && a.headers.map { "\($0.0):\($0.1)" } == b.headers.map { "\($0.0):\($0.1)" }
+            && a.stream === b.stream
     }
 
     static func reason(_ status: Int) -> String {
@@ -54,13 +67,18 @@ public struct HTTPResponse: Sendable, Equatable {
         case 100: return "Continue"
         case 200: return "OK"
         case 400: return "Bad Request"
+        case 401: return "Unauthorized"
         case 403: return "Forbidden"
         case 404: return "Not Found"
+        case 405: return "Method Not Allowed"
         case 408: return "Request Timeout"
+        case 409: return "Conflict"
         case 411: return "Length Required"
         case 413: return "Payload Too Large"
         case 415: return "Unsupported Media Type"
+        case 429: return "Too Many Requests"
         case 431: return "Request Header Fields Too Large"
+        case 500: return "Internal Server Error"
         case 501: return "Not Implemented"
         case 503: return "Service Unavailable"
         default: return "Status"
@@ -70,11 +88,24 @@ public struct HTTPResponse: Sendable, Equatable {
     func serialized() -> Data {
         var head = "HTTP/1.1 \(status) \(Self.reason(status))\r\n"
         for (name, value) in headers { head += "\(name): \(value)\r\n" }
+        if stream != nil {
+            head += "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            return Data(head.utf8)
+        }
         head += "Content-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         var data = Data(head.utf8)
         data.append(body)
         return data
     }
+
+    static func chunk(_ data: Data) -> Data {
+        var framed = Data((String(data.count, radix: 16) + "\r\n").utf8)
+        framed.append(data)
+        framed.append(Data("\r\n".utf8))
+        return framed
+    }
+
+    static let lastChunk = Data("0\r\n\r\n".utf8)
 }
 
 /// 待ち受けの状態。
@@ -87,15 +118,64 @@ public enum LoopbackServerState: Sendable, Equatable {
     case failed(String)
 }
 
-/// 127.0.0.1 だけで待ち受ける最小の HTTP/1.1 サーバー（1 接続 1 リクエスト・Content-Length のみ）。外部ライブラリは使わない。
+/// TLS の自分の証明書と鍵。CF の型は Sendable ではないが、作った後は書き換えない。
+public struct TLSServerIdentity: @unchecked Sendable {
+    public let identity: SecIdentity
+
+    public init(_ identity: SecIdentity) {
+        self.identity = identity
+    }
+}
+
+/// 待ち受けの設定。既定はフック・チャネル用の口（ループバック・平文・Host / Origin / 接続元の検査）。
+public struct HTTPServerOptions: Sendable {
+    public typealias Rejection = @Sendable (HTTPRequest, Int) -> HTTPResponse?
+
+    /// 待ち受けるアドレス。全インターフェース（0.0.0.0）にはしない。
+    public var bindHost: NWEndpoint.Host
+    /// あれば TLS だけで待ち受ける（平文の口は出さない）。
+    public var tls: TLSServerIdentity?
+    public var maxConnections: Int
+    public var maxBodyBytes: Int
+    public var maxHeaderBytes: Int
+    public var readTimeout: TimeInterval
+    /// 流し続ける応答で、相手が受け取らずに溜まってよい量。超えたら切る。
+    public var maxPendingStreamBytes: Int
+    /// 本文を読む前にも掛ける検査（引数はリクエストと待ち受けのポート）。通れば nil。
+    public var rejection: Rejection
+
+    public init(bindHost: NWEndpoint.Host = .ipv4(.loopback),
+                tls: TLSServerIdentity? = nil,
+                maxConnections: Int = LoopbackHTTPServer.maxConnections,
+                maxBodyBytes: Int = LoopbackHTTPServer.maxBodyBytes,
+                maxHeaderBytes: Int = LoopbackHTTPServer.maxHeaderBytes,
+                readTimeout: TimeInterval = LoopbackHTTPServer.readTimeout,
+                maxPendingStreamBytes: Int = 4 * 1024 * 1024,
+                rejection: @escaping Rejection = { MonitorHTTPRoutes.rejection($0, port: $1) }) {
+        self.bindHost = bindHost
+        self.tls = tls
+        self.maxConnections = maxConnections
+        self.maxBodyBytes = maxBodyBytes
+        self.maxHeaderBytes = maxHeaderBytes
+        self.readTimeout = readTimeout
+        self.maxPendingStreamBytes = maxPendingStreamBytes
+        self.rejection = rejection
+    }
+
+    /// フック・チャネル用の口（127.0.0.1・平文）。
+    public static let loopback = HTTPServerOptions()
+}
+
+/// 最小の HTTP/1.1 サーバー（1 接続 1 リクエスト・Content-Length のみ）。外部ライブラリは使わない。
+/// 既定は 127.0.0.1 だけで待ち受ける。`HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限を変えられる。
 public final class LoopbackHTTPServer: @unchecked Sendable {
     public typealias Handler = @Sendable (HTTPRequest) async -> HTTPResponse
 
     /// 本文の上限。フックの JSON は最後の応答文などを含むので小さすぎないようにする。
     public static let maxBodyBytes = 8 * 1024 * 1024
-    static let maxHeaderBytes = 64 * 1024
+    public static let maxHeaderBytes = 64 * 1024
     /// 送り切らない相手で接続を握られ続けないための締め切り。
-    static let readTimeout: TimeInterval = 15
+    public static let readTimeout: TimeInterval = 15
     /// 同時に持つ接続の上限（長ポーリングで待たせている分も数える）。ローカルの暴走で資源を食い尽くさせない。
     public static let maxConnections = 64
     /// 閉じた待ち受けがポートを手放すまで待つ上限。取り消しは非同期で、直後に開き直すと塞がっていることがある。
@@ -103,6 +183,7 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "claude-deck.http-server")
     private let handler: Handler
+    public let options: HTTPServerOptions
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var stateHandler: (@Sendable (LoopbackServerState) -> Void)?
@@ -112,7 +193,8 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     /// start / stop のたびに進める。前の待ち受けの片付けを待つ間に呼び直されたら、古い開き直しを捨てる。
     private var generation = 0
 
-    public init(handler: @escaping Handler) {
+    public init(options: HTTPServerOptions = .loopback, handler: @escaping Handler) {
+        self.options = options
         self.handler = handler
     }
 
@@ -147,10 +229,10 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     private func openLocked(port: Int, onState: @escaping @Sendable (LoopbackServerState) -> Void) {
         stateHandler = onState
         requestedPort = port
-        let params = NWParameters.tcp
+        let params = Self.parameters(tls: options.tls)
         // 閉じた直後の TIME_WAIT で取り直しに失敗しないため（待ち受け中の別プロセスとは重ならないことを試験で確かめている）。
         params.allowLocalEndpointReuse = true
-        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: UInt16(port)) ?? .any)
+        params.requiredLocalEndpoint = .hostPort(host: options.bindHost, port: NWEndpoint.Port(rawValue: UInt16(port)) ?? .any)
         let listener: NWListener
         do {
             listener = try NWListener(using: params)
@@ -165,6 +247,14 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
         }
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         listener.start(queue: queue)
+    }
+
+    static func parameters(tls identity: TLSServerIdentity?) -> NWParameters {
+        guard let identity, let secIdentity = sec_identity_create(identity.identity) else { return .tcp }
+        let tls = NWProtocolTLS.Options()
+        sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
+        sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
+        return NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
     }
 
     /// 待ち受けを閉じ、ポートを手放すまで（上限 `cancelTimeout`）待ってから戻る。キューの上から呼ばない。
@@ -218,13 +308,13 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
-        guard connections.count < Self.maxConnections else {
+        guard connections.count < options.maxConnections else {
             connection.cancel()
             return
         }
         let id = ObjectIdentifier(connection)
         connections[id] = connection
-        let session = ConnectionSession(connection: connection, queue: queue, handler: handler,
+        let session = ConnectionSession(connection: connection, queue: queue, handler: handler, options: options,
                                         boundPort: { [weak self] in self?.currentPort ?? 0 }) { [weak self] in
             self?.connections[id] = nil
         }
@@ -252,6 +342,7 @@ private final class ConnectionSession: @unchecked Sendable {
     private let connection: NWConnection
     private let queue: DispatchQueue
     private let handler: LoopbackHTTPServer.Handler
+    private let options: HTTPServerOptions
     private let boundPort: () -> Int
     private let onFinish: () -> Void
     private var buffer = Data()
@@ -259,20 +350,23 @@ private final class ConnectionSession: @unchecked Sendable {
     private var finished = false
     private var sentContinue = false
     private var dispatched = false
-    /// 応答を作っている途中の処理。相手が切ったら止める（長ポーリングの待ち手を残さないため）。
+    /// 応答を作っている途中の処理（流し続ける応答ならその送り手）。相手が切ったら止める（長ポーリングの待ち手を残さないため）。
     private var work: Task<Void, Never>?
+    /// 流し続ける応答で、送ったがまだ相手に渡っていない量。
+    private var pendingStreamBytes = 0
 
     init(connection: NWConnection, queue: DispatchQueue, handler: @escaping LoopbackHTTPServer.Handler,
-         boundPort: @escaping () -> Int, onFinish: @escaping () -> Void) {
+         options: HTTPServerOptions, boundPort: @escaping () -> Int, onFinish: @escaping () -> Void) {
         self.connection = connection
         self.queue = queue
         self.handler = handler
+        self.options = options
         self.boundPort = boundPort
         self.onFinish = onFinish
     }
 
     func begin() {
-        queue.asyncAfter(deadline: .now() + LoopbackHTTPServer.readTimeout) { [weak self] in
+        queue.asyncAfter(deadline: .now() + options.readTimeout) { [weak self] in
             guard let self, !self.finished, !self.dispatched else { return }
             self.respond(.json(408, ["ok": false, "error": "request timeout"]))
         }
@@ -313,14 +407,14 @@ private final class ConnectionSession: @unchecked Sendable {
     private func process() -> Bool {
         if head == nil {
             guard let end = buffer.range(of: Data("\r\n\r\n".utf8)) else {
-                if buffer.count > LoopbackHTTPServer.maxHeaderBytes {
+                if buffer.count > options.maxHeaderBytes {
                     respond(.json(431, ["ok": false, "error": "headers too large"]))
                     return true
                 }
                 return false
             }
             // 1 回の受信で本文ごと届くと、終端の手前が上限を超えていても上の検査をすり抜ける。
-            if end.lowerBound - buffer.startIndex > LoopbackHTTPServer.maxHeaderBytes {
+            if end.lowerBound - buffer.startIndex > options.maxHeaderBytes {
                 respond(.json(431, ["ok": false, "error": "headers too large"]))
                 return true
             }
@@ -340,14 +434,14 @@ private final class ConnectionSession: @unchecked Sendable {
                 }
                 length = n
             }
-            if length > LoopbackHTTPServer.maxBodyBytes {
+            if length > options.maxBodyBytes {
                 respond(.json(413, ["ok": false, "error": "payload too large"]))
                 return true
             }
             head = (parsed.method, parsed.target, parsed.headers, end.upperBound - buffer.startIndex, length)
             // curl は大きめの本文で `Expect: 100-continue` を付け、返事を待ってから本文を送る。弾く相手には本文を送らせない。
             if length > 0, parsed.headers["expect"]?.lowercased() == "100-continue", !sentContinue {
-                if let rejected = MonitorHTTPRoutes.rejection(request(body: Data()), port: boundPort()) {
+                if let rejected = options.rejection(request(body: Data()), boundPort()) {
                     respond(rejected)
                     return true
                 }
@@ -361,11 +455,17 @@ private final class ConnectionSession: @unchecked Sendable {
         dispatched = true
         buffer = Data()
         let handler = handler
+        let rejection = options.rejection
         let port = boundPort()
         let queue = queue
         weak let weakSelf = self
         work = Task {
-            let response = await MonitorHTTPRoutes.guarded(request, port: port, handler: handler)
+            let response: HTTPResponse
+            if let rejected = rejection(request, port) {
+                response = rejected
+            } else {
+                response = await handler(request)
+            }
             queue.async { weakSelf?.respond(response) }
         }
         return true
@@ -382,7 +482,43 @@ private final class ConnectionSession: @unchecked Sendable {
         guard !finished else { return }
         dispatched = true
         work = nil
+        if let stream = response.stream {
+            connection.send(content: response.serialized(), completion: .idempotent)
+            pump(stream)
+            return
+        }
         connection.send(content: response.serialized(), contentContext: .finalMessage, isComplete: true,
+                        completion: .contentProcessed { [weak self] _ in self?.finish() })
+    }
+
+    /// 流し続ける応答を chunked で送る。流し終えたら終端を送って閉じ、相手が切れば（finish で取り消し）止める。
+    private func pump(_ stream: HTTPBodyStream) {
+        let queue = queue
+        weak let weakSelf = self
+        work = Task {
+            for await chunk in stream.chunks {
+                queue.async { weakSelf?.sendChunk(chunk) }
+            }
+            queue.async { weakSelf?.endStream() }
+        }
+    }
+
+    private func sendChunk(_ chunk: Data) {
+        guard !finished, !chunk.isEmpty else { return }
+        // 受け取らない相手に溜め込ませない。
+        guard pendingStreamBytes + chunk.count <= options.maxPendingStreamBytes else { return finish() }
+        let framed = HTTPResponse.chunk(chunk)
+        pendingStreamBytes += framed.count
+        connection.send(content: framed, completion: .contentProcessed { [weak self] error in
+            guard let self else { return }
+            self.pendingStreamBytes -= framed.count
+            if error != nil { self.finish() }
+        })
+    }
+
+    private func endStream() {
+        guard !finished else { return }
+        connection.send(content: HTTPResponse.lastChunk, contentContext: .finalMessage, isComplete: true,
                         completion: .contentProcessed { [weak self] _ in self?.finish() })
     }
 
