@@ -479,18 +479,26 @@ final class ChatModel {
         guard !body.isEmpty else { return false }
         let imagePaths = (attachments[room.id] ?? []).filter { $0.kind == .image }.map(\.path)
         clearAttachments(of: room.id)
+        // 吹き出しは送信を待たずにすぐ出す。
+        let note = addRelayNote(body, imagePaths: imagePaths, to: sessionId)
         Task {
-            if let reason = await deliverRelay(body, imagePaths: imagePaths, to: sessionId) {
+            if let reason = await deliverRelay(note, to: sessionId) {
                 alertMessage = "伝言を送れませんでした: \(reason)"
             }
         }
         return true
     }
 
-    /// 伝言を手元の吹き出しに足してから送る。失敗すればその理由。
-    func deliverRelay(_ body: String, imagePaths: [String] = [], to sessionId: String) async -> String? {
+    /// 送る伝言を手元の吹き出しに足す。
+    func addRelayNote(_ body: String, imagePaths: [String] = [], to sessionId: String) -> RelayNote {
         let note = RelayNote(text: body, sentAt: Date().timeIntervalSince1970 * 1000, imagePaths: imagePaths)
         relayNotes[sessionId, default: []].append(note)
+        return note
+    }
+
+    /// 足した伝言を送る。失敗すればその理由。
+    func deliverRelay(_ note: RelayNote, to sessionId: String) async -> String? {
+        let body = note.text
         do {
             try await store.sendMessage(to: sessionId, text: body)
             updateNote(note.id, in: sessionId, state: .sent)
@@ -640,9 +648,11 @@ final class ChatModel {
     func answerOnTerminal(_ session: HostedSession, prompt: PermissionPrompt, allow: Bool, report: Bool = true) -> RemoteActionResult {
         let key = Self.ptyPermissionKey(session)
         guard !busyPermissionKeys.contains(key) else { return Self.busyResult }
+        let answeredId = RemoteTerminalPermission.promptId(prompt, generation: session.promptTracker.generation)
         switch session.answerPermission(prompt, allow: allow) {
         case .sent:
-            break
+            // 同じ表示への押し直し（mac・iPhone どちらからでも）を送らないため。
+            session.markAnswered(answeredId)
         case .noPrompt:
             return failed("gone", "端末に権限確認が見当たりません。既に答え終わっている可能性があります。", report: report)
         case .changed:
@@ -671,8 +681,10 @@ final class ChatModel {
         let key = Self.ptyMenuKey(session)
         guard !busyPermissionKeys.contains(key) else { completion?(Self.busyResult); return }
         busyPermissionKeys.insert(key)
-        session.answerMenu(menu, choice: choice) { [weak self] outcome in
+        let answeredId = RemoteMenu.menuId(menu, generation: session.promptTracker.generation)
+        session.answerMenu(menu, choice: choice) { [weak self, weak session] outcome in
             guard let self else { completion?(.failure("ended", "アプリが閉じられました。")); return }
+            if Self.result(of: outcome).ok { session?.markAnswered(answeredId) }
             if outcome == .confirmed, let choice, menu.options[choice].checked != nil {
                 // 複数選択では Enter はチェックの切り替えで、メニューは閉じない。
                 let text = "「\(menu.options[choice].label)」のチェックを切り替えました。"
@@ -691,8 +703,10 @@ final class ChatModel {
         let key = Self.ptyMenuKey(session)
         guard !busyPermissionKeys.contains(key) else { completion?(Self.busyResult); return }
         busyPermissionKeys.insert(key)
-        session.moveMenuTab(menu, direction: direction) { [weak self] outcome in
+        let answeredId = RemoteMenu.menuId(menu, generation: session.promptTracker.generation)
+        session.moveMenuTab(menu, direction: direction) { [weak self, weak session] outcome in
             guard let self else { completion?(.failure("ended", "アプリが閉じられました。")); return }
+            if Self.result(of: outcome).ok { session?.markAnswered(answeredId) }
             completion?(self.finishMenuOperation(key, outcome: outcome, report: report))
         }
     }
@@ -740,8 +754,9 @@ final class ChatModel {
     func cancelUnreadableMenu(_ session: HostedSession, menu: UnreadableMenu, report: Bool = true) -> RemoteActionResult {
         let key = Self.ptyMenuKey(session)
         guard !busyPermissionKeys.contains(key) else { return Self.busyResult }
+        let answeredId = RemoteUnreadableMenu.menuId(menu, generation: session.promptTracker.generation)
         switch session.cancelUnreadableMenu(menu) {
-        case .sent: break
+        case .sent: session.markAnswered(answeredId)
         case .gone:
             return failed("gone", "端末に読み取れない選択肢が見当たりません。既に答え終わったか、カードで答えられる形になった可能性があります。", report: report)
         case .changed:

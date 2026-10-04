@@ -32,6 +32,7 @@ struct RemoteAccessView: View {
     @State private var portText = ""
     @State private var portError: String?
     @State private var revoking: RemoteDevice?
+    @State private var revokeError: String?
 
     private var service: RemoteAccessService { controller.service }
 
@@ -55,7 +56,7 @@ struct RemoteAccessView: View {
         .confirmationDialog("「\(revoking?.name ?? "")」を取り消しますか？", isPresented: Binding(get: { revoking != nil },
                                                                                   set: { if !$0 { revoking = nil } })) {
             Button("取り消す", role: .destructive) {
-                if let device = revoking { service.revoke(device.id) }
+                if let device = revoking { revokeError = service.revoke(device.id) }
                 revoking = nil
             }
             Button("キャンセル", role: .cancel) { revoking = nil }
@@ -113,6 +114,18 @@ struct RemoteAccessView: View {
                 Text(controller.statusText)
                     .foregroundStyle(service.boundPort != nil ? Color.green : Color.primary)
                     .textSelection(.enabled)
+            }
+            if let mismatch = controller.networkMismatch {
+                GridRow(alignment: .top) {
+                    Text("")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("有効にした時（\(mismatch.saved.cidr)）とは別のネットワーク（\(mismatch.current.cidr)）につながっているため、開いていません。"
+                             + "このネットワークの機器からも繋がれるようにしてよい時だけ開いてください。")
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("このネットワークで開く") { controller.trustCurrentNetwork() }
+                    }
+                }
             }
             if let fingerprint = service.fingerprint {
                 GridRow(alignment: .top) {
@@ -182,6 +195,14 @@ struct RemoteAccessView: View {
     @ViewBuilder
     private var devicesSection: some View {
         Text("ペアリング済みの端末").font(.headline)
+        // 書き直せたら（storageProblem が消えたら）取り消しの失敗も出さない。
+        if let problem = service.storageProblem {
+            Text(revokeError ?? problem)
+                .font(.callout)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
         if service.devices.isEmpty {
             Text("まだありません。").font(.callout).foregroundStyle(.secondary)
         }

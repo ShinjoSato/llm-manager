@@ -179,14 +179,30 @@ enum SecureFile {
     static func write(_ data: Data, to url: URL) throws {
         let fm = FileManager.default
         let dir = url.deletingLastPathComponent()
+        let failed = TLSIdentityFiles.Failure.writeFailed(url.lastPathComponent)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // 既にあったディレクトリも（後から広げられていても）毎回締め直す。
+        guard chmod(dir.path, 0o700) == 0 else { throw failed }
         let temp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
-        guard fm.createFile(atPath: temp.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-            throw TLSIdentityFiles.Failure.writeFailed(url.lastPathComponent)
+        // 作った瞬間から 0600（作ってから権限を変えると、その間は他人に読める）。
+        let fd = open(temp.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw failed }
+        let written = data.withUnsafeBytes { buffer -> Bool in
+            var offset = 0
+            while offset < buffer.count {
+                let n = Darwin.write(fd, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    return false
+                }
+                offset += n
+            }
+            return true
         }
-        guard rename(temp.path, url.path) == 0 else {
-            try? fm.removeItem(at: temp)
-            throw TLSIdentityFiles.Failure.writeFailed(url.lastPathComponent)
+        let synced = fsync(fd) == 0
+        guard close(fd) == 0, written, synced, rename(temp.path, url.path) == 0 else {
+            unlink(temp.path)
+            throw failed
         }
     }
 }

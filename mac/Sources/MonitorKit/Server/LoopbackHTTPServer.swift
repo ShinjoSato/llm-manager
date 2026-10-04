@@ -143,6 +143,12 @@ public struct HTTPServerOptions: Sendable {
     public var maxPendingStreamBytes: Int
     /// 本文を読む前にも掛ける検査（引数はリクエストと待ち受けのポート）。通れば nil。
     public var rejection: Rejection
+    /// 接続元のアドレスごとの同時接続の上限（nil は全体の上限だけ）。
+    public var maxConnectionsPerAddress: Int?
+    /// true を返す接続元は受け入れた時点で切る（TLS の握手もさせない）。
+    public var refuseAddress: (@Sendable (String) -> Bool)?
+    /// 黙って消えた相手（Wi-Fi から外れた端末等）の接続を早めに見つけて片付ける。
+    public var keepalive: Bool
 
     public init(bindHost: NWEndpoint.Host = .ipv4(.loopback),
                 tls: TLSServerIdentity? = nil,
@@ -151,6 +157,9 @@ public struct HTTPServerOptions: Sendable {
                 maxHeaderBytes: Int = LoopbackHTTPServer.maxHeaderBytes,
                 readTimeout: TimeInterval = LoopbackHTTPServer.readTimeout,
                 maxPendingStreamBytes: Int = 4 * 1024 * 1024,
+                maxConnectionsPerAddress: Int? = nil,
+                refuseAddress: (@Sendable (String) -> Bool)? = nil,
+                keepalive: Bool = false,
                 rejection: @escaping Rejection = { MonitorHTTPRoutes.rejection($0, port: $1) }) {
         self.bindHost = bindHost
         self.tls = tls
@@ -159,6 +168,9 @@ public struct HTTPServerOptions: Sendable {
         self.maxHeaderBytes = maxHeaderBytes
         self.readTimeout = readTimeout
         self.maxPendingStreamBytes = maxPendingStreamBytes
+        self.maxConnectionsPerAddress = maxConnectionsPerAddress
+        self.refuseAddress = refuseAddress
+        self.keepalive = keepalive
         self.rejection = rejection
     }
 
@@ -186,6 +198,7 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     public let options: HTTPServerOptions
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var connectionsPerAddress: [String: Int] = [:]
     private var stateHandler: (@Sendable (LoopbackServerState) -> Void)?
     private var requestedPort: Int = 0
     /// キュー上でだけ触る。
@@ -229,7 +242,11 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     private func openLocked(port: Int, onState: @escaping @Sendable (LoopbackServerState) -> Void) {
         stateHandler = onState
         requestedPort = port
-        let params = Self.parameters(tls: options.tls)
+        guard let params = Self.parameters(tls: options.tls, keepalive: options.keepalive) else {
+            // TLS を求められて組めない時に平文で開かない。
+            onState(.failed("TLS の設定を組めません"))
+            return
+        }
         // 閉じた直後の TIME_WAIT で取り直しに失敗しないため（待ち受け中の別プロセスとは重ならないことを試験で確かめている）。
         params.allowLocalEndpointReuse = true
         params.requiredLocalEndpoint = .hostPort(host: options.bindHost, port: NWEndpoint.Port(rawValue: UInt16(port)) ?? .any)
@@ -249,12 +266,22 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
         listener.start(queue: queue)
     }
 
-    static func parameters(tls identity: TLSServerIdentity?) -> NWParameters {
-        guard let identity, let secIdentity = sec_identity_create(identity.identity) else { return .tcp }
+    /// 待ち受けの設定。TLS を求められて組めなければ nil（平文には落とさない）。
+    static func parameters(tls identity: TLSServerIdentity?, keepalive: Bool = false,
+                           makeIdentity: (SecIdentity) -> sec_identity_t? = { sec_identity_create($0) }) -> NWParameters? {
+        let tcp = NWProtocolTCP.Options()
+        if keepalive {
+            tcp.enableKeepalive = true
+            tcp.keepaliveIdle = 20
+            tcp.keepaliveInterval = 5
+            tcp.keepaliveCount = 3
+        }
+        guard let identity else { return NWParameters(tls: nil, tcp: tcp) }
+        guard let secIdentity = makeIdentity(identity.identity) else { return nil }
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
         sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
-        return NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+        return NWParameters(tls: tls, tcp: tcp)
     }
 
     /// 待ち受けを閉じ、ポートを手放すまで（上限 `cancelTimeout`）待ってから戻る。キューの上から呼ばない。
@@ -265,6 +292,22 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
             return stopLocked(onCancelled: { released.signal() })
         }
         if waiting { _ = released.wait(timeout: .now() + Self.cancelTimeout) }
+    }
+
+    /// `stop` と同じだが、スレッドを塞がずに待つ（画面のスレッドから閉じる時）。
+    public func stopAndWait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async { [self] in
+                generation &+= 1
+                let once = Once()
+                let resume: @Sendable () -> Void = { if once.claim() { continuation.resume() } }
+                if stopLocked(onCancelled: resume) {
+                    queue.asyncAfter(deadline: .now() + Self.cancelTimeout, execute: resume)
+                } else {
+                    resume()
+                }
+            }
+        }
     }
 
     /// 待ち受けていれば閉じて true（`onCancelled` は手放し終えた時にキュー上で呼ぶ）。
@@ -279,6 +322,7 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
         currentPort = nil
         connections.values.forEach { $0.cancel() }
         connections = [:]
+        connectionsPerAddress = [:]
         stateHandler = nil
         return closing != nil
     }
@@ -312,11 +356,23 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
             connection.cancel()
             return
         }
+        let address = ConnectionSession.address(of: connection.endpoint) ?? "?"
+        if let refuse = options.refuseAddress, refuse(address) {
+            connection.cancel()
+            return
+        }
+        if let limit = options.maxConnectionsPerAddress, (connectionsPerAddress[address] ?? 0) >= limit {
+            connection.cancel()
+            return
+        }
         let id = ObjectIdentifier(connection)
         connections[id] = connection
+        connectionsPerAddress[address, default: 0] += 1
         let session = ConnectionSession(connection: connection, queue: queue, handler: handler, options: options,
                                         boundPort: { [weak self] in self?.currentPort ?? 0 }) { [weak self] in
-            self?.connections[id] = nil
+            guard let self, self.connections.removeValue(forKey: id) != nil else { return }
+            let left = (self.connectionsPerAddress[address] ?? 1) - 1
+            self.connectionsPerAddress[address] = left > 0 ? left : nil
         }
         connection.stateUpdateHandler = { state in
             switch state {

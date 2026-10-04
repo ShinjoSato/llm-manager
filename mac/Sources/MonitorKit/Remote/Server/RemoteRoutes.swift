@@ -15,6 +15,10 @@ public struct RemoteRoutes: Sendable {
     public static let maxBodyBytes = 256 * 1024
     /// 同時接続の上限（ストリームの上限より余裕を持たせる）。
     public static let maxConnections = 32
+    /// 接続元ごとの同時接続の上限（端末あたりのストリーム 4 本 + 操作の分）。未認証の相手 1 つで口を塞がせない。
+    public static let maxConnectionsPerAddress = 8
+    /// 送り切らない相手の締め切り（LAN の口は短く）。
+    public static let readTimeout: TimeInterval = 5
     /// 一度に購読できるセッションの数。
     static let maxTranscriptSubscriptions = 32
 
@@ -31,8 +35,12 @@ public struct RemoteRoutes: Sendable {
     /// 待ち受けの設定（TLS 必須・LAN のアドレスに限る）。
     public func serverOptions(bindHost: NWEndpointHostValue, tls: TLSServerIdentity) -> HTTPServerOptions {
         let routes = self
+        let throttle = throttle
         return HTTPServerOptions(bindHost: bindHost.host, tls: tls, maxConnections: Self.maxConnections,
-                                 maxBodyBytes: Self.maxBodyBytes, rejection: { request, _ in routes.rejection(request) })
+                                 maxBodyBytes: Self.maxBodyBytes, readTimeout: Self.readTimeout,
+                                 maxConnectionsPerAddress: Self.maxConnectionsPerAddress,
+                                 refuseAddress: { throttle.isBlocked($0) }, keepalive: true,
+                                 rejection: { request, _ in routes.rejection(request) })
     }
 
     // MARK: - 先に掛ける検査
@@ -74,7 +82,8 @@ public struct RemoteRoutes: Sendable {
         case ("GET", ["info"]):
             return Self.encoded(200, RemoteInfo(serverName: serverName, device: device))
         case ("POST", ["unpair"]):
-            pairing.revoke(id: device.id)
+            // 書き出しに失敗してもメモリ上は取り消し済み（mac の画面に出して書き直しを続ける）。
+            _ = try? pairing.revoke(id: device.id)
             await events.close(deviceId: device.id)
             return Self.encoded(200, RemoteActionResult.success("unpaired"))
         case ("GET", ["rooms"]):
@@ -206,8 +215,11 @@ public struct RemoteRoutes: Sendable {
             }
             subscription = .sessions(ids)
         }
-        guard let stream = await events.open(deviceId: device.id, transcripts: subscription) else {
-            return Self.error(429, "too_many_streams", "開いているストリームが多すぎます")
+        let stream: HTTPBodyStream
+        switch await events.open(deviceId: device.id, transcripts: subscription) {
+        case .opened(let opened): stream = opened
+        case .revoked: return Self.error(401, "unauthorized", "端末のトークンが無いか、取り消されています")
+        case .tooMany: return Self.error(429, "too_many_streams", "開いているストリームが多すぎます")
         }
         return HTTPResponse(status: 200, headers: [("Content-Type", "text/event-stream; charset=utf-8"), ("Cache-Control", "no-store")],
                             stream: stream)

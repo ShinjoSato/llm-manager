@@ -18,6 +18,13 @@ final class RemoteAccessController {
     private(set) var interfaces: [LANInterface] = []
     /// 開けない理由（インターフェースが無い等）。
     private(set) var problem: String?
+    /// 有効にした時と別のネットワークにいるため止めている（確かめてから開くため）。
+    private(set) var networkMismatch: NetworkMismatch?
+
+    struct NetworkMismatch: Equatable {
+        let saved: LANNetwork
+        let current: LANNetwork
+    }
 
     @ObservationIgnored private var watcher: Task<Void, Never>?
     /// アドレスの変化（DHCP の更新・Wi-Fi の切り替え）を見る間隔。
@@ -27,6 +34,17 @@ final class RemoteAccessController {
         static let enabled = "remoteAccess.enabled"
         static let port = "remoteAccess.port"
         static let interface = "remoteAccess.interface"
+        static let network = "remoteAccess.network"
+    }
+
+    /// 開いてよいと確かめたネットワーク。
+    private var savedNetwork: LANNetwork? {
+        get {
+            UserDefaults.standard.data(forKey: Keys.network).flatMap { try? JSONDecoder().decode(LANNetwork.self, from: $0) }
+        }
+        set {
+            UserDefaults.standard.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.network)
+        }
     }
 
     private init() {
@@ -65,6 +83,16 @@ final class RemoteAccessController {
         guard on != enabled else { return }
         enabled = on
         UserDefaults.standard.set(on, forKey: Keys.enabled)
+        // 有効にした時のネットワークを覚え直す（以後、別のネットワークでは自動で開かない）。
+        if on { savedNetwork = nil }
+        apply()
+    }
+
+    /// 別のネットワークで止めている時に、今のネットワークで開くと決めた。
+    func trustCurrentNetwork() {
+        guard let mismatch = networkMismatch else { return }
+        savedNetwork = mismatch.current
+        networkMismatch = nil
         apply()
     }
 
@@ -82,6 +110,8 @@ final class RemoteAccessController {
         guard name != interfaceName else { return }
         interfaceName = name
         UserDefaults.standard.set(name, forKey: Keys.interface)
+        // 口を選び直したのは今のネットワークで開くという判断。
+        savedNetwork = nil
         if enabled { restart() }
     }
 
@@ -102,6 +132,7 @@ final class RemoteAccessController {
             watcher?.cancel()
             watcher = nil
             problem = nil
+            networkMismatch = nil
             service.stop()
             return
         }
@@ -109,7 +140,23 @@ final class RemoteAccessController {
         guard let chosen = LANInterfaces.choose(interfaceName, from: interfaces) else {
             problem = interfaceName.map { "\($0) が見つかりません（接続が切れている可能性があります）" }
                 ?? "LAN（Wi-Fi・有線）のアドレスが見つかりません"
-            service.stop()
+            networkMismatch = nil
+            if service.isRunning { service.stop() }
+            return
+        }
+        let current = LANNetwork.current(for: chosen)
+        let saved = savedNetwork
+        switch LANNetwork.decide(saved: saved, current: current) {
+        case .open:
+            networkMismatch = nil
+        case .remember(let network):
+            savedNetwork = network
+            networkMismatch = nil
+        case .refuse:
+            // 外出先の Wi-Fi 等で勝手に開かない。確かめてから開く。
+            networkMismatch = saved.flatMap { saved in current.map { NetworkMismatch(saved: saved, current: $0) } }
+            problem = "別のネットワークのため停止中"
+            if service.isRunning { service.stop() }
             return
         }
         problem = nil

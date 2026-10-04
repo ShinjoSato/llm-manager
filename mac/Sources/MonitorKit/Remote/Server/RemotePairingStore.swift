@@ -35,7 +35,9 @@ public final class RemotePairingStore: @unchecked Sendable {
     private var devicesById: [String: StoredDevice] = [:]
     private var ticket: (hash: Data, expiresAt: Date)?
     private var lastWrite: Date = .distantPast
-    /// 一覧が変わった時（ペアリング・取り消し・最後に使った時刻）に呼ぶ。錠の外で呼ぶ。
+    /// 最後の書き出しの失敗（成功すれば nil）。取り消しが保存されていないと再起動で端末が戻るので、書き直しを続ける。
+    private var writeFailure: String?
+    /// 一覧が変わった時（ペアリング・取り消し・最後に使った時刻・書き出しの失敗）に呼ぶ。錠の外で呼ぶ。
     private var changeHandler: (@Sendable () -> Void)?
 
     public init(directory: URL, now: @escaping @Sendable () -> Date = { Date() }) {
@@ -90,7 +92,7 @@ public final class RemotePairingStore: @unchecked Sendable {
                                       pairedAt: now().timeIntervalSince1970 * 1000, lastUsedAt: nil,
                                       tokenHash: Self.hash(deviceToken).hexString)
             devicesById[device.id] = device
-            persistLocked()
+            try? persistLocked()
             return .paired(device.publicValue, token: deviceToken)
         }
         if case .paired = result { notifyChange() }
@@ -113,7 +115,7 @@ public final class RemotePairingStore: @unchecked Sendable {
             // 一覧の「最後に使った時刻」は分単位で足りる。
             if previous.map({ at.timeIntervalSince1970 * 1000 - $0 >= Self.lastUsedWriteInterval * 1000 }) ?? true {
                 changed = true
-                if at.timeIntervalSince(lastWrite) >= Self.lastUsedWriteInterval { persistLocked() }
+                if at.timeIntervalSince(lastWrite) >= Self.lastUsedWriteInterval { try? persistLocked() }
             }
             return device.publicValue
         }
@@ -129,28 +131,57 @@ public final class RemotePairingStore: @unchecked Sendable {
         lock.withLock { devicesById[id]?.publicValue }
     }
 
-    /// 端末を取り消す。以降そのトークンは通らない。
+    /// 端末を取り消す。以降そのトークンは通らない（書き出しに失敗しても、メモリ上の取り消しは保ったままエラーを投げる）。
     @discardableResult
-    public func revoke(id: String) -> Bool {
+    public func revoke(id: String) throws -> Bool {
+        var failure: Error?
         let removed = lock.withLock {
             guard devicesById.removeValue(forKey: id) != nil else { return false }
-            persistLocked()
+            do { try persistLocked() } catch { failure = error }
             return true
         }
         if removed { notifyChange() }
+        if let failure { throw failure }
         return removed
+    }
+
+    /// 書き出しに失敗したままなら（nil でなければ）その理由。
+    public var persistFailure: String? {
+        lock.withLock { writeFailure }
+    }
+
+    /// 失敗した書き出しをやり直す。書けていれば（やり直す必要が無ければ）true。
+    @discardableResult
+    public func retryPersist() -> Bool {
+        let (ok, changed): (Bool, Bool) = lock.withLock {
+            guard writeFailure != nil else { return (true, false) }
+            do {
+                try persistLocked()
+                return (true, true)
+            } catch {
+                return (false, false)
+            }
+        }
+        if changed { notifyChange() }
+        return ok
     }
 
     /// 終了時に最後に使った時刻を書き残す。
     public func flush() {
-        lock.withLock { persistLocked() }
+        lock.withLock { try? persistLocked() }
     }
 
-    private func persistLocked() {
+    private func persistLocked() throws {
         let list = devicesById.values.sorted { $0.pairedAt < $1.pairedAt }
-        guard let data = try? JSONEncoder().encode(list) else { return }
-        try? SecureFile.write(data, to: fileURL)
-        lastWrite = now()
+        do {
+            let data = try JSONEncoder().encode(list)
+            try SecureFile.write(data, to: fileURL)
+            writeFailure = nil
+            lastWrite = now()
+        } catch {
+            writeFailure = String(describing: error)
+            throw error
+        }
     }
 
     private func notifyChange() {

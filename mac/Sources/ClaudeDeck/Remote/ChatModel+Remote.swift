@@ -15,23 +15,13 @@ extension ChatModel: RemoteControl {
 
     private func remoteRoom(_ room: Room) -> RemoteRoom {
         let permissions = monitorPermissions(for: room)
-        var terminalPermission: RemoteTerminalPermission?
-        var menu: RemoteMenu?
-        var unreadable: RemoteUnreadableMenu?
+        let cards: RemoteRoomCards
         var busy = permissions.contains { busyPermissionKeys.contains($0.key) }
         let send: RemoteSendState
         var ended: String?
         if let session = room.hosted {
-            // 会話末尾のカードと同じ優先順（Channels → 端末の権限プロンプト → 選択肢）。
-            if permissions.isEmpty, let prompt = session.permissionPrompt {
-                terminalPermission = RemoteTerminalPermission(prompt)
-            } else if permissions.isEmpty, session.inputBlock == .menu {
-                if let current = session.menuPrompt {
-                    menu = RemoteMenu(current)
-                } else if let current = session.unreadableMenu {
-                    unreadable = RemoteUnreadableMenu(current)
-                }
-            }
+            cards = RemoteRoomCards(channelsPending: !permissions.isEmpty, card: session.terminalCard,
+                                    generation: session.promptTracker.generation)
             busy = busy || busyPermissionKeys.contains(Self.ptyPermissionKey(session)) || busyPermissionKeys.contains(Self.ptyMenuKey(session))
             send = RemoteSendState(mode: .input, disabledReason: Self.inputDisabledReason(for: room) ?? (session.isSending ? "送信中…" : nil))
             switch session.end {
@@ -41,18 +31,26 @@ extension ChatModel: RemoteControl {
             case nil: ended = nil
             }
         } else {
+            cards = RemoteRoomCards(channelsPending: false, card: nil, generation: 0)
             send = RemoteSendState(mode: .relay, disabledReason: inputDisabledReason(for: room))
         }
         return RemoteRoom(id: RemoteRoomID(room.id).string, kind: room.hosted == nil ? .external : .hosted,
                           phase: RemoteRoomPhase(RoomPhase(status: room.status)), name: room.name, branch: room.branch,
                           status: room.status, line: room.line, activityAt: room.activityAt, sessionId: room.sessionId,
                           cwd: room.cwd, ended: ended, session: room.snapshot, permissions: permissions,
-                          terminalPermission: terminalPermission, menu: menu, unreadableMenu: unreadable, busy: busy, send: send)
+                          terminalPermission: cards.terminalPermission, menu: cards.menu, unreadableMenu: cards.unreadableMenu,
+                          busy: busy, send: send)
     }
 
     private func room(_ roomId: String) -> Room? {
         guard let id = RemoteRoomID(roomId) else { return nil }
         return rooms.first { RemoteRoomID($0.id) == id }
+    }
+
+    /// 照合に使う今の端末の様子（一覧のカードと同じ組み立て）。
+    private func terminalContext(_ room: Room, _ session: HostedSession) -> RemoteTerminalContext {
+        RemoteTerminalContext(card: session.terminalCard, tracker: session.promptTracker,
+                              channelsPending: !monitorPermissions(for: room).isEmpty)
     }
 
     private static let roomNotFound = RemoteActionResult.failure("not_found", "ルームが見つかりません。閉じられた可能性があります。")
@@ -67,11 +65,7 @@ extension ChatModel: RemoteControl {
     func remoteAnswerTerminalPermission(roomId: String, promptId: String, decision: PermissionDecision) async -> RemoteActionResult {
         guard let room = room(roomId) else { return Self.roomNotFound }
         guard let session = room.hosted else { return Self.notHosted }
-        // Channels の確認が出ている間はそちらで答える（画面にも端末のカードは出していない）。
-        guard monitorPermissions(for: room).isEmpty else {
-            return .failure("changed", "この確認は Channels で答えます。一覧を取り直してください。")
-        }
-        switch RemoteChecks.terminalPermission(promptId: promptId, current: session.permissionPrompt) {
+        switch RemoteChecks.terminalPermission(promptId: promptId, in: terminalContext(room, session)) {
         case .failure(let result): return result
         case .success(let prompt): return answerOnTerminal(session, prompt: prompt, allow: decision == .allow, report: false)
         }
@@ -82,10 +76,7 @@ extension ChatModel: RemoteControl {
     func remoteAnswerMenu(roomId: String, request: RemoteMenuAnswerRequest) async -> RemoteActionResult {
         guard let room = room(roomId) else { return Self.roomNotFound }
         guard let session = room.hosted else { return Self.notHosted }
-        guard session.permissionPrompt == nil, session.inputBlock == .menu else {
-            return .failure("gone", "端末に選択肢が見当たりません。既に答え終わっている可能性があります。")
-        }
-        switch RemoteChecks.menuAnswer(request, current: session.menuPrompt) {
+        switch RemoteChecks.menuAnswer(request, in: terminalContext(room, session)) {
         case .failure(let result):
             return result
         case .success(let (menu, action)):
@@ -94,8 +85,8 @@ extension ChatModel: RemoteControl {
             case .choose(let index): choice = index
             case .cancel: choice = nil
             }
-            return await withCheckedContinuation { continuation in
-                answerMenu(session, menu: menu, choice: choice, report: false) { continuation.resume(returning: $0) }
+            return await RemoteOperation.wait { done in
+                answerMenu(session, menu: menu, choice: choice, report: false) { done($0) }
             }
         }
     }
@@ -103,13 +94,13 @@ extension ChatModel: RemoteControl {
     func remoteMoveMenuTab(roomId: String, request: RemoteMenuTabRequest) async -> RemoteActionResult {
         guard let room = room(roomId) else { return Self.roomNotFound }
         guard let session = room.hosted else { return Self.notHosted }
-        switch RemoteChecks.menuTab(request, current: session.inputBlock == .menu ? session.menuPrompt : nil) {
+        switch RemoteChecks.menuTab(request, in: terminalContext(room, session)) {
         case .failure(let result):
             return result
         case .success(let menu):
             let direction: MenuTabMover.Direction = request.direction == .next ? .next : .previous
-            return await withCheckedContinuation { continuation in
-                moveMenuTab(session, menu: menu, direction: direction, report: false) { continuation.resume(returning: $0) }
+            return await RemoteOperation.wait { done in
+                moveMenuTab(session, menu: menu, direction: direction, report: false) { done($0) }
             }
         }
     }
@@ -117,7 +108,7 @@ extension ChatModel: RemoteControl {
     func remoteDismissMenu(roomId: String, request: RemoteMenuDismissRequest) async -> RemoteActionResult {
         guard let room = room(roomId) else { return Self.roomNotFound }
         guard let session = room.hosted else { return Self.notHosted }
-        switch RemoteChecks.menuDismiss(request, current: session.inputBlock == .menu ? session.unreadableMenu : nil) {
+        switch RemoteChecks.menuDismiss(request, in: terminalContext(room, session)) {
         case .failure(let result): return result
         case .success(let menu): return cancelUnreadableMenu(session, menu: menu, report: false)
         }
@@ -129,39 +120,28 @@ extension ChatModel: RemoteControl {
         guard let room = room(roomId) else { return Self.roomNotFound }
         guard let session = room.hosted else { return await relayFromRemote(text, to: room) }
         if let reason = Self.inputDisabledReason(for: room) {
-            let code: String
-            switch (session.end, session.inputBlock) {
-            case (.some, _): code = "ended"
-            case (nil, .permission): code = "blocked_permission"
-            case (nil, .menu): code = "blocked_menu"
-            case (nil, nil): code = "unavailable"
-            }
-            return .failure(code, reason)
+            return .failure(RemoteChecks.sendBlockedCode(ended: session.end != nil, inputBlock: session.inputBlock), reason)
         }
         guard !session.isSending else { return .failure("busy", "前の送信が終わっていません。少し待ってから送ってください。") }
         // mac の入力欄の書きかけ・添付には触れない（iPhone の本文だけを送る）。
-        return await withCheckedContinuation { continuation in
-            let result = session.send(text) { completion in
-                continuation.resume(returning: Self.result(of: completion))
-            }
+        return await RemoteOperation.wait { done in
+            let result = session.send(text) { completion in done(Self.result(of: completion)) }
             switch result {
             case .started:
                 break
             case .leftover:
-                continuation.resume(returning: .failure("leftover", "端末側の入力欄に前回の本文が残っているようです。"
+                done(.failure("leftover", "端末側の入力欄に前回の本文が残っているようです。"
                     + "このままもう一度送ると、残っているものの後ろにつながって送られます。"))
             case .blocked(.permission):
-                continuation.resume(returning: .failure("blocked_permission",
-                    "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"))
+                done(.failure("blocked_permission", "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"))
             case .blocked(.menu):
-                continuation.resume(returning: .failure("blocked_menu",
-                    "選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。選択肢に答えてください。"))
+                done(.failure("blocked_menu", "選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。選択肢に答えてください。"))
             case .busy:
-                continuation.resume(returning: .failure("busy", "前の送信が終わっていません。少し待ってから送ってください。"))
+                done(.failure("busy", "前の送信が終わっていません。少し待ってから送ってください。"))
             case .empty:
-                continuation.resume(returning: .failure("invalid", "本文が空です。"))
+                done(.failure("invalid", "本文が空です。"))
             case nil:
-                continuation.resume(returning: .failure("ended", "claude は動いていません。"))
+                done(.failure("ended", "claude は動いていません。"))
             }
         }
     }
@@ -186,7 +166,8 @@ extension ChatModel: RemoteControl {
         if let reason = inputDisabledReason(for: room) { return .failure("unavailable", reason) }
         let body = RelayNotes.normalized(text)
         guard !body.isEmpty else { return .failure("invalid", "本文が空です。") }
-        if let reason = await deliverRelay(body, to: sessionId) {
+        let note = addRelayNote(body, to: sessionId)
+        if let reason = await deliverRelay(note, to: sessionId) {
             return .failure("failed", "伝言を送れませんでした: \(reason)")
         }
         return .success("relayed")

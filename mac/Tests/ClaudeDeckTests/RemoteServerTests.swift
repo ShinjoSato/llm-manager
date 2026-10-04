@@ -29,7 +29,7 @@ final class RemoteServerTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        service?.stop()
+        await service?.stopAndWait()
         try? FileManager.default.removeItem(at: dir)
     }
 
@@ -166,10 +166,72 @@ final class RemoteServerTests: XCTestCase {
             let (status, _, _) = try await request("GET", "/v1/rooms", token: "wrong")
             XCTAssertEqual(status, 401)
         }
-        let (blocked, _, _) = try await request("GET", "/v1/rooms", token: paired.deviceToken)
-        XCTAssertEqual(blocked, 429, "失敗が続いた接続元はしばらく正しいトークンでも受け付けない")
-        let (pairing, _, _) = try await request("POST", "/v1/pair", json: ["token": "x", "deviceName": "y"])
-        XCTAssertEqual(pairing, 429)
+        // 失敗が続いた接続元は、しばらく正しいトークンでも受け付けない（受け入れた時点で切り、TLS の握手もさせない）。
+        do {
+            let (status, _, _) = try await request("GET", "/v1/rooms", token: paired.deviceToken)
+            XCTFail("塞いだ接続元の接続は切る: \(status)")
+        } catch {}
+        do {
+            _ = try await request("POST", "/v1/pair", json: ["token": "x", "deviceName": "y"])
+            XCTFail("ペアリングも同じ")
+        } catch {}
+        // 接続の途中で塞がった時のための検査も残っている。
+        XCTAssertEqual(service.throttle.isBlocked("127.0.0.1"), true)
+        let routes = RemoteRoutes(pairing: service.pairing, throttle: service.throttle, transcripts: transcripts, events: service.events,
+                                  controlRef: RemoteControlRef(control), serverName: "t")
+        XCTAssertEqual(routes.rejection(HTTPRequest(method: "GET", path: "/v1/rooms"))?.status, 429)
+    }
+
+    /// 1 つの接続元が握れる接続の数には上限があり、未認証の相手だけで口を塞げない。
+    func testConnectionsPerAddressAreLimited() async throws {
+        let paired = try await pair()
+        let queue = DispatchQueue(label: "idle-clients")
+        var idle: [NWConnection] = []
+        defer { idle.forEach { $0.cancel() } }
+        for _ in 0..<RemoteRoutes.maxConnectionsPerAddress {
+            let c = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: UInt16(port))!, using: .tcp)
+            c.start(queue: queue)
+            idle.append(c)
+        }
+        // 何も送らない接続で枠が埋まると、同じ接続元の次の接続は受け入れた時点で切る。
+        var refused = false
+        for _ in 0..<100 {
+            do {
+                _ = try await request("GET", "/v1/info", token: paired.deviceToken)
+            } catch {
+                refused = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(refused, "接続元ごとの上限を超えた接続は切る")
+        idle.forEach { $0.cancel() }
+        var recovered = false
+        for _ in 0..<200 {
+            if let (status, _, _) = try? await request("GET", "/v1/info", token: paired.deviceToken), status == 200 {
+                recovered = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(recovered, "閉じれば枠は空く")
+    }
+
+    /// 閉じる処理で画面のスレッドを待たせず、閉じ終えた後は同じポートで開き直せる。
+    func testStopDoesNotBlockAndPortIsReleased() async throws {
+        let started = Date()
+        service.stop()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
+        XCTAssertEqual(service.state, .stopped)
+        await service.stopAndWait()
+        let again = port
+        service.start(address: "127.0.0.1", port: again)
+        for _ in 0..<300 where service.boundPort == nil {
+            if case .failed(let reason) = service.state { return XCTFail(reason) }
+            if case .portInUse = service.state { return XCTFail("手放し終えてから開く") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(service.boundPort, again)
     }
 
     func testLoopbackOnlyRoutesAndBrowsersAreNotExposed() async throws {
@@ -287,9 +349,10 @@ final class RemoteServerTests: XCTestCase {
         let outcome = await waiting.value
         XCTAssertEqual(outcome.rawValue, "allow")
         XCTAssertTrue(store.permissions.isEmpty, "答えた確認は消える")
-        let (again, _, _) = try await request("POST", "/v1/permissions/decision", token: paired.deviceToken,
-                                              json: ["key": key, "decision": "allow"])
-        XCTAssertEqual(again, 404, "もう待っていない確認には答えない")
+        let (again, againData, _) = try await request("POST", "/v1/permissions/decision", token: paired.deviceToken,
+                                                      json: ["key": key, "decision": "allow"])
+        XCTAssertEqual(again, 409, "もう待っていない確認には答えない")
+        XCTAssertEqual(object(againData)["code"] as? String, "gone")
     }
 
     // MARK: - ストリーム
@@ -337,7 +400,7 @@ final class RemoteServerTests: XCTestCase {
     func testHubSendsStateOnlyOnChangeAndPingsOtherwise() async throws {
         let hub = RemoteEventHub(controlRef: RemoteControlRef(control), transcripts: transcripts,
                                  pollInterval: .seconds(3600), heartbeatInterval: 0)
-        let stream = try XCTUnwrap(hub.open(deviceId: "d", transcripts: .none))
+        guard case .opened(let stream) = hub.open(deviceId: "d", transcripts: .none) else { return XCTFail() }
         var chunks = stream.chunks.makeAsyncIterator()
         let first = await chunks.next().map { String(decoding: $0, as: UTF8.self) }
         XCTAssertEqual(first?.hasPrefix("event: state\ndata: {"), true)
@@ -353,26 +416,76 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertNil(end)
     }
 
-    func testStreamsPerDeviceAreLimited() async throws {
+    /// 端末あたりの上限に達したら、その端末の最も古いストリームを閉じて新しいものを受ける（黙って切れた分で 429 にしない）。
+    func testStreamsPerDeviceReplaceTheOldest() async throws {
         let paired = try await pair()
         var open: [URLSession.AsyncBytes] = []
         for _ in 0..<RemoteEventHub.maxStreamsPerDevice {
             var req = URLRequest(url: URL(string: "https://127.0.0.1:\(port)/v1/events")!)
             req.setValue("Bearer \(paired.deviceToken)", forHTTPHeaderField: "Authorization")
+            // 閉じられないまま待ち続けて試験が止まらないように。
+            req.timeoutInterval = 5
             let (bytes, response) = try await session.session.bytes(for: req)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
             open.append(bytes)
+            // 開いた順を確かにする。
+            for _ in 0..<200 where service.events.streamCount < open.count { try await Task.sleep(for: .milliseconds(10)) }
         }
-        let (status, _, _) = try await request("GET", "/v1/events", token: paired.deviceToken)
-        XCTAssertEqual(status, 429)
+        var oldest = SSEReader(open[0].lines.makeAsyncIterator())
+        let first = try await oldest.next()
+        XCTAssertEqual(first?.name, "state")
+
+        var req = URLRequest(url: URL(string: "https://127.0.0.1:\(port)/v1/events")!)
+        req.setValue("Bearer \(paired.deviceToken)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 5
+        let (newest, response) = try await session.session.bytes(for: req)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, "上限でも新しいストリームは受ける")
+        let end = try await oldest.next()
+        XCTAssertNil(end, "最も古いストリームを閉じる")
         XCTAssertEqual(service.events.streamCount, RemoteEventHub.maxStreamsPerDevice)
-        service.stop()
+        await service.stopAndWait()
         XCTAssertEqual(service.state, .stopped)
-        _ = open
+        _ = (open, newest)
+    }
+
+    @MainActor
+    func testHubEvictsOldestPerDeviceAndRefusesRevokedDevices() async throws {
+        let revoked = RevokedSet()
+        let hub = RemoteEventHub(controlRef: RemoteControlRef(control), transcripts: transcripts, pollInterval: .seconds(3600),
+                                 isDeviceActive: { !revoked.contains($0) })
+        var streams: [HTTPBodyStream] = []
+        for _ in 0..<RemoteEventHub.maxStreamsPerDevice {
+            guard case .opened(let s) = hub.open(deviceId: "a", transcripts: .none) else { return XCTFail() }
+            streams.append(s)
+        }
+        guard case .opened = hub.open(deviceId: "b", transcripts: .none) else { return XCTFail("別の端末は別の枠") }
+        guard case .opened = hub.open(deviceId: "a", transcripts: .none) else { return XCTFail("上限でも入れ替えて受ける") }
+        XCTAssertEqual(hub.connections, ["a": RemoteEventHub.maxStreamsPerDevice, "b": 1])
+        var oldest = streams[0].chunks.makeAsyncIterator()
+        _ = await oldest.next()  // 開いた時の state
+        let ended = await oldest.next()
+        XCTAssertNil(ended, "入れ替えられた最も古いストリームは終わる")
+        var second = streams[1].chunks.makeAsyncIterator()
+        let alive = await second.next()
+        XCTAssertNotNil(alive, "他は残る")
+
+        // 認証の後、開くまでの間に取り消された端末には開かない。
+        revoked.insert("b")
+        guard case .revoked = hub.open(deviceId: "b", transcripts: .none) else { return XCTFail("取り消し済みの端末には開かない") }
+        hub.closeAll()
+        XCTAssertEqual(hub.streamCount, 0)
     }
 }
 
 // MARK: - 試験用の部品
+
+final class RevokedSet: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: Set<String> = []
+
+    func insert(_ id: String) { lock.withLock { _ = ids.insert(id) } }
+    func contains(_ id: String) -> Bool { lock.withLock { ids.contains(id) } }
+}
 
 @MainActor
 final class FakeRemoteControl: RemoteControl {
@@ -386,7 +499,8 @@ final class FakeRemoteControl: RemoteControl {
         let room = RemoteRoom(id: "h:\(UUID().uuidString)", kind: .hosted, phase: .attention, name: "mirio", branch: "develop",
                               status: .waiting, line: "plan を確認", activityAt: 1, sessionId: FakeTranscriptSource.sessionId,
                               cwd: "/tmp/mirio", ended: nil, session: nil, permissions: [], terminalPermission: nil,
-                              menu: RemoteMenu(MenuPrompt(context: [], question: "Proceed?", options: [.init(number: 1, label: "Yes")], cursor: 0)),
+                              menu: RemoteMenu(MenuPrompt(context: [], question: "Proceed?", options: [.init(number: 1, label: "Yes")], cursor: 0),
+                                               generation: 0),
                               unreadableMenu: nil, busy: false, send: send)
         return RemoteState(rooms: [room], usage: nil, monitoring: true)
     }

@@ -182,28 +182,38 @@ CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 **既定は無効**で、メニュー「claude-deck → iPhone 連携…」のウィンドウで有効にした時だけ開く。
 
 - **口**: フック・チャネルの口（127.0.0.1:8766）とは別のサーバー・別のポート（既定 8767・変更可。1024 未満と 8766 は不可）。
-  選んだ LAN のインターフェース（既定は自動: `en*` を優先。VPN（utun）・AirDrop（awdl）等は候補に出さない）の IPv4 アドレスだけで待ち受け、
-  `0.0.0.0` にはしない。10 秒ごとにアドレスを確かめ、替わっていれば開き直す。開けなければ（ポート使用中等）10 秒ごとに取り直す。
-  `/hook` 等はこの口には無い（404）。設定は UserDefaults（`remoteAccess.enabled` / `remoteAccess.port` / `remoteAccess.interface`）。
-- **TLS**: 初回に P-256 の鍵と自己署名の証明書を作り、`~/Library/Application Support/claude-deck/remote/`（0700。`CLAUDE_DECK_REMOTE_DIR` で差し替え）に
-  0600 で置く（キーチェーンは使わない）。証明書は DER を自前で組み（`SelfSignedCertificate`）、CryptoKit で署名、`SecIdentityCreate` で手元に組む。
-  平文の口は出さない。iPhone は QR の SHA-256 指紋でピン留めする（ウィンドウにも指紋を出す）。
+  選んだ LAN のインターフェース（既定は自動: `en*` を優先。ポイントツーポイント・VPN（utun / tun / tap）・AirDrop（awdl / llw）・
+  仮想マシンや共有のブリッジ（bridge / vmnet / vmenet / vnic / feth）等は候補に出さない）の IPv4 アドレスだけで待ち受け、
+  `0.0.0.0`・マルチキャスト・ブロードキャストには開かない。10 秒ごとにアドレスを確かめ、替わっていれば開き直す。開けなければ（ポート使用中等）10 秒ごとに取り直す。
+  **有効にした時のネットワーク**（インターフェースのアドレス帯 + 取れれば既定のルーターの MAC。SSID は位置情報の許可が要るので使わない）を覚え、
+  別のネットワーク（外出先の Wi-Fi 等）では開かずに止めて、ウィンドウに「このネットワークで開く」を出す（判定は `LANNetwork.decide`）。
+  口を閉じる時はポートを手放すのを画面のスレッドの外で待つ。
+  `/hook` 等はこの口には無い（404）。設定は UserDefaults（`remoteAccess.enabled` / `remoteAccess.port` / `remoteAccess.interface` / `remoteAccess.network`）。
+- **TLS**: 初回に P-256 の鍵と自己署名の証明書を作り、`~/Library/Application Support/claude-deck/remote/`（毎回 0700 に締め直す。`CLAUDE_DECK_REMOTE_DIR` で差し替え）に
+  0600 で置く（作った瞬間から 0600 の一時ファイルに書いて置き換える。キーチェーンは使わない）。証明書は DER を自前で組み（`SelfSignedCertificate`）、CryptoKit で署名、`SecIdentityCreate` で手元に組む。
+  平文の口は出さない（TLS の設定を組めなければ開かずに失敗にする）。iPhone は QR の SHA-256 指紋でピン留めする（ウィンドウにも指紋を出す）。
 - **ペアリング**: 「QR を出す」で `claude-deck://pair?...`（接続先・一時トークン（5 分・1 回限り）・指紋・Mac の名前・mDNS 名）を出す。
   iPhone が `POST /v1/pair` で一時トークンを出すと端末トークン（256bit）を返し、mac にはそのハッシュだけを `devices.json`（0600）に残す。
   ウィンドウに端末一覧（名前・接続中・最後に使った時刻・ペアリング日時）と「取り消す」（確認あり。開いているストリームも切る）。
-- **認証と上限**: 全 API で `Authorization: Bearer`。失敗（認証・ペアリング）は接続元ごとに 5 分で 10 回まで（超えたら 5 分 429）。
-  `Origin` 付きは 403。本文 256KB・ヘッダー 64KB・同時接続 32・読み取り 15 秒・ストリームは端末あたり 4 本 / 全体 16 本。
+  取り消しを `devices.json` に書き出せなければ、メモリ上は取り消したままウィンドウに出し、5 秒ごとに書き直す。
+- **認証と上限**: 全 API で `Authorization: Bearer`。失敗（認証・ペアリング）は接続元ごとに 5 分で 10 回まで（超えたら 5 分、その接続元の接続は受け入れた時点で切る）。
+  `Origin` 付きは 403。本文 256KB・ヘッダー 64KB・同時接続 32（接続元ごとに 8）・読み取り 5 秒・TCP keepalive・
+  ストリームは端末あたり 4 本（超えたら同じ端末の最も古いものを閉じて受ける）/ 全体 16 本。
 - **操作は既存の経路だけ**: iPhone からの許可 / 拒否・選択肢・送信は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理
   （`MonitorStore.decide`・`answerOnTerminal`・`answerMenu`（`MenuNavigator`）・`HostedSession.send`・伝言）に渡す。
   端末のプロンプトとメニューは iPhone が見ていたもの（`promptId` / `menuId`）と今のものが一致した時だけ送り、その後の画面との再照合も画面の時と同じ。
+  ID には表示の世代を混ぜる（`HostedSession.promptTracker`。確認が消えるか替わるたびに進むので、同じ文面で出し直された次の確認には古い表示から答えられない）。
+  答えた ID（mac・iPhone どちらから答えても）の押し直しは送らずに `answered` を返す。Channels の確認が出ている間は端末の権限・選択肢を iPhone から扱わない。
+  操作の待ちは 30 秒で `timeout` を返す（操作自体は続きうる）。カードの組み立てと照合の純粋な部分は MonitorKit（`RemoteTerminalCard`・`RemoteRoomCards`・`RemoteChecks`）。
   選択待ちの間は送信しない。iPhone からの失敗は mac に警告を出さず結果で返す。mac の入力欄の書きかけ・添付には触れない。
   新しい claude を起動する口・headless の口は無い（料金事故ゼロの方針はそのまま）。
 - **実機で確かめること**: 初めて有効にした時の macOS の「受信接続を許可しますか？」（アプリケーションファイアウォールが有効な場合）と
   ローカルネットワークの許可（`NSLocalNetworkUsageDescription` を Info.plist に入れてある）。ad-hoc 署名のため、`.app` を作り直すと
   ファイアウォールの許可を取り直すことがある。
-- **テスト**: `RemoteAccessUnitTests`（証明書・DER・ペアリング・回数制限・照合・QR の中身）と `RemoteServerTests`
+- **テスト**: `RemoteAccessUnitTests`（証明書・DER・ペアリング・回数制限・照合・表示の世代と押し直し・カードの優先順・QR の中身・
+  インターフェースの除外・ネットワークの判定・鍵ファイルの権限・取り消しの書き直し・TLS の設定・操作の待ちの上限）と `RemoteServerTests`
   （ループバックの OS 割り当てのポートに TLS で立て、指紋でピン留めした URLSession / NWConnection で叩く。別の指紋・平文は繋がらない・
-  未認証 / 不正 / 取り消し後は 401・回数制限・上限・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること）。LAN には立てない。
+  未認証 / 不正 / 取り消し後は 401・回数制限・接続元ごとの上限・ストリームの入れ替え・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること）。LAN には立てない。
 
 ## Claude Code 側の設定（フック・statusLine・Channels）
 

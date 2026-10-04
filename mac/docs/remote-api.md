@@ -11,9 +11,12 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 ## 口の開け方
 
 - **既定は無効**。mac アプリのメニュー「claude-deck → iPhone 連携…」で有効にした時だけ開く（設定は UserDefaults）。
-- 待ち受けは**選んだ LAN のインターフェースの IPv4 アドレスだけ**（既定は自動: `en*`（Wi-Fi / 有線）を優先）。
-  `0.0.0.0` では待ち受けない。ポートは既定 **8767**（設定で変更可。1024 未満と 8766 は不可）。
+- 待ち受けは**選んだ LAN のインターフェースの IPv4 アドレスだけ**（既定は自動: `en*`（Wi-Fi / 有線）を優先。
+  ポイントツーポイント・VPN・AirDrop・仮想マシンや共有のブリッジ（`bridge*` / `vmnet*` / `vmenet*` / `vnic*` / `tun*` / `tap*` / `feth*` / `utun*` / `awdl*` / `llw*` / `anpi*`）は使わない）。
+  `0.0.0.0`・マルチキャスト・ブロードキャストでは待ち受けない。ポートは既定 **8767**（設定で変更可。1024 未満と 8766 は不可）。
   アドレスは 10 秒ごとに確かめ、替わっていれば開き直す（QR に載せたアドレスも替わるので、iPhone は下の予備の名前か再ペアリングで追う）。
+- **有効にした時のネットワーク**（アドレス帯と、取れれば既定のルーターの MAC）を覚え、別のネットワークでは開かない
+  （mac の画面で「このネットワークで開く」を選ぶまで止める）。iPhone からは繋がらないだけに見える。
 - フック・チャネルの口（`127.0.0.1:8766`・`/hook`・`/api/channel/permissions`）は**別のサーバー**で、LAN には出さない
   （この口で叩いても 404）。
 - **TLS のみ**（平文の HTTP は出さない）。最低 TLS 1.2。
@@ -44,14 +47,17 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | 条件 | 応答 |
 |---|---|
 | トークン無し・不正・取り消し済み | 401（`WWW-Authenticate: Bearer`） |
-| 同じ接続元から 5 分間に 10 回の失敗（認証・ペアリング） | 以降 5 分間 429（正しいトークンでも） |
+| 同じ接続元から 5 分間に 10 回の失敗（認証・ペアリング） | 以降 5 分間、その接続元の接続は受け入れた時点で切る（正しいトークンでも。既に繋がっていた接続には 429） |
 | `Origin` ヘッダー付き（ブラウザ） | 403 |
 | POST の `content-type` が `application/json` でない | 415 |
 | 本文 256KB 超 / ヘッダー 64KB 超 | 413 / 431 |
 | `Transfer-Encoding: chunked` の本文 | 501 |
-| 同時接続 32 超 | 即切断 |
-| 送り切らない相手 | 15 秒で 408 |
-| ストリームが端末あたり 4 本・全体 16 本を超える | 429 |
+| 同時接続 32 超・同じ接続元から 8 超 | 即切断 |
+| 送り切らない相手（TLS の握手を含む） | 5 秒で 408（か切断） |
+| ストリームが端末あたり 4 本を超える | 同じ端末の**最も古いストリームを閉じて**新しいものを受ける |
+| ストリームが全体 16 本を超える | 429 |
+
+黙って消えた相手（Wi-Fi から外れた iPhone 等）は TCP keepalive（20 秒無通信の後 5 秒ごと・3 回）とストリームの `: ping` で見つけて閉じる。
 
 失敗の本文は `RemoteErrorBody`: `{"ok":false,"error":"<code>","message":"<日本語>"}`。
 
@@ -102,6 +108,10 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 
 カードの出し方は mac の会話末尾と同じ: `permissions`（Channels）があればそれ、無ければ `terminalPermission`、
 それも無ければ `menu`（読めなければ `unreadableMenu`）。外部セッションは `permissions` だけ（無ければ答えられない）。
+`permissions` がある間は、端末の権限・選択肢の操作は `changed` で断る。
+
+`promptId` / `menuId` は中身（❯ の位置は除く）と**表示の世代**から作る。世代は端末の確認が消えるか替わるたびに進むので、
+同じ文面の確認が続けて出ても ID は別になる（前の表示の ID で次の確認に答えることは無い）。iPhone は常に最新の `state` の ID で操作すること。
 
 ### `/v1/events`（Server-Sent Events）
 
@@ -110,7 +120,8 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 - `event: transcript` / `data: <TranscriptEvent の JSON>` … `transcripts=` で指定したセッション（`*` は全部、最大 32 件）の会話の追記。
   取りこぼさないよう、**先にストリームを張ってから** `GET …/transcript` で全件を取り、id で重複を除いて足す（mac のチャット画面と同じ順）。
 - 15 秒何も送らなければ `: ping`（コメント行）を送る。受け取りが遅れて 4MB 溜まった相手は切る。
-- 端末を取り消す・口を閉じると切れる。iPhone は間を空けて張り直す（張り直したら `state` が届き、会話は全件を取り直す）。
+- 端末を取り消す・口を閉じると切れる。同じ端末が 5 本目を張ると最も古い 1 本が切れる。
+  iPhone は間を空けて張り直す（張り直したら `state` が届き、会話は全件を取り直す）。
 
 ## 操作の結果（`RemoteActionResult`）
 
@@ -119,19 +130,35 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 
 | 操作 | 成功の code | 主な失敗の code |
 |---|---|---|
-| 権限（Channels） | `decided` | `not_found`（もう待っていない）・`busy` |
-| 権限（端末） | `allowed` / `denied` | `gone`・`changed`（`promptId` が今のプロンプトと違う）・`busy` |
-| 選択肢 | `confirmed` / `toggled`（複数選択のチェック切り替え）/ `cancelled` | `gone`・`changed`（`menuId` 違い・途中で替わった）・`unavailable`（文字入力の選択肢）・`confirm_required`（`cancelExits` なのに `confirmExit` が無い）・`stuck`・`vanished`・`settling`・`ended`・`busy` |
-| タブ | `moved` | 同上 |
-| 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`・`aborted`・`busy`・`ended` |
+| 権限（Channels） | `decided` | `gone`（もう待っていない）・`failed`（答えを届けられなかった）・`busy` |
+| 権限（端末） | `allowed` / `denied` / `answered` | `gone`・`changed`（`promptId` が今のプロンプトと違う・Channels で答える）・`busy` |
+| 選択肢 | `confirmed` / `toggled`（複数選択のチェック切り替え）/ `cancelled` / `answered` | `gone`・`changed`（`menuId` 違い・途中で替わった・Channels で答える）・`unavailable`（文字入力の選択肢）・`confirm_required`（`cancelExits` なのに `confirmExit` が無い）・`stuck`・`vanished`・`settling`・`ended`・`busy`・`timeout` |
+| タブ | `moved` / `answered` | 同上 |
+| 読めない選択肢を閉じる | `cancelled` / `answered` | `gone`・`changed`・`confirm_required`・`busy` |
+| 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`・`aborted`・`busy`・`ended`・`unavailable`・`timeout` |
 | 送信（外部） | `relayed` | `failed`（受信箱に届かない）・`unavailable` |
+| 共通 | | `not_found`（ルームが無い）・`invalid`（本文の形・空・長すぎ）・`app_unavailable`（mac の画面の準備ができていない） |
+
+結果コードの意味:
+
+| code | ok | 意味 |
+|---|---|---|
+| `answered` | true | 同じ `promptId` / `menuId` には既に答えている（mac・iPhone のどちらからでも）。**送り直していない**。押し直し・再送は安全にこれになる |
+| `gone` | false | 答える相手（確認・選択肢）がもう出ていない |
+| `changed` | false | 出ているものが iPhone の見ていたものと違う（別の確認・出し直された確認・途中で替わった）。`state` を取り直して確かめる |
+| `invalid` | false | 要求の形が不正 |
+| `ended` | false | claude が終了している・途中で終了した |
+| `app_unavailable` | false | mac アプリの操作の受け手が無い（起動直後・終了処理中） |
+| `failed` | false | 届けられなかった（伝言の受信箱・Channels への答え） |
+| `timeout` | false | mac での操作が 30 秒で戻らなかった。**操作は続いていて、後から反映されることがある**ので、再送の前に `state` で端末の様子を確かめる |
+| `busy` | false | 直前の操作を送っている最中（終わってから） |
 
 ## mac 側の安全策（iPhone からの操作も同じ経路）
 
 - 操作はすべて mac アプリの `ChatModel` の既存の処理を通す（`ChatModel+Remote.swift`）。迂回する口は無い。
   - 権限（Channels）: `MonitorStore.decide`（画面の権限カードと同じ）。
   - 権限（端末）: `promptId` が今のプロンプトと一致した時だけ、画面と同じ `answerOnTerminal`（端末の画面と再照合してから `1` / `Esc`）。
-  - 選択肢: `menuId`（❯ の位置以外の中身から作る）が一致した時だけ、画面と同じ `answerMenu`（`MenuNavigator` で 1 行ずつ動かし、
+  - 選択肢: `menuId`（❯ の位置以外の中身と表示の世代から作る）が一致した時だけ、画面と同じ `answerMenu`（`MenuNavigator` で 1 行ずつ動かし、
     着いたのを確かめてから Enter）。押し間違いを避けるため、iPhone の画面も古い `menuId` のまま押させないこと。
   - 送信: 画面と同じ `HostedSession.send`（貼り付け前と Enter 直前に選択待ちを判定して止める・取りやめた本文の残りを確かめる）。
     mac の入力欄の書きかけ・添付には触れない。外部セッションは画面と同じ伝言（mac にも点線の吹き出しで出る）。

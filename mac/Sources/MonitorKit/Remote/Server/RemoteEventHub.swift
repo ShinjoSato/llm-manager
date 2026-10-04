@@ -60,6 +60,7 @@ public final class RemoteEventHub {
     private let transcripts: RemoteTranscriptSource
     private let pollInterval: Duration
     private let heartbeatInterval: TimeInterval
+    private let isDeviceActive: @Sendable (String) -> Bool
     private var clients: [Int: Client] = [:]
     private var seq = 0
     private var lastState: RemoteState?
@@ -69,17 +70,34 @@ public final class RemoteEventHub {
     public private(set) var connections: [String: Int] = [:]
     public var onConnectionsChanged: (([String: Int]) -> Void)?
 
+    /// `isDeviceActive` は開く直前に端末がまだ有効か（取り消し済みでないか）を確かめる。
     public init(controlRef: RemoteControlRef, transcripts: RemoteTranscriptSource,
-                pollInterval: Duration = .milliseconds(300), heartbeatInterval: TimeInterval = 15) {
+                pollInterval: Duration = .milliseconds(300), heartbeatInterval: TimeInterval = 15,
+                isDeviceActive: @escaping @Sendable (String) -> Bool = { _ in true }) {
         self.controlRef = controlRef
         self.transcripts = transcripts
         self.pollInterval = pollInterval
         self.heartbeatInterval = heartbeatInterval
+        self.isDeviceActive = isDeviceActive
     }
 
-    /// ストリームを開く。上限を超えていれば nil。
-    public func open(deviceId: String, transcripts subscription: TranscriptSubscription) -> HTTPBodyStream? {
-        guard clients.count < Self.maxStreams, (connections[deviceId] ?? 0) < Self.maxStreamsPerDevice else { return nil }
+    public enum OpenResult: Sendable {
+        case opened(HTTPBodyStream)
+        /// 認証の後、開くまでの間に取り消された。
+        case revoked
+        /// 全体の上限に達している。
+        case tooMany
+    }
+
+    /// ストリームを開く。端末ごとの上限に達していれば、その端末の最も古いストリームを閉じて受ける（黙って切れた分が枠を塞ぐため）。
+    public func open(deviceId: String, transcripts subscription: TranscriptSubscription) -> OpenResult {
+        // 取り消しも MainActor の上で行うので、ここで有効なら取り消しの後の `close` で必ず閉じられる。
+        guard isDeviceActive(deviceId) else { return .revoked }
+        if (connections[deviceId] ?? 0) >= Self.maxStreamsPerDevice,
+           let oldest = clients.filter({ $0.value.deviceId == deviceId }).keys.min() {
+            closeClient(oldest)
+        }
+        guard clients.count < Self.maxStreams else { return .tooMany }
         seq += 1
         let id = seq
         let (stream, continuation) = AsyncStream<Data>.makeStream(bufferingPolicy: .unbounded)
@@ -109,16 +127,23 @@ public final class RemoteEventHub {
         }
         updateConnections()
         startLoop()
-        return HTTPBodyStream(stream)
+        return .opened(HTTPBodyStream(stream))
     }
 
     /// その端末のストリームを閉じる（取り消した時）。
     public func close(deviceId: String) {
-        for (_, client) in clients where client.deviceId == deviceId { client.continuation.finish() }
+        for (id, client) in clients where client.deviceId == deviceId { closeClient(id) }
     }
 
     public func closeAll() {
-        for client in clients.values { client.continuation.finish() }
+        for id in Array(clients.keys) { closeClient(id) }
+    }
+
+    /// 終わらせて、枠もすぐに空ける（`onTermination` からの片付けを待たない）。
+    private func closeClient(_ id: Int) {
+        guard let client = clients[id] else { return }
+        client.continuation.finish()
+        remove(id)
     }
 
     public var streamCount: Int { clients.count }
