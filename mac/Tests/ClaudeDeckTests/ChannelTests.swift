@@ -65,10 +65,31 @@ final class ChannelProtocolTests: XCTestCase {
 final class ChannelRelayTests: XCTestCase {
     func testBaseURL() {
         XCTAssertEqual(ChannelRelay.baseURL([:]), "http://127.0.0.1:8766")
-        XCTAssertEqual(ChannelRelay.baseURL(["MONITOR_URL": "http://127.0.0.1:9000/"]), "http://127.0.0.1:9000", "旧名も読む")
+        XCTAssertEqual(ChannelRelay.baseURL(["MONITOR_URL": "http://127.0.0.1:9000/"]), "http://127.0.0.1:8766", "旧名は読まない")
         XCTAssertEqual(ChannelRelay.baseURL(["CLAUDE_DECK_URL": "http://127.0.0.1:9100//", "MONITOR_URL": "http://127.0.0.1:9000"]),
                        "http://127.0.0.1:9100")
         XCTAssertEqual(ChannelRelay.baseURL(["CLAUDE_DECK_URL": ""]), "http://127.0.0.1:8766")
+        XCTAssertEqual(ChannelRelay.baseURL(["CLAUDE_DECK_URL": "http://localhost:9100"]), "http://localhost:9100")
+        XCTAssertEqual(ChannelRelay.baseURL(["CLAUDE_DECK_URL": "http://[::1]:9100/"]), "http://[::1]:9100")
+        XCTAssertEqual(ChannelRelay.baseURL(["CLAUDE_DECK_URL": "HTTP://LOCALHOST:9100"]), "HTTP://LOCALHOST:9100")
+    }
+
+    func testBaseURLRejectsNonLoopback() {
+        for raw in ["http://example.com:8766", "https://127.0.0.1:8766", "http://192.168.0.2:8766", "http://127.0.0.1.example.com",
+                    "http://user@127.0.0.1:8766", "http://127.0.0.1:8766/other", "http://127.0.0.1:8766?x=1", "file:///tmp/x",
+                    "127.0.0.1:8766", "not a url"] {
+            var logged: [String] = []
+            XCTAssertEqual(ChannelRelay.baseURL(["CLAUDE_DECK_URL": raw]) { logged.append($0) }, "http://127.0.0.1:8766", raw)
+            XCTAssertEqual(logged.count, 1, "既定に戻した理由を残す: \(raw)")
+        }
+    }
+
+    func testSessionStaysLocal() {
+        let session = ChannelRelay.makeSession()
+        defer { session.invalidateAndCancel() }
+        XCTAssertEqual(session.configuration.connectionProxyDictionary?.isEmpty, true, "システムのプロキシを経由しない")
+        XCTAssertGreaterThanOrEqual(session.configuration.httpMaximumConnectionsPerHost, 32)
+        XCTAssertTrue(session.delegate is ChannelRelay.NoRedirect)
     }
 
     func testClassify() {
@@ -77,7 +98,10 @@ final class ChannelRelayTests: XCTestCase {
         XCTAssertEqual(c(200, #"{"ok":true,"outcome":"deny"}"#), .deny)
         XCTAssertEqual(c(200, #"{"ok":true,"outcome":"dropped"}"#), .dropped)
         XCTAssertEqual(c(200, #"{"ok":true,"outcome":"timeout"}"#), .timeout)
-        XCTAssertEqual(c(200, "broken"), .timeout)
+        XCTAssertEqual(c(200, "broken"), .unreachable, "読めない応答で待たずに取り直し続けない")
+        XCTAssertEqual(c(200, #"{"ok":true}"#), .unreachable)
+        XCTAssertEqual(c(200, #"{"ok":true,"outcome":"later"}"#), .unreachable)
+        XCTAssertNotNil(ChannelRelay.classify(status: 200, body: Data("broken".utf8)).1)
         XCTAssertEqual(c(400, ""), .dropped, "形が悪い申請は取り直しても同じ")
         XCTAssertEqual(c(403, ""), .dropped)
         XCTAssertEqual(c(503, ""), .unreachable)
@@ -140,6 +164,25 @@ final class ChannelExecutableTests: XCTestCase {
         throw NSError(domain: "listen", code: 1)
     }
 
+    func testDoesNotFollowRedirect() async throws {
+        let followed = Box(false)
+        let server = LoopbackHTTPServer { request in
+            if request.path == "/elsewhere" {
+                followed.mutate { $0 = true }
+                return .json(200, ["ok": true, "outcome": "allow"])
+            }
+            return HTTPResponse(status: 307, headers: [("Location", "/elsewhere")])
+        }
+        defer { server.stop() }
+        let port = try await listen(server)
+        let session = ChannelRelay.makeSession()
+        defer { session.invalidateAndCancel() }
+        let ask = ChannelRelay.httpAsk(baseURL: "http://127.0.0.1:\(port)", body: Data("{}".utf8), session: session) { _ in }
+        let outcome = await ask()
+        XCTAssertNotEqual(outcome, .allow)
+        XCTAssertFalse(followed.value, "リダイレクト先には預けない")
+    }
+
     func testRelaysPermissionThroughFakeReceiver() async throws {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             return XCTFail("実行ファイルが無い: \(executable.path)")
@@ -161,7 +204,6 @@ final class ChannelExecutableTests: XCTestCase {
         process.executableURL = executable
         var env = ProcessInfo.processInfo.environment
         env["CLAUDE_DECK_URL"] = "http://127.0.0.1:\(port)"
-        env["MONITOR_URL"] = "http://127.0.0.1:1"
         process.environment = env
         let stdin = Pipe(), stdout = Pipe()
         process.standardInput = stdin

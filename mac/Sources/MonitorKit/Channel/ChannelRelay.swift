@@ -60,12 +60,39 @@ public struct ChannelRelay: Sendable {
         }
     }
 
-    /// 宛先。`CLAUDE_DECK_URL` を優先し、旧名 `MONITOR_URL` も読む。
-    public static func baseURL(_ env: [String: String]) -> String {
-        let raw = [env["CLAUDE_DECK_URL"], env["MONITOR_URL"]].compactMap { $0 }.first { !$0.isEmpty } ?? defaultBaseURL
+    /// 宛先。`CLAUDE_DECK_URL` で差し替える。権限の判断を預ける先なので、手元（http のループバック）以外は既定に戻す。
+    public static func baseURL(_ env: [String: String], log: (String) -> Void = { _ in }) -> String {
+        guard let raw = env["CLAUDE_DECK_URL"], !raw.isEmpty else { return defaultBaseURL }
         var url = Substring(raw)
         while url.hasSuffix("/") { url = url.dropLast() }
+        guard isLoopbackHTTP(String(url)) else {
+            log("CLAUDE_DECK_URL が手元の http ではないので既定の \(defaultBaseURL) を使います: \(raw)")
+            return defaultBaseURL
+        }
         return String(url)
+    }
+
+    /// scheme が http・ホストがループバック名・パス等の付かない形だけを通す。
+    static func isLoopbackHTTP(_ string: String) -> Bool {
+        guard let parts = URLComponents(string: string), parts.scheme?.lowercased() == "http",
+              let host = parts.host?.lowercased(), ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host),
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              parts.path.isEmpty else { return false }
+        return true
+    }
+
+    /// 受け口に繋ぐセッション。宛先を手元に固定するため、リダイレクトにもシステムのプロキシにも従わない。
+    public static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        // 確認は並行して長ポーリングで待つので、既定の上限（6）で後続を詰まらせない。
+        configuration.httpMaximumConnectionsPerHost = 32
+        return URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
+    }
+
+    final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? { nil }
     }
 
     /// 受け口に渡す本文。チャネルは Claude Code の子プロセスなので、親 PID がそのままセッションの PID になる。
@@ -91,15 +118,20 @@ public struct ChannelRelay: Sendable {
         case "allow": return (.allow, nil)
         case "deny": return (.deny, nil)
         case "dropped": return (.dropped, nil)
-        default: return (.timeout, nil)
+        case "timeout": return (.timeout, nil)
+        // 受け口ではないものが応えている恐れがあるので、待たずに取り直し続けない。
+        default: return (.unreachable, "claude-deck の応答を読めません（HTTP \(status)）")
         }
     }
 
     /// 実際に HTTP で預ける。届かなければ unreachable（呼び出し側がログを間引く）。
-    public static func httpAsk(baseURL: String, body: Data, session: URLSession = .shared,
+    public static func httpAsk(baseURL: String, body: Data, session: URLSession = makeSession(),
                                log: @escaping @Sendable (String) -> Void) -> @Sendable () async -> ChannelAskResult {
         {
-            guard let url = URL(string: baseURL + "/api/channel/permissions") else { return .dropped }
+            guard let url = URL(string: baseURL + "/api/channel/permissions") else {
+                log("宛先の URL を作れないので中継を諦めます: \(baseURL)")
+                return .dropped
+            }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -31,7 +31,7 @@ public struct MonitorConfiguration: Sendable, Equatable {
 
     /// 環境変数から組み立てる。
     /// `CLAUDE_HOME`（読み取り元）・`CLAUDE_DECK_SERVER_PORT`（待ち受け。`off` で待ち受けない）・
-    /// `CLAUDE_DECK_USAGE_FILE`（使用量ファイル。旧名 `MONITOR_USAGE_FILE`）・`CLAUDE_DECK_MONITOR_DEBUG=1`（デバッグ出力）。
+    /// `CLAUDE_DECK_USAGE_FILE`（使用量ファイル）・`CLAUDE_DECK_MONITOR_DEBUG=1`（デバッグ出力）。
     public static func fromEnvironment(_ env: [String: String] = ProcessInfo.processInfo.environment,
                                        legacyUsageFile: URL? = nil) -> MonitorConfiguration {
         var config = MonitorConfiguration(claudeHome: .fromEnvironment(env), usageFile: UsageReader.defaultFile(env),

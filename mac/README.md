@@ -120,7 +120,7 @@ mac/
 - **会話**: `TranscriptStore`（250ms で追記を読む actor）。購読するのは直近に開いたルームだけ（`watchTranscripts`）で、
   開いていないセッションのログは読まない・持たない。ルームを開いたら購読を張ってから `fetchTranscript` で全件、
   以降は追記を id で重複除去して足す。購読の張り替えは 1 回の呼び出しで行い、間の追記を落とさない。画像は `imageSource`（行の位置を覚えて読み直す。base64 の PNG / JPEG / GIF / WebP のみ）
-- **使用量**: `~/Library/Application Support/claude-deck/usage.json`（`scripts/statusline.sh` が書く）を 3 秒ごとに読む（`CLAUDE_DECK_USAGE_FILE`、旧名 `MONITOR_USAGE_FILE` で差し替え）。
+- **使用量**: `~/Library/Application Support/claude-deck/usage.json`（`scripts/statusline.sh` が書く）を 3 秒ごとに読む（`CLAUDE_DECK_USAGE_FILE` で差し替え。スクリプトと同じ変数）。
   移行期間は旧 statusLine が書く `<ai-manager ルート>/data/claude-usage.json` も読み、取得時刻の新しい方を使う
 - **伝言**: 受信箱ソケット（自分が所有する Unix ソケットだけ）へ行区切りの JSON を 1 行書く。失敗は `HubFailure`（`not_found` / `not_alive` / `no_socket` / `unreachable`）
 - 読み取り元は `CLAUDE_HOME`（既定 `~/.claude`）。読むだけで書かない。デバッグ出力は `CLAUDE_DECK_MONITOR_DEBUG=1`
@@ -208,7 +208,7 @@ CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 `~/Library/Application Support/claude-deck/usage.json` に**原子的に**書く（同じディレクトリに一時ファイルを作って `mv`。
 作るディレクトリは 0700・ファイルは 0600）。アプリはそれを 3 秒ごとに読み、上限到達の強制終了に使う。
 
-`~/.claude/settings.json` の `statusLine` を次のように差し替える（旧 `monitor/scripts/statusline.sh` を指していたら、このパスに変える）。
+`~/.claude/settings.json` の `statusLine` を次のように指定する（旧 `monitor/scripts/statusline.sh` を指していたら、このパスに変える）。
 
 ```jsonc
 {
@@ -220,7 +220,8 @@ CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 ```
 
 - 保存先は環境変数 `CLAUDE_DECK_USAGE_FILE` で差し替えられる（アプリ側も同じ変数を読む。Finder から起動したアプリには環境変数が渡らないので、通常は既定の場所のまま使う）。
-- 移行期間として、アプリは旧 `data/claude-usage.json` も読み、取得時刻の新しい方を使う。差し替え前でも上限の判定は途切れない。
+- 移行期間として、旧パス `monitor/scripts/statusline.sh` に `mac/scripts/statusline.sh` へ渡すだけの転送スクリプトを残している。settings.json を差し替える前でも使用量は新しい保存先に書かれ、上限の判定は途切れない。差し替えたら転送スクリプトは消してよい。
+- アプリは旧 `data/claude-usage.json` も手元に残っていれば読み、取得時刻の新しい方を使う（もう書かれないので、古い値に引きずられることはない）。
 - **表示を先に出し切ってから書く。** 書き込みに失敗してもステータスラインは出る。値が 1 つも無い入力では記録を上書きしない。
 - `jq` が要る。出すのは `rate_limits` 由来の表示だけなので、他に出したいものがあればスクリプトに足す。
 - statusLine は Claude Code が動いている間しか呼ばれない。全セッションが止まると値が古くなるので、アプリは取得 10 分以内の値だけ使う。
@@ -253,7 +254,7 @@ Claude Code の **Channels**（research preview の permission relay）を使う
 
 - 起動時に全画面の警告（`I am using this for local development`）と、`.mcp.json` の初回同意ダイアログが出る。
 - `command` は実行ファイルを直接指す（シェルや `env` を挟まない）。申請元のセッションを**チャネルの親 PID**で引くため、間にプロセスが 1 段増えるとずれる。
-- 宛先は既定 `http://127.0.0.1:8766`。アプリのポートを変えた時だけ `.mcp.json` の `env` に `CLAUDE_DECK_URL` を足す（旧名 `MONITOR_URL` も読む）。
+- 宛先は既定 `http://127.0.0.1:8766`。アプリのポートを変えた時だけ `.mcp.json` の `env` に `CLAUDE_DECK_URL` を足す。受け付けるのは `http://127.0.0.1` / `http://localhost` / `http://[::1]`（ポートのみ指定可）だけで、それ以外は既定に戻して stderr に理由を出す。リダイレクトとシステムのプロキシには従わない。
 - **`allow` / `deny` しか返せない。**「常に許可」「今回だけ」は Channels に無い（確認ごとに ID が変わる）。
 - 中継されるのは**ツール使用の承認だけ**。`AskUserQuestion`・プロジェクト信頼・MCP サーバー同意は端末に出る（アプリでホスト中のセッションなら選択肢カードで答えられる）。
 - 端末のダイアログと同時に生きていて**先に答えた方が採用される**。端末側で答えられた分は、そのセッションのログが進んだ時点で保留から消える

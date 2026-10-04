@@ -18,12 +18,14 @@ public final class ChannelServer: @unchecked Sendable {
                 cwd: String = FileManager.default.currentDirectoryPath,
                 output: FileHandle = .standardOutput,
                 errors: FileHandle = .standardError) {
-        baseURL = ChannelRelay.baseURL(environment)
         self.pid = pid
         self.cwd = cwd
         self.output = output
         self.errors = errors
-        session = URLSession(configuration: .ephemeral)
+        session = ChannelRelay.makeSession()
+        baseURL = ChannelRelay.baseURL(environment) { message in
+            try? errors.write(contentsOf: Data("[claude-deck-channel] \(message)\n".utf8))
+        }
     }
 
     /// stdin が閉じる（Claude Code が終わる）まで読み続ける。

@@ -3,9 +3,19 @@ import XCTest
 
 /// `mac/scripts/statusline.sh` を偽の入力で動かす。保存先は一時ディレクトリに差し替え、実データには書かない。
 final class StatusLineScriptTests: XCTestCase {
-    private var script: URL {
+    private var macRoot: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("scripts/statusline.sh")
+    }
+
+    private var script: URL { macRoot.appendingPathComponent("scripts/statusline.sh") }
+
+    /// 旧 statusLine のパスに残す転送スクリプト。
+    private var forwarder: URL { macRoot.deletingLastPathComponent().appendingPathComponent("monitor/scripts/statusline.sh") }
+
+    /// スクリプトに渡す PATH。swift test の PATH に Homebrew が無くても、手元の jq を見つけられるようにする。
+    private var searchPath: String {
+        let base = ProcessInfo.processInfo.environment["PATH"].flatMap { $0.isEmpty ? nil : $0 } ?? "/usr/bin:/bin"
+        return base + ":/opt/homebrew/bin:/usr/local/bin"
     }
 
     private var dir: URL!
@@ -19,12 +29,17 @@ final class StatusLineScriptTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    private func run(_ input: String, env extra: [String: String]) throws -> String {
+    private func run(_ input: String, env extra: [String: String], executable: URL? = nil) throws -> String {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [script.path]
+        if let executable {
+            process.executableURL = executable
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = [script.path]
+        }
         var env = ProcessInfo.processInfo.environment
         env["CLAUDE_DECK_USAGE_FILE"] = nil
+        env["PATH"] = searchPath
         env["HOME"] = dir.appendingPathComponent("home").path
         env.merge(extra) { _, new in new }
         process.environment = env
@@ -41,8 +56,16 @@ final class StatusLineScriptTests: XCTestCase {
     }
 
     private func requireJQ() throws {
-        let found = ["/usr/bin/jq", "/opt/homebrew/bin/jq", "/usr/local/bin/jq"].contains { FileManager.default.isExecutableFile(atPath: $0) }
-        try XCTSkipUnless(found, "jq が無い環境ではスクリプトが値を読めない")
+        // スクリプトと同じ PATH で探す。
+        let which = Process()
+        which.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        which.arguments = ["which", "jq"]
+        which.environment = ["PATH": searchPath]
+        which.standardOutput = FileHandle.nullDevice
+        which.standardError = FileHandle.nullDevice
+        try which.run()
+        which.waitUntilExit()
+        try XCTSkipUnless(which.terminationStatus == 0, "jq が無い環境ではスクリプトが値を読めない")
     }
 
     private func mode(_ url: URL) throws -> Int {
@@ -69,6 +92,18 @@ final class StatusLineScriptTests: XCTestCase {
         // 値が 1 つも無い入力では、表示も記録の上書きもしない。
         XCTAssertEqual(try run(#"{"model":{"id":"x"}}"#, env: ["CLAUDE_DECK_USAGE_FILE": target.path]), "")
         XCTAssertEqual(UsageReader.read(target), saved)
+    }
+
+    func testForwarderAtOldPathWritesToNewFile() throws {
+        try requireJQ()
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: forwarder.path), "settings.json が直接実行するので実行権限が要る")
+        let target = dir.appendingPathComponent("forwarded/usage.json")
+        let shown = try run(#"{"rate_limits":{"five_hour":{"used_percentage":12},"seven_day":{"used_percentage":34}}}"#,
+                            env: ["CLAUDE_DECK_USAGE_FILE": target.path], executable: forwarder)
+        XCTAssertEqual(shown, "セッション: 12% | 週間: 34%")
+        let saved = try XCTUnwrap(UsageReader.read(target), "新しいスクリプトと同じ保存先に書かれる")
+        XCTAssertEqual(saved.fiveHour?.usedPercentage, 12)
+        XCTAssertEqual(saved.sevenDay?.usedPercentage, 34)
     }
 
     func testDefaultsToApplicationSupport() throws {

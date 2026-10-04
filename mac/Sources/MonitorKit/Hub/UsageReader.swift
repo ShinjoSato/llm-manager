@@ -2,16 +2,16 @@ import Foundation
 
 /// Claude Code の使用量。`mac/scripts/statusline.sh` が書いたファイルを読むだけ。
 public enum UsageReader {
-    /// statusline.sh と同じ既定の置き場所。`CLAUDE_DECK_USAGE_FILE`（旧名 `MONITOR_USAGE_FILE`）で差し替える。
+    /// statusline.sh と同じ既定の置き場所。スクリプトと同じ `CLAUDE_DECK_USAGE_FILE` で差し替える。
     public static func defaultFile(_ env: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
-        if let raw = [env["CLAUDE_DECK_USAGE_FILE"], env["MONITOR_USAGE_FILE"]].compactMap({ $0 }).first(where: { !$0.isEmpty }) {
+        if let raw = env["CLAUDE_DECK_USAGE_FILE"], !raw.isEmpty {
             return URL(fileURLWithPath: raw)
         }
         let home = env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
         return URL(fileURLWithPath: home).appendingPathComponent("Library/Application Support/claude-deck/usage.json")
     }
 
-    /// 移行期間は旧 `data/claude-usage.json` も読み、取得時刻の新しい方を使う（古い statusLine のままでも途切れないように）。
+    /// 旧 `data/claude-usage.json` が手元に残っていても、取得時刻の新しい方を使えば古い値に引きずられない。
     public static func readNewest(_ urls: [URL?]) -> UsageSnapshot? {
         urls.compactMap { read($0) }.max { $0.fetchedAt < $1.fetchedAt }
     }

@@ -64,7 +64,7 @@ final class MonitorModelTests: XCTestCase {
         XCTAssertNil(MonitorConfiguration.fromEnvironment(["CLAUDE_DECK_SERVER_PORT": "off"]).serverPort)
         XCTAssertEqual(MonitorConfiguration.fromEnvironment(["CLAUDE_DECK_SERVER_PORT": "nope"]).serverPort, 8766)
         XCTAssertEqual(MonitorConfiguration.fromEnvironment(["CLAUDE_DECK_USAGE_FILE": "/u.json", "MONITOR_USAGE_FILE": "/m.json"]).usageFile?.path, "/u.json")
-        XCTAssertEqual(MonitorConfiguration.fromEnvironment(["MONITOR_USAGE_FILE": "/m.json"]).usageFile?.path, "/m.json", "旧名も読む")
+        XCTAssertNotEqual(MonitorConfiguration.fromEnvironment(["MONITOR_USAGE_FILE": "/m.json"]).usageFile?.path, "/m.json", "スクリプトが読まない旧名は読まない")
     }
 
     func testSessionRegistryLookup() throws {
