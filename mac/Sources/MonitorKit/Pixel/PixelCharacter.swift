@@ -1,6 +1,6 @@
 import Foundation
 
-// 絵と配色の出典は 旧 monitor UI の `pixel/sprites.ts`・`look.ts`・`kit.ts`（SKIN）。一覧のアイコンはマークの大きさ・位置・跳ね幅だけ小さい表示で読めるよう変えている（ステージの 3D は出典どおり）。
+// 一覧のアイコンはマークの大きさ・位置・跳ね幅を小さい表示で読めるよう変えている（ステージの 3D はそのまま）。
 
 /// 文字列で持つドット絵。"." は透明で、他の 1 文字がパレットのキーになる。
 public struct PixelSprite: Sendable, Equatable {
@@ -92,7 +92,7 @@ public enum PixelSprites {
     public static let markQuestion = PixelSprite(["AAA", "..A", ".A.", "...", ".A."])
     public static let markSleep = PixelSprite(["AAA", "..A", ".A.", "A..", "AAA"])
 
-    // 以下はステージ（3D）で使う（出典 sprites.ts の KID_STAND・ITEM_*）。
+    // 以下はステージ（3D）で使う。
 
     /// サブエージェント。C=明色 E=濃色 S=肌 K=目 F=脚
     public static let kidStand = PixelSprite([
@@ -228,7 +228,7 @@ public enum PixelSprites {
     }
 }
 
-/// 状態ごとの小さな動き（旧 monitor の 2D は稼働中だけ跳ねる。一覧では要対応と待機のマークも動かす）。
+/// 状態ごとの小さな動き（稼働中は跳ね、要対応と待機はマークを動かす）。
 public enum PixelMotion: Sendable, Equatable {
     /// 体が 2 コマで上下に跳ねる。
     case bob
@@ -325,7 +325,7 @@ public enum PixelCharacter {
         let i = ((index % 8) + 8) % 8
         switch motion {
         case .bob:
-            // 2 コマずつ（0.5 秒）上下。旧 monitor の `bob`（1.1 秒・2 段）に近い拍。
+            // 2 コマずつ（0.5 秒）上下。
             return PixelFrame(bodyOffsetY: i % 4 < 2 ? 0 : -1, markOffsetY: 0, markVisible: true)
         case .blink:
             return PixelFrame(bodyOffsetY: 0, markOffsetY: 0, markVisible: i % 4 < 3)

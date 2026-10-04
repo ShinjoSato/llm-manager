@@ -1,9 +1,7 @@
 import Foundation
 
-/// 入力欄（NSTextView）とモデル側の下書きの同期判定。
-///
-/// 日本語入力の変換中（marked text）は NSTextView が textDidChange を出さないため、下書きは確定済みの部分しか持たない。
-/// その間に再描画で下書きを書き戻すと変換中の文字ごと消えるので、自分が最後に渡した値と違う時（送信後の空など本当の外部変更）だけ書き戻す。
+/// 入力欄とモデルの下書きの同期判定。変換中（marked text）は下書きが確定分しか持たず、書き戻すと変換中の文字ごと消えるので、
+/// 自分が最後に渡した値と違う時（送信後の空など本当の外部変更）だけ書き戻す。
 public struct ComposerSync: Sendable, Equatable {
     /// 入力欄から下書きへ最後に渡した値（書き戻した値も含む）。nil はまだ一度も同期していない。
     public private(set) var lastPublished: String?

@@ -163,10 +163,4 @@ final class LimitGuardScreenTests: XCTestCase {
         XCTAssertNil(LimitGuard.screenLimitLine([]))
         XCTAssertNil(LimitGuard.screenLimitLine(["", ""]))
     }
-
-    func testBufferLineCount() {
-        for count in [0, 1, 5, 24, 25, 100, 1234] {
-            XCTAssertEqual(LimitGuard.bufferLineCount(rows: 24) { $0 < count }, count)
-        }
-    }
 }

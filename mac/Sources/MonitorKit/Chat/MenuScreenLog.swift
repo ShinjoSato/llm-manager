@@ -16,8 +16,7 @@ public enum MenuScreenLog {
     static let header = "=== "
 
     public static var defaultURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/claude-deck/menu-screens.log")
+        DeckPaths.logs.appendingPathComponent("menu-screens.log")
     }
 
     /// 1 件分の文字列。
@@ -52,20 +51,9 @@ public enum MenuScreenLog {
         queue.async { try? write(text, to: url) }
     }
 
-    /// 一時ファイルを 0600 で作ってから置き換える（書きかけや他人に読める瞬間を作らない）。
+    /// 本人だけが読める 0600 で置き換えて書く（書きかけや他人に読める瞬間を作らない）。
     static func write(_ entry: String, to url: URL) throws {
-        let manager = FileManager.default
-        let directory = url.deletingLastPathComponent()
-        try manager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        let data = Data(appending(entry, to: existing).utf8)
-        let temporary = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
-        guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        guard rename(temporary.path, url.path) == 0 else {
-            try? manager.removeItem(at: temporary)
-            throw CocoaError(.fileWriteUnknown)
-        }
+        try SecureFile.write(Data(appending(entry, to: existing).utf8), to: url)
     }
 }

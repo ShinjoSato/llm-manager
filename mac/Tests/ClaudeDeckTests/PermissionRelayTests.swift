@@ -1,7 +1,7 @@
 import XCTest
 @testable import MonitorKit
 
-// 移植元: 旧 monitor（削除済み）の test/permissions.test.ts と同じ観点。承認が手元以外に漏れると任意のコマンドを許可できてしまう。
+// 承認が手元以外に漏れると任意のコマンドを許可できてしまう。
 final class PermissionRelayTests: XCTestCase {
     let raw: [String: Any] = ["requestId": "abcde", "toolName": "Bash", "description": "ls を実行する",
                               "inputPreview": #"{"command":"ls"}"#, "pid": 1234, "cwd": "/Users/me/project"]
@@ -10,12 +10,11 @@ final class PermissionRelayTests: XCTestCase {
     private func with(_ changes: [String: Any]) -> [String: Any] { raw.merging(changes) { _, new in new } }
 
     func testDecisionValues() {
-        XCTAssertEqual(PermissionRelay.isDecision("allow"), .allow)
-        XCTAssertEqual(PermissionRelay.isDecision("deny"), .deny)
-        XCTAssertNil(PermissionRelay.isDecision("always"))
-        XCTAssertNil(PermissionRelay.isDecision("ALLOW"))
-        XCTAssertNil(PermissionRelay.isDecision(""))
-        XCTAssertNil(PermissionRelay.isDecision(1))
+        XCTAssertEqual(PermissionDecision(rawValue: "allow"), .allow)
+        XCTAssertEqual(PermissionDecision(rawValue: "deny"), .deny)
+        XCTAssertNil(PermissionDecision(rawValue: "always"))
+        XCTAssertNil(PermissionDecision(rawValue: "ALLOW"))
+        XCTAssertNil(PermissionDecision(rawValue: ""))
     }
 
     func testParseRequest() {

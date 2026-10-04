@@ -1,9 +1,8 @@
 import SwiftUI
 import MonitorKit
 
-/// 画面案B のステージパネルの配色（他は ChatTheme を使う）。
+/// ステージパネルの寸法と見出し。
 enum StageTheme {
-    static let panel = Color(hex: 0x0b111d)
     static let label = Font.system(size: 11, weight: .bold)
     static let width: CGFloat = 360
 }
@@ -33,7 +32,7 @@ struct StagePanel: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .background(StageTheme.panel)
+        .background(ChatTheme.stagePanel)
         .background(WindowWidthReader(width: $windowWidth))
         .onChange(of: isNarrow) { _, narrow in
             if !narrow { openedWhileNarrow = false }
@@ -92,7 +91,7 @@ struct StagePanel: View {
             stage(room: room, sessionId: sessionId, snapshot: snapshot)
                 .frame(height: 230)
                 .frame(maxWidth: .infinity)
-                .background(StageTheme.panel)
+                .background(ChatTheme.stagePanel)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(ChatTheme.border, lineWidth: 1))
                 .padding(.horizontal, 14)
@@ -321,7 +320,7 @@ private struct FeedSection: View {
 
     private func row(_ item: FeedItem) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(Self.clock.string(from: item.date))
+            Text(ChatTime.seconds(item.date))
                 .foregroundStyle(ChatTheme.tertiary)
             Text(StageLogic.kindLabel(item.kind))
                 .foregroundStyle(Self.color(item.kind))
@@ -334,22 +333,14 @@ private struct FeedSection: View {
         .font(.system(size: 11, design: .monospaced))
     }
 
-    private static let clock: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ja_JP")
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
-
-    /// 旧 monitor UI の LiveFeed と同じ色分け。
     private static func color(_ kind: FeedKind) -> Color {
         switch kind {
-        case .tool: return Color(hex: 0x7dd3fc)
-        case .prompt: return Color(hex: 0xc4b5fd)
+        case .tool: return ChatTheme.feedTool
+        case .prompt: return ChatTheme.feedPrompt
         case .message: return ChatTheme.secondary
-        case .status: return Color(hex: 0xfcd34d)
-        case .session: return Color(hex: 0x6ee7b7)
-        case .agent: return Color(hex: 0xf0abfc)
+        case .status: return ChatTheme.feedStatus
+        case .session: return ChatTheme.feedSession
+        case .agent: return ChatTheme.feedAgent
         case .unknown: return ChatTheme.tertiary
         }
     }

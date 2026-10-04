@@ -1,6 +1,6 @@
 import Foundation
 
-/// `~/.claude` 配下のパス（移植元: 旧 monitor（削除済み）の src/paths.ts）。試験では一時ディレクトリを差し込む。
+/// `~/.claude` 配下のパス。試験では一時ディレクトリを差し込む。
 public struct ClaudeHome: Sendable, Equatable {
     public var root: URL
 
@@ -17,7 +17,7 @@ public struct ClaudeHome: Sendable, Equatable {
     public var sessionsDirectory: URL { root.appendingPathComponent("sessions", isDirectory: true) }
     public var projectsDirectory: URL { root.appendingPathComponent("projects", isDirectory: true) }
 
-    /// cwd からプロジェクトディレクトリ名を推測する（/Users/x/p → -Users-x-p）。JS と同じく UTF-16 単位で置き換える。
+    /// cwd からプロジェクトディレクトリ名を推測する（/Users/x/p → -Users-x-p）。Claude Code と同じく UTF-16 単位で置き換える。
     public static func slug(forCwd cwd: String) -> String {
         var units: [UInt16] = []
         units.reserveCapacity(cwd.utf16.count)

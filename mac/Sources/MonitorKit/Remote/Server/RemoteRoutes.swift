@@ -242,7 +242,7 @@ public struct RemoteRoutes: Sendable {
     }
 
     static func decode<T: Decodable>(_ request: HTTPRequest, _ type: T.Type) -> Decoded<T> {
-        guard request.header("content-type")?.lowercased().hasPrefix("application/json") == true else {
+        guard request.isJSONContentType else {
             return .rejected(error(415, "unsupported_media_type", "content-type must be application/json"))
         }
         guard let value = try? JSONDecoder().decode(type, from: request.body) else {

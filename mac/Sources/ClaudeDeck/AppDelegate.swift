@@ -17,7 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.title = "claude-deck"
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(hex: 0x0a0f1a)
+        window.backgroundColor = ChatTheme.nsBackground
         window.titlebarAppearsTransparent = true
         window.contentViewController = main
         window.contentMinSize = NSSize(width: 860, height: 520)
@@ -89,10 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         contentView.cacheDisplay(in: rect, to: rep)
         guard let data = rep.representation(using: .png, properties: [:]) else { return }
 
-        // ファイル名（撮影時刻）
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let name = "claude-deck-\(formatter.string(from: Date())).png"
+        let name = "claude-deck-\(ChatTime.stamp(Date())).png"
         let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
         let url = desktop.appendingPathComponent(name)
 

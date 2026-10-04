@@ -2,9 +2,6 @@
 secrets/*
 !secrets/README.md
 
-# 旧 statusLine が書いていた上限の残量（移行期間はアプリが読むので、手元に残っていても追跡しない）
-data/claude-usage.json*
-
 # ビルド成果物
 node_modules/
 mac/dist/

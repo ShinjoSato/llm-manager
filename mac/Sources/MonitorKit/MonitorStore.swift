@@ -16,7 +16,7 @@ public enum MonitorConnectionState: Sendable, Equatable {
 }
 
 /// セッション・フィード・残量・権限確認を保持する観測可能なストア。
-/// データ源はアプリ内の監視（`SessionHub` / `TranscriptStore`）で、フック等の外からの口は `LoopbackHTTPServer` で受ける。
+/// データ源はアプリ内の監視（`SessionHub` / `TranscriptStore`）で、フック等の外からの口は `HTTPServer` で受ける。
 @MainActor
 @Observable
 public final class MonitorStore {
@@ -25,8 +25,8 @@ public final class MonitorStore {
     @ObservationIgnored public let transcripts: TranscriptStore
 
     public private(set) var connection: MonitorConnectionState = .idle
-    /// フック等の受け口（:8766）の状態。使用中なら旧 monitor 等が動いていて、フックはこちらに届かない。
-    public private(set) var serverState: LoopbackServerState = .stopped
+    /// フック等の受け口（:8766）の状態。使用中なら別のプロセスが待ち受けていて、フックはこちらに届かない。
+    public private(set) var serverState: HTTPServerState = .stopped
     public private(set) var sessions: [SessionSnapshot] = []
     public private(set) var feed: [FeedItem] = []
     public private(set) var usage: UsageSnapshot?
@@ -34,13 +34,12 @@ public final class MonitorStore {
     public private(set) var permissions: [PendingPermission] = []
     /// 監視を始めるたびに増える。取りこぼしを埋める取得（transcript 等）をやり直す合図に使う。
     public private(set) var connectionEpoch = 0
-    public private(set) var lastEventAt: Date?
     public private(set) var transcriptSubscription: TranscriptSubscription = .none
     /// アプリが PTY でホストしている claude の pid → sessionId。
     public private(set) var hostedSessionIds: [Int32: String] = [:]
 
     /// フィードを何件まで持つか。
-    public var feedLimit = 500
+    public let feedLimit: Int
 
     /// 会話の追記の受け口（チャット画面が使う）。
     @ObservationIgnored public var onTranscript: ((TranscriptEvent) -> Void)?
@@ -48,7 +47,7 @@ public final class MonitorStore {
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var continuation: AsyncStream<MonitorEvent>.Continuation?
     @ObservationIgnored private var transcriptSubscriberId: Int?
-    @ObservationIgnored private var server: LoopbackHTTPServer?
+    @ObservationIgnored private var server: HTTPServer?
     @ObservationIgnored private var serverRetry: Task<Void, Never>?
     @ObservationIgnored private let registry: ClaudeSessionRegistry
     @ObservationIgnored private var hostedPids: Set<Int32> = []
@@ -61,12 +60,13 @@ public final class MonitorStore {
     /// 購読の張り替えを順に流す（連続して呼ばれても購読を二重に持たない・取りこぼさない）。
     @ObservationIgnored private var subscriptionChain: Task<Void, Never>?
 
-    public init(configuration: MonitorConfiguration = .fromEnvironment(), registry: ClaudeSessionRegistry? = nil) {
+    public init(configuration: MonitorConfiguration = .fromEnvironment(), registry: ClaudeSessionRegistry? = nil,
+                feedLimit: Int = 500) {
         self.configuration = configuration
+        self.feedLimit = feedLimit
         self.registry = registry ?? ClaudeSessionRegistry(directory: configuration.claudeHome.sessionsDirectory)
         transcripts = TranscriptStore(home: configuration.claudeHome)
-        hub = SessionHub(home: configuration.claudeHome, usageFile: configuration.usageFile,
-                         legacyUsageFile: configuration.legacyUsageFile, transcripts: transcripts)
+        hub = SessionHub(home: configuration.claudeHome, usageFile: configuration.usageFile, transcripts: transcripts)
     }
 
     public var isRunning: Bool { running }
@@ -178,19 +178,19 @@ public final class MonitorStore {
             return
         }
         let hub = hub
-        let server = LoopbackHTTPServer { request in await MonitorHTTPRoutes.handle(request, hub: hub) }
+        let server = HTTPServer { request in await HookServerRoutes.handle(request, hub: hub) }
         self.server = server
         listen(server, port: port)
     }
 
-    private func listen(_ server: LoopbackHTTPServer, port: Int) {
+    private func listen(_ server: HTTPServer, port: Int) {
         serverState = .starting
         server.start(port: port) { [weak self] state in
             Task { @MainActor in self?.serverChanged(state, server: server, port: port) }
         }
     }
 
-    private func serverChanged(_ state: LoopbackServerState, server: LoopbackHTTPServer, port: Int) {
+    private func serverChanged(_ state: HTTPServerState, server: HTTPServer, port: Int) {
         guard running, server === self.server else { return }
         serverState = state
         switch state {
@@ -268,17 +268,6 @@ public final class MonitorStore {
         hostedSessionIds[pid]
     }
 
-    public func session(forHostedPid pid: Int32) -> SessionSnapshot? {
-        guard let id = hostedSessionIds[pid] else { return nil }
-        return session(id: id)
-    }
-
-    /// アプリの外（VSCode・別ターミナル等）で動いているセッション。
-    public var externalSessions: [SessionSnapshot] {
-        let hosted = Set(hostedSessionIds.values)
-        return sessions.filter { !hosted.contains($0.sessionId) }
-    }
-
     // MARK: - 書き込み
 
     /// そのセッションの受信箱へ伝言を送る。失敗は `HubFailure`。
@@ -294,25 +283,14 @@ public final class MonitorStore {
         if pending == nil { throw HubFailure(code: "not_found", message: "この確認はもう待っていません") }
     }
 
-    public func open(sessionId: String, in app: OpenApp) async throws {
-        try await hub.openInApp(sessionId: sessionId, app: app)
-    }
-
-    public func close(sessionId: String, in app: CloseApp = .xcode) async throws -> CloseState {
-        try await hub.closeInApp(sessionId: sessionId, app: app)
-    }
-
     // MARK: - 反映
 
     func apply(_ event: MonitorEvent) {
-        lastEventAt = Date()
         switch event {
         case .sessions(let list):
             if list != sessions { sessions = list }
             resolveHostedSessions()
             logSessionsIfChanged()
-        case .feedBatch(let items):
-            feed = Array(items.sorted { $0.id < $1.id }.suffix(feedLimit))
         case .feed(let item):
             guard !feed.contains(where: { $0.id == item.id }) else { return }
             feed.append(item)
@@ -340,7 +318,7 @@ public final class MonitorStore {
 
     private func log(_ message: @autoclosure () -> String) {
         guard configuration.debugLogging else { return }
-        FileHandle.standardError.write(Data("[monitor] \(message())\n".utf8))
+        FileHandle.standardError.write(Data("[claude-deck] \(message())\n".utf8))
     }
 
     private static func describe(_ usage: UsageSnapshot?) -> String {

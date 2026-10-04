@@ -13,7 +13,7 @@ public struct ChannelRelay: Sendable {
     public static let retryDelay: TimeInterval = 5
     /// 受け口が戻らないまま待ち続けない。ここを過ぎたら端末のダイアログに任せる。
     public static let giveUpAfter: TimeInterval = 30 * 60
-    public static let defaultBaseURL = "http://127.0.0.1:8766"
+    public static let defaultBaseURL = "http://127.0.0.1:\(HookServerRoutes.defaultPort)"
 
     public var ask: @Sendable () async -> ChannelAskResult
     public var sleep: @Sendable (TimeInterval) async -> Void
@@ -75,7 +75,7 @@ public struct ChannelRelay: Sendable {
     /// scheme が http・ホストがループバック名・パス等の付かない形だけを通す。
     static func isLoopbackHTTP(_ string: String) -> Bool {
         guard let parts = URLComponents(string: string), parts.scheme?.lowercased() == "http",
-              let host = parts.host?.lowercased(), ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host),
+              let host = parts.host?.lowercased(), LoopbackGuard.isLoopbackHostName(host),
               parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
               parts.path.isEmpty else { return false }
         return true
@@ -105,7 +105,7 @@ public struct ChannelRelay: Sendable {
             "pid": Int(pid),
             "cwd": cwd,
         ]
-        return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
+        return JSONLoose.data(object, options: [.sortedKeys])
     }
 
     /// 受け口の応答を読む。ログに残すべき理由があれば併せて返す。

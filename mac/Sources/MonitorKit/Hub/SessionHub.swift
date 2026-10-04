@@ -86,8 +86,7 @@ final class HookDropCounter: @unchecked Sendable {
     }
 }
 
-/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: 旧 monitor（削除済み）の src/hub.ts）。
-/// 受け手は `MonitorEvent` を 1 本の流れで受け取る（以前の SSE と同じ単位）。
+/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を `MonitorEvent` の流れとして受け手へ渡す。
 public actor SessionHub {
     /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。
     static let staleBusy: Double = 10 * 60_000
@@ -101,7 +100,6 @@ public actor SessionHub {
     public static let snapshotInterval: Duration = .seconds(1)
     /// サブエージェント数の走査は syscall が多いので実況ポーリングより粗くする。
     static let agentScanInterval: Double = 2_000
-    static let feedLimit = 300
 
     /// ログの終わり方。busy はモデルの番（ツール実行中・長考中）で、無音でも動いている。
     enum TurnState { case busy, settled }
@@ -133,8 +131,6 @@ public actor SessionHub {
         var socketPath: String?
         /// cwd は変わらないのでセッション生成時に一度だけ調べる。
         var xcodeProject: String?
-        /// メタ情報と Xcode プロジェクトの読み込み。終わるまで `xcodeProject == nil` は「無い」とは限らない。
-        var metaTask: Task<Void, Never>?
         /// 最初の在庫走査で見つけた（起動前から動いていた）セッションか。時刻の無いログ行の新旧の見分けに使う。
         var knownAtStart = false
         /// メタ情報（ai-title 等）の遡り読みを、この位置のログについて始めたか。
@@ -152,7 +148,6 @@ public actor SessionHub {
 
     public let home: ClaudeHome
     private let usageFile: URL?
-    private let legacyUsageFile: URL?
     private let now: @Sendable () -> Double
     private let isAlive: @Sendable (Int32) -> Bool
     private let transcripts: TranscriptStore?
@@ -161,7 +156,6 @@ public actor SessionHub {
 
     private var sessions: [String: State] = [:]
     private var permissions = PermissionRegistry()
-    private var feed: [FeedItem] = []
     private var feedSeq = 0
     private var agentTypes: [String: String] = [:]
     private var usage: UsageSnapshot?
@@ -192,7 +186,6 @@ public actor SessionHub {
 
     public init(home: ClaudeHome,
                 usageFile: URL?,
-                legacyUsageFile: URL? = nil,
                 transcripts: TranscriptStore? = nil,
                 now: @escaping @Sendable () -> Double = epochMillisNow,
                 isAlive: @escaping @Sendable (Int32) -> Bool = SessionInventory.processAlive,
@@ -200,7 +193,6 @@ public actor SessionHub {
                 metaLoader: @escaping @Sendable (_ cwd: String, _ transcriptPath: String?) -> MetaResult = SessionHub.loadMetaFromDisk) {
         self.home = home
         self.usageFile = usageFile
-        self.legacyUsageFile = legacyUsageFile
         self.transcripts = transcripts
         self.now = now
         self.isAlive = isAlive
@@ -365,7 +357,6 @@ public actor SessionHub {
         }
         guard !created.isEmpty else { return }
         let task = Task<Void, Never> { [weak self] in await self?.loadMeta(created) }
-        for id in created { sessions[id]?.metaTask = task }
         if waitForMeta { await task.value }
     }
 
@@ -522,9 +513,8 @@ public actor SessionHub {
         if changed { emitUpdate() }
     }
 
-    /// 初回読みの各行を起動前の分（フィードに積まない）とみなすか。
-    /// 時刻の無い行（ai-title 等）は近くの時刻のある行に倣う（--resume で書き直された古いメタ情報を新着にしないため）。
-    /// 読んだ中に時刻のある行が無ければ、起動前から動いていたセッションの分だけ古いとみなす。
+    /// 初回読みの各行を起動前の分（フィードに積まない）とみなすか。時刻の無い行は近くの時刻のある行に倣う
+    /// （--resume で書き直された古いメタ情報を新着にしないため）。時刻のある行が無ければ、起動前から動いていたセッションの分だけ古いとみなす。
     private func initialQuietFlags(_ events: [ParsedEvent], knownAtStart: Bool) -> [Bool] {
         var flags = [Bool](repeating: knownAtStart, count: events.count)
         var previous: Double?
@@ -577,14 +567,12 @@ public actor SessionHub {
 
     /// statusline スクリプトが書いたファイルを読み直す。内容が変わった時だけ配る。
     func pollUsage() {
-        let next = UsageReader.readNewest([usageFile, legacyUsageFile])
+        let next = UsageReader.read(usageFile)
         if usageRead && next == usage { return }
         usageRead = true
         usage = next
         sink?(.usage(next))
     }
-
-    public func usageSnapshot() -> UsageSnapshot? { usage }
 
     // MARK: - フック層
 
@@ -675,8 +663,6 @@ public actor SessionHub {
         let item = FeedItem(id: feedSeq, sessionId: sessionId,
                             project: sessions[sessionId].map { Self.basename($0.raw.cwd) } ?? "?",
                             at: now(), kind: kind, text: text, tool: tool, local: local ? true : nil)
-        feed.append(item)
-        if feed.count > Self.feedLimit { feed.removeFirst(feed.count - Self.feedLimit) }
         sink?(.feed(item))
     }
 
@@ -686,10 +672,6 @@ public actor SessionHub {
 
     private func emitPermissions() {
         sink?(.permissions(permissions.list()))
-    }
-
-    public func recentFeed(limit: Int = 80) -> [FeedItem] {
-        Array(feed.suffix(limit))
     }
 
     // MARK: - 権限確認の中継
@@ -859,60 +841,6 @@ public actor SessionHub {
         // 受理されたかまでは分からないので、送ったことだけを記録する。
         push(sessionId, .status, error == nil ? "伝言を送信: \(Self.truncate(text, 60))" : "送信失敗: \(error!)")
         if let error { throw HubFailure(code: "unreachable", message: error) }
-    }
-
-    /// Xcode プロジェクトの場所。検出直後でまだ探している途中なら、探し終わるのを待ってから答える。
-    func resolvedXcodeProject(_ state: State) async -> String? {
-        if state.xcodeProject == nil { await state.metaTask?.value }
-        return state.xcodeProject
-    }
-
-    /// 試験用。
-    func resolvedXcodeProject(sessionId: String) async -> String? {
-        guard let state = sessions[sessionId] else { return nil }
-        return await resolvedXcodeProject(state)
-    }
-
-    /// そのセッションの作業場所をエディタで開く。開く先はリクエストではなく cwd から引く。
-    public func openInApp(sessionId: String, app: OpenApp) async throws {
-        guard let state = sessions[sessionId] else { throw HubFailure(code: "not_found", message: "セッションが見つかりません") }
-        var target = state.raw.cwd
-        if app == .xcode {
-            guard let project = await resolvedXcodeProject(state) else {
-                throw HubFailure(code: "no_project", message: "Xcode プロジェクトが見つかりません")
-            }
-            target = project
-        }
-        let name = EditorOpen.appName(app)
-        let error = await EditorOpen.open(app, target: target)
-        push(sessionId, .status, error == nil ? "\(name) で開きました" : "\(name) を開けません: \(Self.truncate(error!, 120))")
-        if let error { throw HubFailure(code: "failed", message: error) }
-    }
-
-    /// そのセッションのワークスペースだけを閉じる。閉じる先はリクエストではなく cwd から引く。
-    public func closeInApp(sessionId: String, app: CloseApp = .xcode) async throws -> CloseState {
-        guard let state = sessions[sessionId] else { throw HubFailure(code: "not_found", message: "セッションが見つかりません") }
-        guard let project = await resolvedXcodeProject(state) else {
-            throw HubFailure(code: "no_project", message: "Xcode プロジェクトが見つかりません")
-        }
-        let outcome = await XcodeClose.close(path: project)
-        let closeState: CloseState
-        switch outcome {
-        case .closeRequested, .opened: closeState = .closed
-        case .notOpen: closeState = .notOpen
-        case .notRunning: closeState = .notRunning
-        case .failed(let reason):
-            push(sessionId, .status, "Xcode を閉じられません: \(Self.truncate(reason, 120))")
-            throw HubFailure(code: "failed", message: reason)
-        }
-        let note: String
-        switch closeState {
-        case .closed: note = "ワークスペースを閉じました"
-        case .notRunning: note = "起動していませんでした"
-        default: note = "ワークスペースは開かれていませんでした"
-        }
-        push(sessionId, .status, "Xcode: \(note)")
-        return closeState
     }
 
     // MARK: - 下請け

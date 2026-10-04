@@ -114,12 +114,6 @@ final class AttachmentPasteboardTests: XCTestCase {
         pasteboard.releaseGlobally()
     }
 
-    private func pngData() -> Data {
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8, samplesPerPixel: 4,
-                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        return rep.representation(using: .png, properties: [:])!
-    }
-
     func testFileURLsBecomeFiles() {
         let urls = [URL(fileURLWithPath: "/tmp/a.png"), URL(fileURLWithPath: "/tmp/b c.txt")]
         pasteboard.writeObjects(urls as [NSURL])
@@ -136,27 +130,27 @@ final class AttachmentPasteboardTests: XCTestCase {
     func testTextWithImageStaysText() {
         pasteboard.declareTypes([.string, .png], owner: nil)
         pasteboard.setString("hello", forType: .string)
-        pasteboard.setData(pngData(), forType: .png)
+        pasteboard.setData(testPNGData(), forType: .png)
         XCTAssertFalse(AttachmentPasteboard.canAttach(pasteboard))
         XCTAssertEqual(AttachmentPasteboard.sources(in: pasteboard), [])
     }
 
     func testScreenshotPNG() {
-        let png = pngData()
+        let png = testPNGData()
         pasteboard.setData(png, forType: .png)
         XCTAssertTrue(AttachmentPasteboard.canAttach(pasteboard))
         XCTAssertEqual(AttachmentPasteboard.sources(in: pasteboard, imageName: "x.png"), [.imageData(png, name: "x.png")])
     }
 
     func testTIFFIsPassedAsIsForBackgroundConversion() throws {
-        let tiff = try XCTUnwrap(NSImage(data: pngData())?.tiffRepresentation)
+        let tiff = try XCTUnwrap(NSImage(data: testPNGData())?.tiffRepresentation)
         pasteboard.setData(tiff, forType: .tiff)
         XCTAssertTrue(AttachmentPasteboard.canAttach(pasteboard))
         XCTAssertEqual(AttachmentPasteboard.sources(in: pasteboard, imageName: "x"), [.imageData(tiff, name: "x")])
     }
 
     func testJPEGOnlyIsAttached() throws {
-        let rep = try XCTUnwrap(NSBitmapImageRep(data: pngData()))
+        let rep = try XCTUnwrap(NSBitmapImageRep(data: testPNGData()))
         let jpeg = try XCTUnwrap(rep.representation(using: .jpeg, properties: [:]))
         let type = NSPasteboard.PasteboardType(UTType.jpeg.identifier)
         pasteboard.setData(jpeg, forType: type)
@@ -188,14 +182,8 @@ final class AttachmentStoreTests: XCTestCase {
         try XCTUnwrap(FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int)
     }
 
-    private func pngData() -> Data {
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8, samplesPerPixel: 4,
-                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        return rep.representation(using: .png, properties: [:])!
-    }
-
     func testClipboardImageIsSavedPrivately() throws {
-        let attachment = try store.ingest(.imageData(pngData(), name: "貼り付けた画像.png"))
+        let attachment = try store.ingest(.imageData(testPNGData(), name: "貼り付けた画像.png"))
         XCTAssertEqual(attachment.kind, .image)
         XCTAssertNil(attachment.sourcePath)
         XCTAssertTrue(attachment.path.hasSuffix(".png"))
@@ -207,7 +195,7 @@ final class AttachmentStoreTests: XCTestCase {
 
     func testImageFileIsCopiedAndOtherFilesKeepTheirPath() throws {
         let original = root.appendingPathComponent("スクリーン ショット.PNG")
-        try pngData().write(to: original)
+        try testPNGData().write(to: original)
         let image = try store.ingest(.file(original))
         XCTAssertEqual(image.kind, .image)
         XCTAssertEqual(image.name, "スクリーン ショット.PNG")
@@ -225,7 +213,7 @@ final class AttachmentStoreTests: XCTestCase {
 
     func testConvertibleImageBecomesPNG() throws {
         let tiffURL = root.appendingPathComponent("a.tiff")
-        try XCTUnwrap(NSImage(data: pngData())?.tiffRepresentation).write(to: tiffURL)
+        try XCTUnwrap(NSImage(data: testPNGData())?.tiffRepresentation).write(to: tiffURL)
         let attachment = try store.ingest(.file(tiffURL))
         XCTAssertEqual(attachment.kind, .image)
         XCTAssertTrue(attachment.path.hasSuffix(".png"))
@@ -234,7 +222,7 @@ final class AttachmentStoreTests: XCTestCase {
 
     func testCopiedImageIsPrivateEvenIfOriginalIsNot() throws {
         let original = root.appendingPathComponent("a.jpeg")
-        try pngData().write(to: original)
+        try testPNGData().write(to: original)
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: original.path)
         let image = try store.ingest(.file(original))
         XCTAssertTrue(image.path.hasSuffix(".jpg"))
@@ -242,7 +230,7 @@ final class AttachmentStoreTests: XCTestCase {
     }
 
     func testImageDataKeepsPasteableFormatAndConvertsOthers() throws {
-        let rep = try XCTUnwrap(NSBitmapImageRep(data: pngData()))
+        let rep = try XCTUnwrap(NSBitmapImageRep(data: testPNGData()))
         let jpeg = try XCTUnwrap(rep.representation(using: .jpeg, properties: [:]))
         let kept = try store.ingest(.imageData(jpeg, name: "j"))
         XCTAssertTrue(kept.path.hasSuffix(".jpg"))
@@ -284,7 +272,7 @@ final class AttachmentStoreTests: XCTestCase {
     }
 
     func testDiscardOnlyTouchesCache() throws {
-        let cached = try store.ingest(.imageData(pngData(), name: "a.png"))
+        let cached = try store.ingest(.imageData(testPNGData(), name: "a.png"))
         let outside = root.appendingPathComponent("keep.txt")
         try Data("x".utf8).write(to: outside)
         let file = try store.ingest(.file(outside))
@@ -295,8 +283,8 @@ final class AttachmentStoreTests: XCTestCase {
     }
 
     func testSweepRemovesOnlyOldFiles() throws {
-        let old = try store.ingest(.imageData(pngData(), name: "old.png"))
-        let fresh = try store.ingest(.imageData(pngData(), name: "new.png"))
+        let old = try store.ingest(.imageData(testPNGData(), name: "old.png"))
+        let fresh = try store.ingest(.imageData(testPNGData(), name: "new.png"))
         let now = Date()
         try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-8 * 24 * 3600)], ofItemAtPath: old.path)
         XCTAssertEqual(store.sweep(now: now), 1)
@@ -335,6 +323,16 @@ final class SendCompletionTests: XCTestCase {
 
         XCTAssertNil(SendCompletion.submitted.notice)
         XCTAssertNil(SendCompletion.ended.notice)
+    }
+
+    func testRemoteNoticeDoesNotMentionTheMacComposer() throws {
+        let before = try XCTUnwrap(SendCompletion.abortedBeforeBody(.permission).remoteNotice)
+        XCTAssertEqual(before, "送信の途中で権限の確認が出たため、本文を貼る前に取りやめました。")
+        let after = try XCTUnwrap(SendCompletion.abortedAfterBody(.menu).remoteNotice)
+        XCTAssertTrue(after.contains("本文が残っています"))
+        XCTAssertFalse(after.contains("戻しました"))
+        XCTAssertNil(SendCompletion.submitted.remoteNotice)
+        XCTAssertEqual(SendCompletion.ended.remoteNotice, "claude が終了したため送れませんでした。")
     }
 
     func testRestoredDraftComesBeforeNewText() {

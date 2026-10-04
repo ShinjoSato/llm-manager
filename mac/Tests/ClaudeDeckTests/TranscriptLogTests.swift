@@ -1,7 +1,6 @@
 import XCTest
 @testable import MonitorKit
 
-// 移植元: 旧 monitor（削除済み）の test/transcriptApi.test.ts・transcriptImages.test.ts と同じ観点。
 final class TranscriptFormatTests: XCTestCase {
     typealias F = FakeClaudeHome
     let at = millis(FakeClaudeHome.timestamp)
@@ -119,13 +118,7 @@ final class TranscriptLogTests: XCTestCase {
 
     private func append(_ url: URL, _ text: String) throws { try append(url, Data(text.utf8)) }
 
-    private func append(_ url: URL, _ data: Data) throws {
-        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
-        let h = try FileHandle(forWritingTo: url)
-        defer { try? h.close() }
-        try h.seekToEnd()
-        try h.write(contentsOf: data)
-    }
+    private func append(_ url: URL, _ data: Data) throws { try appendToFile(data, at: url) }
 
     func testIncrementalReadAndSince() throws {
         let url = dir.appendingPathComponent("s1.jsonl")

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 「あなたの返答待ち」で止まっているセッションの扱い（移植元: 旧 monitor（削除済み）の src/attention.ts）。
+/// 「あなたの返答待ち」で止まっているセッションの扱い。
 public enum Attention {
     /// 人の操作が要る状態。画面で強調し、待ち時間を数える対象。
     public static func needsAttention(_ status: SessionStatus?) -> Bool {

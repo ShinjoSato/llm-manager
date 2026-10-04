@@ -1,8 +1,7 @@
 import Foundation
 
-// iPhone アプリと共有する API の型（`/v1/...`）。仕様は mac/docs/remote-api.md。
-// このディレクトリ（Remote/API）と MonitorModels.swift は Foundation / Security / CryptoKit だけに依存させ、
-// 後で共有パッケージへそのまま切り出せるようにする。
+// iPhone アプリと共有する API の型（仕様は mac/docs/remote-api.md）。共有パッケージへ切り出せるよう、
+// Remote/API と MonitorModels.swift は Foundation / Security / CryptoKit だけに依存させる。
 
 /// API の版。互換の無い変更をしたら上げ、パスの `/v1` も替える。
 public enum RemoteAPI {
@@ -134,7 +133,7 @@ public struct RemoteInfo: Codable, Sendable, Equatable {
 
 // MARK: - ルーム一覧と状態
 
-public enum RemoteRoomKind: String, MonitorLenientEnum {
+public enum RemoteRoomKind: String, LenientStringEnum {
     /// mac アプリが PTY でホストしているセッション。入力欄へ送れる。
     case hosted
     /// ターミナル・VS Code 等で動いているセッション。送れるのは伝言だけ。
@@ -144,14 +143,14 @@ public enum RemoteRoomKind: String, MonitorLenientEnum {
 }
 
 /// 一覧のグループ（要対応 → 稼働中 → 待機）。
-public enum RemoteRoomPhase: String, MonitorLenientEnum {
+public enum RemoteRoomPhase: String, LenientStringEnum {
     case attention, active, idle
     case unknown
     public static var unknownCase: RemoteRoomPhase { .unknown }
 }
 
 /// 送信の口。
-public enum RemoteSendMode: String, MonitorLenientEnum {
+public enum RemoteSendMode: String, LenientStringEnum {
     /// 端末の入力欄へ（本人の入力と同じ）。
     case input
     /// 外部セッションへの伝言（「別セッションからのメッセージ」として届く）。

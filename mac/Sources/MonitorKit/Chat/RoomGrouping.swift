@@ -91,12 +91,7 @@ public enum RoomGrouping {
         return terms.allSatisfy { haystack.range(of: $0, options: [.caseInsensitive, .widthInsensitive]) != nil }
     }
 
-    /// 未読数: そのセッションの応答（feed の message）のうち、最後に開いた時刻より後のもの。
-    public static func unreadCount(feed: [FeedItem], sessionId: String, since: Double) -> Int {
-        feed.reduce(0) { $0 + ($1.sessionId == sessionId && $1.kind == .message && $1.at > since ? 1 : 0) }
-    }
-
-    /// 全セッションの未読数を feed の 1 回の走査で数える。`since` に無いセッションは `defaultSince` から数える。
+    /// 各セッションの未読数（最後に開いた時刻より後の応答）。`since` に無いセッションは `defaultSince` から数える。
     public static func unreadCounts(feed: [FeedItem], since: [String: Double], defaultSince: Double) -> [String: Int] {
         var counts: [String: Int] = [:]
         for item in feed where item.kind == .message && item.at > (since[item.sessionId] ?? defaultSince) {

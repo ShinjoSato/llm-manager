@@ -19,10 +19,10 @@ final class MonitorStoreTests: XCTestCase {
                           description: "", inputPreview: "", askedAt: 0)
     }
 
-    private func makeStore(home: URL? = nil, registryDir: URL? = nil) -> MonitorStore {
+    private func makeStore(home: URL? = nil, registryDir: URL? = nil, feedLimit: Int = 500) -> MonitorStore {
         let root = home ?? FileManager.default.temporaryDirectory.appendingPathComponent("none-\(UUID().uuidString)")
         let config = MonitorConfiguration(claudeHome: ClaudeHome(root: root), usageFile: nil, serverPort: nil)
-        return MonitorStore(configuration: config, registry: registryDir.map { ClaudeSessionRegistry(directory: $0) })
+        return MonitorStore(configuration: config, registry: registryDir.map { ClaudeSessionRegistry(directory: $0) }, feedLimit: feedLimit)
     }
 
     func testSnapshotEventsFillStore() {
@@ -33,15 +33,12 @@ final class MonitorStoreTests: XCTestCase {
         XCTAssertEqual(store.sessions.map(\.sessionId), ["s1", "s2"])
         XCTAssertEqual(store.usage?.fiveHour?.remainingPercentage, 90)
         XCTAssertEqual(store.permissions(forSessionId: "s1").map(\.key), ["k1"])
-        XCTAssertNotNil(store.lastEventAt)
     }
 
-    func testFeedBatchReplacesAndFeedAppendsWithoutDuplicates() {
-        let store = makeStore()
-        store.feedLimit = 3
-        store.apply(.feed(feed(100)))
-        store.apply(.feedBatch([feed(2), feed(1)]))
-        XCTAssertEqual(store.feed.map(\.id), [1, 2])
+    func testFeedAppendsWithoutDuplicates() {
+        let store = makeStore(feedLimit: 3)
+        store.apply(.feed(feed(1)))
+        store.apply(.feed(feed(2)))
         store.apply(.feed(feed(3)))
         store.apply(.feed(feed(3)))
         store.apply(.feed(feed(4)))
@@ -68,8 +65,7 @@ final class MonitorStoreTests: XCTestCase {
         try Data(#"{"pid":777,"sessionId":"s-hosted"}"#.utf8).write(to: dir.appendingPathComponent("777.json"))
         store.apply(.sessions([session("s-hosted", pid: 777), session("s-ext", pid: 888)]))
         XCTAssertEqual(store.sessionId(forHostedPid: 777), "s-hosted")
-        XCTAssertEqual(store.session(forHostedPid: 777)?.sessionId, "s-hosted")
-        XCTAssertEqual(store.externalSessions.map(\.sessionId), ["s-ext"])
+        XCTAssertEqual(store.hostedSessionIds, [777: "s-hosted"], "外部のセッションは混ざらない")
 
         // /clear で sessionId が替わっても次の sessions で追従する。
         try Data(#"{"pid":777,"sessionId":"s-new"}"#.utf8).write(to: dir.appendingPathComponent("777.json"))
@@ -182,13 +178,5 @@ final class MonitorStoreTests: XCTestCase {
         await store.watchTranscripts([])
         let none = await store.transcripts.subscriberCount
         XCTAssertEqual(none, 0)
-    }
-
-    private func waitUntil(timeout: TimeInterval = 5, _ condition: @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition() {
-            if Date() > deadline { return XCTFail("時間内に揃いませんでした") }
-            try await Task.sleep(for: .milliseconds(50))
-        }
     }
 }

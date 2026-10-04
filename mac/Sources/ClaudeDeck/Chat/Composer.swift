@@ -303,8 +303,8 @@ struct ComposerTextView: NSViewRepresentable {
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.font = .systemFont(ofSize: 14)
-        textView.textColor = NSColor(hex: 0xe6ebf2)
-        textView.insertionPointColor = NSColor(hex: 0xe6ebf2)
+        textView.textColor = ChatTheme.nsText
+        textView.insertionPointColor = ChatTheme.nsText
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true

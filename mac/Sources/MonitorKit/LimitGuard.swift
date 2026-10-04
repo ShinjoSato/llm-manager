@@ -68,7 +68,7 @@ public enum LimitGuard {
     /// 端末の実画面（上から順の行）の末尾に上限表示が出ていれば、その行を返す。
     /// 会話本文は見ない。見るのは入力欄より下（フッター）、入力欄直上の最後の `⎿` 行（エラー表示）、メニュー表示中の選択肢だけ。
     public static func screenLimitLine(_ screen: [String]) -> String? {
-        let lines = droppingTrailingBlank(screen)
+        let lines = TerminalScreen.droppingTrailingBlankLines(screen)
         guard let boxTop = inputBoxTop(lines) else {
             // 本文の番号付きリストで落とさないよう、メニュー固有の操作案内が出ている時だけ見る。
             let tail = lines.suffix(menuLines)
@@ -157,29 +157,6 @@ public enum LimitGuard {
     /// フッターは左右に複数の表示が空白で並ぶので、2 つ以上の空白で区切る。
     static func segments(_ line: String) -> [String] {
         line.components(separatedBy: "  ").map(\.trimmed).filter { !$0.isEmpty }
-    }
-
-    static func droppingTrailingBlank(_ screen: [String]) -> [String] {
-        var end = screen.count
-        while end > 0, screen[end - 1].trimmed.isEmpty { end -= 1 }
-        return Array(screen[..<end])
-    }
-
-    /// `exists(i)` が「i < 行数」の時だけ true になる前提で、端末バッファの行数を O(log 行数) で求める。
-    public static func bufferLineCount(rows: Int, exists: (Int) -> Bool) -> Int {
-        guard exists(0) else { return 0 }
-        var low = max(0, rows - 1)
-        guard exists(low) else { return (0..<rows).first { !exists($0) } ?? rows }
-        var high = low + 1
-        while exists(high) {
-            low = high
-            high *= 2
-        }
-        while high - low > 1 {
-            let mid = (low + high) / 2
-            if exists(mid) { low = mid } else { high = mid }
-        }
-        return high
     }
 }
 

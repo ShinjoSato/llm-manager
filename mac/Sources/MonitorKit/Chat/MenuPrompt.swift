@@ -91,9 +91,8 @@ public struct MenuPrompt: Sendable, Hashable {
     }
 }
 
-/// AskUserQuestion の上部のタブ行。問いごとのタブと、最後の Submit タブ（回答の確認）。
-/// v2.1.286 の描画: `← ` + 各問い ` ☒ 見出し `（☒ 回答済み・☐ 未回答）+ ` ✔ Submit ` + ` →`。
-/// 問いが 1 つの単一選択は Submit タブも矢印も無く ` ☐ 見出し ` だけ。今のタブは背景色だけで示される。
+/// AskUserQuestion の上部のタブ行。v2.1.286 の描画は `← ☒ 見出し … ✔ Submit →`（☒ 回答済み・☐ 未回答）で、今のタブは背景色だけで示す。
+/// 問いが 1 つの単一選択は Submit タブも矢印も無く ` ☐ 見出し ` だけ。
 public struct MenuTabs: Sendable, Hashable {
     public struct Tab: Sendable, Hashable {
         public var title: String
@@ -130,13 +129,6 @@ public struct MenuTabs: Sendable, Hashable {
         guard hasArrows else { return false }
         guard let current else { return true }
         return current > 0
-    }
-
-    /// 今のタブの名前（Submit タブなら "Submit"）。読めなければ nil。
-    public var currentTitle: String? {
-        guard let current else { return nil }
-        if current == tabs.count { return hasSubmit ? "Submit" : nil }
-        return tabs.indices.contains(current) ? tabs[current].title : nil
     }
 
     var ignoringCurrent: MenuTabs {
@@ -518,10 +510,8 @@ public struct UnreadableMenu: Sendable, Hashable {
     }
 }
 
-/// カードで押した選択肢まで ❯ を矢印キーで動かし、着いたら Enter で確定する手順。
-/// 番号キーは使わない（trust 確認には番号が無く、番号キーが「移動」か「即決定」かもメニューごとに違うため）。
-/// 未反映の矢印は常に 0 か 1 個に保ち、❯ が送った向きへ 1 行ずつ動いた時だけ受け入れ、着いた位置が続けて変わらない時だけ確定する。
-/// 未反映の矢印を残して止まった時は `PendingArrowHold` で次の移動を待たせ、ナビゲーションをまたいでも 0 か 1 個を保つ。
+/// 押した選択肢まで ❯ を矢印で 1 行ずつ動かし、着いた位置が続けて変わらない時だけ Enter で確定する。
+/// 番号キーは使わない（trust 確認には番号が無く、番号キーが移動か即決定かもメニューで違う）。未反映の矢印は常に 0 か 1 個（`PendingArrowHold`）。
 public struct MenuNavigator: Sendable {
     public enum Direction: Sendable, Equatable { case up, down }
 

@@ -1,10 +1,15 @@
 import Foundation
 
-/// DNS リバインディング対策と接続元の判定（移植元: 旧 monitor（削除済み）の src/origin.ts）。
+/// DNS リバインディング対策と接続元の判定。
 /// 攻撃者のドメインを 127.0.0.1 に向けても Host は攻撃者のもののままなので、ここで弾ける。
 public enum LoopbackGuard {
     /// ループバックを指すホスト名。これ以外は外部のドメイン。
     static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "[::1]"]
+
+    /// URL から取り出したホスト名（小文字）がループバックか。IPv6 は括弧の有無を問わない。
+    static func isLoopbackHostName(_ host: String) -> Bool {
+        loopbackHosts.contains(host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host)
+    }
 
     /// `host:port` をホストとポートに割る。`[::1]:8766` のブラケット形式も扱う。
     public static func splitHostPort(_ value: String) -> (host: String, port: String) {
@@ -31,10 +36,9 @@ public enum LoopbackGuard {
     public static func isAllowedOrigin(_ value: String, port: Int) -> Bool {
         // Origin: null（sandbox iframe 等）や壊れた値はここで弾かれる。
         guard let url = URLComponents(string: value), let scheme = url.scheme?.lowercased(),
-              let rawHost = url.host?.lowercased(), url.user == nil, url.password == nil else { return false }
-        let host = rawHost.contains(":") && !rawHost.hasPrefix("[") ? "[\(rawHost)]" : rawHost
+              let host = url.host?.lowercased(), url.user == nil, url.password == nil else { return false }
         // 画面を持たないので、自分自身（手元の同じポート）のページ以外から来る理由が無い。
-        guard scheme == "http", loopbackHosts.contains(host) else { return false }
+        guard scheme == "http", isLoopbackHostName(host) else { return false }
         if let p = url.port { return p == port }
         return port == 80
     }

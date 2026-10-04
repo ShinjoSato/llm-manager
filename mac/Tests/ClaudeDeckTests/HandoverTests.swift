@@ -4,12 +4,12 @@ import Darwin
 
 final class SessionIdValidationTests: XCTestCase {
     func testAcceptsUUID() {
-        XCTAssertTrue(SessionHandover.isValidSessionId("acb12868-4061-4d7e-987c-0522878e518d"))
+        XCTAssertTrue(SessionHandover.isResumableSessionId("acb12868-4061-4d7e-987c-0522878e518d"))
     }
 
     func testRejectsShellMetacharacters() {
         for bad in ["", "a b", "a;rm -rf ~", "$(id)", "`id`", "a\nb", "../x", "a'b", "ａ", String(repeating: "a", count: 129)] {
-            XCTAssertFalse(SessionHandover.isValidSessionId(bad), bad)
+            XCTAssertFalse(SessionHandover.isResumableSessionId(bad), bad)
         }
     }
 
@@ -17,7 +17,7 @@ final class SessionIdValidationTests: XCTestCase {
         for bad in ["-p", "--print", "--dangerously-skip-permissions", "-pacb12868-4061-4d7e-987c-0522878e518d",
                     "-cb12868-4061-4d7e-987c-0522878e518d", "acb12868-4061-4d7e-987c-0522878e518d -p",
                     "acb1286840614d7e987c0522878e518d", "acb12868-4061-4d7e-987c-0522878e518"] {
-            XCTAssertFalse(SessionHandover.isValidSessionId(bad), bad)
+            XCTAssertFalse(SessionHandover.isResumableSessionId(bad), bad)
             XCTAssertNil(SessionHandover.resumeArgument(bad), bad)
         }
     }
@@ -305,13 +305,9 @@ final class SessionTerminatorTests: XCTestCase {
 }
 
 final class RelayNotesTests: XCTestCase {
-    private func user(_ id: String, _ text: String, at: Double?) -> TranscriptItem {
-        TranscriptItem(id: id, kind: .user, at: at, text: text, tool: nil, parentId: nil)
-    }
+    private func user(_ id: String, _ text: String, at: Double?) -> TranscriptItem { TestItem.user(id, text, at: at) }
 
-    private func assistant(_ id: String, at: Double?) -> TranscriptItem {
-        TranscriptItem(id: id, kind: .assistant, at: at, text: id, tool: nil, parentId: nil)
-    }
+    private func assistant(_ id: String, at: Double?) -> TranscriptItem { TestItem.assistant(id, at: at) }
 
     func testNotesAreInsertedByTime() {
         let items = [user("u1", "最初", at: 1000), assistant("a1", at: 2000), user("u2", "次", at: 5000), assistant("a2", at: 6000)]

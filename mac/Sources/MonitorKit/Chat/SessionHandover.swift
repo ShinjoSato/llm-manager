@@ -4,13 +4,13 @@ import Darwin
 /// 外部（ターミナル等）で動いている claude をアプリに引き継ぐための判定と終了処理。
 public enum SessionHandover {
     /// シェルのコマンド行に埋め込むので UUID の形だけを通す（`-p` 等のオプションに化けさせない）。
-    public static func isValidSessionId(_ id: String) -> Bool {
+    public static func isResumableSessionId(_ id: String) -> Bool {
         id.wholeMatch(of: #/[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}/#) != nil
     }
 
     /// `claude` に渡す再開の引数。値が次の引数として解釈されないよう `=` でつなぐ。
     public static func resumeArgument(_ id: String) -> String? {
-        isValidSessionId(id) ? "--resume=\(id)" : nil
+        isResumableSessionId(id) ? "--resume=\(id)" : nil
     }
 
     /// ターミナルで対話起動した claude 以外は止めると元の画面（VS Code 等）が壊れるので引き継がない。

@@ -10,7 +10,6 @@ public struct TranscriptBuffer: Sendable, Equatable {
 
     public init() {}
 
-    public var lastId: String? { items.last?.id }
     public var isEmpty: Bool { items.isEmpty }
 
     /// GET を投げる直前に呼ぶ。

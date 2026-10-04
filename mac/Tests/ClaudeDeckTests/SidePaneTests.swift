@@ -153,7 +153,7 @@ final class SidePaneTests: XCTestCase {
         XCTAssertEqual(Array(pane.suffix(PaneFixture.numberedInputBox.count)), PaneFixture.numberedInputBox)
     }
 
-    /// パネルが会話の横に出ていても、本物の選択メニュー・権限プロンプトは従来どおり読める。
+    /// パネルが会話の横に出ていても、本物の選択メニュー・権限プロンプトは読める。
     func testMenusAreReadWithPaneAbove() throws {
         for (menu, expected) in [(PaneFixture.askMenu, InputBlock.menu), (PaneFixture.planMenu, .menu), (PaneFixture.permissionMenu, .permission)] {
             let screen = PaneFixture.paneRows + [PaneFixture.fullRule] + menu

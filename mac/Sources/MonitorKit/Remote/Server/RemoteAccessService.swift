@@ -7,7 +7,7 @@ import Observation
 @MainActor
 @Observable
 public final class RemoteAccessService {
-    public private(set) var state: LoopbackServerState = .stopped
+    public private(set) var state: HTTPServerState = .stopped
     /// 待ち受けているアドレス（LAN の IPv4）。
     public private(set) var listeningAddress: String?
     public private(set) var devices: [RemoteDevice] = []
@@ -28,7 +28,7 @@ public final class RemoteAccessService {
     @ObservationIgnored private let transcripts: RemoteTranscriptSource
     @ObservationIgnored private let serverName: String
     @ObservationIgnored private let localHostName: String?
-    @ObservationIgnored private var server: LoopbackHTTPServer?
+    @ObservationIgnored private var server: HTTPServer?
     @ObservationIgnored private var identity: TLSIdentityFiles.Loaded?
     @ObservationIgnored private var offerExpiry: Task<Void, Never>?
     /// 閉じている途中の前の待ち受け（ポートを手放してから次を開くため）。
@@ -94,7 +94,7 @@ public final class RemoteAccessService {
         }
         let routes = RemoteRoutes(pairing: pairing, throttle: throttle, transcripts: transcripts, events: events,
                                   controlRef: controlRef, serverName: serverName)
-        let server = LoopbackHTTPServer(options: routes.serverOptions(bindHost: host, tls: identity!.serverIdentity)) { request in
+        let server = HTTPServer(options: routes.serverOptions(bindHost: host, tls: identity!.serverIdentity)) { request in
             await routes.handle(request)
         }
         self.server = server

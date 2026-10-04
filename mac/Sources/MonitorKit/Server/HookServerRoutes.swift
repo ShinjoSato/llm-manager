@@ -1,11 +1,8 @@
 import Foundation
 
-/// アプリ内サーバーの口（移植元: 旧 monitor（削除済み）の src/server.ts のうち外から叩かれるものだけ）。
-///   GET  /api/health                 疎通確認
-///   POST /hook                       Claude Code のフックから状態遷移を受け取る
-///   POST /api/channel/permissions    チャネル（claude-deck-channel）からの権限確認（判断が出るまで待たせる）
+/// アプリ内サーバー（:8766）の口: `GET /api/health`・`POST /hook`・`POST /api/channel/permissions`（判断が出るまで待たせる）。
 /// 認証が無く承認の口もあるので、ループバックでしか待ち受けず、Host / Origin / 接続元も確かめる。
-public enum MonitorHTTPRoutes {
+public enum HookServerRoutes {
     /// 既定の待ち受け。`~/.claude/settings.json` のフックと claude-deck-channel がこのポートを宛先にしている。
     public static let defaultPort = 8766
 
@@ -54,7 +51,7 @@ public enum MonitorHTTPRoutes {
     }
 
     static func jsonBody(_ request: HTTPRequest) -> Body {
-        guard request.header("content-type")?.lowercased().hasPrefix("application/json") == true else {
+        guard request.isJSONContentType else {
             return .rejected(.json(415, ["ok": false, "error": "content-type must be application/json"]))
         }
         guard let object = JSONLoose.object(request.body) else {

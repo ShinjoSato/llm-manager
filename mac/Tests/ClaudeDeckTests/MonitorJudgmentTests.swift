@@ -1,8 +1,6 @@
 import XCTest
 @testable import MonitorKit
 
-// 移植元: 旧 monitor（削除済み）の test/attention.test.ts・usage.test.ts・origin.test.ts と同じ観点。
-
 final class AttentionTests: XCTestCase {
     func testNeedsAttention() {
         XCTAssertTrue(Attention.needsAttention(.permission))
@@ -113,21 +111,6 @@ final class UsageReaderTests: XCTestCase {
         XCTAssertEqual(UsageReader.read(url)?.fiveHour?.usedPercentage, 42.7)
         try Data("{ half written".utf8).write(to: url)
         XCTAssertNil(UsageReader.read(url))
-    }
-
-    func testReadsNewestOfNewAndLegacy() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("usage-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let current = dir.appendingPathComponent("usage.json")
-        let legacy = dir.appendingPathComponent("claude-usage.json")
-        XCTAssertNil(UsageReader.readNewest([current, legacy, nil]))
-        try Data(#"{"fetchedAt":100,"fiveHour":{"usedPercentage":10}}"#.utf8).write(to: legacy)
-        XCTAssertEqual(UsageReader.readNewest([current, legacy])?.fiveHour?.usedPercentage, 10, "新しい場所が無ければ旧を読む")
-        try Data(#"{"fetchedAt":200,"fiveHour":{"usedPercentage":20}}"#.utf8).write(to: current)
-        XCTAssertEqual(UsageReader.readNewest([current, legacy])?.fiveHour?.usedPercentage, 20)
-        try Data(#"{"fetchedAt":300,"fiveHour":{"usedPercentage":30}}"#.utf8).write(to: legacy)
-        XCTAssertEqual(UsageReader.readNewest([current, legacy])?.fiveHour?.usedPercentage, 30, "取得時刻の新しい方を使う")
     }
 }
 

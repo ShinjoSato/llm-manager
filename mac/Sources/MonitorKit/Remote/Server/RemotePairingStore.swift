@@ -81,7 +81,7 @@ public final class RemotePairingStore: @unchecked Sendable {
     public func pair(token: String, deviceName: String) -> PairOutcome {
         let presented = Self.hash(token)
         let result: PairOutcome = lock.withLock {
-            guard let current = ticket, current.expiresAt > now(), Self.constantTimeEqual(current.hash, presented) else {
+            guard let current = ticket, current.expiresAt > now(), RemotePinning.constantTimeEqual(current.hash, presented) else {
                 if let current = ticket, current.expiresAt <= now() { ticket = nil }
                 return .rejected
             }
@@ -105,7 +105,7 @@ public final class RemotePairingStore: @unchecked Sendable {
         let hash = Self.hash(token).hexString
         var changed = false
         let device: RemoteDevice? = lock.withLock {
-            guard var device = devicesById.values.first(where: { Self.constantTimeEqual(Data($0.tokenHash.utf8), Data(hash.utf8)) }) else {
+            guard var device = devicesById.values.first(where: { RemotePinning.constantTimeEqual(Data($0.tokenHash.utf8), Data(hash.utf8)) }) else {
                 return nil
             }
             let at = now()
@@ -203,11 +203,6 @@ public final class RemotePairingStore: @unchecked Sendable {
     }
 
     static func hash(_ token: String) -> Data { Data(SHA256.hash(data: Data(token.utf8))) }
-
-    static func constantTimeEqual(_ a: Data, _ b: Data) -> Bool {
-        guard a.count == b.count else { return false }
-        return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
-    }
 
     /// 一覧に出す名前。制御文字を落とし、長すぎれば切る。
     static func sanitizedName(_ raw: String) -> String {

@@ -2,45 +2,36 @@ import AppKit
 import SwiftTerm
 import MonitorKit
 
-/// Claude Code の作業状態（ペイン見出しのバッジ表示に使う）。
+/// Claude Code の作業状態（ルームのバッジ・並び順に使う）。
 enum ClaudeStatus: Equatable {
     case working        // 出力が流れている（生成中）
     case waitingInput   // 権限確認・選択メニュー・質問プロンプトを検出（要応答）
     case idle           // 出力停止 かつ プロンプト無し（待機/完了）
 }
 
-/// Claude Code を PTY でホストする端末ビュー。
-///
-/// 設計上の安全装置（料金事故をゼロにする）:
-///  - 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去する。
-///    API 課金経路が存在しないため、Max 枠の上限に達しても「待つ」だけで課金は発生しない。
-///  - headless（`claude -p` / Agent SDK）の起動口は一切設けない。
-///
-/// さらに、上限到達（公式の残量 100% か、画面末尾の上限表示）を検知したらセッションを強制終了する。
+/// Claude Code を PTY でホストする端末ビュー。料金事故をゼロにするため、子の環境から API キーを必ず除き、headless の起動口は設けない。
+/// 上限到達（公式の残量 100% か、画面末尾の上限表示）を検知したらセッションを強制終了する。
 final class ClaudeTerminalView: LocalProcessTerminalView {
 
     /// 上限到達を検知したときに呼ばれる（メインスレッド）。
     var onLimitReached: (() -> Void)?
 
-    /// 作業ステータスが変化したときに呼ばれる（メインスレッド）。
-    var onStatusChanged: ((ClaudeStatus) -> Void)?
+    /// 画面から読んだ状態。
+    struct ScreenState: Equatable {
+        var status: ClaudeStatus = .idle
+        var permissionPrompt: PermissionPrompt?
+        /// 入力欄への送信を止める状態（権限プロンプト・選択メニュー）。
+        var inputBlock: InputBlock?
+        /// 選択メニューの中身（読み取れなければ nil。inputBlock が .menu でも nil はありうる）。
+        var menuPrompt: MenuPrompt?
+        /// 選択メニューは出ているが中身を読めない時の写し。
+        var unreadableMenu: UnreadableMenu?
+    }
 
-    /// 画面に出ている権限プロンプトが変わったときに呼ばれる（メインスレッド）。
-    var onPermissionPromptChanged: ((PermissionPrompt?) -> Void)?
+    /// `screenState` が変わったときに呼ばれる（メインスレッド）。
+    var onScreenStateChanged: ((ScreenState) -> Void)?
 
-    /// 入力欄への送信を止める状態が変わったときに呼ばれる（メインスレッド）。
-    var onInputBlockChanged: ((InputBlock?) -> Void)?
-
-    /// 画面に出ている選択メニューの中身が変わったときに呼ばれる（メインスレッド）。
-    var onMenuPromptChanged: ((MenuPrompt?) -> Void)?
-
-    /// 中身を読み取れない選択メニューの写しが変わったときに呼ばれる（メインスレッド）。
-    var onUnreadableMenuChanged: ((UnreadableMenu?) -> Void)?
-
-    private(set) var permissionPrompt: PermissionPrompt?
-    private(set) var inputBlock: InputBlock?
-    private(set) var menuPrompt: MenuPrompt?
-    private(set) var unreadableMenu: UnreadableMenu?
+    private(set) var screenState = ScreenState()
     /// 選択肢へ ❯ を動かしている最中。重ねて動かすと互いのキーで行き先がずれる。
     private(set) var isNavigatingMenu = false
     /// 未反映の矢印を残して移動をやめた印。外れるまで次の移動を始めない。
@@ -54,22 +45,17 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     // MARK: - ステータス検知（ハイブリッド: 活動量 + プロンプト文言）
     private var statusTimer: Timer?
     private var lastDataTime = Date()
-    private(set) var currentStatus: ClaudeStatus = .idle
 
     /// 「最後の出力からこの秒数以内」なら出力が流れている＝作業中とみなす（活動量ベース）。
     private static let busyThreshold: TimeInterval = 1.0
 
-    /// 実行中インジケータ。これが現在画面に出ている間は、出力が一時的に止まっても作業中とみなす。
-    /// 長い bash 実行やネット待ちで出力が途切れても「完了」へ誤遷移しないための補助シグナル。
-    /// ⚠️ Claude Code の TUI 文言に合わせて要・実機検証。
+    /// 画面に出ている間は出力が止まっても作業中とみなす（長いコマンドやネット待ちで「完了」に見せないため）。
     private static let busyMarkers: [String] = [
         "esc to interrupt"
     ]
 
-    /// 指定プロジェクトのディレクトリで `claude` を起動する。
-    /// ログインシェル経由で PATH（~/.local/bin など）を継承しつつ、API キーは二重に遮断する。
-    /// `resumeSessionId` があれば対話起動のまま `claude --resume=<id>` で会話を再開する。不正な id なら起動せず false。
-    @discardableResult
+    /// `directory` で `claude` を起動する（ログインシェルで PATH を得て、API キーは環境とシェルの二重で外す）。
+    /// `resumeSessionId` があれば `--resume=<id>` で再開する。不正な id なら起動せず false。
     func launchClaude(in directory: String, resumeSessionId: String? = nil) -> Bool {
         var command = "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec claude"
         if let resumeSessionId {
@@ -80,8 +66,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let env = Self.buildSafeEnvironment()
         startProcess(
             executable: "/bin/zsh",
-            // -l ログインシェルで PATH を取得、-i 対話、-c コマンド。
-            // 渡す環境からは既に API キーを抜いてあるが、念のためシェル側でも unset してから exec。
+            // -l で PATH を得る。環境から抜いた API キーをシェルの設定が戻しても効かないよう、unset してから exec。
             args: ["-lic", command],
             environment: env,
             execName: nil,
@@ -112,16 +97,14 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         statusTimer = timer
     }
 
-    /// ステータス監視を停止する（セッション終了・上限到達・ペインクローズ時）。
+    /// 画面の監視を止める（終了・上限到達・ルームを閉じた時）。
     func stopStatusMonitoring() {
         statusTimer?.invalidate()
         statusTimer = nil
     }
 
-    /// 現在のステータスを判定し、変化時のみ通知する。
-    /// 判定は端末の「現在画面の下数行」を直接読む（履歴が累積する scanBuffer は使わない）ため、
-    /// プロンプト応答後に古い文言が残って誤判定する問題が起きない。
-    /// dataReceived も Timer も SwiftTerm 既定キュー（main）上で動くので端末バッファ参照は安全。
+    /// 実画面から状態を読み、変わった時だけ通知する（履歴ではなく今の画面を読むので、答え終えた確認を引きずらない）。
+    /// dataReceived も Timer も main で動くので、端末バッファをそのまま読める。
     func evaluateStatus() {
         let screen = screenLines()
         let tail = Self.tailText(screen, lines: 8)
@@ -130,65 +113,50 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let prompt = PermissionPrompt.parse(screen: screen)
         // InputBlock.detect と同じ判定を、読み取り済みの権限プロンプトを使い回して行う。
         let block: InputBlock? = prompt != nil ? .permission : (ChoiceMenu.isShowing(screen: screen) ? .menu : nil)
-        let newStatus: ClaudeStatus
+        let status: ClaudeStatus
         if block != nil {
-            newStatus = .waitingInput
+            status = .waitingInput
         } else if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
-            newStatus = .working
+            status = .working
         } else if InputBlock.looksWaiting(tail: tail) {
             // 文言だけの判定は返答本文と取り違えうるので、バッジにだけ使い送信は止めない。
-            newStatus = .waitingInput
+            status = .waitingInput
         } else {
-            newStatus = .idle
-        }
-        if prompt != permissionPrompt {
-            permissionPrompt = prompt
-            onPermissionPromptChanged?(prompt)
-        }
-        if block != inputBlock {
-            inputBlock = block
-            onInputBlockChanged?(block)
+            status = .idle
         }
         let menu = block == .menu ? ChoiceMenu.parseShowing(screen: screen, highlight: highlightReader()) : nil
         releasePendingArrowHoldIfDone(cursor: menu?.cursor)
-        if menu != menuPrompt {
-            menuPrompt = menu
-            onMenuPromptChanged?(menu)
-        }
         let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen) : nil
-        if unreadable != unreadableMenu {
-            unreadableMenu = unreadable
-            onUnreadableMenuChanged?(unreadable)
-        }
         logMenuScreen(menu: menu, unreadable: unreadable, screen: screen)
-        guard newStatus != currentStatus else { return }
-        currentStatus = newStatus
-        onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
+        let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable)
+        guard next != screenState else { return }
+        screenState = next
+        onScreenStateChanged?(next)   // Timer は main runloop なのでメインスレッド
     }
 
-    /// アプリが今いじっている実画面の全行（上から順・右端の空白は除く）。右に縦線で区切った別の欄（差分パネル等）は除く。
-    /// ターミナル表示で上にスクロールしていても、表示位置（yDisp）ではなく末尾の `rows` 行を読む。
+    /// 実画面（バッファ末尾の `rows` 行）。ターミナル表示のスクロール位置（yDisp）に依らない。
     /// SwiftTerm は `lines.count == yBase + rows` を保つが yBase を公開していないので、行数を探って求める。
-    func screenLines() -> [String] {
+    private func rawScreenLines() -> [BufferLine] {
         let term = getTerminal()
         let rows = term.rows
         guard rows > 0 else { return [] }
         let top = term.buffer.totalLinesTrimmed
         let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
-        let base = max(0, count - rows)
-        return TerminalScreen.mainPane((base..<count).compactMap { term.getScrollInvariantLine(row: top + $0).map(Self.text(of:)) })
+        return (max(0, count - rows)..<count).compactMap { term.getScrollInvariantLine(row: top + $0) }
+    }
+
+    /// 実画面の全行（右端の空白は除く）。右に縦線で区切った別の欄（差分パネル等）は除く。
+    func screenLines() -> [String] {
+        TerminalScreen.mainPane(rawScreenLines().map(Self.text(of:)))
     }
 
     /// 実画面の行（`screenLines` の添字）の各文字に背景色（か反転）が付いているか。タブ行の今のタブを読むのに使う。
     /// 文字の並びは `screenLines` と同じく全角の後半セルを飛ばして数える。
     private func highlightReader() -> (Int) -> [Bool]? {
-        let term = getTerminal()
-        let rows = term.rows
-        let top = term.buffer.totalLinesTrimmed
-        let count = TerminalScreen.lineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
-        let base = max(0, count - rows)
+        let lines = rawScreenLines()
         return { row in
-            guard rows > 0, let line = term.getScrollInvariantLine(row: top + base + row) else { return nil }
+            guard lines.indices.contains(row) else { return nil }
+            let line = lines[row]
             var flags: [Bool] = []
             var text = ""
             _ = line.translateToString(trimRight: true, skipNullCellsFollowingWide: true) { cell in
@@ -257,9 +225,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         case leftover
     }
 
-    /// チャット欄の本文を入力欄に貼り付けてから Enter で送る。作業中でも Claude Code 側でキューに積まれる。
-    /// 貼り付けの前に必ず判定するので、止める時は入力欄に何も入れない。
-    /// `.started` を返した時だけ、Enter を送った・途中でやめた・端末が無くなったのいずれかを `completion` に 1 回返す。
+    /// 本文を入力欄に貼り付けてから Enter で送る（作業中でも Claude Code がキューに積む）。止める時は何も貼らない。
+    /// `.started` の時だけ、結末（送った・途中でやめた・端末が無くなった）を `completion` に 1 回返す。
     func sendMessage(_ text: String, attachments: [Attachment] = [], completion: @escaping (SendCompletion) -> Void) -> SendResult {
         guard !isSending else { return .busy }
         let screen = screenLines()
@@ -535,13 +502,11 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         super.dataReceived(slice: slice)
         lastDataTime = Date()   // 活動量ベースの作業中判定に使う
         guard !limitHandled else { return }
-        // UTF-8 として lossy デコード（途中で切れても落ちない）
-        let chunk = String(decoding: slice, as: UTF8.self)
-        scan(chunk)
+        scan()
     }
 
     /// 生の出力は TUI がカーソル移動で語を並べるので照合できない。描画後の実画面の末尾を間引いて見る。
-    private func scan(_ chunk: String) {
+    private func scan() {
         guard !limitCheckPending else { return }
         limitCheckPending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
@@ -573,17 +538,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         return info.pbi_ppid == UInt32(getpid()) && info.pbi_status != UInt32(SZOMB)
     }
 
-    /// 実画面の全行。表示位置（yDisp）ではなくバッファ末尾の `rows` 行を読む。空白を書かずに飛ばしたセル（NUL）は空白に戻す。
+    /// 上限の検査は右の別の欄も含めて全幅で読む（`screenLines` と違い欄で切らない）。
     private func limitScreenLines() -> [String] {
-        let term = getTerminal()
-        let rows = term.rows
-        guard rows > 0 else { return [] }
-        let top = term.buffer.totalLinesTrimmed
-        let count = LimitGuard.bufferLineCount(rows: rows) { term.getScrollInvariantLine(row: top + $0) != nil }
-        return (max(0, count - rows)..<count).compactMap { row in
-            term.getScrollInvariantLine(row: top + row).map {
-                $0.translateToString(trimRight: true, skipNullCellsFollowingWide: true).replacingOccurrences(of: "\u{0}", with: " ")
-            }
-        }
+        rawScreenLines().map(Self.text(of:))
     }
 }

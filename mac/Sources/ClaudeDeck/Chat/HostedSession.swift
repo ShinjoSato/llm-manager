@@ -21,14 +21,13 @@ final class HostedSession: Identifiable {
     @ObservationIgnored private let observer = TerminalProcessObserver()
 
     private(set) var pid: Int32?
-    private(set) var localStatus: ClaudeStatus = .idle
-    private(set) var permissionPrompt: PermissionPrompt?
-    /// 入力欄への送信を止める状態（権限プロンプト・選択メニュー）。
-    private(set) var inputBlock: InputBlock?
-    /// 端末に出ている選択メニューの中身（読み取れなければ nil。inputBlock が .menu でも nil はありうる）。
-    private(set) var menuPrompt: MenuPrompt?
-    /// 選択メニューは出ているが中身を読めない時の写し。
-    private(set) var unreadableMenu: UnreadableMenu?
+    /// 端末の画面から読んだ状態（終了後は状態以外を消す）。
+    private(set) var screen = ClaudeTerminalView.ScreenState()
+    var localStatus: ClaudeStatus { screen.status }
+    var permissionPrompt: PermissionPrompt? { screen.permissionPrompt }
+    var inputBlock: InputBlock? { screen.inputBlock }
+    var menuPrompt: MenuPrompt? { screen.menuPrompt }
+    var unreadableMenu: UnreadableMenu? { screen.unreadableMenu }
     /// チャット欄からの送信の途中（画像の取り込み待ち〜Enter）。
     private(set) var isSending = false
     private(set) var end: End?
@@ -57,26 +56,7 @@ final class HostedSession: Identifiable {
             terminal.setFrameSize(NSSize(width: width, height: terminal.frame.height))
         }
         terminal.processDelegate = observer
-        terminal.onStatusChanged = { [weak self] status in
-            self?.localStatus = status
-            self?.lastChangeAt = Date()
-        }
-        terminal.onPermissionPromptChanged = { [weak self] in
-            self?.permissionPrompt = $0
-            self?.trackCard()
-        }
-        terminal.onInputBlockChanged = { [weak self] in
-            self?.inputBlock = $0
-            self?.trackCard()
-        }
-        terminal.onMenuPromptChanged = { [weak self] in
-            self?.menuPrompt = $0
-            self?.trackCard()
-        }
-        terminal.onUnreadableMenuChanged = { [weak self] in
-            self?.unreadableMenu = $0
-            self?.trackCard()
-        }
+        terminal.onScreenStateChanged = { [weak self] in self?.update($0) }
         terminal.onSendingChanged = { [weak self] in self?.isSending = $0 }
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
@@ -150,16 +130,14 @@ final class HostedSession: Identifiable {
         promptTracker.markAnswered(id)
     }
 
-    private func trackCard() {
+    private func update(_ next: ClaudeTerminalView.ScreenState) {
+        if next.status != screen.status { lastChangeAt = Date() }
+        screen = next
         promptTracker.observe(terminalCard)
     }
 
     private func clearScreenState() {
-        permissionPrompt = nil
-        inputBlock = nil
-        menuPrompt = nil
-        unreadableMenu = nil
-        trackCard()
+        update(ClaudeTerminalView.ScreenState(status: screen.status))
     }
 
     private func handleLimitReached() {

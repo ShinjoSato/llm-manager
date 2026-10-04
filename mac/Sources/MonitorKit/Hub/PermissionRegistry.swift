@@ -32,7 +32,7 @@ public struct PermissionRequestInput: Sendable, Equatable {
     public var key: String { PermissionRelay.pendingKey(pid: pid, requestId: requestId) }
 }
 
-/// 権限確認の中継の判定（移植元: 旧 monitor（削除済み）の src/permissions.ts）。
+/// 権限確認の中継の判定。
 public enum PermissionRelay {
     /// チャネルが取りに来なくなったら保留を消す。長ポーリングの一巡より十分長くする。
     public static let pendingTTL: Double = 90_000
@@ -48,11 +48,6 @@ public enum PermissionRelay {
     static let maxToolName = 80
     static let maxDescription = 600
     static let maxInputPreview = 4_000
-
-    public static func isDecision(_ value: Any?) -> PermissionDecision? {
-        guard let s = value as? String else { return nil }
-        return PermissionDecision(rawValue: s)
-    }
 
     public static func pendingKey(pid: Int32?, requestId: String) -> String {
         "\(pid.map(String.init) ?? "x")-\(requestId)"
@@ -84,7 +79,7 @@ public enum PermissionRelay {
         )
     }
 
-    /// 表示だけに使う文字列なので、画面を守れる長さで切る（JS と同じく UTF-16 単位で数える）。
+    /// 表示だけに使う文字列なので、画面を守れる長さで切る（UTF-16 単位で数える）。
     static func clip(_ text: String, _ max: Int) -> String {
         guard text.utf16.count > max else { return text }
         let cut = String(decoding: Array(text.utf16.prefix(max)), as: UTF16.self)

@@ -2,7 +2,7 @@ import Foundation
 
 /// SIGTERM / SIGINT の既定動作（即終了）だけを外す。
 public enum TerminationSignals {
-    /// SIG_IGN は exec を越えて子（端末ペインの claude 等）に残るが、登録したハンドラは exec で既定に戻るので漏れない。
+    /// SIG_IGN は exec を越えて子（PTY でホストする claude 等）に残るが、登録したハンドラは exec で既定に戻るので漏れない。
     public static func installNoopHandlers(for signals: [Int32] = [SIGTERM, SIGINT]) {
         for sig in signals {
             var action = sigaction()

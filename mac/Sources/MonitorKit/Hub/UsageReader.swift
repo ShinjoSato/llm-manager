@@ -8,12 +8,7 @@ public enum UsageReader {
             return URL(fileURLWithPath: raw)
         }
         let home = env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
-        return URL(fileURLWithPath: home).appendingPathComponent("Library/Application Support/claude-deck/usage.json")
-    }
-
-    /// 旧 `data/claude-usage.json` が手元に残っていても、取得時刻の新しい方を使えば古い値に引きずられない。
-    public static func readNewest(_ urls: [URL?]) -> UsageSnapshot? {
-        urls.compactMap { read($0) }.max { $0.fetchedAt < $1.fetchedAt }
+        return DeckPaths.applicationSupport(home: home).appendingPathComponent("usage.json")
     }
 
     /// ファイルを読む。未生成・壊れていれば nil（statusLine 未設定でも動くように）。

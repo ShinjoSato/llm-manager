@@ -6,9 +6,9 @@ extension ChatModel: RemoteControl {
     func remoteState() -> RemoteState {
         // mac の検索欄の絞り込みは iPhone に持ち込まない。
         let keys = rooms.map { room in
-            RoomKey(id: RemoteRoomID(room.id).string, name: room.name, status: room.status, activityAt: room.activityAt, searchText: "")
+            RoomKey(id: room.id.string, name: room.name, status: room.status, activityAt: room.activityAt, searchText: "")
         }
-        let byId = Dictionary(rooms.map { (RemoteRoomID($0.id).string, $0) }, uniquingKeysWith: { a, _ in a })
+        let byId = Dictionary(rooms.map { ($0.id.string, $0) }, uniquingKeysWith: { a, _ in a })
         let ordered = RoomGrouping.group(keys).flatMap { group in group.ids.compactMap { byId[$0] } }
         return RemoteState(rooms: ordered.map(remoteRoom), usage: store.usage, monitoring: store.connection.isConnected)
     }
@@ -34,7 +34,7 @@ extension ChatModel: RemoteControl {
             cards = RemoteRoomCards(channelsPending: false, card: nil, generation: 0)
             send = RemoteSendState(mode: .relay, disabledReason: inputDisabledReason(for: room))
         }
-        return RemoteRoom(id: RemoteRoomID(room.id).string, kind: room.hosted == nil ? .external : .hosted,
+        return RemoteRoom(id: room.id.string, kind: room.hosted == nil ? .external : .hosted,
                           phase: RemoteRoomPhase(RoomPhase(status: room.status)), name: room.name, branch: room.branch,
                           status: room.status, line: room.line, activityAt: room.activityAt, sessionId: room.sessionId,
                           cwd: room.cwd, ended: ended, session: room.snapshot, permissions: permissions,
@@ -44,7 +44,7 @@ extension ChatModel: RemoteControl {
 
     private func room(_ roomId: String) -> Room? {
         guard let id = RemoteRoomID(roomId) else { return nil }
-        return rooms.first { RemoteRoomID($0.id) == id }
+        return rooms.first { $0.id == id }
     }
 
     /// 照合に使う今の端末の様子（一覧のカードと同じ組み立て）。
@@ -122,41 +122,23 @@ extension ChatModel: RemoteControl {
         if let reason = Self.inputDisabledReason(for: room) {
             return .failure(RemoteChecks.sendBlockedCode(ended: session.end != nil, inputBlock: session.inputBlock), reason)
         }
-        guard !session.isSending else { return .failure("busy", "前の送信が終わっていません。少し待ってから送ってください。") }
+        if session.isSending, let busy = ClaudeTerminalView.SendResult.busy.refusal { return .failure(busy.code, busy.message) }
         // mac の入力欄の書きかけ・添付には触れない（iPhone の本文だけを送る）。
         return await RemoteOperation.wait { done in
             let result = session.send(text) { completion in done(Self.result(of: completion)) }
-            switch result {
-            case .started:
-                break
-            case .leftover:
-                done(.failure("leftover", "端末側の入力欄に前回の本文が残っているようです。"
-                    + "このままもう一度送ると、残っているものの後ろにつながって送られます。"))
-            case .blocked(.permission):
-                done(.failure("blocked_permission", "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。"))
-            case .blocked(.menu):
-                done(.failure("blocked_menu", "選択肢が出ているため送りませんでした（今 Enter を送るとその選択が確定します）。選択肢に答えてください。"))
-            case .busy:
-                done(.failure("busy", "前の送信が終わっていません。少し待ってから送ってください。"))
-            case .empty:
-                done(.failure("invalid", "本文が空です。"))
-            case nil:
+            if result == nil {
                 done(.failure("ended", "claude は動いていません。"))
+            } else if let refusal = result?.refusal {
+                done(.failure(refusal.code, refusal.message))
             }
         }
     }
 
     static func result(of completion: SendCompletion) -> RemoteActionResult {
         switch completion {
-        case .submitted:
-            return .success("submitted")
-        case .abortedBeforeBody:
-            return .failure("aborted", "送信の途中で選択肢が出たため、本文を貼る前に取りやめました。")
-        case .abortedAfterBody:
-            return .failure("aborted", "送信の途中で選択肢が出たため、本文を貼った後、Enter を押さずに取りやめました。"
-                + "端末側の入力欄に本文が残っています。選択肢に答えた後に送ると、残っている本文とつながって送られます。")
-        case .ended:
-            return .failure("ended", "claude が終了したため送れませんでした。")
+        case .submitted: return .success("submitted")
+        case .ended: return .failure("ended", completion.remoteNotice ?? "")
+        case .abortedBeforeBody, .abortedAfterBody: return .failure("aborted", completion.remoteNotice ?? "")
         }
     }
 
@@ -171,14 +153,5 @@ extension ChatModel: RemoteControl {
             return .failure("failed", "伝言を送れませんでした: \(reason)")
         }
         return .success("relayed")
-    }
-}
-
-extension RemoteRoomID {
-    init(_ id: RoomID) {
-        switch id {
-        case .hosted(let uuid): self = .hosted(uuid)
-        case .external(let sessionId): self = .external(sessionId)
-        }
     }
 }

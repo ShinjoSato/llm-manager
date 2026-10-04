@@ -24,6 +24,9 @@ public struct HTTPRequest: Sendable {
     }
 
     public func header(_ name: String) -> String? { headers[name.lowercased()] }
+
+    /// 本文が JSON と名乗っているか（フォーム送信等で別オリジンから投げさせないため）。
+    var isJSONContentType: Bool { header("content-type")?.lowercased().hasPrefix("application/json") == true }
 }
 
 /// 送り続ける応答の本文（Server-Sent Events 等）。流し終えるか相手が切れば接続を閉じる。
@@ -51,10 +54,9 @@ public struct HTTPResponse: Sendable, Equatable {
 
     /// JSON の応答。キャッシュさせない。
     public static func json(_ status: Int, _ object: Any) -> HTTPResponse {
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes, .sortedKeys])) ?? Data("{}".utf8)
-        return HTTPResponse(status: status,
-                            headers: [("Content-Type", "application/json; charset=utf-8"), ("Cache-Control", "no-store")],
-                            body: data)
+        HTTPResponse(status: status,
+                     headers: [("Content-Type", "application/json; charset=utf-8"), ("Cache-Control", "no-store")],
+                     body: JSONLoose.data(object, options: [.withoutEscapingSlashes, .sortedKeys]))
     }
 
     public static func == (a: HTTPResponse, b: HTTPResponse) -> Bool {
@@ -109,11 +111,11 @@ public struct HTTPResponse: Sendable, Equatable {
 }
 
 /// 待ち受けの状態。
-public enum LoopbackServerState: Sendable, Equatable {
+public enum HTTPServerState: Sendable, Equatable {
     case stopped
     case starting
     case listening(port: Int)
-    /// 別のプロセス（旧 monitor 等）がポートを使っている。
+    /// 別のプロセスがポートを使っている。
     case portInUse(port: Int)
     case failed(String)
 }
@@ -152,15 +154,15 @@ public struct HTTPServerOptions: Sendable {
 
     public init(bindHost: NWEndpoint.Host = .ipv4(.loopback),
                 tls: TLSServerIdentity? = nil,
-                maxConnections: Int = LoopbackHTTPServer.maxConnections,
-                maxBodyBytes: Int = LoopbackHTTPServer.maxBodyBytes,
-                maxHeaderBytes: Int = LoopbackHTTPServer.maxHeaderBytes,
-                readTimeout: TimeInterval = LoopbackHTTPServer.readTimeout,
+                maxConnections: Int = HTTPServer.maxConnections,
+                maxBodyBytes: Int = HTTPServer.maxBodyBytes,
+                maxHeaderBytes: Int = HTTPServer.maxHeaderBytes,
+                readTimeout: TimeInterval = HTTPServer.readTimeout,
                 maxPendingStreamBytes: Int = 4 * 1024 * 1024,
                 maxConnectionsPerAddress: Int? = nil,
                 refuseAddress: (@Sendable (String) -> Bool)? = nil,
                 keepalive: Bool = false,
-                rejection: @escaping Rejection = { MonitorHTTPRoutes.rejection($0, port: $1) }) {
+                rejection: @escaping Rejection = { HookServerRoutes.rejection($0, port: $1) }) {
         self.bindHost = bindHost
         self.tls = tls
         self.maxConnections = maxConnections
@@ -180,7 +182,7 @@ public struct HTTPServerOptions: Sendable {
 
 /// 最小の HTTP/1.1 サーバー（1 接続 1 リクエスト・Content-Length のみ）。外部ライブラリは使わない。
 /// 既定は 127.0.0.1 だけで待ち受ける。`HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限を変えられる。
-public final class LoopbackHTTPServer: @unchecked Sendable {
+public final class HTTPServer: @unchecked Sendable {
     public typealias Handler = @Sendable (HTTPRequest) async -> HTTPResponse
 
     /// 本文の上限。フックの JSON は最後の応答文などを含むので小さすぎないようにする。
@@ -199,7 +201,7 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var connectionsPerAddress: [String: Int] = [:]
-    private var stateHandler: (@Sendable (LoopbackServerState) -> Void)?
+    private var stateHandler: (@Sendable (HTTPServerState) -> Void)?
     private var requestedPort: Int = 0
     /// キュー上でだけ触る。
     private var currentPort: Int?
@@ -222,7 +224,7 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
     }
 
     /// 待ち受けを始める（既に待ち受けていれば閉じてから）。`port` が 0 なら OS が割り当てる。結果は `onState` に届く（キュー上で呼ぶ）。
-    public func start(port: Int, onState: @escaping @Sendable (LoopbackServerState) -> Void) {
+    public func start(port: Int, onState: @escaping @Sendable (HTTPServerState) -> Void) {
         queue.async { [self] in
             generation &+= 1
             let gen = generation
@@ -239,7 +241,7 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
         }
     }
 
-    private func openLocked(port: Int, onState: @escaping @Sendable (LoopbackServerState) -> Void) {
+    private func openLocked(port: Int, onState: @escaping @Sendable (HTTPServerState) -> Void) {
         stateHandler = onState
         requestedPort = port
         guard let params = Self.parameters(tls: options.tls, keepalive: options.keepalive) else {
@@ -346,7 +348,7 @@ public final class LoopbackHTTPServer: @unchecked Sendable {
         }
     }
 
-    static func state(for error: Error, port: Int) -> LoopbackServerState {
+    static func state(for error: Error, port: Int) -> HTTPServerState {
         if case NWError.posix(let code) = error, code == .EADDRINUSE { return .portInUse(port: port) }
         return .failed(String(describing: error))
     }
@@ -397,7 +399,7 @@ private final class Once: @unchecked Sendable {
 private final class ConnectionSession: @unchecked Sendable {
     private let connection: NWConnection
     private let queue: DispatchQueue
-    private let handler: LoopbackHTTPServer.Handler
+    private let handler: HTTPServer.Handler
     private let options: HTTPServerOptions
     private let boundPort: () -> Int
     private let onFinish: () -> Void
@@ -411,7 +413,7 @@ private final class ConnectionSession: @unchecked Sendable {
     /// 流し続ける応答で、送ったがまだ相手に渡っていない量。
     private var pendingStreamBytes = 0
 
-    init(connection: NWConnection, queue: DispatchQueue, handler: @escaping LoopbackHTTPServer.Handler,
+    init(connection: NWConnection, queue: DispatchQueue, handler: @escaping HTTPServer.Handler,
          options: HTTPServerOptions, boundPort: @escaping () -> Int, onFinish: @escaping () -> Void) {
         self.connection = connection
         self.queue = queue
