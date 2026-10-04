@@ -208,7 +208,7 @@ CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 `~/Library/Application Support/claude-deck/usage.json` に**原子的に**書く（同じディレクトリに一時ファイルを作って `mv`。
 作るディレクトリは 0700・ファイルは 0600）。アプリはそれを 3 秒ごとに読み、上限到達の強制終了に使う。
 
-`~/.claude/settings.json` の `statusLine` を次のように指定する（旧 `monitor/scripts/statusline.sh` を指していたら、このパスに変える）。
+`~/.claude/settings.json` の `statusLine` を次のように指定する。
 
 ```jsonc
 {
@@ -220,7 +220,6 @@ CLAUDE_DECK_SERVER_PORT=8799 swift run monitor-probe 30
 ```
 
 - 保存先は環境変数 `CLAUDE_DECK_USAGE_FILE` で差し替えられる（アプリ側も同じ変数を読む。Finder から起動したアプリには環境変数が渡らないので、通常は既定の場所のまま使う）。
-- 移行期間として、旧パス `monitor/scripts/statusline.sh` に `mac/scripts/statusline.sh` へ渡すだけの転送スクリプトを残している。settings.json を差し替える前でも使用量は新しい保存先に書かれ、上限の判定は途切れない。差し替えたら転送スクリプトは消してよい。
 - アプリは旧 `data/claude-usage.json` も手元に残っていれば読み、取得時刻の新しい方を使う（もう書かれないので、古い値に引きずられることはない）。
 - **表示を先に出し切ってから書く。** 書き込みに失敗してもステータスラインは出る。値が 1 つも無い入力では記録を上書きしない。
 - `jq` が要る。出すのは `rate_limits` 由来の表示だけなので、他に出したいものがあればスクリプトに足す。
