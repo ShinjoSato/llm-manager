@@ -49,11 +49,6 @@ public enum PermissionRelay {
     static let maxDescription = 600
     static let maxInputPreview = 4_000
 
-    public static func isDecision(_ value: Any?) -> PermissionDecision? {
-        guard let s = value as? String else { return nil }
-        return PermissionDecision(rawValue: s)
-    }
-
     public static func pendingKey(pid: Int32?, requestId: String) -> String {
         "\(pid.map(String.init) ?? "x")-\(requestId)"
     }

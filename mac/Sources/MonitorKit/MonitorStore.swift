@@ -34,7 +34,6 @@ public final class MonitorStore {
     public private(set) var permissions: [PendingPermission] = []
     /// 監視を始めるたびに増える。取りこぼしを埋める取得（transcript 等）をやり直す合図に使う。
     public private(set) var connectionEpoch = 0
-    public private(set) var lastEventAt: Date?
     public private(set) var transcriptSubscription: TranscriptSubscription = .none
     /// アプリが PTY でホストしている claude の pid → sessionId。
     public private(set) var hostedSessionIds: [Int32: String] = [:]
@@ -65,8 +64,7 @@ public final class MonitorStore {
         self.configuration = configuration
         self.registry = registry ?? ClaudeSessionRegistry(directory: configuration.claudeHome.sessionsDirectory)
         transcripts = TranscriptStore(home: configuration.claudeHome)
-        hub = SessionHub(home: configuration.claudeHome, usageFile: configuration.usageFile,
-                         legacyUsageFile: configuration.legacyUsageFile, transcripts: transcripts)
+        hub = SessionHub(home: configuration.claudeHome, usageFile: configuration.usageFile, transcripts: transcripts)
     }
 
     public var isRunning: Bool { running }
@@ -268,17 +266,6 @@ public final class MonitorStore {
         hostedSessionIds[pid]
     }
 
-    public func session(forHostedPid pid: Int32) -> SessionSnapshot? {
-        guard let id = hostedSessionIds[pid] else { return nil }
-        return session(id: id)
-    }
-
-    /// アプリの外（VSCode・別ターミナル等）で動いているセッション。
-    public var externalSessions: [SessionSnapshot] {
-        let hosted = Set(hostedSessionIds.values)
-        return sessions.filter { !hosted.contains($0.sessionId) }
-    }
-
     // MARK: - 書き込み
 
     /// そのセッションの受信箱へ伝言を送る。失敗は `HubFailure`。
@@ -294,25 +281,14 @@ public final class MonitorStore {
         if pending == nil { throw HubFailure(code: "not_found", message: "この確認はもう待っていません") }
     }
 
-    public func open(sessionId: String, in app: OpenApp) async throws {
-        try await hub.openInApp(sessionId: sessionId, app: app)
-    }
-
-    public func close(sessionId: String, in app: CloseApp = .xcode) async throws -> CloseState {
-        try await hub.closeInApp(sessionId: sessionId, app: app)
-    }
-
     // MARK: - 反映
 
     func apply(_ event: MonitorEvent) {
-        lastEventAt = Date()
         switch event {
         case .sessions(let list):
             if list != sessions { sessions = list }
             resolveHostedSessions()
             logSessionsIfChanged()
-        case .feedBatch(let items):
-            feed = Array(items.sorted { $0.id < $1.id }.suffix(feedLimit))
         case .feed(let item):
             guard !feed.contains(where: { $0.id == item.id }) else { return }
             feed.append(item)

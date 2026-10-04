@@ -38,16 +38,13 @@ final class StageLogicTests: XCTestCase {
 
     // MARK: - サブエージェント
 
-    func testJobAndEscortLine() {
+    func testJobAndSortedAgents() {
         XCTAssertEqual(StageLogic.job(for: "Explore").label, "斥候")
         XCTAssertEqual(StageLogic.job(for: "developer-plugin:code-reviewer").label, "監査役")
         XCTAssertEqual(StageLogic.job(for: nil).label, "従者")
         XCTAssertEqual(StageLogic.job(for: "unknown").label, "従者")
 
         let agents = [AgentInfo(id: "b", type: "Plan", lastActivityAt: 2), AgentInfo(id: "a", type: "Explore", lastActivityAt: 1)]
-        XCTAssertEqual(StageLogic.escortLine(agents), "斥候 ほか1名が随伴")
-        XCTAssertEqual(StageLogic.escortLine([agents[0]]), "軍師が随伴")
-        XCTAssertNil(StageLogic.escortLine([]))
         XCTAssertEqual(StageLogic.sortedAgents(agents).map(\.id), ["a", "b"])
     }
 

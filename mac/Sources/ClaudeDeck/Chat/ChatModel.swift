@@ -830,7 +830,7 @@ final class ChatModel {
 
     func xcodeProject(for room: Room) -> URL? {
         if let cached = xcodeProjects[room.cwd] { return cached }
-        let found = TerminalPaneViewController.findXcodeProject(in: room.cwd)
+        let found = XcodeFinder.find(in: room.cwd).map { URL(fileURLWithPath: $0) }
         xcodeProjects[room.cwd] = found
         return found
     }

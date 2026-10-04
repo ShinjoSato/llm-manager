@@ -4,7 +4,6 @@ import Foundation
 public enum MonitorEvent: Sendable, Equatable {
     case sessions([SessionSnapshot])
     case feed(FeedItem)
-    case feedBatch([FeedItem])
     /// statusLine 未設定なら nil。
     case usage(UsageSnapshot?)
     case permissions([PendingPermission])

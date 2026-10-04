@@ -17,7 +17,6 @@ final class TranscriptBufferTests: XCTestCase {
         buffer.apply(response(["a", "b"]), fullReplace: true)
         buffer.append([item("b"), item("c")])
         XCTAssertEqual(buffer.items.map(\.id), ["a", "b", "c"])
-        XCTAssertEqual(buffer.lastId, "c")
     }
 
     func testSSEDuringFetchIsKeptAfterResponseOrder() {
@@ -123,8 +122,8 @@ final class RoomGroupingTests: XCTestCase {
             FeedItem(id: id, sessionId: s, project: "p", at: at, kind: kind, text: "", tool: nil, local: nil)
         }
         let feed = [f(1, "s1", .message, 10), f(2, "s1", .message, 30), f(3, "s1", .tool, 40), f(4, "s2", .message, 50)]
-        XCTAssertEqual(RoomGrouping.unreadCount(feed: feed, sessionId: "s1", since: 20), 1)
-        XCTAssertEqual(RoomGrouping.unreadCount(feed: feed, sessionId: "s1", since: 0), 2)
+        XCTAssertEqual(RoomGrouping.unreadCounts(feed: feed, since: ["s1": 20], defaultSince: 0)["s1"], 1)
+        XCTAssertEqual(RoomGrouping.unreadCounts(feed: feed, since: [:], defaultSince: 0)["s1"], 2)
     }
 
     func testColorIndexIsDeterministic() {

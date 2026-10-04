@@ -10,12 +10,11 @@ final class PermissionRelayTests: XCTestCase {
     private func with(_ changes: [String: Any]) -> [String: Any] { raw.merging(changes) { _, new in new } }
 
     func testDecisionValues() {
-        XCTAssertEqual(PermissionRelay.isDecision("allow"), .allow)
-        XCTAssertEqual(PermissionRelay.isDecision("deny"), .deny)
-        XCTAssertNil(PermissionRelay.isDecision("always"))
-        XCTAssertNil(PermissionRelay.isDecision("ALLOW"))
-        XCTAssertNil(PermissionRelay.isDecision(""))
-        XCTAssertNil(PermissionRelay.isDecision(1))
+        XCTAssertEqual(PermissionDecision(rawValue: "allow"), .allow)
+        XCTAssertEqual(PermissionDecision(rawValue: "deny"), .deny)
+        XCTAssertNil(PermissionDecision(rawValue: "always"))
+        XCTAssertNil(PermissionDecision(rawValue: "ALLOW"))
+        XCTAssertNil(PermissionDecision(rawValue: ""))
     }
 
     func testParseRequest() {

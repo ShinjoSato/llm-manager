@@ -113,14 +113,6 @@ final class SessionInventoryTests: XCTestCase {
         XCTAssertEqual(XcodeFinder.find(in: root.path).map { URL(fileURLWithPath: $0).lastPathComponent }, "Top.xcodeproj", "浅い方を選ぶ")
         XCTAssertNil(XcodeFinder.find(in: root.appendingPathComponent("node_modules").path.appending("/none")))
     }
-
-    func testEditorOpenRejectsRelativeTargets() async {
-        let reason = await EditorOpen.open(.vscode, target: "-a Terminal")
-        XCTAssertEqual(reason, "開く先が絶対パスではありません")
-        XCTAssertEqual(EditorOpen.failureReason(timedOut: true, stderr: "x", fallback: "y"), "応答がありません（確認ダイアログが出ているかもしれません）")
-        XCTAssertEqual(EditorOpen.failureReason(timedOut: false, stderr: "  やられた  ", fallback: "y"), "やられた")
-        XCTAssertEqual(EditorOpen.failureReason(timedOut: false, stderr: "", fallback: "boom"), "boom")
-    }
 }
 
 /// 状態の合成・フック・要対応・権限の中継（移植元: 旧 monitor（削除済み）の src/hub.ts）。
@@ -326,8 +318,6 @@ final class SessionHubTests: XCTestCase {
         let usages = events.value.compactMap { if case .usage(let u) = $0 { return u } else { return nil } }
         XCTAssertEqual(usages.count, 1)
         XCTAssertEqual(usages.first?.fiveHour?.usedPercentage, 40)
-        let current = await hub.usageSnapshot()
-        XCTAssertEqual(current?.fiveHour?.usedPercentage, 40)
     }
 
     func testPermissionRelayThroughHub() async throws {
@@ -379,8 +369,8 @@ final class SessionHubTests: XCTestCase {
         let texts = feedTexts(events)
         XCTAssertFalse(texts.contains("起動前の応答"))
         XCTAssertTrue(texts.contains("起動後の応答"))
-        let feed = await hub.recentFeed()
-        XCTAssertEqual(feed.filter { $0.kind == .message }.count, 1, "未読数の元になる応答は起動後の分だけ")
+        let messages = events.value.filter { if case .feed(let f) = $0 { return f.kind == .message } else { return false } }
+        XCTAssertEqual(messages.count, 1, "未読数の元になる応答は起動後の分だけ")
     }
 
     /// フックは届いた順に反映する（待ち行列）。
@@ -492,8 +482,8 @@ final class SessionHubTests: XCTestCase {
         if flushed.value { await flushing.value }
     }
 
-    /// 検出直後で Xcode プロジェクトを探している間は「無い」と答えず、探し終わるのを待つ。
-    func testXcodeProjectWaitsForMetaLoad() async throws {
+    /// Xcode プロジェクトの走査はフックの取り込みを止めず、終わってからスナップショットに載る。
+    func testXcodeProjectLoadsAfterMeta() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("xc-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root.appendingPathComponent("App.xcodeproj"), withIntermediateDirectories: true)
@@ -506,10 +496,9 @@ final class SessionHubTests: XCTestCase {
         try await waitUntil { gate.waiting }
         let before = await snap(hub)
         XCTAssertNil(before?.xcodeProject, "まだ探し終わっていない")
-        let resolving = Task { await hub.resolvedXcodeProject(sessionId: sessionId) }
-        try await Task.sleep(for: .milliseconds(50))
         gate.open()
-        let found = await resolving.value
+        try await waitUntil { await self.snap(hub)?.xcodeProject != nil }
+        let found = await snap(hub)?.xcodeProject
         XCTAssertEqual(found.map { URL(fileURLWithPath: $0).lastPathComponent }, "App.xcodeproj")
     }
 

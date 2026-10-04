@@ -6,19 +6,6 @@ struct ManagedProject: Equatable, Codable {
     let path: String
     let status: String   // active | paused | archived
     let note: String
-    /// このディレクトリに紐づく GitHub Project（任意）。両方あるとき GitHub 画面を開ける。
-    let ghOwner: String?
-    let ghNumber: String?
-
-    init(name: String, path: String, status: String, note: String,
-         ghOwner: String? = nil, ghNumber: String? = nil) {
-        self.name = name
-        self.path = path
-        self.status = status
-        self.note = note
-        self.ghOwner = ghOwner
-        self.ghNumber = ghNumber
-    }
 }
 
 /// `projects/registry.tsv` を読み込む。

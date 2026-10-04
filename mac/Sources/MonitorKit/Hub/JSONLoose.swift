@@ -110,7 +110,6 @@ enum JSONLoose {
     }
 
     static func dict(_ v: Any?) -> [String: Any]? { v as? [String: Any] }
-    static func array(_ v: Any?) -> [Any]? { v as? [Any] }
 
     /// `Date.parse(timestamp) || null`（epoch ミリ秒）。
     static func timestamp(_ v: Any?) -> Double? {

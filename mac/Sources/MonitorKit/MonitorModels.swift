@@ -126,7 +126,6 @@ public struct PendingPermission: Codable, Sendable, Hashable, Identifiable {
     public var askedAt: Double
 
     public var id: String { key }
-    public var askedDate: Date { Date(epochMillis: askedAt) }
 }
 
 public enum TranscriptItemKind: String, MonitorLenientEnum {
@@ -196,25 +195,6 @@ public struct TranscriptEvent: Codable, Sendable, Hashable {
 /// 権限確認への返答。Channels は allow / deny しか返せない。
 public enum PermissionDecision: String, Codable, Sendable {
     case allow, deny
-}
-
-/// 作業場所を開くアプリ。
-public enum OpenApp: String, Codable, Sendable {
-    case vscode, xcode
-}
-
-/// ワークスペースを閉じるアプリ。
-public enum CloseApp: String, Codable, Sendable {
-    case xcode
-}
-
-/// close の結果（未保存の変更があると Xcode が確認を出すので、閉じたとは断定しない）。
-public enum CloseState: String, MonitorLenientEnum {
-    case closed
-    case notOpen = "not_open"
-    case notRunning = "not_running"
-    case unknown
-    public static var unknownCase: CloseState { .unknown }
 }
 
 extension Date {

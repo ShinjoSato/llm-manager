@@ -60,34 +60,3 @@ public enum XcodeFinder {
         return workspace && !best.workspace
     }
 }
-
-/// macOS の `open -a` でエディタに開かせる（移植元: 旧 monitor（削除済み）の src/open.ts）。同じパスを開き直すと既存ウィンドウが前面に出る。
-public enum EditorOpen {
-    public static let timeout: TimeInterval = 15
-
-    /// `open -a` に渡すアプリ名。受け取った文字列をそのままコマンドへ渡さないための対応表。
-    public static func appName(_ app: OpenApp) -> String {
-        switch app {
-        case .vscode: return "Visual Studio Code"
-        case .xcode: return "Xcode"
-        }
-    }
-
-    /// 実行に失敗した理由。打ち切りは message にコマンド全文が入りうるので出さない。
-    public static func failureReason(timedOut: Bool, stderr: String, fallback: String) -> String {
-        if timedOut { return "応答がありません（確認ダイアログが出ているかもしれません）" }
-        let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallback : trimmed
-    }
-
-    /// シェルを経由せず引数配列で渡す。成功なら nil、失敗なら理由。
-    public static func open(_ app: OpenApp, target: String) async -> String? {
-        // 先頭が `-` のパスは open のオプションとして解釈される。
-        guard target.hasPrefix("/") else { return "開く先が絶対パスではありません" }
-        let result = await ProcessRunner.run(executable: URL(fileURLWithPath: "/usr/bin/open"),
-                                             arguments: ["-a", appName(app), target], timeout: timeout)
-        if let launchError = result.launchError { return launchError }
-        if result.status == 0 && !result.timedOut { return nil }
-        return failureReason(timedOut: result.timedOut, stderr: result.stderr, fallback: "終了コード \(result.status)")
-    }
-}

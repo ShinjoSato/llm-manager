@@ -132,13 +132,6 @@ public struct MenuTabs: Sendable, Hashable {
         return current > 0
     }
 
-    /// 今のタブの名前（Submit タブなら "Submit"）。読めなければ nil。
-    public var currentTitle: String? {
-        guard let current else { return nil }
-        if current == tabs.count { return hasSubmit ? "Submit" : nil }
-        return tabs.indices.contains(current) ? tabs[current].title : nil
-    }
-
     var ignoringCurrent: MenuTabs {
         var copy = self
         copy.current = nil

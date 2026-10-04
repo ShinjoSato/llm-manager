@@ -32,7 +32,6 @@ enum ChatTheme {
     static let caption = Font.system(size: 12)
     static let headline = Font.system(size: 16, weight: .bold)
     static let mono = Font.system(size: 12, design: .monospaced)
-    static let monoBody = Font.system(size: 13, design: .monospaced)
 
     /// プロジェクトの頭文字アイコンの色（名前から決定的に選ぶ）。
     static let avatarPalette: [Color] = [

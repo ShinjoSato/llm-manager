@@ -93,13 +93,6 @@ public enum StageLogic {
         return jobs[type] ?? unknownJob
     }
 
-    /// 「監査役 ほか2名が随伴」。代表者は id 順で選び、更新順の入れ替わりで文言がちらつかないようにする。
-    public static func escortLine(_ agents: [AgentInfo]) -> String? {
-        guard let head = agents.min(by: { $0.id < $1.id }) else { return nil }
-        let first = job(for: head.type).label
-        return agents.count > 1 ? "\(first) ほか\(agents.count - 1)名が随伴" : "\(first)が随伴"
-    }
-
     /// ログの更新がこれ以内なら作業中とみなす（旧 monitor も 3 分更新が無いと一覧から外す）。
     public static let agentActiveWindow: TimeInterval = 15
 

@@ -142,11 +142,9 @@ final class MenuTabsParseTests: XCTestCase {
         XCTAssertTrue(tabs.canMovePrevious)
         tabs.current = 0
         XCTAssertFalse(tabs.canMovePrevious)
-        XCTAssertEqual(tabs.currentTitle, "a")
         tabs.current = 2
         XCTAssertTrue(tabs.isOnSubmit)
         XCTAssertFalse(tabs.canMoveNext)
-        XCTAssertEqual(tabs.currentTitle, "Submit")
     }
 }
 
@@ -174,7 +172,6 @@ final class MultiSelectMenuTests: XCTestCase {
         let screen = Fixture.multiSelect()
         let menu = try XCTUnwrap(ChoiceMenu.parse(screen: screen, highlight: Fixture.highlight(row: 5, line: Fixture.tabLine, text: "☒ 対応範囲")))
         XCTAssertEqual(menu.tabs?.current, 0)
-        XCTAssertEqual(menu.tabs?.currentTitle, "対応範囲")
         // 今のタブは照合に使わない（読めた時と読めなかった時で同じメニュー）。
         XCTAssertTrue(menu.sameMenu(as: try XCTUnwrap(ChoiceMenu.parse(screen: screen))))
     }

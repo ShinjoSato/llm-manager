@@ -61,19 +61,6 @@ enum ProjectStore {
         return list
     }
 
-    /// 指定パスのエントリに GitHub Project（owner/number）を設定する。nil で解除。
-    @discardableResult
-    static func setGitHub(path: String, owner: String?, number: String?) -> [ManagedProject] {
-        var list = load()
-        if let i = list.firstIndex(where: { $0.path == path }) {
-            let p = list[i]
-            list[i] = ManagedProject(name: p.name, path: p.path, status: p.status, note: p.note,
-                                     ghOwner: owner, ghNumber: number)
-            save(list)
-        }
-        return list
-    }
-
     /// registry.tsv の内容を取り込む（既存パスは重複させない）。
     @discardableResult
     static func importFromRegistry() -> [ManagedProject] {

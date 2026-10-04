@@ -266,30 +266,12 @@ struct HookServerNotice: View {
     }
 }
 
-/// 「+」の中身: 登録済みプロジェクトから選んで起動する。一覧の追加・削除・取り込み・GitHub の紐づけもここで行う。
+/// 「+」の中身: 登録済みプロジェクトから選んで起動する。一覧の追加・削除・取り込みもここで行う。
 struct ProjectLauncher: View {
     let onPick: (ManagedProject) -> Void
     // 初期値の式は親の再描画のたびに評価されるので、読み込みは表示時に 1 回だけ行う。
-    @State private var listing = Listing(projects: [], subtitles: [:])
+    @State private var projects: [ManagedProject] = []
     @State private var filter = ""
-
-    /// 一覧と各行の 2 行目。描画のたびに TSV を読まないよう、一覧を読んだ時にまとめて作る。
-    struct Listing {
-        var projects: [ManagedProject]
-        var subtitles: [String: String]
-
-        static func load() -> Listing {
-            let projects = ProjectStore.load()
-            let mappings = GitHubBoard.loadMappings()
-            var subtitles: [String: String] = [:]
-            for project in projects {
-                if let mapping = GitHubBoard.mapping(forProject: project, in: mappings) {
-                    subtitles[project.path] = "\(project.path)  ·  GH #\(mapping.number)"
-                }
-            }
-            return Listing(projects: projects, subtitles: subtitles)
-        }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -313,7 +295,7 @@ struct ProjectLauncher: View {
                                     RoomAvatar(name: project.name, size: 26)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(project.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(ChatTheme.text)
-                                        Text(subtitle(of: project)).font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)
+                                        Text(project.path).font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)
                                             .lineLimit(1).truncationMode(.middle)
                                     }
                                     Spacer()
@@ -334,7 +316,7 @@ struct ProjectLauncher: View {
                             .menuStyle(.borderlessButton)
                             .menuIndicator(.hidden)
                             .fixedSize()
-                            .help("GitHub Project の設定・一覧から削除")
+                            .help("Finder で表示・一覧から削除")
                         }
                         .contextMenu { actions(for: project) }
                     }
@@ -363,14 +345,11 @@ struct ProjectLauncher: View {
         .padding(12)
         .frame(width: 360)
         .background(ChatTheme.sidebar)
-        .onAppear { listing = Listing.load() }
+        .onAppear { reload() }
     }
 
     @ViewBuilder
     private func actions(for project: ManagedProject) -> some View {
-        Button("GitHub Project を設定…") {
-            if GitHubProjectPrompt.run(for: project) { reload() }
-        }
         Button("Finder で表示") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.path)])
         }
@@ -381,19 +360,15 @@ struct ProjectLauncher: View {
         }
     }
 
-    private func subtitle(of project: ManagedProject) -> String {
-        listing.subtitles[project.path] ?? project.path
-    }
-
     private var filtered: [ManagedProject] {
         let terms = filter.split(whereSeparator: \.isWhitespace)
-        return listing.projects.filter { p in
+        return projects.filter { p in
             terms.allSatisfy { "\(p.name) \(p.path)".range(of: $0, options: [.caseInsensitive, .widthInsensitive]) != nil }
         }
     }
 
     private func reload() {
-        listing = Listing.load()
+        projects = ProjectStore.load()
     }
 
     private func importRegistry() {

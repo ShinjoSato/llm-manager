@@ -27,13 +27,6 @@ let package = Package(
             name: "MonitorKit",
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         ),
-        // アプリ内の監視を GUI 無しで確かめるデバッグ用エントリ（`swift run monitor-probe`）。
-        .executableTarget(
-            name: "monitor-probe",
-            dependencies: ["MonitorKit"],
-            path: "Sources/MonitorProbe",
-            swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
-        ),
         // Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー）。権限確認をアプリの受け口へ中継する。
         .executableTarget(
             name: "claude-deck-channel",

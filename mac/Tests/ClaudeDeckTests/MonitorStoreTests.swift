@@ -33,15 +33,13 @@ final class MonitorStoreTests: XCTestCase {
         XCTAssertEqual(store.sessions.map(\.sessionId), ["s1", "s2"])
         XCTAssertEqual(store.usage?.fiveHour?.remainingPercentage, 90)
         XCTAssertEqual(store.permissions(forSessionId: "s1").map(\.key), ["k1"])
-        XCTAssertNotNil(store.lastEventAt)
     }
 
-    func testFeedBatchReplacesAndFeedAppendsWithoutDuplicates() {
+    func testFeedAppendsWithoutDuplicates() {
         let store = makeStore()
         store.feedLimit = 3
-        store.apply(.feed(feed(100)))
-        store.apply(.feedBatch([feed(2), feed(1)]))
-        XCTAssertEqual(store.feed.map(\.id), [1, 2])
+        store.apply(.feed(feed(1)))
+        store.apply(.feed(feed(2)))
         store.apply(.feed(feed(3)))
         store.apply(.feed(feed(3)))
         store.apply(.feed(feed(4)))
@@ -68,8 +66,7 @@ final class MonitorStoreTests: XCTestCase {
         try Data(#"{"pid":777,"sessionId":"s-hosted"}"#.utf8).write(to: dir.appendingPathComponent("777.json"))
         store.apply(.sessions([session("s-hosted", pid: 777), session("s-ext", pid: 888)]))
         XCTAssertEqual(store.sessionId(forHostedPid: 777), "s-hosted")
-        XCTAssertEqual(store.session(forHostedPid: 777)?.sessionId, "s-hosted")
-        XCTAssertEqual(store.externalSessions.map(\.sessionId), ["s-ext"])
+        XCTAssertEqual(store.hostedSessionIds, [777: "s-hosted"], "外部のセッションは混ざらない")
 
         // /clear で sessionId が替わっても次の sessions で追従する。
         try Data(#"{"pid":777,"sessionId":"s-new"}"#.utf8).write(to: dir.appendingPathComponent("777.json"))
