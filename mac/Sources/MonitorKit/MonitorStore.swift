@@ -65,7 +65,8 @@ public final class MonitorStore {
         self.configuration = configuration
         self.registry = registry ?? ClaudeSessionRegistry(directory: configuration.claudeHome.sessionsDirectory)
         transcripts = TranscriptStore(home: configuration.claudeHome)
-        hub = SessionHub(home: configuration.claudeHome, usageFile: configuration.usageFile, transcripts: transcripts)
+        hub = SessionHub(home: configuration.claudeHome, usageFile: configuration.usageFile,
+                         legacyUsageFile: configuration.legacyUsageFile, transcripts: transcripts)
     }
 
     public var isRunning: Bool { running }

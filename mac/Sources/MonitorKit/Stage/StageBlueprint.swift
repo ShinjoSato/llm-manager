@@ -1,6 +1,6 @@
 import Foundation
 
-// ステージ（3D）の寸法・配置・光り方。出典は monitor UI の `three/blueprint.ts`・`three/World.tsx`（数値は同じ）。
+// ステージ（3D）の寸法・配置・光り方。出典は 旧 monitor UI の `three/blueprint.ts`・`three/World.tsx`（数値は同じ）。
 
 public struct StageVector: Sendable, Equatable {
     public var x: Double

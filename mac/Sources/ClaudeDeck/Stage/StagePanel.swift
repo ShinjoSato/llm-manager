@@ -341,7 +341,7 @@ private struct FeedSection: View {
         return formatter
     }()
 
-    /// monitor UI の LiveFeed と同じ色分け。
+    /// 旧 monitor UI の LiveFeed と同じ色分け。
     private static func color(_ kind: FeedKind) -> Color {
         switch kind {
         case .tool: return Color(hex: 0x7dd3fc)

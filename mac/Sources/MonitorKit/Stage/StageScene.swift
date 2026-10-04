@@ -1,6 +1,6 @@
 import Foundation
 
-// 1 セッション分のステージの中身と動き。出典は monitor UI の `three/Ziggurat.tsx`・`pixel/voxelize.ts`・`pixel/kit.ts`・`pixel/look.ts`。
+// 1 セッション分のステージの中身と動き。出典は 旧 monitor UI の `three/Ziggurat.tsx`・`pixel/voxelize.ts`・`pixel/kit.ts`・`pixel/look.ts`。
 
 /// 立方体 1 つ。左右の中央・下端を原点に取る（絵の 1 マス = 1）。
 public struct StageVoxel: Sendable, Equatable {

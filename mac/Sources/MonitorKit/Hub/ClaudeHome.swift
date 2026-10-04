@@ -1,6 +1,6 @@
 import Foundation
 
-/// `~/.claude` 配下のパス（移植元: monitor/src/paths.ts）。試験では一時ディレクトリを差し込む。
+/// `~/.claude` 配下のパス（移植元: 旧 monitor（削除済み）の src/paths.ts）。試験では一時ディレクトリを差し込む。
 public struct ClaudeHome: Sendable, Equatable {
     public var root: URL
 

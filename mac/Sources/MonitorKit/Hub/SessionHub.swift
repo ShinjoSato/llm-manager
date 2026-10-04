@@ -86,7 +86,7 @@ final class HookDropCounter: @unchecked Sendable {
     }
 }
 
-/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: monitor/src/hub.ts）。
+/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: 旧 monitor（削除済み）の src/hub.ts）。
 /// 受け手は `MonitorEvent` を 1 本の流れで受け取る（以前の SSE と同じ単位）。
 public actor SessionHub {
     /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。
@@ -152,6 +152,7 @@ public actor SessionHub {
 
     public let home: ClaudeHome
     private let usageFile: URL?
+    private let legacyUsageFile: URL?
     private let now: @Sendable () -> Double
     private let isAlive: @Sendable (Int32) -> Bool
     private let transcripts: TranscriptStore?
@@ -191,6 +192,7 @@ public actor SessionHub {
 
     public init(home: ClaudeHome,
                 usageFile: URL?,
+                legacyUsageFile: URL? = nil,
                 transcripts: TranscriptStore? = nil,
                 now: @escaping @Sendable () -> Double = epochMillisNow,
                 isAlive: @escaping @Sendable (Int32) -> Bool = SessionInventory.processAlive,
@@ -198,6 +200,7 @@ public actor SessionHub {
                 metaLoader: @escaping @Sendable (_ cwd: String, _ transcriptPath: String?) -> MetaResult = SessionHub.loadMetaFromDisk) {
         self.home = home
         self.usageFile = usageFile
+        self.legacyUsageFile = legacyUsageFile
         self.transcripts = transcripts
         self.now = now
         self.isAlive = isAlive
@@ -574,7 +577,7 @@ public actor SessionHub {
 
     /// statusline スクリプトが書いたファイルを読み直す。内容が変わった時だけ配る。
     func pollUsage() {
-        let next = UsageReader.read(usageFile)
+        let next = UsageReader.readNewest([usageFile, legacyUsageFile])
         if usageRead && next == usage { return }
         usageRead = true
         usage = next

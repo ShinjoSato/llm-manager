@@ -213,7 +213,7 @@ struct RoomAvatar: View {
     }
 }
 
-/// monitor に繋がっていない間だけ、検索欄の下に出す。
+/// 監視が動いていない・受け口が開けない間だけ、検索欄の下に出す。
 struct ConnectionNotice: View {
     let connection: MonitorConnectionState
 

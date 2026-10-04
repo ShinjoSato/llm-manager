@@ -7,7 +7,7 @@ public enum TranscriptSubscription: Sendable, Hashable {
     case sessions(Set<String>)
 }
 
-/// ログの読み出しと購読者への配信をまとめて持つ（移植元: monitor/src/transcriptApi.ts の TranscriptStore）。
+/// ログの読み出しと購読者への配信をまとめて持つ（移植元: 旧 monitor（削除済み）の src/transcriptApi.ts の TranscriptStore）。
 /// 監視（SessionHub）とは別の actor にして、画像の読み直しで状態の更新を待たせない。
 public actor TranscriptStore {
     public static let pollInterval: Duration = .milliseconds(250)

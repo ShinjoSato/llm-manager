@@ -1,6 +1,6 @@
 import Foundation
 
-// 会話履歴（移植元: monitor/src/transcriptApi.ts）。1 セッションの jsonl を最初から読み、チャット表示の単位（発話・応答・ツール）に整形する。
+// 会話履歴（移植元: 旧 monitor（削除済み）の src/transcriptApi.ts）。1 セッションの jsonl を最初から読み、チャット表示の単位（発話・応答・ツール）に整形する。
 
 public enum TranscriptFormat {
     /// 1 回に読む量。数十 MB のログでも巨大なバッファを一度に確保しない。

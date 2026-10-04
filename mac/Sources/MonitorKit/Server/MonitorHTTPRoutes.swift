@@ -1,12 +1,12 @@
 import Foundation
 
-/// アプリ内サーバーの口（移植元: monitor/src/server.ts のうち外から叩かれるものだけ）。
+/// アプリ内サーバーの口（移植元: 旧 monitor（削除済み）の src/server.ts のうち外から叩かれるものだけ）。
 ///   GET  /api/health                 疎通確認
 ///   POST /hook                       Claude Code のフックから状態遷移を受け取る
-///   POST /api/channel/permissions    チャネル（monitor/src/channel.ts）からの権限確認（判断が出るまで待たせる）
+///   POST /api/channel/permissions    チャネル（claude-deck-channel）からの権限確認（判断が出るまで待たせる）
 /// 認証が無く承認の口もあるので、ループバックでしか待ち受けず、Host / Origin / 接続元も確かめる。
 public enum MonitorHTTPRoutes {
-    /// 既定の待ち受け。`~/.claude/settings.json` のフックと channel.ts がこのポートを宛先にしている。
+    /// 既定の待ち受け。`~/.claude/settings.json` のフックと claude-deck-channel がこのポートを宛先にしている。
     public static let defaultPort = 8766
 
     /// 全ての口に先に掛ける検査。外れたら handler を呼ばずに返す。

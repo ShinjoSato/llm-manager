@@ -2,7 +2,7 @@ import Foundation
 
 /// 吹き出しに出す画像 1 枚の出どころ。
 public enum ChatImage: Sendable, Hashable, Identifiable {
-    /// transcript の発話に添えられた画像（monitor から取る）。
+    /// transcript の発話に添えられた画像（アプリ内の監視から取る）。
     case transcript(itemId: String, index: Int)
     /// アプリから送った画像の手元の一時ファイル。
     case file(String)
