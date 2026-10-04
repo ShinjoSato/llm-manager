@@ -22,25 +22,22 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 上限到達を検知したときに呼ばれる（メインスレッド）。
     var onLimitReached: (() -> Void)?
 
-    /// 作業ステータスが変化したときに呼ばれる（メインスレッド）。
-    var onStatusChanged: ((ClaudeStatus) -> Void)?
+    /// 画面から読んだ状態。
+    struct ScreenState: Equatable {
+        var status: ClaudeStatus = .idle
+        var permissionPrompt: PermissionPrompt?
+        /// 入力欄への送信を止める状態（権限プロンプト・選択メニュー）。
+        var inputBlock: InputBlock?
+        /// 選択メニューの中身（読み取れなければ nil。inputBlock が .menu でも nil はありうる）。
+        var menuPrompt: MenuPrompt?
+        /// 選択メニューは出ているが中身を読めない時の写し。
+        var unreadableMenu: UnreadableMenu?
+    }
 
-    /// 画面に出ている権限プロンプトが変わったときに呼ばれる（メインスレッド）。
-    var onPermissionPromptChanged: ((PermissionPrompt?) -> Void)?
+    /// `screenState` が変わったときに呼ばれる（メインスレッド）。
+    var onScreenStateChanged: ((ScreenState) -> Void)?
 
-    /// 入力欄への送信を止める状態が変わったときに呼ばれる（メインスレッド）。
-    var onInputBlockChanged: ((InputBlock?) -> Void)?
-
-    /// 画面に出ている選択メニューの中身が変わったときに呼ばれる（メインスレッド）。
-    var onMenuPromptChanged: ((MenuPrompt?) -> Void)?
-
-    /// 中身を読み取れない選択メニューの写しが変わったときに呼ばれる（メインスレッド）。
-    var onUnreadableMenuChanged: ((UnreadableMenu?) -> Void)?
-
-    private(set) var permissionPrompt: PermissionPrompt?
-    private(set) var inputBlock: InputBlock?
-    private(set) var menuPrompt: MenuPrompt?
-    private(set) var unreadableMenu: UnreadableMenu?
+    private(set) var screenState = ScreenState()
     /// 選択肢へ ❯ を動かしている最中。重ねて動かすと互いのキーで行き先がずれる。
     private(set) var isNavigatingMenu = false
     /// 未反映の矢印を残して移動をやめた印。外れるまで次の移動を始めない。
@@ -54,7 +51,6 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     // MARK: - ステータス検知（ハイブリッド: 活動量 + プロンプト文言）
     private var statusTimer: Timer?
     private var lastDataTime = Date()
-    private(set) var currentStatus: ClaudeStatus = .idle
 
     /// 「最後の出力からこの秒数以内」なら出力が流れている＝作業中とみなす（活動量ベース）。
     private static let busyThreshold: TimeInterval = 1.0
@@ -69,7 +65,6 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 指定プロジェクトのディレクトリで `claude` を起動する。
     /// ログインシェル経由で PATH（~/.local/bin など）を継承しつつ、API キーは二重に遮断する。
     /// `resumeSessionId` があれば対話起動のまま `claude --resume=<id>` で会話を再開する。不正な id なら起動せず false。
-    @discardableResult
     func launchClaude(in directory: String, resumeSessionId: String? = nil) -> Bool {
         var command = "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec claude"
         if let resumeSessionId {
@@ -130,40 +125,25 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let prompt = PermissionPrompt.parse(screen: screen)
         // InputBlock.detect と同じ判定を、読み取り済みの権限プロンプトを使い回して行う。
         let block: InputBlock? = prompt != nil ? .permission : (ChoiceMenu.isShowing(screen: screen) ? .menu : nil)
-        let newStatus: ClaudeStatus
+        let status: ClaudeStatus
         if block != nil {
-            newStatus = .waitingInput
+            status = .waitingInput
         } else if quiet < Self.busyThreshold || Self.busyMarkers.contains(where: { tail.contains($0) }) {
-            newStatus = .working
+            status = .working
         } else if InputBlock.looksWaiting(tail: tail) {
             // 文言だけの判定は返答本文と取り違えうるので、バッジにだけ使い送信は止めない。
-            newStatus = .waitingInput
+            status = .waitingInput
         } else {
-            newStatus = .idle
-        }
-        if prompt != permissionPrompt {
-            permissionPrompt = prompt
-            onPermissionPromptChanged?(prompt)
-        }
-        if block != inputBlock {
-            inputBlock = block
-            onInputBlockChanged?(block)
+            status = .idle
         }
         let menu = block == .menu ? ChoiceMenu.parseShowing(screen: screen, highlight: highlightReader()) : nil
         releasePendingArrowHoldIfDone(cursor: menu?.cursor)
-        if menu != menuPrompt {
-            menuPrompt = menu
-            onMenuPromptChanged?(menu)
-        }
         let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen) : nil
-        if unreadable != unreadableMenu {
-            unreadableMenu = unreadable
-            onUnreadableMenuChanged?(unreadable)
-        }
         logMenuScreen(menu: menu, unreadable: unreadable, screen: screen)
-        guard newStatus != currentStatus else { return }
-        currentStatus = newStatus
-        onStatusChanged?(newStatus)   // Timer は main runloop なのでメインスレッド
+        let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable)
+        guard next != screenState else { return }
+        screenState = next
+        onScreenStateChanged?(next)   // Timer は main runloop なのでメインスレッド
     }
 
     /// 実画面（バッファ末尾の `rows` 行）。ターミナル表示のスクロール位置（yDisp）に依らない。
@@ -535,13 +515,11 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         super.dataReceived(slice: slice)
         lastDataTime = Date()   // 活動量ベースの作業中判定に使う
         guard !limitHandled else { return }
-        // UTF-8 として lossy デコード（途中で切れても落ちない）
-        let chunk = String(decoding: slice, as: UTF8.self)
-        scan(chunk)
+        scan()
     }
 
     /// 生の出力は TUI がカーソル移動で語を並べるので照合できない。描画後の実画面の末尾を間引いて見る。
-    private func scan(_ chunk: String) {
+    private func scan() {
         guard !limitCheckPending else { return }
         limitCheckPending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in

@@ -19,10 +19,10 @@ final class MonitorStoreTests: XCTestCase {
                           description: "", inputPreview: "", askedAt: 0)
     }
 
-    private func makeStore(home: URL? = nil, registryDir: URL? = nil) -> MonitorStore {
+    private func makeStore(home: URL? = nil, registryDir: URL? = nil, feedLimit: Int = 500) -> MonitorStore {
         let root = home ?? FileManager.default.temporaryDirectory.appendingPathComponent("none-\(UUID().uuidString)")
         let config = MonitorConfiguration(claudeHome: ClaudeHome(root: root), usageFile: nil, serverPort: nil)
-        return MonitorStore(configuration: config, registry: registryDir.map { ClaudeSessionRegistry(directory: $0) })
+        return MonitorStore(configuration: config, registry: registryDir.map { ClaudeSessionRegistry(directory: $0) }, feedLimit: feedLimit)
     }
 
     func testSnapshotEventsFillStore() {
@@ -36,8 +36,7 @@ final class MonitorStoreTests: XCTestCase {
     }
 
     func testFeedAppendsWithoutDuplicates() {
-        let store = makeStore()
-        store.feedLimit = 3
+        let store = makeStore(feedLimit: 3)
         store.apply(.feed(feed(1)))
         store.apply(.feed(feed(2)))
         store.apply(.feed(feed(3)))

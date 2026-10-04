@@ -39,35 +39,27 @@ enum ProjectStore {
         }
     }
 
-    /// フォルダを追加（同一パスは無視）。表示名は未指定ならフォルダ名。
-    @discardableResult
-    static func add(path: String, name: String? = nil) -> [ManagedProject] {
+    /// フォルダを追加（同一パスは無視）。表示名はフォルダ名。
+    static func add(path: String) {
         var list = load()
         let clean = (path as NSString).standardizingPath
-        guard !list.contains(where: { $0.path == clean }) else { return list }
-        let displayName = name ?? (clean as NSString).lastPathComponent
-        list.append(ManagedProject(name: displayName, path: clean, status: "active", note: ""))
+        guard !list.contains(where: { $0.path == clean }) else { return }
+        list.append(ManagedProject(name: (clean as NSString).lastPathComponent, path: clean, status: "active", note: ""))
         save(list)
-        return list
     }
 
-    /// 指定パスのエントリを削除。
-    @discardableResult
-    static func remove(path: String) -> [ManagedProject] {
+    static func remove(path: String) {
         var list = load()
         list.removeAll { $0.path == path }
         save(list)
-        return list
     }
 
     /// registry.tsv の内容を取り込む（既存パスは重複させない）。
-    @discardableResult
-    static func importFromRegistry() -> [ManagedProject] {
+    static func importFromRegistry() {
         var list = load()
         for p in ProjectRegistry.load() where !list.contains(where: { $0.path == p.path }) {
             list.append(p)
         }
         save(list)
-        return list
     }
 }

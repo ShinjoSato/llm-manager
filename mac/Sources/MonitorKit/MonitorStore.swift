@@ -39,7 +39,7 @@ public final class MonitorStore {
     public private(set) var hostedSessionIds: [Int32: String] = [:]
 
     /// フィードを何件まで持つか。
-    public var feedLimit = 500
+    public let feedLimit: Int
 
     /// 会話の追記の受け口（チャット画面が使う）。
     @ObservationIgnored public var onTranscript: ((TranscriptEvent) -> Void)?
@@ -60,8 +60,10 @@ public final class MonitorStore {
     /// 購読の張り替えを順に流す（連続して呼ばれても購読を二重に持たない・取りこぼさない）。
     @ObservationIgnored private var subscriptionChain: Task<Void, Never>?
 
-    public init(configuration: MonitorConfiguration = .fromEnvironment(), registry: ClaudeSessionRegistry? = nil) {
+    public init(configuration: MonitorConfiguration = .fromEnvironment(), registry: ClaudeSessionRegistry? = nil,
+                feedLimit: Int = 500) {
         self.configuration = configuration
+        self.feedLimit = feedLimit
         self.registry = registry ?? ClaudeSessionRegistry(directory: configuration.claudeHome.sessionsDirectory)
         transcripts = TranscriptStore(home: configuration.claudeHome)
         hub = SessionHub(home: configuration.claudeHome, usageFile: configuration.usageFile, transcripts: transcripts)
