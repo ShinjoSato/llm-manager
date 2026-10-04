@@ -26,6 +26,8 @@
 	<string>14.0</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Xcode から、このプロジェクトのワークスペースだけを閉じるために使います。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>「iPhone 連携」を有効にした時だけ、同じ Wi-Fi の iPhone からの接続を受けるために使います。</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>

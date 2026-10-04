@@ -478,20 +478,36 @@ final class ChatModel {
         let body = RelayNotes.normalized(message.body)
         guard !body.isEmpty else { return false }
         let imagePaths = (attachments[room.id] ?? []).filter { $0.kind == .image }.map(\.path)
-        let note = RelayNote(text: body, sentAt: Date().timeIntervalSince1970 * 1000, imagePaths: imagePaths)
-        relayNotes[sessionId, default: []].append(note)
         clearAttachments(of: room.id)
+        // 吹き出しは送信を待たずにすぐ出す。
+        let note = addRelayNote(body, imagePaths: imagePaths, to: sessionId)
         Task {
-            do {
-                try await store.sendMessage(to: sessionId, text: body)
-                updateNote(note.id, in: sessionId, state: .sent)
-            } catch {
-                let reason = RelayNotes.failureReason(error)
-                updateNote(note.id, in: sessionId, state: .failed(reason))
+            if let reason = await deliverRelay(note, to: sessionId) {
                 alertMessage = "伝言を送れませんでした: \(reason)"
             }
         }
         return true
+    }
+
+    /// 送る伝言を手元の吹き出しに足す。
+    func addRelayNote(_ body: String, imagePaths: [String] = [], to sessionId: String) -> RelayNote {
+        let note = RelayNote(text: body, sentAt: Date().timeIntervalSince1970 * 1000, imagePaths: imagePaths)
+        relayNotes[sessionId, default: []].append(note)
+        return note
+    }
+
+    /// 足した伝言を送る。失敗すればその理由。
+    func deliverRelay(_ note: RelayNote, to sessionId: String) async -> String? {
+        let body = note.text
+        do {
+            try await store.sendMessage(to: sessionId, text: body)
+            updateNote(note.id, in: sessionId, state: .sent)
+            return nil
+        } catch {
+            let reason = RelayNotes.failureReason(error)
+            updateNote(note.id, in: sessionId, state: .failed(reason))
+            return reason
+        }
     }
 
     private func updateNote(_ id: String, in sessionId: String, state: RelayNote.State) {
@@ -616,52 +632,82 @@ final class ChatModel {
         }
     }
 
+    /// Channels の確認に答えて結果を返す（iPhone から。mac に警告は出さない）。
+    func decide(key: String, _ decision: PermissionDecision) async -> RemoteActionResult {
+        guard !busyPermissionKeys.contains(key) else { return Self.busyResult }
+        busyPermissionKeys.insert(key)
+        defer { busyPermissionKeys.remove(key) }
+        return await store.remoteDecide(key: key, decision: decision)
+    }
+
     static func ptyPermissionKey(_ session: HostedSession) -> String { "pty:\(session.id.uuidString)" }
 
     /// `prompt` はカードに出していたもの。端末の今のプロンプトと違えば何も送らない（別の確認を承認しないため）。
-    func answerOnTerminal(_ session: HostedSession, prompt: PermissionPrompt, allow: Bool) {
+    /// `report` が false なら mac に警告を出さず、結果だけを返す（iPhone からの操作）。
+    @discardableResult
+    func answerOnTerminal(_ session: HostedSession, prompt: PermissionPrompt, allow: Bool, report: Bool = true) -> RemoteActionResult {
         let key = Self.ptyPermissionKey(session)
-        guard !busyPermissionKeys.contains(key) else { return }
+        guard !busyPermissionKeys.contains(key) else { return Self.busyResult }
+        let answeredId = RemoteTerminalPermission.promptId(prompt, generation: session.promptTracker.generation)
         switch session.answerPermission(prompt, allow: allow) {
         case .sent:
-            break
+            // 同じ表示への押し直し（mac・iPhone どちらからでも）を送らないため。
+            session.markAnswered(answeredId)
         case .noPrompt:
-            alertMessage = "端末に権限確認が見当たりません。既に答え終わっている可能性があります。"
-            return
+            return failed("gone", "端末に権限確認が見当たりません。既に答え終わっている可能性があります。", report: report)
         case .changed:
-            alertMessage = "権限の確認の内容が替わったため送りませんでした。カードの内容を確かめてから答えてください。"
-            return
+            return failed("changed", "権限の確認の内容が替わったため送りませんでした。カードの内容を確かめてから答えてください。", report: report)
         }
         busyPermissionKeys.insert(key)
         // キーを送ってからプロンプトが消えるまで少し掛かるので、その間は押せないままにする。
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+        return .success(allow ? "allowed" : "denied")
     }
 
     static func ptyMenuKey(_ session: HostedSession) -> String { "menu:\(session.id.uuidString)" }
 
+    static let busyResult = RemoteActionResult.failure("busy", "前の操作を送っているところです。少し待ってからもう一度押してください。")
+
+    /// 失敗を返す。`report` なら mac にも警告を出す。
+    private func failed(_ code: String, _ message: String, report: Bool) -> RemoteActionResult {
+        if report { alertMessage = message }
+        return .failure(code, message)
+    }
+
     /// `menu` はカードに出していたもの。`choice` はその選択肢の位置、nil なら取り消し（Esc）。
-    /// 端末の今のメニューと違えば何も送らない（別の問いに答えないため）。
-    func answerMenu(_ session: HostedSession, menu: MenuPrompt, choice: Int?) {
+    /// 端末の今のメニューと違えば何も送らない（別の問いに答えないため）。結果は `completion` に 1 回返す。
+    func answerMenu(_ session: HostedSession, menu: MenuPrompt, choice: Int?, report: Bool = true,
+                    completion: ((RemoteActionResult) -> Void)? = nil) {
         let key = Self.ptyMenuKey(session)
-        guard !busyPermissionKeys.contains(key) else { return }
+        guard !busyPermissionKeys.contains(key) else { completion?(Self.busyResult); return }
         busyPermissionKeys.insert(key)
-        session.answerMenu(menu, choice: choice) { [weak self] outcome in
-            guard let self else { return }
+        let answeredId = RemoteMenu.menuId(menu, generation: session.promptTracker.generation)
+        session.answerMenu(menu, choice: choice) { [weak self, weak session] outcome in
+            guard let self else { completion?(.failure("ended", "アプリが閉じられました。")); return }
+            if Self.result(of: outcome).ok { session?.markAnswered(answeredId) }
             if outcome == .confirmed, let choice, menu.options[choice].checked != nil {
                 // 複数選択では Enter はチェックの切り替えで、メニューは閉じない。
-                self.showMenuNotice(key, "「\(menu.options[choice].label)」のチェックを切り替えました。")
+                let text = "「\(menu.options[choice].label)」のチェックを切り替えました。"
+                self.showMenuNotice(key, text)
+                self.finishMenuOperation(key, outcome: outcome, report: report)
+                completion?(.success("toggled", text))
+                return
             }
-            self.finishMenuOperation(key, outcome: outcome)
+            completion?(self.finishMenuOperation(key, outcome: outcome, report: report))
         }
     }
 
     /// AskUserQuestion の問いのタブを 1 つ移る（→ / ←）。`menu` はカードに出していたもの。
-    func moveMenuTab(_ session: HostedSession, menu: MenuPrompt, direction: MenuTabMover.Direction) {
+    func moveMenuTab(_ session: HostedSession, menu: MenuPrompt, direction: MenuTabMover.Direction, report: Bool = true,
+                     completion: ((RemoteActionResult) -> Void)? = nil) {
         let key = Self.ptyMenuKey(session)
-        guard !busyPermissionKeys.contains(key) else { return }
+        guard !busyPermissionKeys.contains(key) else { completion?(Self.busyResult); return }
         busyPermissionKeys.insert(key)
-        session.moveMenuTab(menu, direction: direction) { [weak self] outcome in
-            self?.finishMenuOperation(key, outcome: outcome)
+        let answeredId = RemoteMenu.menuId(menu, generation: session.promptTracker.generation)
+        session.moveMenuTab(menu, direction: direction) { [weak self, weak session] outcome in
+            guard let self else { completion?(.failure("ended", "アプリが閉じられました。")); return }
+            if Self.result(of: outcome).ok { session?.markAnswered(answeredId) }
+            completion?(self.finishMenuOperation(key, outcome: outcome, report: report))
         }
     }
 
@@ -672,44 +718,53 @@ final class ChatModel {
         }
     }
 
-    private func finishMenuOperation(_ key: String, outcome: ClaudeTerminalView.MenuAnswerOutcome) {
-        switch outcome {
-        case .confirmed, .cancelled, .moved:
-            break
-        case .failed(.gone):
-            alertMessage = "端末に選択肢が見当たりません。既に答え終わっている可能性があります。"
-        case .failed(.vanished):
-            alertMessage = "キーを送った後に端末の選択肢が読み取れなくなったため、Enter を押さずにやめました。端末の表示を確かめてから答えてください。"
-        case .failed(.changed):
-            alertMessage = "選択肢の内容が替わったため送りませんでした（矢印で ❯ を動かしていた場合は Enter を押していません）。カードの内容を確かめてから答えてください。"
-        case .failed(.stuck):
-            alertMessage = "選択肢の位置を合わせられなかった（またはタブが移らなかった）ため、Enter を押さずにやめました。カードの内容を確かめてからもう一度答えてください。"
-        case .ended:
-            alertMessage = "claude が終了した（終了・上限到達など）ため、選択肢を確定できませんでした。Enter は押していません。"
-        case .unavailable:
-            alertMessage = "この操作はここからはできません（文字入力の行に ❯ がある時はタブを移れません）。"
-        case .settling:
-            alertMessage = "直前に送った矢印キーが端末に反映されるのを待っています。少し待ってからもう一度押してください。"
-        }
+    @discardableResult
+    private func finishMenuOperation(_ key: String, outcome: ClaudeTerminalView.MenuAnswerOutcome, report: Bool) -> RemoteActionResult {
+        let result = Self.result(of: outcome)
+        if report, !result.ok, let message = result.message { alertMessage = message }
         // キーを送ってから画面が替わるまで・やめた移動の矢印が遅れて反映されうる間は、すぐには押せるようにしない。
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+        return result
+    }
+
+    static func result(of outcome: ClaudeTerminalView.MenuAnswerOutcome) -> RemoteActionResult {
+        switch outcome {
+        case .confirmed: return .success("confirmed")
+        case .cancelled: return .success("cancelled")
+        case .moved: return .success("moved")
+        case .failed(.gone):
+            return .failure("gone", "端末に選択肢が見当たりません。既に答え終わっている可能性があります。")
+        case .failed(.vanished):
+            return .failure("vanished", "キーを送った後に端末の選択肢が読み取れなくなったため、Enter を押さずにやめました。端末の表示を確かめてから答えてください。")
+        case .failed(.changed):
+            return .failure("changed", "選択肢の内容が替わったため送りませんでした（矢印で ❯ を動かしていた場合は Enter を押していません）。カードの内容を確かめてから答えてください。")
+        case .failed(.stuck):
+            return .failure("stuck", "選択肢の位置を合わせられなかった（またはタブが移らなかった）ため、Enter を押さずにやめました。カードの内容を確かめてからもう一度答えてください。")
+        case .ended:
+            return .failure("ended", "claude が終了した（終了・上限到達など）ため、選択肢を確定できませんでした。Enter は押していません。")
+        case .unavailable:
+            return .failure("unavailable", "この操作はここからはできません（文字入力の行に ❯ がある時はタブを移れません）。")
+        case .settling:
+            return .failure("settling", "直前に送った矢印キーが端末に反映されるのを待っています。少し待ってからもう一度押してください。")
+        }
     }
 
     /// 中身を読み取れない選択メニューを閉じる。`menu` はカードに出していた写し。
-    func cancelUnreadableMenu(_ session: HostedSession, menu: UnreadableMenu) {
+    @discardableResult
+    func cancelUnreadableMenu(_ session: HostedSession, menu: UnreadableMenu, report: Bool = true) -> RemoteActionResult {
         let key = Self.ptyMenuKey(session)
-        guard !busyPermissionKeys.contains(key) else { return }
+        guard !busyPermissionKeys.contains(key) else { return Self.busyResult }
+        let answeredId = RemoteUnreadableMenu.menuId(menu, generation: session.promptTracker.generation)
         switch session.cancelUnreadableMenu(menu) {
-        case .sent: break
+        case .sent: session.markAnswered(answeredId)
         case .gone:
-            alertMessage = "端末に読み取れない選択肢が見当たりません。既に答え終わったか、カードで答えられる形になった可能性があります。"
-            return
+            return failed("gone", "端末に読み取れない選択肢が見当たりません。既に答え終わったか、カードで答えられる形になった可能性があります。", report: report)
         case .changed:
-            alertMessage = "端末の選択肢が替わったため送りませんでした。カードの内容を確かめてから操作してください。"
-            return
+            return failed("changed", "端末の選択肢が替わったため送りませんでした。カードの内容を確かめてから操作してください。", report: report)
         }
         busyPermissionKeys.insert(key)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyPermissionKeys.remove(key) }
+        return .success("cancelled")
     }
 
     // MARK: - 会話履歴

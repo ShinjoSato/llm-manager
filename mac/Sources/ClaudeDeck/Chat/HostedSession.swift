@@ -38,6 +38,8 @@ final class HostedSession: Identifiable {
     private(set) var lastChangeAt = Date()
 
     @ObservationIgnored var onLimitReached: ((HostedSession) -> Void)?
+    /// iPhone に出すカードの世代と答えた ID（同じ文面で出し直された確認を古い表示から答えさせないため）。
+    @ObservationIgnored private(set) var promptTracker = RemotePromptTracker()
     /// 外部から引き継いだ時の再開対象。
     let resumeSessionId: String?
 
@@ -59,10 +61,22 @@ final class HostedSession: Identifiable {
             self?.localStatus = status
             self?.lastChangeAt = Date()
         }
-        terminal.onPermissionPromptChanged = { [weak self] in self?.permissionPrompt = $0 }
-        terminal.onInputBlockChanged = { [weak self] in self?.inputBlock = $0 }
-        terminal.onMenuPromptChanged = { [weak self] in self?.menuPrompt = $0 }
-        terminal.onUnreadableMenuChanged = { [weak self] in self?.unreadableMenu = $0 }
+        terminal.onPermissionPromptChanged = { [weak self] in
+            self?.permissionPrompt = $0
+            self?.trackCard()
+        }
+        terminal.onInputBlockChanged = { [weak self] in
+            self?.inputBlock = $0
+            self?.trackCard()
+        }
+        terminal.onMenuPromptChanged = { [weak self] in
+            self?.menuPrompt = $0
+            self?.trackCard()
+        }
+        terminal.onUnreadableMenuChanged = { [weak self] in
+            self?.unreadableMenu = $0
+            self?.trackCard()
+        }
         terminal.onSendingChanged = { [weak self] in self?.isSending = $0 }
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
@@ -126,13 +140,32 @@ final class HostedSession: Identifiable {
         return terminal.cancelUnreadableMenu(expected)
     }
 
-    private func handleLimitReached() {
-        guard end == nil else { return }
-        end = .limitReached
+    /// 端末に出ている答えられる表示（会話末尾のカードと同じ優先順）。
+    var terminalCard: RemoteTerminalCard? {
+        RemoteTerminalCard.current(permissionPrompt: permissionPrompt, inputBlock: inputBlock, menuPrompt: menuPrompt,
+                                   unreadableMenu: unreadableMenu)
+    }
+
+    func markAnswered(_ id: String) {
+        promptTracker.markAnswered(id)
+    }
+
+    private func trackCard() {
+        promptTracker.observe(terminalCard)
+    }
+
+    private func clearScreenState() {
         permissionPrompt = nil
         inputBlock = nil
         menuPrompt = nil
         unreadableMenu = nil
+        trackCard()
+    }
+
+    private func handleLimitReached() {
+        guard end == nil else { return }
+        end = .limitReached
+        clearScreenState()
         terminal.stopStatusMonitoring()
         terminal.terminate()
         release()
@@ -142,10 +175,7 @@ final class HostedSession: Identifiable {
     private func handleExit(_ code: Int32?) {
         terminal.stopStatusMonitoring()
         if end == nil { end = .exited(code) }
-        permissionPrompt = nil
-        inputBlock = nil
-        menuPrompt = nil
-        unreadableMenu = nil
+        clearScreenState()
         release()
     }
 

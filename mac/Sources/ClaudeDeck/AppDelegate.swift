@@ -24,11 +24,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("ClaudeDeckChatWindow")
         window.center()
         window.makeKeyAndOrderFront(nil)
+        // 画面のモデルを渡した後に開く（操作の受け手が揃ってから）。既定は無効。
+        RemoteAccessController.shared.startIfEnabled()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    func applicationWillTerminate(_ notification: Notification) { MonitorBridge.stop() }
+    func applicationWillTerminate(_ notification: Notification) {
+        RemoteAccessController.shared.shutdown()
+        MonitorBridge.stop()
+    }
 
     // MARK: - メニュー（最小構成: アプリ / 編集）
 
@@ -40,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "claude-deck について", action: nil, keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "iPhone 連携…", action: #selector(showRemoteAccess), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "claude-deck を終了",
                         action: #selector(NSApplication.terminate(_:)),
@@ -65,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenuItem.submenu = editMenu
 
         NSApplication.shared.mainMenu = mainMenu
+    }
+
+    @MainActor @objc private func showRemoteAccess() {
+        RemoteAccessWindow.show()
     }
 
     // MARK: - スクリーンショット
