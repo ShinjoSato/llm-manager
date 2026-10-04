@@ -98,7 +98,7 @@ final class RemoteAccessController {
 
     /// 1024 未満（特権ポート）と 8766（フック・チャネルの口）は使わない。
     func setPort(_ value: Int) -> Bool {
-        guard (1024...65535).contains(value), value != MonitorHTTPRoutes.defaultPort else { return false }
+        guard (1024...65535).contains(value), value != HookServerRoutes.defaultPort else { return false }
         guard value != port else { return true }
         port = value
         UserDefaults.standard.set(value, forKey: Keys.port)

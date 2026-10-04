@@ -154,8 +154,8 @@ final class ChannelExecutableTests: XCTestCase {
         return products.appendingPathComponent("claude-deck-channel")
     }
 
-    private func listen(_ server: LoopbackHTTPServer) async throws -> Int {
-        let states = Box<[LoopbackServerState]>([])
+    private func listen(_ server: HTTPServer) async throws -> Int {
+        let states = Box<[HTTPServerState]>([])
         server.start(port: 0) { state in states.mutate { $0.append(state) } }
         for _ in 0..<300 {
             if case .listening(let port)? = states.value.last { return port }
@@ -166,7 +166,7 @@ final class ChannelExecutableTests: XCTestCase {
 
     func testDoesNotFollowRedirect() async throws {
         let followed = Box(false)
-        let server = LoopbackHTTPServer { request in
+        let server = HTTPServer { request in
             if request.path == "/elsewhere" {
                 followed.mutate { $0 = true }
                 return .json(200, ["ok": true, "outcome": "allow"])
@@ -188,7 +188,7 @@ final class ChannelExecutableTests: XCTestCase {
             return XCTFail("実行ファイルが無い: \(executable.path)")
         }
         let received = Box<[[String: Any]]>([])
-        let server = LoopbackHTTPServer { request in
+        let server = HTTPServer { request in
             guard request.method == "POST", request.path == "/api/channel/permissions" else { return .json(404, [:]) }
             let body = (try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]) ?? [:]
             var count = 0

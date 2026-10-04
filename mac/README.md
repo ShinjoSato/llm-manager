@@ -69,9 +69,9 @@ mac/
       XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探しと `open -a`
       ClaudeHome.swift            ~/.claude のパス・スラッグ・transcript の場所
     Server/                     フック等を受けるアプリ内の HTTP サーバー
-      LoopbackHTTPServer.swift    最小の HTTP/1.1（Network.framework・外部ライブラリなし）。既定は 127.0.0.1・平文。
+      HTTPServer.swift    最小の HTTP/1.1（Network.framework・外部ライブラリなし）。既定は 127.0.0.1・平文。
                                   `HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限を変えられ、chunked で流し続ける応答（SSE）も出せる
-      MonitorHTTPRoutes.swift     /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
+      HookServerRoutes.swift     /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
       LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定（移植元: 旧 monitor の src/origin.ts）
     Remote/                     iPhone 向けの口（同じ Wi-Fi・TLS・端末トークン）。仕様は docs/remote-api.md
       API/                        iOS と共有する型（RemoteAPIModels: リクエスト・応答・状態 / RemotePinning: 指紋のピン留め）
@@ -117,7 +117,7 @@ mac/
 ## セッション監視とフックの受け口（MonitorKit・アプリ内）
 
 以前は別プロセスの monitor（Node・:8766。削除済み）が担っていた仕事を**アプリの中で行う**。起動時に `MonitorBridge.start()` → `MonitorStore.start()` が
-監視（`SessionHub` / `TranscriptStore`）と受け口（`LoopbackHTTPServer`）を動かし、UI は HTTP / SSE を経由せず
+監視（`SessionHub` / `TranscriptStore`）と受け口（`HTTPServer`）を動かし、UI は HTTP / SSE を経由せず
 ストアから直接読む。重い I/O は actor 上で行い、メインスレッドには載せない。
 
 - **在庫層**（3 秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)`。**実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl`
@@ -161,7 +161,7 @@ mac/
   127.0.0.1 では bind できず「使用中」になることを試験で確かめている
 - ポートは `CLAUDE_DECK_SERVER_PORT`（既定 8766。`off` で待ち受けない）
 - **ポートが使われている時**（旧 monitor が動いている等）: 奪わない・止めない。ルーム一覧の検索欄の下に
-  「ポート 8766 を別のプロセス（旧 monitor 等）が使っているため、フック（権限待ち・入力待ち）が届きません」と出し、
+  「ポート 8766 を別のプロセスが使っているため、フック（権限待ち・入力待ち）が届きません」と出し、
   監視（一覧・会話・使用量）は続ける。5 秒ごとに取り直すので、旧 monitor を止めれば自動で引き継ぐ（`MonitorStore.serverState`）
 - アプリが起動していない間のフックは届かない（curl は `--max-time 1` で諦めるだけで、Claude Code 側は止まらない）。
   取りこぼしてよい扱いにしている: 権限待ち・入力待ちはフックでしか分からないが、次のフックかログの追記で状態は戻る

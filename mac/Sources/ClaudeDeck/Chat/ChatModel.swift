@@ -531,7 +531,7 @@ final class ChatModel {
         }
         if handingOver.contains(sessionId) { return "引き継ぎ中…" }
         if !snapshot.alive || room.status == .stopped { return "このセッションは終了しています" }
-        if !SessionHandover.isValidSessionId(sessionId) { return "sessionId の形式が想定外のため引き継げません" }
+        if !SessionHandover.isResumableSessionId(sessionId) { return "sessionId の形式が想定外のため引き継げません" }
         if let reason = handoverSourceReason(for: room) { return reason }
         if LimitWatch.shared.isLimitReached { return "Max 枠の上限に達しているため引き継げません（リセット後に試してください）" }
         return nil

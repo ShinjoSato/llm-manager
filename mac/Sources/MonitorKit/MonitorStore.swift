@@ -16,7 +16,7 @@ public enum MonitorConnectionState: Sendable, Equatable {
 }
 
 /// セッション・フィード・残量・権限確認を保持する観測可能なストア。
-/// データ源はアプリ内の監視（`SessionHub` / `TranscriptStore`）で、フック等の外からの口は `LoopbackHTTPServer` で受ける。
+/// データ源はアプリ内の監視（`SessionHub` / `TranscriptStore`）で、フック等の外からの口は `HTTPServer` で受ける。
 @MainActor
 @Observable
 public final class MonitorStore {
@@ -25,8 +25,8 @@ public final class MonitorStore {
     @ObservationIgnored public let transcripts: TranscriptStore
 
     public private(set) var connection: MonitorConnectionState = .idle
-    /// フック等の受け口（:8766）の状態。使用中なら旧 monitor 等が動いていて、フックはこちらに届かない。
-    public private(set) var serverState: LoopbackServerState = .stopped
+    /// フック等の受け口（:8766）の状態。使用中なら別のプロセスが待ち受けていて、フックはこちらに届かない。
+    public private(set) var serverState: HTTPServerState = .stopped
     public private(set) var sessions: [SessionSnapshot] = []
     public private(set) var feed: [FeedItem] = []
     public private(set) var usage: UsageSnapshot?
@@ -47,7 +47,7 @@ public final class MonitorStore {
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var continuation: AsyncStream<MonitorEvent>.Continuation?
     @ObservationIgnored private var transcriptSubscriberId: Int?
-    @ObservationIgnored private var server: LoopbackHTTPServer?
+    @ObservationIgnored private var server: HTTPServer?
     @ObservationIgnored private var serverRetry: Task<Void, Never>?
     @ObservationIgnored private let registry: ClaudeSessionRegistry
     @ObservationIgnored private var hostedPids: Set<Int32> = []
@@ -176,19 +176,19 @@ public final class MonitorStore {
             return
         }
         let hub = hub
-        let server = LoopbackHTTPServer { request in await MonitorHTTPRoutes.handle(request, hub: hub) }
+        let server = HTTPServer { request in await HookServerRoutes.handle(request, hub: hub) }
         self.server = server
         listen(server, port: port)
     }
 
-    private func listen(_ server: LoopbackHTTPServer, port: Int) {
+    private func listen(_ server: HTTPServer, port: Int) {
         serverState = .starting
         server.start(port: port) { [weak self] state in
             Task { @MainActor in self?.serverChanged(state, server: server, port: port) }
         }
     }
 
-    private func serverChanged(_ state: LoopbackServerState, server: LoopbackHTTPServer, port: Int) {
+    private func serverChanged(_ state: HTTPServerState, server: HTTPServer, port: Int) {
         guard running, server === self.server else { return }
         serverState = state
         switch state {
@@ -316,7 +316,7 @@ public final class MonitorStore {
 
     private func log(_ message: @autoclosure () -> String) {
         guard configuration.debugLogging else { return }
-        FileHandle.standardError.write(Data("[monitor] \(message())\n".utf8))
+        FileHandle.standardError.write(Data("[claude-deck] \(message())\n".utf8))
     }
 
     private static func describe(_ usage: UsageSnapshot?) -> String {

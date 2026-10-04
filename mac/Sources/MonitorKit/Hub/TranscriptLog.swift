@@ -13,7 +13,7 @@ public enum TranscriptFormat {
     public static let imageMediaTypes: Set<String> = ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
     /// パスに埋め込みうるので、UUID 相当の文字だけを通す（`..` や `/` を入れさせない）。
-    public static func isValidSessionId(_ id: String) -> Bool {
+    public static func isResumableSessionId(_ id: String) -> Bool {
         guard (1...128).contains(id.utf8.count) else { return false }
         return id.unicodeScalars.allSatisfy { $0.isASCIILetter || $0.isASCIIDigit || $0 == "-" }
     }
@@ -21,7 +21,7 @@ public enum TranscriptFormat {
     /// 履歴の要素 id（`<uuid>:<ブロック番号>` / `line<N>:<ブロック番号>`）。
     public static func isValidItemId(_ id: String) -> Bool {
         let parts = id.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 2, isValidSessionId(String(parts[0])) else { return false }
+        guard parts.count == 2, isResumableSessionId(String(parts[0])) else { return false }
         return (1...6).contains(parts[1].count) && parts[1].unicodeScalars.allSatisfy(\.isASCIIDigit)
     }
 

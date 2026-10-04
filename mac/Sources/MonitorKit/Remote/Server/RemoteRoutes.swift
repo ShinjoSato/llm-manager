@@ -210,7 +210,7 @@ public struct RemoteRoutes: Sendable {
         case "*": subscription = .all
         case let list?:
             let ids = Set(list.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) })
-            guard ids.count <= Self.maxTranscriptSubscriptions, ids.allSatisfy(TranscriptFormat.isValidSessionId) else {
+            guard ids.count <= Self.maxTranscriptSubscriptions, ids.allSatisfy(TranscriptFormat.isResumableSessionId) else {
                 return Self.error(400, "invalid", "transcripts の指定が不正です")
             }
             subscription = .sessions(ids)

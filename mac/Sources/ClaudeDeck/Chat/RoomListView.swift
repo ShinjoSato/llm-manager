@@ -241,10 +241,10 @@ struct ConnectionNotice: View {
 struct HookServerNotice: View {
     let text: String
 
-    static func text(for state: LoopbackServerState) -> String? {
+    static func text(for state: HTTPServerState) -> String? {
         switch state {
         case .portInUse(let port):
-            return "ポート \(port) を別のプロセス（旧 monitor 等）が使っているため、フック（権限待ち・入力待ち）が届きません。そのプロセスを止めると自動で引き継ぎます。"
+            return "ポート \(port) を別のプロセスが使っているため、フック（権限待ち・入力待ち）が届きません。そのプロセスを止めると自動で引き継ぎます。"
         case .failed(let reason):
             return "フックの受け口を開けません（\(reason)）。権限待ち・入力待ちが届きません。"
         case .stopped, .starting, .listening:

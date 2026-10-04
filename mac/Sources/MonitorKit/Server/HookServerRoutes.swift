@@ -5,7 +5,7 @@ import Foundation
 ///   POST /hook                       Claude Code のフックから状態遷移を受け取る
 ///   POST /api/channel/permissions    チャネル（claude-deck-channel）からの権限確認（判断が出るまで待たせる）
 /// 認証が無く承認の口もあるので、ループバックでしか待ち受けず、Host / Origin / 接続元も確かめる。
-public enum MonitorHTTPRoutes {
+public enum HookServerRoutes {
     /// 既定の待ち受け。`~/.claude/settings.json` のフックと claude-deck-channel がこのポートを宛先にしている。
     public static let defaultPort = 8766
 

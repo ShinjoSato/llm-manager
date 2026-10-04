@@ -2,12 +2,12 @@ import XCTest
 @testable import MonitorKit
 
 /// アプリ内サーバー（移植元: 旧 monitor（削除済み）の src/server.ts の外から叩かれる口）。:8766 は使わず、OS に割り当てさせた別ポートで立てる。
-final class LoopbackHTTPServerTests: XCTestCase {
+final class HTTPServerTests: XCTestCase {
     typealias F = FakeClaudeHome
     let sessionId = "11111111-2222-3333-4444-555555555555"
     var home: FakeClaudeHome!
     var hub: SessionHub!
-    var server: LoopbackHTTPServer!
+    var server: HTTPServer!
     var port = 0
 
     override func setUp() async throws {
@@ -16,7 +16,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
         hub = SessionHub(home: home.home, usageFile: nil)
         await hub.scanInventory()
         let hub = hub!
-        server = LoopbackHTTPServer { request in await MonitorHTTPRoutes.handle(request, hub: hub) }
+        server = HTTPServer { request in await HookServerRoutes.handle(request, hub: hub) }
         port = try await listen(server, port: 0)
         XCTAssertNotEqual(port, 8766)
     }
@@ -26,8 +26,8 @@ final class LoopbackHTTPServerTests: XCTestCase {
         home?.remove()
     }
 
-    private func listen(_ server: LoopbackHTTPServer, port: Int) async throws -> Int {
-        let states = Box<[LoopbackServerState]>([])
+    private func listen(_ server: HTTPServer, port: Int) async throws -> Int {
+        let states = Box<[HTTPServerState]>([])
         server.start(port: port) { state in states.mutate { $0.append(state) } }
         for _ in 0..<200 {
             if let last = states.value.last {
@@ -114,7 +114,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
     }
 
     func testOversizedAndChunkedBodiesAreRejected() async throws {
-        let big = try rawRequest("POST /hook HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nContent-Type: application/json\r\nContent-Length: \(LoopbackHTTPServer.maxBodyBytes + 1)\r\n\r\n")
+        let big = try rawRequest("POST /hook HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nContent-Type: application/json\r\nContent-Length: \(HTTPServer.maxBodyBytes + 1)\r\n\r\n")
         XCTAssertTrue(big.hasPrefix("HTTP/1.1 413"), big)
         let chunked = try rawRequest("POST /hook HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")
         XCTAssertTrue(chunked.hasPrefix("HTTP/1.1 501"), chunked)
@@ -144,7 +144,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
             return true
         })
         await busyHub.scanInventory()
-        let busyServer = LoopbackHTTPServer { request in await MonitorHTTPRoutes.handle(request, hub: busyHub) }
+        let busyServer = HTTPServer { request in await HookServerRoutes.handle(request, hub: busyHub) }
         defer { busyServer.stop() }
         let busyPort = try await listen(busyServer, port: 0)
         blocking.mutate { $0 = true }
@@ -199,17 +199,17 @@ final class LoopbackHTTPServerTests: XCTestCase {
     func testConnectionLimit() async throws {
         var idle: [Int32] = []
         defer { idle.forEach { close($0) } }
-        for _ in 0..<LoopbackHTTPServer.maxConnections { idle.append(try connectRaw()) }
-        for _ in 0..<200 where server.connectionCount < LoopbackHTTPServer.maxConnections {
+        for _ in 0..<HTTPServer.maxConnections { idle.append(try connectRaw()) }
+        for _ in 0..<200 where server.connectionCount < HTTPServer.maxConnections {
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertEqual(server.connectionCount, LoopbackHTTPServer.maxConnections)
+        XCTAssertEqual(server.connectionCount, HTTPServer.maxConnections)
         let extra = try connectRaw()
         defer { close(extra) }
         var buf = [UInt8](repeating: 0, count: 16)
         let n = read(extra, &buf, buf.count)
         XCTAssertTrue(n == 0 || (n < 0 && errno != EAGAIN), "上限を超えた接続は何も返さずに閉じる（n=\(n) errno=\(errno)）")
-        XCTAssertEqual(server.connectionCount, LoopbackHTTPServer.maxConnections)
+        XCTAssertEqual(server.connectionCount, HTTPServer.maxConnections)
 
         idle.forEach { close($0) }
         idle = []
@@ -304,13 +304,13 @@ final class LoopbackHTTPServerTests: XCTestCase {
     func testNonLoopbackActorIsHidden() async {
         let request = HTTPRequest(method: "GET", path: "/api/health", headers: ["host": "127.0.0.1:8766"], remoteAddress: "192.168.0.11")
         let hub = hub!
-        let response = await MonitorHTTPRoutes.guarded(request, port: 8766) { await MonitorHTTPRoutes.handle($0, hub: hub) }
+        let response = await HookServerRoutes.guarded(request, port: 8766) { await HookServerRoutes.handle($0, hub: hub) }
         XCTAssertEqual(response.status, 404, "ループバック以外には存在ごと伏せる")
     }
 
     /// ポートが使われていれば奪わずに「使用中」を返す（旧 monitor が動いている時の扱い）。
     func testPortInUseIsReportedWithoutStealing() async throws {
-        let second = LoopbackHTTPServer { _ in .json(200, ["ok": true]) }
+        let second = HTTPServer { _ in .json(200, ["ok": true]) }
         defer { second.stop() }
         do {
             _ = try await listen(second, port: port)
@@ -331,7 +331,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
     /// 止めて別の待ち受けで開き直すのを繰り返しても、毎回すぐに取れる。
     func testStopThenListenElsewhereRepeatedly() async throws {
         let taken = port
-        let other = LoopbackHTTPServer { _ in .json(200, ["ok": true]) }
+        let other = HTTPServer { _ in .json(200, ["ok": true]) }
         defer { other.stop() }
         var (current, next) = (server!, other)
         for _ in 0..<50 {
@@ -376,7 +376,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
         }
         let foreignPort = Int(UInt16(bigEndian: actual.sin_port))
 
-        let mine = LoopbackHTTPServer { _ in .json(200, ["ok": true]) }
+        let mine = HTTPServer { _ in .json(200, ["ok": true]) }
         defer { mine.stop() }
         do {
             _ = try await listen(mine, port: foreignPort)
@@ -391,7 +391,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
         for (v6, reuse) in [(false, false), (false, true), (true, false), (true, true)] {
             let (fd, foreignPort) = try wildcardListener(v6: v6, reuseAddr: reuse)
             defer { close(fd) }
-            let mine = LoopbackHTTPServer { _ in .json(200, ["ok": true]) }
+            let mine = HTTPServer { _ in .json(200, ["ok": true]) }
             defer { mine.stop() }
             do {
                 _ = try await listen(mine, port: foreignPort)

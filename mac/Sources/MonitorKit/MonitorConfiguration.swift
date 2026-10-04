@@ -15,7 +15,7 @@ public struct MonitorConfiguration: Sendable, Equatable {
 
     public init(claudeHome: ClaudeHome = .fromEnvironment(),
                 usageFile: URL? = nil,
-                serverPort: Int? = MonitorHTTPRoutes.defaultPort,
+                serverPort: Int? = HookServerRoutes.defaultPort,
                 serverRetryInterval: TimeInterval = 5,
                 debugLogging: Bool = false) {
         self.claudeHome = claudeHome

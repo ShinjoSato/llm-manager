@@ -487,13 +487,13 @@ final class RemoteAccessUnitTests: XCTestCase {
 
     func testTLSParametersNeverFallBackToPlaintext() throws {
         let loaded = try TLSIdentityFiles(directory: dir).loadOrCreate()
-        XCTAssertNil(LoopbackHTTPServer.parameters(tls: loaded.serverIdentity, makeIdentity: { _ in nil }),
+        XCTAssertNil(HTTPServer.parameters(tls: loaded.serverIdentity, makeIdentity: { _ in nil }),
                      "TLS を組めなければ平文の設定を返さない")
-        let tls = try XCTUnwrap(LoopbackHTTPServer.parameters(tls: loaded.serverIdentity, keepalive: true))
+        let tls = try XCTUnwrap(HTTPServer.parameters(tls: loaded.serverIdentity, keepalive: true))
         XCTAssertTrue(tls.defaultProtocolStack.applicationProtocols.contains { $0 is NWProtocolTLS.Options })
         let tcp = try XCTUnwrap(tls.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options)
         XCTAssertTrue(tcp.enableKeepalive, "黙って消えた相手を見つける")
-        let plain = try XCTUnwrap(LoopbackHTTPServer.parameters(tls: nil))
+        let plain = try XCTUnwrap(HTTPServer.parameters(tls: nil))
         XCTAssertFalse(plain.defaultProtocolStack.applicationProtocols.contains { $0 is NWProtocolTLS.Options })
         XCTAssertFalse((plain.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options)?.enableKeepalive ?? true,
                        "8766 の口の既定は変えない")

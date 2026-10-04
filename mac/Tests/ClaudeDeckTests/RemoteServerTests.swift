@@ -24,7 +24,7 @@ final class RemoteServerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         port = try XCTUnwrap(service.boundPort)
-        XCTAssertNotEqual(port, MonitorHTTPRoutes.defaultPort)
+        XCTAssertNotEqual(port, HookServerRoutes.defaultPort)
         fingerprint = try XCTUnwrap(service.fingerprint)
     }
 

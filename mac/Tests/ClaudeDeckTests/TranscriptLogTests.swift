@@ -75,9 +75,9 @@ final class TranscriptFormatTests: XCTestCase {
     }
 
     func testIdsAndImageCatalog() {
-        XCTAssertTrue(TranscriptFormat.isValidSessionId("9c5a73ea-48db-4aef-9ca5-a772f22c89a0"))
-        XCTAssertFalse(TranscriptFormat.isValidSessionId("../etc"))
-        XCTAssertFalse(TranscriptFormat.isValidSessionId(""))
+        XCTAssertTrue(TranscriptFormat.isResumableSessionId("9c5a73ea-48db-4aef-9ca5-a772f22c89a0"))
+        XCTAssertFalse(TranscriptFormat.isResumableSessionId("../etc"))
+        XCTAssertFalse(TranscriptFormat.isResumableSessionId(""))
         XCTAssertTrue(TranscriptFormat.isValidItemId("9ebe6f6b-8bb4-4b6f-ae38-23c465ae94a0:0"))
         XCTAssertTrue(TranscriptFormat.isValidItemId("line12:0"))
         XCTAssertFalse(TranscriptFormat.isValidItemId("abc"))

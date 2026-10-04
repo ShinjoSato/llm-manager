@@ -4,11 +4,11 @@ import Foundation
 // 時刻は epoch ミリ秒のまま持ち、Date が要る所では *Date の計算プロパティを使う。
 
 /// 未知の値が来てもデコード全体を落とさないための文字列 enum の共通処理。
-public protocol MonitorLenientEnum: RawRepresentable, Codable, Sendable, Hashable where RawValue == String {
+public protocol LenientStringEnum: RawRepresentable, Codable, Sendable, Hashable where RawValue == String {
     static var unknownCase: Self { get }
 }
 
-extension MonitorLenientEnum {
+extension LenientStringEnum {
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
         self = Self(rawValue: raw) ?? Self.unknownCase
@@ -16,14 +16,14 @@ extension MonitorLenientEnum {
 }
 
 /// セッションの状態（types.ts の SessionStatus）。
-public enum SessionStatus: String, MonitorLenientEnum {
+public enum SessionStatus: String, LenientStringEnum {
     case working, waiting, permission, idle, error, stopped
     case unknown
     public static var unknownCase: SessionStatus { .unknown }
 }
 
 /// 状態の出どころ（types.ts の StatusSource）。
-public enum StatusSource: String, MonitorLenientEnum {
+public enum StatusSource: String, LenientStringEnum {
     case hook, transcript, inventory
     case unknown
     public static var unknownCase: StatusSource { .unknown }
@@ -94,7 +94,7 @@ public struct UsageSnapshot: Codable, Sendable, Hashable {
     public var fetchedDate: Date { Date(epochMillis: fetchedAt) }
 }
 
-public enum FeedKind: String, MonitorLenientEnum {
+public enum FeedKind: String, LenientStringEnum {
     case tool, prompt, message, status, session, agent
     case unknown
     public static var unknownCase: FeedKind { .unknown }
@@ -128,7 +128,7 @@ public struct PendingPermission: Codable, Sendable, Hashable, Identifiable {
     public var id: String { key }
 }
 
-public enum TranscriptItemKind: String, MonitorLenientEnum {
+public enum TranscriptItemKind: String, LenientStringEnum {
     case user, assistant, tool
     case unknown
     public static var unknownCase: TranscriptItemKind { .unknown }
