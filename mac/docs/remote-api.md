@@ -3,9 +3,10 @@
 claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す API。iPhone アプリ（#121）はこの文書に従う。
 外部サービスは使わない（通知だけは iCloud 経由。#122）。
 
-- 型（Codable）は `Sources/MonitorKit/Remote/API/`（`RemoteAPIModels.swift`・`RemotePinning.swift`）と
-  `Sources/MonitorKit/MonitorModels.swift`（`SessionSnapshot`・`PendingPermission`・`TranscriptItem` 等）。
-  この 3 ファイルは Foundation / Security / CryptoKit だけに依存するので、共有パッケージへそのまま切り出せる。
+- 型（Codable）は共有パッケージ `packages/DeckCore` の `Sources/DeckCore/Remote/`（`RemoteAPIModels.swift`・`RemotePinning.swift`）と
+  `Sources/DeckCore/Models/MonitorModels.swift`（`SessionSnapshot`・`PendingPermission`・`TranscriptItem` 等）。
+  iPhone 側のクライアント（ピン留めの URLSession・要求の組み立て・SSE・結果コードの文言・再接続の待ち）も `Sources/DeckCore/Client/` にある。
+  DeckCore は Foundation / Security / CryptoKit だけに依存させる（macOS 14 / iOS 17）。
 - サーバー側は `Sources/MonitorKit/Remote/Server/`、mac の画面と操作の受け手は `Sources/ClaudeDeck/Remote/`。
 
 ## 口の開け方
