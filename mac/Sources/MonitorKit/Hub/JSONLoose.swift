@@ -2,7 +2,7 @@ import Foundation
 
 /// JSONSerialization の値を JavaScript の typeof に近い厳しさで読む（NSNumber の 1 を true と取り違えないため）。
 enum JSONLoose {
-    /// 1 行の JSON を読む。不正な UTF-8 は置換文字に直してから読み直す（Node の toString("utf8") と同じ扱い）。
+    /// 1 行の JSON を読む。不正な UTF-8 は置換文字に直してから読み直す。
     static func object(_ bytes: some Collection<UInt8>) -> Any? {
         let data = Data(bytes)
         if let o = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) { return o }

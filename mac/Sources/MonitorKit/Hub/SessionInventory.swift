@@ -1,6 +1,6 @@
 import Foundation
 
-/// 在庫層が `~/.claude/sessions/<pid>.json` から読む生の情報（移植元: 旧 monitor（削除済み）の src/types.ts の RawSession）。
+/// 在庫層が `~/.claude/sessions/<pid>.json` から読む生の情報。
 public struct RawSession: Sendable, Equatable {
     public var pid: Int32
     public var sessionId: String
@@ -15,7 +15,7 @@ public struct RawSession: Sendable, Equatable {
     public var alive: Bool
 }
 
-/// 在庫層（移植元: 旧 monitor（削除済み）の src/inventory.ts）。フックが飛ばないセッションでも全体像が取れる唯一の経路。
+/// 在庫層。フックが飛ばないセッションでも全体像が取れる唯一の経路。
 public enum SessionInventory {
     /// EPERM は他ユーザーのプロセスで、存在はしている。
     @Sendable public static func processAlive(_ pid: Int32) -> Bool {

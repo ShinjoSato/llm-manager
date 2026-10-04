@@ -1,11 +1,7 @@
 import Foundation
 import MonitorKit
 
-/// ユーザーが追加・削除したプロジェクト一覧の永続ストア。
-/// 実体は `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。
-///
-/// - 初回（ファイル未作成）は `registry.tsv` から取り込んで空にしない。
-/// - 以降は完全にユーザー管理（追加・削除がそのまま保存される）。
+/// 「+」のプロジェクト一覧（Application Support の projects.json）。初回だけ registry.tsv から取り込み、以降はユーザーが管理する。
 enum ProjectStore {
 
     private static var fileURL: URL {

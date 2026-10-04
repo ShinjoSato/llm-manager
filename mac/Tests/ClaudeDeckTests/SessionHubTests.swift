@@ -1,7 +1,7 @@
 import XCTest
 @testable import MonitorKit
 
-/// 実況層の読み取り（移植元: 旧 monitor（削除済み）の src/transcript.ts）。
+/// 実況層の読み取り。
 final class TranscriptTailTests: XCTestCase {
     typealias F = FakeClaudeHome
 
@@ -76,7 +76,7 @@ final class TranscriptTailTests: XCTestCase {
     }
 }
 
-/// 在庫層（移植元: 旧 monitor（削除済み）の src/inventory.ts）。
+/// 在庫層。
 final class SessionInventoryTests: XCTestCase {
     func testScanSkipsBrokenAndIncomplete() throws {
         let home = try FakeClaudeHome()
@@ -115,7 +115,7 @@ final class SessionInventoryTests: XCTestCase {
     }
 }
 
-/// 状態の合成・フック・要対応・権限の中継（移植元: 旧 monitor（削除済み）の src/hub.ts）。
+/// 状態の合成・フック・要対応・権限の中継。
 final class SessionHubTests: XCTestCase {
     typealias F = FakeClaudeHome
     let sessionId = "11111111-2222-3333-4444-555555555555"

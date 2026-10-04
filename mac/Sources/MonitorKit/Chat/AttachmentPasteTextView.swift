@@ -42,7 +42,7 @@ open class AttachmentPasteTextView: NSTextView {
         super.pasteAsRichText(sender)
     }
 
-    /// ファイルや画像だけのクリップボードなら添付にして true。文字を含むものは false（従来どおり文字として貼る）。
+    /// ファイルや画像だけのクリップボードなら添付にして true。文字を含むものは false（文字として貼る）。
     @discardableResult
     public func attachPaste() -> Bool {
         isEditable && attach(from: pasteSource)

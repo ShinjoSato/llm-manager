@@ -91,7 +91,7 @@ final class TerminationSignalsTests: XCTestCase {
         }
     }
 
-    /// 端末ペインと同じ SwiftTerm の起動経路で、terminate()（SIGTERM）で子が終わる。
+    /// ホスト中のセッションと同じ SwiftTerm の起動経路で、terminate()（SIGTERM）で子が終わる。
     func testSwiftTermChildStillDiesOnTerminate() throws {
         TerminationSignals.installNoopHandlers(for: signals)
         let delegate = NullTerminalDelegate()

@@ -148,9 +148,8 @@ public enum ChoiceMenu {
 
 /// 端末下部の入力欄（罫線の直下の ❯ 行から次の罫線まで）。
 public enum InputBox {
-    /// 入力欄の ❯ 行の位置。選択肢の形（❯ n. …）の行は、下を罫線で閉じている時だけ入力欄とみなす（番号付きの文を入力中）。
-    /// 選択メニューは ❯ の下を罫線で閉じない（v2.1.286: 入力欄は上下に罫線、plan 承認は上だけ、
-    /// AskUserQuestion の区切り線は「Chat about this」の上で、その下は操作案内）。
+    /// 入力欄の ❯ 行の位置。`❯ n. …` の形は下を罫線で閉じている時だけ入力欄とみなす（番号付きの文を入力中）。
+    /// v2.1.286 では入力欄だけが ❯ の上下を罫線で挟み、選択メニューは ❯ の下を閉じない。
     static func promptIndex(_ lines: [String]) -> Int? {
         lines.indices.last { index in
             guard index > 0 else { return false }

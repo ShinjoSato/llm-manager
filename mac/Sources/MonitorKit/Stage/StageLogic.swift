@@ -1,6 +1,6 @@
 import Foundation
 
-/// サブエージェント種別に対応する職業（旧 monitor UI の `pixel/kit.ts` の JOBS と同じ呼び名）。
+/// サブエージェント種別に対応する職業。
 public struct StageJob: Sendable, Equatable {
     public var label: String
     public var role: String
@@ -22,7 +22,7 @@ public enum StageContent: Sendable, Equatable {
     case placeholder(String)
 }
 
-/// ステージパネルの文言・開閉の判定（UI 非依存。旧 monitor UI の言い回しにそろえる）。
+/// ステージパネルの文言・開閉の判定（UI 非依存）。
 public enum StageLogic {
     // MARK: - いまの動き
 
@@ -51,7 +51,7 @@ public enum StageLogic {
         "SendMessage": "文を送っている",
     ]
 
-    /// ツールの動作の一言。Agent / Task は子が出るので持ち物にしない（kit.ts の itemForVerb と同じ）。
+    /// ツールの動作の一言。Agent / Task は子が出るので持ち物にしない。
     public static func toolVerb(_ tool: String?) -> String? {
         guard let tool, !tool.isEmpty, tool != "Agent", tool != "Task" else { return nil }
         return verbs[tool] ?? "手を動かしている"
@@ -93,7 +93,7 @@ public enum StageLogic {
         return jobs[type] ?? unknownJob
     }
 
-    /// ログの更新がこれ以内なら作業中とみなす（旧 monitor も 3 分更新が無いと一覧から外す）。
+    /// ログの更新がこれ以内なら作業中とみなす。
     public static let agentActiveWindow: TimeInterval = 15
 
     public static func activity(of agent: AgentInfo, now: Date) -> StageAgentActivity {
@@ -108,7 +108,7 @@ public enum StageLogic {
 
     // MARK: - 時間
 
-    /// 旧 monitor UI の `ago` と同じ書き方（「12秒前」）。
+    /// 「12秒前」。
     public static func ago(_ date: Date?, now: Date) -> String {
         guard let date else { return "—" }
         let s = Int(max(0, now.timeIntervalSince(date)))
@@ -118,7 +118,7 @@ public enum StageLogic {
         return "\(s / 86_400)日前"
     }
 
-    /// 旧 monitor UI の `dur` と同じ書き方（「1時間5分」）。
+    /// 「1時間5分」。
     public static func duration(since date: Date, now: Date) -> String {
         let s = Int(max(0, now.timeIntervalSince(date)))
         let h = s / 3600

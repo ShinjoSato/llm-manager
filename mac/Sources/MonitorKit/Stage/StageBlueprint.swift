@@ -1,6 +1,6 @@
 import Foundation
 
-// ステージ（3D）の寸法・配置・光り方。出典は 旧 monitor UI の `three/blueprint.ts`・`three/World.tsx`（数値は同じ）。
+// ステージ（3D）の寸法・配置・光り方。数値は three.js で描いていた頃の見た目に合わせてある。
 
 public struct StageVector: Sendable, Equatable {
     public var x: Double
@@ -109,7 +109,7 @@ public enum StageBlueprint {
 
     /// キャラの厚み（絵の 1 マスを 1 とした値）。
     public static let figureDepth = 3.0
-    /// 同時に出すサブエージェントの上限（出典 `pixel/AgentStage.tsx` の MAX_KIDS）。
+    /// 同時に出すサブエージェントの上限。
     public static let maxKids = 4
 
     /// 影と光の輪の半径。
@@ -118,7 +118,7 @@ public enum StageBlueprint {
     public static let itemGlowSize = itemHeight * 2.1
     public static let markGlowSize = Double(markRows) * markVoxel * 2.4
 
-    // MARK: - 空間（World.tsx）
+    // MARK: - 空間
 
     public static let fov = 34.0
     /// 見下ろす角度（ラジアン）。

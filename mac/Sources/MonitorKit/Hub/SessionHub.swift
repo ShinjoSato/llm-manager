@@ -86,8 +86,7 @@ final class HookDropCounter: @unchecked Sendable {
     }
 }
 
-/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: 旧 monitor（削除済み）の src/hub.ts）。
-/// 受け手は `MonitorEvent` を 1 本の流れで受け取る（以前の SSE と同じ単位）。
+/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を `MonitorEvent` の流れとして受け手へ渡す。
 public actor SessionHub {
     /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。
     static let staleBusy: Double = 10 * 60_000
@@ -514,9 +513,8 @@ public actor SessionHub {
         if changed { emitUpdate() }
     }
 
-    /// 初回読みの各行を起動前の分（フィードに積まない）とみなすか。
-    /// 時刻の無い行（ai-title 等）は近くの時刻のある行に倣う（--resume で書き直された古いメタ情報を新着にしないため）。
-    /// 読んだ中に時刻のある行が無ければ、起動前から動いていたセッションの分だけ古いとみなす。
+    /// 初回読みの各行を起動前の分（フィードに積まない）とみなすか。時刻の無い行は近くの時刻のある行に倣う
+    /// （--resume で書き直された古いメタ情報を新着にしないため）。時刻のある行が無ければ、起動前から動いていたセッションの分だけ古いとみなす。
     private func initialQuietFlags(_ events: [ParsedEvent], knownAtStart: Bool) -> [Bool] {
         var flags = [Bool](repeating: knownAtStart, count: events.count)
         var previous: Double?

@@ -2,21 +2,15 @@ import AppKit
 import SwiftTerm
 import MonitorKit
 
-/// Claude Code の作業状態（ペイン見出しのバッジ表示に使う）。
+/// Claude Code の作業状態（ルームのバッジ・並び順に使う）。
 enum ClaudeStatus: Equatable {
     case working        // 出力が流れている（生成中）
     case waitingInput   // 権限確認・選択メニュー・質問プロンプトを検出（要応答）
     case idle           // 出力停止 かつ プロンプト無し（待機/完了）
 }
 
-/// Claude Code を PTY でホストする端末ビュー。
-///
-/// 設計上の安全装置（料金事故をゼロにする）:
-///  - 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去する。
-///    API 課金経路が存在しないため、Max 枠の上限に達しても「待つ」だけで課金は発生しない。
-///  - headless（`claude -p` / Agent SDK）の起動口は一切設けない。
-///
-/// さらに、上限到達（公式の残量 100% か、画面末尾の上限表示）を検知したらセッションを強制終了する。
+/// Claude Code を PTY でホストする端末ビュー。料金事故をゼロにするため、子の環境から API キーを必ず除き、headless の起動口は設けない。
+/// 上限到達（公式の残量 100% か、画面末尾の上限表示）を検知したらセッションを強制終了する。
 final class ClaudeTerminalView: LocalProcessTerminalView {
 
     /// 上限到達を検知したときに呼ばれる（メインスレッド）。
@@ -55,16 +49,13 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     /// 「最後の出力からこの秒数以内」なら出力が流れている＝作業中とみなす（活動量ベース）。
     private static let busyThreshold: TimeInterval = 1.0
 
-    /// 実行中インジケータ。これが現在画面に出ている間は、出力が一時的に止まっても作業中とみなす。
-    /// 長い bash 実行やネット待ちで出力が途切れても「完了」へ誤遷移しないための補助シグナル。
-    /// ⚠️ Claude Code の TUI 文言に合わせて要・実機検証。
+    /// 画面に出ている間は出力が止まっても作業中とみなす（長いコマンドやネット待ちで「完了」に見せないため）。
     private static let busyMarkers: [String] = [
         "esc to interrupt"
     ]
 
-    /// 指定プロジェクトのディレクトリで `claude` を起動する。
-    /// ログインシェル経由で PATH（~/.local/bin など）を継承しつつ、API キーは二重に遮断する。
-    /// `resumeSessionId` があれば対話起動のまま `claude --resume=<id>` で会話を再開する。不正な id なら起動せず false。
+    /// `directory` で `claude` を起動する（ログインシェルで PATH を得て、API キーは環境とシェルの二重で外す）。
+    /// `resumeSessionId` があれば `--resume=<id>` で再開する。不正な id なら起動せず false。
     func launchClaude(in directory: String, resumeSessionId: String? = nil) -> Bool {
         var command = "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec claude"
         if let resumeSessionId {
@@ -75,8 +66,7 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         let env = Self.buildSafeEnvironment()
         startProcess(
             executable: "/bin/zsh",
-            // -l ログインシェルで PATH を取得、-i 対話、-c コマンド。
-            // 渡す環境からは既に API キーを抜いてあるが、念のためシェル側でも unset してから exec。
+            // -l で PATH を得る。環境から抜いた API キーをシェルの設定が戻しても効かないよう、unset してから exec。
             args: ["-lic", command],
             environment: env,
             execName: nil,
@@ -107,16 +97,14 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         statusTimer = timer
     }
 
-    /// ステータス監視を停止する（セッション終了・上限到達・ペインクローズ時）。
+    /// 画面の監視を止める（終了・上限到達・ルームを閉じた時）。
     func stopStatusMonitoring() {
         statusTimer?.invalidate()
         statusTimer = nil
     }
 
-    /// 現在のステータスを判定し、変化時のみ通知する。
-    /// 判定は端末の「現在画面の下数行」を直接読む（履歴が累積する scanBuffer は使わない）ため、
-    /// プロンプト応答後に古い文言が残って誤判定する問題が起きない。
-    /// dataReceived も Timer も SwiftTerm 既定キュー（main）上で動くので端末バッファ参照は安全。
+    /// 実画面から状態を読み、変わった時だけ通知する（履歴ではなく今の画面を読むので、答え終えた確認を引きずらない）。
+    /// dataReceived も Timer も main で動くので、端末バッファをそのまま読める。
     func evaluateStatus() {
         let screen = screenLines()
         let tail = Self.tailText(screen, lines: 8)
@@ -237,9 +225,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         case leftover
     }
 
-    /// チャット欄の本文を入力欄に貼り付けてから Enter で送る。作業中でも Claude Code 側でキューに積まれる。
-    /// 貼り付けの前に必ず判定するので、止める時は入力欄に何も入れない。
-    /// `.started` を返した時だけ、Enter を送った・途中でやめた・端末が無くなったのいずれかを `completion` に 1 回返す。
+    /// 本文を入力欄に貼り付けてから Enter で送る（作業中でも Claude Code がキューに積む）。止める時は何も貼らない。
+    /// `.started` の時だけ、結末（送った・途中でやめた・端末が無くなった）を `completion` に 1 回返す。
     func sendMessage(_ text: String, attachments: [Attachment] = [], completion: @escaping (SendCompletion) -> Void) -> SendResult {
         guard !isSending else { return .busy }
         let screen = screenLines()

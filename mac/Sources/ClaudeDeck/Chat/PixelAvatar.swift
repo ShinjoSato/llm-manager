@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// セッションの状態を 旧 monitor の 2D と同じドット絵キャラで出すアイコン。
+/// セッションの状態をステージと同じドット絵キャラで出すアイコン。
 struct PixelAvatar: View {
     let status: SessionStatus
     let size: CGFloat

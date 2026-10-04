@@ -31,7 +31,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
     private let ground = SCNNode()
     private let grid = SCNNode()
 
-    // three.js の光は物理単位（拡散は 1/π 倍）なので、出典の強さ（0.85 / 1.7 / 0.5）を SceneKit の 1000 = 1 に直す。
+    // three.js の光は物理単位（拡散は 1/π 倍）なので、元の強さ（0.85 / 1.7 / 0.5）を SceneKit の 1000 = 1 に直す。
     static let ambientIntensity = CGFloat(0.85 / Double.pi * 1000)
     static let keyIntensity = CGFloat(1.7 / Double.pi * 1000)
     static let rimIntensity = CGFloat(0.5 / Double.pi * 1000)
@@ -55,7 +55,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
     """
 
     /// 光の板。three.js は canvas の絵（16 進の値をそのまま線形として読む）を tone map し、濃さ × opacity を掛けて足す。
-    /// 濃さは出典 glowTexture の放射グラデーション（中心 d0 → 4 割で 50 → 縁で 0）。絵を介すと色空間の変換で縁が濃くなるので式で描く。
+    /// 濃さは放射グラデーション（中心 d0 → 4 割で 50 → 縁で 0）。絵を介すと色空間の変換で縁が濃くなるので式で描く。
     static let glowShading = """
     #pragma arguments
     float3 glowColor;
@@ -170,7 +170,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         ground.eulerAngles.x = -.pi / 2
         ground.geometry = SCNPlane(width: 1, height: 1)
         let groundMaterial = Self.lambert(StageBlueprint.groundColor)
-        // 出典の地面は MeshStandardMaterial で、奥からの青い光（rim）の照り返しが乗る。lambert には無いので一定量を足す。
+        // three.js の地面（MeshStandardMaterial）には奥からの青い光（rim）の照り返しが乗る。lambert には無いので一定量を足す。
         groundMaterial.emission.contents = Self.linearColor(0.0085, 0.0080, 0.0105)
         ground.geometry?.firstMaterial = groundMaterial
         world.addChildNode(ground)
@@ -332,9 +332,8 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         material?.setValue(NSNumber(value: Float(value)), forKey: "glowOpacity")
     }
 
-    /// 足元の影と光の輪（出典 Ziggurat.tsx の shadow / halo）。three.js は半透明を sRGB のまま重ねるので、
-    /// 線形で重ねる SceneKit で同じ板を使うと明るく出る。地面の上で sRGB の重ね結果になるよう、
-    /// 下を残す割合を掛ける板と足りない分を足す板の 2 枚に分ける（下のグリッドの線も同じ割合で透ける）。
+    /// 足元の影と光の輪。three.js は半透明を sRGB のまま重ね、線形で重ねる SceneKit では明るく出るので、
+    /// 下を残す割合を掛ける板と足りない分を足す板の 2 枚に分けて sRGB の重ね結果に合わせる。
     static func haloShading(adding: Bool) -> String {
         """
         #pragma arguments
@@ -393,7 +392,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
     }
 
     /// three.js の GridHelper と同じ線（中心の 2 本だけ明るい色）。色ごとに 1 形状にする。
-    /// 1px の線は tone map すると地面に沈む（出典では地面より明るく見える）ので、色をそのまま出す。
+    /// 1px の線は tone map すると地面に沈む（three.js では地面より明るく見えた）ので、色をそのまま出す。
     static func gridNodes(size: Double, divisions: Int) -> [SCNNode] {
         let half = size / 2
         let step = size / Double(divisions)

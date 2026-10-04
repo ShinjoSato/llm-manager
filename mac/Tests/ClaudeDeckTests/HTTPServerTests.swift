@@ -1,7 +1,7 @@
 import XCTest
 @testable import MonitorKit
 
-/// アプリ内サーバー（移植元: 旧 monitor（削除済み）の src/server.ts の外から叩かれる口）。:8766 は使わず、OS に割り当てさせた別ポートで立てる。
+/// アプリ内サーバー。:8766 は使わず、OS に割り当てさせた別ポートで立てる。
 final class HTTPServerTests: XCTestCase {
     typealias F = FakeClaudeHome
     let sessionId = "11111111-2222-3333-4444-555555555555"
@@ -286,7 +286,7 @@ final class HTTPServerTests: XCTestCase {
         XCTAssertEqual(response.status, 404, "ループバック以外には存在ごと伏せる")
     }
 
-    /// ポートが使われていれば奪わずに「使用中」を返す（旧 monitor が動いている時の扱い）。
+    /// ポートが使われていれば奪わずに「使用中」を返す。
     func testPortInUseIsReportedWithoutStealing() async throws {
         let second = HTTPServer { _ in .json(200, ["ok": true]) }
         defer { second.stop() }

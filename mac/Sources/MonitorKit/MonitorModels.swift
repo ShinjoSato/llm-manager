@@ -1,6 +1,6 @@
 import Foundation
 
-// 監視のドメイン型（移植元: 旧 monitor（削除済み）の src/types.ts）。
+// 監視のドメイン型。
 // 時刻は epoch ミリ秒のまま持ち、Date が要る所では *Date の計算プロパティを使う。
 
 /// 未知の値が来てもデコード全体を落とさないための文字列 enum の共通処理。
@@ -15,14 +15,14 @@ extension LenientStringEnum {
     }
 }
 
-/// セッションの状態（types.ts の SessionStatus）。
+/// セッションの状態。
 public enum SessionStatus: String, LenientStringEnum {
     case working, waiting, permission, idle, error, stopped
     case unknown
     public static var unknownCase: SessionStatus { .unknown }
 }
 
-/// 状態の出どころ（types.ts の StatusSource）。
+/// 状態の出どころ。
 public enum StatusSource: String, LenientStringEnum {
     case hook, transcript, inventory
     case unknown
@@ -42,7 +42,7 @@ public struct AgentInfo: Codable, Sendable, Hashable, Identifiable {
     public var lastActivityAt: Double
 }
 
-/// 1 セッション分のスナップショット（types.ts の SessionSnapshot）。
+/// 1 セッション分のスナップショット。
 public struct SessionSnapshot: Codable, Sendable, Hashable, Identifiable {
     public var sessionId: String
     public var pid: Int32
@@ -80,12 +80,12 @@ public struct UsageWindow: Codable, Sendable, Hashable {
     public var usedPercentage: Double
     public var resetsAt: Double?
 
-    /// 残り%（旧 monitor の UI と同じく 100 − 使用率を 0...100 に収める）。
+    /// 残り%（100 − 使用率を 0...100 に収める）。
     public var remainingPercentage: Double { min(100, max(0, 100 - usedPercentage)) }
     public var resetsDate: Date? { resetsAt.map(Date.init(epochMillis:)) }
 }
 
-/// statusLine が最後に書き残した使用量（types.ts の UsageSnapshot）。
+/// statusLine が最後に書き残した使用量。
 public struct UsageSnapshot: Codable, Sendable, Hashable {
     public var fetchedAt: Double
     public var fiveHour: UsageWindow?
@@ -100,7 +100,7 @@ public enum FeedKind: String, LenientStringEnum {
     public static var unknownCase: FeedKind { .unknown }
 }
 
-/// ライブフィードの 1 行（types.ts の FeedItem）。
+/// ライブフィードの 1 行。
 public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     public var id: Int
     public var sessionId: String
@@ -114,7 +114,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     public var date: Date { Date(epochMillis: at) }
 }
 
-/// 保留中の権限確認 1 件（types.ts の PendingPermission）。
+/// 保留中の権限確認 1 件。
 public struct PendingPermission: Codable, Sendable, Hashable, Identifiable {
     public var key: String
     public var requestId: String
@@ -140,7 +140,7 @@ public struct TranscriptTool: Codable, Sendable, Hashable {
     public var target: String?
 }
 
-/// 発話に添えられた画像 1 枚の目録（types.ts の TranscriptImage）。本体は `MonitorStore.transcriptImage` で取る。
+/// 発話に添えられた画像 1 枚の目録。本体は `MonitorStore.imageSource` で取る。
 public struct TranscriptImage: Codable, Sendable, Hashable {
     /// 発話の中で何枚目の画像か（取り出しに使う位置）。
     public var index: Int
@@ -152,7 +152,7 @@ public struct TranscriptImage: Codable, Sendable, Hashable {
     }
 }
 
-/// 会話履歴の 1 要素（types.ts の TranscriptItem）。
+/// 会話履歴の 1 要素。
 public struct TranscriptItem: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var kind: TranscriptItemKind

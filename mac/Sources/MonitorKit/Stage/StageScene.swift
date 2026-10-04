@@ -1,6 +1,6 @@
 import Foundation
 
-// 1 セッション分のステージの中身と動き。出典は 旧 monitor UI の `three/Ziggurat.tsx`・`pixel/voxelize.ts`・`pixel/kit.ts`・`pixel/look.ts`。
+// 1 セッション分のステージの中身と動き。
 
 /// 立方体 1 つ。左右の中央・下端を原点に取る（絵の 1 マス = 1）。
 public struct StageVoxel: Sendable, Equatable {
@@ -56,7 +56,7 @@ public enum StageVoxels {
     }
 }
 
-/// 持ち物の絵と配色（出典 kit.ts の ITEMS）。
+/// 持ち物の絵と配色。
 public struct StageItem: Sendable, Equatable {
     public var sprite: PixelSprite
     public var palette: PixelPalette
@@ -120,7 +120,7 @@ public struct StageSceneModel: Sendable, Equatable {
         parent = StageFigure(id: "parent", voxels: StageVoxels.voxelize(look.sprite, palette: look.palette),
                              scale: parentScale, position: StageVector(0, B.topY + parentScale / 2, 0), glow: nil)
 
-        // 頭上マークはこちらを呼んでいる状態だけ立てる（出典 look.ts の mark / markPalette）。
+        // 頭上マークはこちらを呼んでいる状態だけ立てる。
         if let sign = Self.mark(for: s.status) {
             mark = StageFigure(id: "mark", voxels: StageVoxels.voxelize(sign.sprite, palette: ["A": sign.color]),
                                scale: B.markVoxel,
@@ -190,7 +190,7 @@ public struct StageSceneModel: Sendable, Equatable {
     }
 }
 
-/// 画面の縦横比に合わせたカメラと地面（出典 World.tsx）。
+/// 画面の縦横比に合わせたカメラと地面。
 public struct StageView: Sendable, Equatable {
     public var camera: StageCameraFit
     /// 地面の一辺。画角を埋めるだけ広げる。

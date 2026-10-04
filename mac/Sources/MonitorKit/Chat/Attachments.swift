@@ -133,9 +133,8 @@ public enum AttachmentPasteboard {
         return imageType(in: pasteboard) != nil
     }
 
-    /// ファイル URL があればそれを、文字列が無く画像だけならその画像（元の形式のまま）を返す。添付にしないなら空。
-    /// 文字列を含むコピー（アプリによっては本文の画像表現も載る）は従来どおり文字として貼るため、画像より文字を優先する。
-    /// 変換は重いのでここではせず、取り込み（`AttachmentStore.ingest`）でバックグラウンドに任せる。
+    /// ファイル URL か、文字列の無い画像（元の形式のまま）を返す。添付にしないなら空。
+    /// 文字列を含むコピーは画像表現も載ることがあるので文字として貼る。変換は重いので取り込み（`ingest`）に任せる。
     public static func sources(in pasteboard: NSPasteboard, imageName: String = "貼り付けた画像") -> [AttachmentSource] {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         if !urls.isEmpty { return urls.map { .file($0) } }

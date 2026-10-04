@@ -1,6 +1,6 @@
 import Foundation
 
-/// セッションの作業場所から Xcode で開く対象を探す（移植元: 旧 monitor（削除済み）の src/xcode.ts）。
+/// 作業場所から Xcode で開く対象を探す（`ios/` 等の下にあることが多いので浅く潜る）。
 public enum XcodeFinder {
     static let maxDepth = 3
     /// 走査するディレクトリ数の上限。cwd が巨大でも監視が止まらないようにする。

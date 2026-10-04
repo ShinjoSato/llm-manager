@@ -1,8 +1,6 @@
 import XCTest
 @testable import MonitorKit
 
-// 移植元: 旧 monitor（削除済み）の test/attention.test.ts・usage.test.ts・origin.test.ts と同じ観点。
-
 final class AttentionTests: XCTestCase {
     func testNeedsAttention() {
         XCTAssertTrue(Attention.needsAttention(.permission))

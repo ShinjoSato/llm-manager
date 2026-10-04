@@ -8,7 +8,7 @@ public struct MonitorConfiguration: Sendable, Equatable {
     public var usageFile: URL?
     /// フック等を受けるアプリ内サーバーのポート。nil なら待ち受けない。
     public var serverPort: Int?
-    /// 使用中だった時に取り直す間隔（秒）。旧 monitor を止めれば自動で引き継ぐ。
+    /// 使用中だった時に取り直す間隔（秒）。使っていたプロセスが止まれば自動で引き継ぐ。
     public var serverRetryInterval: TimeInterval
     /// true なら状態とイベントの要約を標準エラーに出す。
     public var debugLogging: Bool
@@ -25,9 +25,7 @@ public struct MonitorConfiguration: Sendable, Equatable {
         self.debugLogging = debugLogging
     }
 
-    /// 環境変数から組み立てる。
-    /// `CLAUDE_HOME`（読み取り元）・`CLAUDE_DECK_SERVER_PORT`（待ち受け。`off` で待ち受けない）・
-    /// `CLAUDE_DECK_USAGE_FILE`（使用量ファイル）・`CLAUDE_DECK_MONITOR_DEBUG=1`（デバッグ出力）。
+    /// `CLAUDE_HOME`・`CLAUDE_DECK_SERVER_PORT`（`off` で待ち受けない）・`CLAUDE_DECK_USAGE_FILE`・`CLAUDE_DECK_MONITOR_DEBUG=1` から組み立てる。
     public static func fromEnvironment(_ env: [String: String] = ProcessInfo.processInfo.environment) -> MonitorConfiguration {
         var config = MonitorConfiguration(claudeHome: .fromEnvironment(env), usageFile: UsageReader.defaultFile(env))
         if let raw = env["CLAUDE_DECK_SERVER_PORT"] {

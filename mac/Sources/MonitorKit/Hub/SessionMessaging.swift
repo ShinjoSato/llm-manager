@@ -1,7 +1,6 @@
 import Foundation
 
-/// セッションの受信箱ソケットへテキストを投稿する（移植元: 旧 monitor（削除済み）の src/messaging.ts）。
-/// 公式に文書化された経路（cross-session messaging の inbox socket）で、行区切りの JSON を書く。
+/// セッションの受信箱ソケット（公式の cross-session messaging）へ行区切りの JSON を書く。
 /// 届いたテキストは「別セッションからのメッセージ」として扱われ、本人の指示・権限承認にはならない。
 public enum SessionMessaging {
     /// 無通信がこれだけ続いたら諦める。受信側は 30 秒で切る。

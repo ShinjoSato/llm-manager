@@ -36,7 +36,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ClaudeDeckTests",
-            // SwiftTerm は端末ペインと同じ起動経路（forkpty）でシグナル設定の漏れを確かめるため。
+            // SwiftTerm はホスト中のセッションと同じ起動経路（forkpty）でシグナル設定の漏れを確かめるため。
             // チャネルは実行ファイルを stdin/stdout で繋いで確かめるので、先にビルドさせる。
             dependencies: ["MonitorKit", "claude-deck-channel", .product(name: "SwiftTerm", package: "SwiftTerm")],
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]

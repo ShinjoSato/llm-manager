@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 画面案B のトークン（ダーク固定）。
+/// チャット画面のトークン（ダーク固定）。
 enum ChatTheme {
     /// AppKit 側（ウィンドウ・入力欄）と共有する色。
     private enum Hex {
