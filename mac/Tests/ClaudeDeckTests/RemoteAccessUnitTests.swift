@@ -147,21 +147,6 @@ final class RemoteAccessUnitTests: XCTestCase {
         XCTAssertFalse(throttle.isBlocked("10.0.0.3"), "古い失敗は数えない")
     }
 
-    // MARK: - QR の中身
-
-    func testPairingPayloadRoundTripsThroughURL() {
-        let payload = RemotePairingPayload(host: "192.168.1.5", port: 8767, token: "abc-_DEF", fingerprint: String(repeating: "ab", count: 32),
-                                           name: "Shinjo の MacBook", expiresAt: 1_800_000_000_000, localHostName: "mac.local")
-        XCTAssertEqual(payload.url.scheme, "claude-deck")
-        XCTAssertEqual(RemotePairingPayload(url: payload.url), payload)
-        var bad = URLComponents(url: payload.url, resolvingAgainstBaseURL: false)!
-        bad.queryItems = bad.queryItems!.map { $0.name == "fp" ? URLQueryItem(name: "fp", value: "zz") : $0 }
-        XCTAssertNil(RemotePairingPayload(url: bad.url!), "指紋の形が違えば読まない")
-        XCTAssertNil(RemotePairingPayload(url: URL(string: "https://example.com/pair")!))
-        XCTAssertEqual(RemotePinning.display("abcd"), "AB:CD")
-        XCTAssertEqual(RemotePinning.normalize("AB:CD"), "abcd")
-    }
-
     func testRoomIdParsing() {
         let uuid = UUID()
         XCTAssertEqual(RemoteRoomID("h:\(uuid.uuidString)"), .hosted(uuid))

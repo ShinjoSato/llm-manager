@@ -33,6 +33,12 @@ public struct TokenUsage: Codable, Sendable, Hashable {
     public var input: Int
     public var output: Int
     public var cacheRead: Int
+
+    public init(input: Int, output: Int, cacheRead: Int) {
+        self.input = input
+        self.output = output
+        self.cacheRead = cacheRead
+    }
 }
 
 /// 親に随伴しているサブエージェント 1 体。
@@ -40,6 +46,12 @@ public struct AgentInfo: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var type: String?
     public var lastActivityAt: Double
+
+    public init(id: String, type: String?, lastActivityAt: Double) {
+        self.id = id
+        self.type = type
+        self.lastActivityAt = lastActivityAt
+    }
 }
 
 /// 1 セッション分のスナップショット。
@@ -70,6 +82,37 @@ public struct SessionSnapshot: Codable, Sendable, Hashable, Identifiable {
     public var canReceive: Bool
     public var xcodeProject: String?
 
+    public init(sessionId: String, pid: Int32, alive: Bool, name: String, project: String, cwd: String, branch: String?,
+                title: String?, lastPrompt: String?, status: SessionStatus, statusSource: StatusSource, statusDetail: String?,
+                attentionSince: Double? = nil, entrypoint: String?, version: String?, startedAt: Double, lastActivityAt: Double?,
+                currentTool: String?, currentSkill: String?, currentAction: String?, tokens: TokenUsage?, agents: [AgentInfo],
+                canReceive: Bool, xcodeProject: String?) {
+        self.sessionId = sessionId
+        self.pid = pid
+        self.alive = alive
+        self.name = name
+        self.project = project
+        self.cwd = cwd
+        self.branch = branch
+        self.title = title
+        self.lastPrompt = lastPrompt
+        self.status = status
+        self.statusSource = statusSource
+        self.statusDetail = statusDetail
+        self.attentionSince = attentionSince
+        self.entrypoint = entrypoint
+        self.version = version
+        self.startedAt = startedAt
+        self.lastActivityAt = lastActivityAt
+        self.currentTool = currentTool
+        self.currentSkill = currentSkill
+        self.currentAction = currentAction
+        self.tokens = tokens
+        self.agents = agents
+        self.canReceive = canReceive
+        self.xcodeProject = xcodeProject
+    }
+
     public var id: String { sessionId }
     public var startedDate: Date { Date(epochMillis: startedAt) }
     public var lastActivityDate: Date? { lastActivityAt.map(Date.init(epochMillis:)) }
@@ -79,6 +122,11 @@ public struct SessionSnapshot: Codable, Sendable, Hashable, Identifiable {
 public struct UsageWindow: Codable, Sendable, Hashable {
     public var usedPercentage: Double
     public var resetsAt: Double?
+
+    public init(usedPercentage: Double, resetsAt: Double?) {
+        self.usedPercentage = usedPercentage
+        self.resetsAt = resetsAt
+    }
 
     /// 残り%（100 − 使用率を 0...100 に収める）。
     public var remainingPercentage: Double { min(100, max(0, 100 - usedPercentage)) }
@@ -90,6 +138,12 @@ public struct UsageSnapshot: Codable, Sendable, Hashable {
     public var fetchedAt: Double
     public var fiveHour: UsageWindow?
     public var sevenDay: UsageWindow?
+
+    public init(fetchedAt: Double, fiveHour: UsageWindow?, sevenDay: UsageWindow?) {
+        self.fetchedAt = fetchedAt
+        self.fiveHour = fiveHour
+        self.sevenDay = sevenDay
+    }
 
     public var fetchedDate: Date { Date(epochMillis: fetchedAt) }
 }
@@ -111,6 +165,17 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     public var tool: String?
     public var local: Bool?
 
+    public init(id: Int, sessionId: String, project: String, at: Double, kind: FeedKind, text: String, tool: String?, local: Bool?) {
+        self.id = id
+        self.sessionId = sessionId
+        self.project = project
+        self.at = at
+        self.kind = kind
+        self.text = text
+        self.tool = tool
+        self.local = local
+    }
+
     public var date: Date { Date(epochMillis: at) }
 }
 
@@ -125,6 +190,18 @@ public struct PendingPermission: Codable, Sendable, Hashable, Identifiable {
     public var inputPreview: String
     public var askedAt: Double
 
+    public init(key: String, requestId: String, sessionId: String?, project: String?, toolName: String, description: String,
+                inputPreview: String, askedAt: Double) {
+        self.key = key
+        self.requestId = requestId
+        self.sessionId = sessionId
+        self.project = project
+        self.toolName = toolName
+        self.description = description
+        self.inputPreview = inputPreview
+        self.askedAt = askedAt
+    }
+
     public var id: String { key }
 }
 
@@ -138,6 +215,12 @@ public struct TranscriptTool: Codable, Sendable, Hashable {
     public var name: String
     public var description: String?
     public var target: String?
+
+    public init(name: String, description: String?, target: String?) {
+        self.name = name
+        self.description = description
+        self.target = target
+    }
 }
 
 /// 発話に添えられた画像 1 枚の目録。本体は `MonitorStore.imageSource` で取る。
@@ -161,6 +244,17 @@ public struct TranscriptItem: Codable, Sendable, Hashable, Identifiable {
     public var tool: TranscriptTool?
     public var parentId: String?
     public var images: [TranscriptImage] = []
+
+    public init(id: String, kind: TranscriptItemKind, at: Double?, text: String?, tool: TranscriptTool?, parentId: String?,
+                images: [TranscriptImage] = []) {
+        self.id = id
+        self.kind = kind
+        self.at = at
+        self.text = text
+        self.tool = tool
+        self.parentId = parentId
+        self.images = images
+    }
 }
 
 extension TranscriptItem {
@@ -184,12 +278,23 @@ public struct TranscriptResponse: Codable, Sendable, Hashable {
     public var sessionId: String
     public var items: [TranscriptItem]
     public var reset: Bool
+
+    public init(sessionId: String, items: [TranscriptItem], reset: Bool) {
+        self.sessionId = sessionId
+        self.items = items
+        self.reset = reset
+    }
 }
 
 /// 会話の追記分。
 public struct TranscriptEvent: Codable, Sendable, Hashable {
     public var sessionId: String
     public var items: [TranscriptItem]
+
+    public init(sessionId: String, items: [TranscriptItem]) {
+        self.sessionId = sessionId
+        self.items = items
+    }
 }
 
 /// 権限確認への返答。Channels は allow / deny しか返せない。

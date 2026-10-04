@@ -34,7 +34,7 @@ public enum RemotePinning {
     }
 
     /// 中身によらず同じ時間で比べる（一致した桁数を時間から推測させない）。
-    static func constantTimeEqual(_ a: Data, _ b: Data) -> Bool {
+    public static func constantTimeEqual(_ a: Data, _ b: Data) -> Bool {
         guard a.count == b.count else { return false }
         return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }

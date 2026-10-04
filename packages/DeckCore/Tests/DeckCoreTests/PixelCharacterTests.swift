@@ -1,5 +1,5 @@
 import XCTest
-@testable import MonitorKit
+@testable import DeckCore
 
 final class PixelCharacterTests: XCTestCase {
     private let allStatuses: [SessionStatus] = [.working, .permission, .waiting, .error, .idle, .stopped, .unknown]
