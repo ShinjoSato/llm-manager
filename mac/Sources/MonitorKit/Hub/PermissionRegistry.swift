@@ -9,7 +9,7 @@ public enum PermissionOutcome: String, Sendable, Codable, Equatable {
     }
 }
 
-/// チャネル（monitor/src/channel.ts）から預かる申請。
+/// チャネル（claude-deck-channel）から預かる申請。
 public struct PermissionRequestInput: Sendable, Equatable {
     public var requestId: String
     public var toolName: String
@@ -32,7 +32,7 @@ public struct PermissionRequestInput: Sendable, Equatable {
     public var key: String { PermissionRelay.pendingKey(pid: pid, requestId: requestId) }
 }
 
-/// 権限確認の中継の判定（移植元: monitor/src/permissions.ts）。
+/// 権限確認の中継の判定（移植元: 旧 monitor（削除済み）の src/permissions.ts）。
 public enum PermissionRelay {
     /// チャネルが取りに来なくなったら保留を消す。長ポーリングの一巡より十分長くする。
     public static let pendingTTL: Double = 90_000

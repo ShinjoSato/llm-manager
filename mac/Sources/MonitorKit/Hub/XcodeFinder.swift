@@ -1,6 +1,6 @@
 import Foundation
 
-/// セッションの作業場所から Xcode で開く対象を探す（移植元: monitor/src/xcode.ts）。
+/// セッションの作業場所から Xcode で開く対象を探す（移植元: 旧 monitor（削除済み）の src/xcode.ts）。
 public enum XcodeFinder {
     static let maxDepth = 3
     /// 走査するディレクトリ数の上限。cwd が巨大でも監視が止まらないようにする。
@@ -61,7 +61,7 @@ public enum XcodeFinder {
     }
 }
 
-/// macOS の `open -a` でエディタに開かせる（移植元: monitor/src/open.ts）。同じパスを開き直すと既存ウィンドウが前面に出る。
+/// macOS の `open -a` でエディタに開かせる（移植元: 旧 monitor（削除済み）の src/open.ts）。同じパスを開き直すと既存ウィンドウが前面に出る。
 public enum EditorOpen {
     public static let timeout: TimeInterval = 15
 

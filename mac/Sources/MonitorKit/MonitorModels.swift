@@ -1,6 +1,6 @@
 import Foundation
 
-// 監視のドメイン型（移植元: monitor/src/types.ts）。
+// 監視のドメイン型（移植元: 旧 monitor（削除済み）の src/types.ts）。
 // 時刻は epoch ミリ秒のまま持ち、Date が要る所では *Date の計算プロパティを使う。
 
 /// 未知の値が来てもデコード全体を落とさないための文字列 enum の共通処理。
@@ -80,7 +80,7 @@ public struct UsageWindow: Codable, Sendable, Hashable {
     public var usedPercentage: Double
     public var resetsAt: Double?
 
-    /// 残り%（monitor の UI と同じく 100 − 使用率を 0...100 に収める）。
+    /// 残り%（旧 monitor の UI と同じく 100 − 使用率を 0...100 に収める）。
     public var remainingPercentage: Double { min(100, max(0, 100 - usedPercentage)) }
     public var resetsDate: Date? { resetsAt.map(Date.init(epochMillis:)) }
 }

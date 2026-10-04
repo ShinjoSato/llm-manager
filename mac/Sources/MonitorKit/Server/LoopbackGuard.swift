@@ -1,6 +1,6 @@
 import Foundation
 
-/// DNS リバインディング対策と接続元の判定（移植元: monitor/src/origin.ts）。
+/// DNS リバインディング対策と接続元の判定（移植元: 旧 monitor（削除済み）の src/origin.ts）。
 /// 攻撃者のドメインを 127.0.0.1 に向けても Host は攻撃者のもののままなので、ここで弾ける。
 public enum LoopbackGuard {
     /// ループバックを指すホスト名。これ以外は外部のドメイン。

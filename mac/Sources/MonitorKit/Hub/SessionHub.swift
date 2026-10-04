@@ -86,7 +86,7 @@ final class HookDropCounter: @unchecked Sendable {
     }
 }
 
-/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: monitor/src/hub.ts）。
+/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を受け手へ流す（移植元: 旧 monitor（削除済み）の src/hub.ts）。
 /// 受け手は `MonitorEvent` を 1 本の流れで受け取る（以前の SSE と同じ単位）。
 public actor SessionHub {
     /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。

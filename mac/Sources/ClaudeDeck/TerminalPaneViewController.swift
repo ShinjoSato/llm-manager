@@ -22,7 +22,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
     private var lastStatus: ClaudeStatus?
     private var ended = false
     private var started = false
-    /// monitor 側のセッションと突き合わせるため、起動した claude の pid を覚えておく。
+    /// 監視のセッションと突き合わせるため、起動した claude の pid を覚えておく。
     private(set) var hostedPid: pid_t?
 
     // GitHub ボード（マッピングがあるときだけ生成）
@@ -243,7 +243,7 @@ final class TerminalPaneViewController: NSViewController, LocalProcessTerminalVi
         }
     }
 
-    /// monitor 側で対応付いたセッション（未接続・未検出なら nil）。
+    /// 監視で対応付いたセッション（監視の開始前・未検出なら nil）。
     var monitorSession: SessionSnapshot? {
         hostedPid.flatMap { MonitorBridge.store.session(forHostedPid: $0) }
     }

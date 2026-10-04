@@ -1,6 +1,6 @@
 import Foundation
 
-// 実況層（移植元: monitor/src/transcript.ts）。jsonl の末尾差分から「今なにをしているか」を取り出す。
+// 実況層（移植元: 旧 monitor（削除済み）の src/transcript.ts）。jsonl の末尾差分から「今なにをしているか」を取り出す。
 // ログの単位はターン／ツール呼び出しで、トークン単位ではない。
 
 /// ツール呼び出しの中身。キャラの持ち物と一言に使う。

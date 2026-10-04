@@ -34,7 +34,7 @@ final class HostedSession: Identifiable {
     private(set) var end: End?
     /// 最後に解決できた sessionId。終了して監視の対応表から消えた後も会話を出すために持ち続ける。
     @ObservationIgnored var lastSessionId: String?
-    /// 最後にローカル判定が変わった時刻（monitor 未接続時の並び順に使う）。
+    /// 最後にローカル判定が変わった時刻（監視の開始前の並び順に使う）。
     private(set) var lastChangeAt = Date()
 
     @ObservationIgnored var onLimitReached: ((HostedSession) -> Void)?

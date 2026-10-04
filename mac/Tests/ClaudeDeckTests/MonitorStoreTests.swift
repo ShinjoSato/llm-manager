@@ -87,7 +87,7 @@ final class MonitorStoreTests: XCTestCase {
         XCTAssertEqual(store.sessionId(forHostedPid: 55), "live")
     }
 
-    /// monitor を起動しなくても、アプリ内の監視だけで一覧・会話・画像・追記が揃う。
+    /// 別プロセスを起動しなくても、アプリ内の監視だけで一覧・会話・画像・追記が揃う。
     func testInAppMonitorFillsStoreFromClaudeHome() async throws {
         let home = try FakeClaudeHome()
         defer { home.remove() }

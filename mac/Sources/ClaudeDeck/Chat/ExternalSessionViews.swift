@@ -100,10 +100,10 @@ struct RelayBubble: View {
     }
 }
 
-/// 外部セッションが権限待ちなのに monitor に確認が来ていない（Channels を載せていない）時の案内。
+/// 外部セッションが権限待ちなのにアプリに確認が来ていない（Channels を載せていない）時の案内。
 struct ChannelsMissingCard: View {
     let toolName: String?
-    /// 権限待ちになった直後は monitor に確認が届く前なので、少し待ってから出す。
+    /// 権限待ちになった直後はアプリに確認が届く前なので、少し待ってから出す。
     @State private var shown = false
 
     var body: some View {

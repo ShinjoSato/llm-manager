@@ -25,7 +25,7 @@ public enum EditorOutcome: Sendable, Equatable {
     }
 }
 
-/// Xcode から 1 つのワークスペースだけを閉じる。monitor（`monitor/src/close.ts`）と同じ AppleScript。
+/// Xcode から 1 つのワークスペースだけを閉じる。出典: 旧 monitor（削除済み）の `src/close.ts` と同じ AppleScript。
 public enum XcodeClose {
     public static let osascript = URL(fileURLWithPath: "/usr/bin/osascript")
     public static let timeout: TimeInterval = 15

@@ -3,7 +3,7 @@ import SceneKit
 import XCTest
 @testable import MonitorKit
 
-/// ステージ（3D）の組み立て。期待値は monitor UI の `three/blueprint.ts` を同じ入力で動かした結果。
+/// ステージ（3D）の組み立て。期待値は 旧 monitor UI の `three/blueprint.ts` を同じ入力で動かした結果。
 final class StageSceneTests: XCTestCase {
     private func session(_ status: SessionStatus, id: String = "00000000-aaaa-4bbb-8ccc-dddddddddddd",
                          tool: String? = nil, skill: String? = nil, agents: [AgentInfo] = []) -> SessionSnapshot {

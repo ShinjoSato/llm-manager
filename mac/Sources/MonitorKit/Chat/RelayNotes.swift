@@ -33,7 +33,7 @@ public enum RelayNotes {
     /// 書き出し無しで同じ文面が出た時に写しと見なす時間（ミリ秒）。作業中は伝言がキューで待つので長めに取る。
     static let plainEchoWindow: Double = 10 * 60_000
 
-    /// monitor は受信箱へ送る前に前後の空白を落とすので、照合も同じ形にそろえる。
+    /// 送る側は受信箱へ送る前に前後の空白を落とすので、照合も同じ形にそろえる。
     public static func normalized(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }

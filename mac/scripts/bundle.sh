@@ -10,6 +10,8 @@ set -euo pipefail
 
 MAC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="claude-deck"
+# Claude Code が .mcp.json から起動するチャネル。.app の中の絶対パスで登録できるよう同梱する。
+CHANNEL_NAME="claude-deck-channel"
 BUILD_SYSTEM="auto"
 CONFIG="release"
 OUT_DIR="$MAC_DIR/dist"
@@ -29,6 +31,7 @@ cd "$MAC_DIR"
 build() {
   local extra=("$@")
   swift build -c "$CONFIG" --product "$APP_NAME" ${extra[@]+"${extra[@]}"} \
+    && swift build -c "$CONFIG" --product "$CHANNEL_NAME" ${extra[@]+"${extra[@]}"} \
     && BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path ${extra[@]+"${extra[@]}"})"
 }
 
@@ -50,6 +53,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
+cp "$BIN_DIR/$CHANNEL_NAME" "$APP/Contents/MacOS/$CHANNEL_NAME"
 cp "$MAC_DIR/Resources/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
