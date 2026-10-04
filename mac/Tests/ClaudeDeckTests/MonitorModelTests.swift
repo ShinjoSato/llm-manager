@@ -49,20 +49,22 @@ final class MonitorModelTests: XCTestCase {
         let base = MonitorConfiguration.fromEnvironment(["HOME": "/x"])
         XCTAssertEqual(base.serverPort, 8766, "フックの宛先（:8766）をそのまま受ける")
         XCTAssertFalse(base.debugLogging)
-        XCTAssertNil(base.usageFile)
+        XCTAssertEqual(base.usageFile?.path, "/x/Library/Application Support/claude-deck/usage.json", "statusline.sh の既定と同じ場所")
+        XCTAssertNil(base.legacyUsageFile)
 
         let usage = URL(fileURLWithPath: "/repo/data/claude-usage.json")
         let c = MonitorConfiguration.fromEnvironment(["CLAUDE_HOME": "/tmp/fake-claude", "CLAUDE_DECK_SERVER_PORT": "8799",
-                                                      "CLAUDE_DECK_MONITOR_DEBUG": "1"], defaultUsageFile: usage)
+                                                      "CLAUDE_DECK_MONITOR_DEBUG": "1"], legacyUsageFile: usage)
         XCTAssertEqual(c.claudeHome.root.path, "/tmp/fake-claude")
         XCTAssertEqual(c.claudeHome.sessionsDirectory.path, "/tmp/fake-claude/sessions")
         XCTAssertEqual(c.serverPort, 8799)
-        XCTAssertEqual(c.usageFile, usage)
+        XCTAssertEqual(c.legacyUsageFile, usage)
         XCTAssertTrue(c.debugLogging)
 
         XCTAssertNil(MonitorConfiguration.fromEnvironment(["CLAUDE_DECK_SERVER_PORT": "off"]).serverPort)
         XCTAssertEqual(MonitorConfiguration.fromEnvironment(["CLAUDE_DECK_SERVER_PORT": "nope"]).serverPort, 8766)
-        XCTAssertEqual(MonitorConfiguration.fromEnvironment(["MONITOR_USAGE_FILE": "/u.json"], defaultUsageFile: usage).usageFile?.path, "/u.json")
+        XCTAssertEqual(MonitorConfiguration.fromEnvironment(["CLAUDE_DECK_USAGE_FILE": "/u.json", "MONITOR_USAGE_FILE": "/m.json"]).usageFile?.path, "/u.json")
+        XCTAssertEqual(MonitorConfiguration.fromEnvironment(["MONITOR_USAGE_FILE": "/m.json"]).usageFile?.path, "/m.json", "旧名も読む")
     }
 
     func testSessionRegistryLookup() throws {

@@ -1,5 +1,6 @@
 #!/bin/sh
-# Claude Code の statusLine から呼ばれる。標準入力の JSON を表示し、使用量を data/claude-usage.json に残す。
+# Claude Code の statusLine から呼ばれる。標準入力の JSON を表示し、使用量を claude-deck が読む場所に残す。
+# 保存先は既定で ~/Library/Application Support/claude-deck/usage.json（CLAUDE_DECK_USAGE_FILE で差し替え）。
 # 高頻度で呼ばれるので、重い処理・外部通信は入れない。
 input=$(cat)
 
@@ -52,11 +53,12 @@ fi
 # 値が 1 つも取れない入力では、既にある記録を上書きしない。
 [ -n "$five_pct" ] || [ -n "$week_pct" ] || exit 0
 
-# 出力先は配置場所から引く（monitor/scripts の 2 つ上が ai-manager のルート）。
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || exit 0
-[ -n "$script_dir" ] || exit 0
-out_dir="${script_dir}/../../data"
-out="${out_dir}/claude-usage.json"
+out="${CLAUDE_DECK_USAGE_FILE:-}"
+if [ -z "$out" ]; then
+  [ -n "${HOME:-}" ] || exit 0
+  out="${HOME}/Library/Application Support/claude-deck/usage.json"
+fi
+out_dir=$(dirname -- "$out")
 
 usage=$(echo "$input" | jq -c --argjson now "$(date +%s)000" '
   def win: if . == null or .used_percentage == null then null
@@ -66,6 +68,8 @@ usage=$(echo "$input" | jq -c --argjson now "$(date +%s)000" '
 [ -n "$usage" ] || exit 0
 
 # 同じディレクトリ内の mv は原子的。読み手が半端な JSON を掴まない。
+# アカウントの使用状況なので本人以外に読ませない（作るディレクトリは 0700・ファイルは 0600）。
+umask 077
 mkdir -p "$out_dir" 2>/dev/null || exit 0
 tmp="${out}.$$"
 trap 'rm -f "$tmp"' EXIT INT TERM
