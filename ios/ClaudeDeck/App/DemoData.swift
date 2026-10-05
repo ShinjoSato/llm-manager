@@ -8,8 +8,8 @@ enum DemoData {
     static func model(from arguments: [String]) -> AppModel? {
         guard let i = arguments.firstIndex(of: "-demo"), i + 1 < arguments.count else { return nil }
         let now = Date().timeIntervalSince1970 * 1000
-        let pairing = RemotePairing(host: "192.168.1.20", port: 8767, localHostName: "shinjo-mac.local",
-                                    fingerprint: String(repeating: "ab", count: 32), serverName: "Shinjo の MacBook Pro",
+        let pairing = RemotePairing(host: "192.0.2.20", port: 8767, localHostName: "demo-mac.local",
+                                    fingerprint: String(repeating: "ab", count: 32), serverName: "Demo の MacBook Pro",
                                     deviceId: "demo", deviceToken: "demo", pairedAt: now - 86_400_000)
         let model = AppModel(demo: state(now: now), pairing: pairing, transcripts: ["s-mirio": transcript(now: now)],
                              open: nil)
@@ -33,7 +33,7 @@ enum DemoData {
                   _ line: String, _ ago: Double, _ sid: String?, send: RemoteSendState, menu: RemoteMenu? = nil,
                   permissions: [PendingPermission] = []) -> RemoteRoom {
             RemoteRoom(id: id, kind: kind, phase: phase, name: name, branch: branch, status: status, line: line, activityAt: now - ago,
-                       sessionId: sid, cwd: "/Users/shinjo/project/\(name)", ended: nil, session: nil, permissions: permissions,
+                       sessionId: sid, cwd: "/Users/demo/project/\(name)", ended: nil, session: nil, permissions: permissions,
                        terminalPermission: nil, menu: menu, unreadableMenu: nil, busy: false, send: send)
         }
         let permission = PendingPermission(key: "k1", requestId: "r1", sessionId: "s-infra", project: "infra", toolName: "Bash",

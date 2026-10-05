@@ -70,7 +70,8 @@ public struct AttentionNotice: Sendable, Equatable, Codable {
 
 /// CloudKit のレコードの形。mac（書き手）と iPhone（購読側）で同じ名前を使う。
 public enum AttentionNoticeSchema {
-    public static let containerIdentifier = "iCloud.com.shinjosato.claude-deck"
+    /// Info.plist でコンテナを渡すキー（値はビルド設定 `DECK_ICLOUD_CONTAINER` から入る）。
+    public static let containerInfoKey = "DeckICloudContainer"
     public static let recordType = "AttentionNotice"
     public static let subscriptionID = "attention-notice-created"
     /// 形を変えた時に古い読み手が取り違えないための版。
@@ -79,6 +80,13 @@ public enum AttentionNoticeSchema {
     public static let titleLocalizationKey = "ATTENTION_TITLE"
     public static let bodyLocalizationKey = "ATTENTION_BODY"
     public static let notificationCategory = "ATTENTION"
+
+    /// Info.plist の値からコンテナを決める。空・未展開の変数は「設定されていない」として nil。
+    public static func containerIdentifier(infoValue: Any?) -> String? {
+        guard let raw = (infoValue as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty,
+              !raw.contains("$(") else { return nil }
+        return raw
+    }
 
     public enum Field {
         public static let roomId = "roomId"

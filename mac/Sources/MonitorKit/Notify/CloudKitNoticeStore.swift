@@ -4,27 +4,38 @@ import Security
 
 /// iCloud（CloudKit）を使えるか。エンタイトルメントが無いまま CKContainer を作るとプロセスが落ちるので、先に確かめる。
 public enum CloudKitAvailability: Equatable, Sendable {
-    case available
+    /// 使えるコンテナ。
+    case available(String)
     case unavailable(String)
+
+    public static let missingContainerReason =
+        "iCloud コンテナが設定されていないため使えません。"
+        + "config/Local.xcconfig の DECK_ICLOUD_CONTAINER にコンテナを書き、mac/scripts/bundle.sh で .app を作り直すと使えます。"
 
     public static let missingEntitlementReason =
         "この起動では iCloud を使えません（swift run や ad-hoc 署名の .app には iCloud のエンタイトルメントが無いため）。"
         + "プロビジョニングプロファイルを用意して mac/scripts/bundle.sh で作った .app（Apple Development 署名）で使えます。"
 
-    /// 署名に CloudKit と共有コンテナのエンタイトルメントが入っているか。
-    public static func entitlementsPresent() -> Bool {
+    /// この .app の Info.plist に入ったコンテナ（bundle.sh が埋める）。
+    public static func bundleContainer(_ bundle: Bundle = .main) -> String? {
+        AttentionNoticeSchema.containerIdentifier(infoValue: bundle.object(forInfoDictionaryKey: AttentionNoticeSchema.containerInfoKey))
+    }
+
+    /// 署名に CloudKit とそのコンテナのエンタイトルメントが入っているか。
+    public static func entitlementsPresent(container: String) -> Bool {
         guard let task = SecTaskCreateFromSelf(nil) else { return false }
         let services = SecTaskCopyValueForEntitlement(task, "com.apple.developer.icloud-services" as CFString, nil) as? [String]
         let containers = SecTaskCopyValueForEntitlement(task, "com.apple.developer.icloud-container-identifiers" as CFString, nil) as? [String]
-        return matches(services: services, containers: containers)
+        return matches(services: services, containers: containers, container: container)
     }
 
-    static func matches(services: [String]?, containers: [String]?) -> Bool {
-        (services ?? []).contains("CloudKit") && (containers ?? []).contains(AttentionNoticeSchema.containerIdentifier)
+    static func matches(services: [String]?, containers: [String]?, container: String) -> Bool {
+        !container.isEmpty && (services ?? []).contains("CloudKit") && (containers ?? []).contains(container)
     }
 
-    public static func current() -> CloudKitAvailability {
-        entitlementsPresent() ? .available : .unavailable(missingEntitlementReason)
+    public static func current(container: String? = bundleContainer()) -> CloudKitAvailability {
+        guard let container else { return .unavailable(missingContainerReason) }
+        return entitlementsPresent(container: container) ? .available(container) : .unavailable(missingEntitlementReason)
     }
 }
 
@@ -57,8 +68,8 @@ public struct CloudKitNoticeError: Error, LocalizedError, Equatable {
 public final class CloudKitNoticeStore: AttentionNoticeStore, @unchecked Sendable {
     private let database: CKDatabase
 
-    /// `CloudKitAvailability.current() == .available` を確かめてから作る。
-    public init(containerIdentifier: String = AttentionNoticeSchema.containerIdentifier) {
+    /// `CloudKitAvailability.current()` が `.available` を返したコンテナで作る。
+    public init(containerIdentifier: String) {
         database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
     }
 

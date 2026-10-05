@@ -111,11 +111,11 @@ public enum ExecutableEntitlements {
 
 extension AttentionNoticeSchema {
     /// CloudKit と共有コンテナ（受け手はプッシュも）のエンタイトルメントが揃っているか。
-    public static func entitlementsAllowNotices(_ values: [String: Any]?, needsPush: Bool) -> Bool {
-        guard let values else { return false }
+    public static func entitlementsAllowNotices(_ values: [String: Any]?, container: String, needsPush: Bool) -> Bool {
+        guard let values, !container.isEmpty else { return false }
         let services = values["com.apple.developer.icloud-services"] as? [String] ?? []
         let containers = values["com.apple.developer.icloud-container-identifiers"] as? [String] ?? []
-        guard services.contains("CloudKit"), containers.contains(containerIdentifier) else { return false }
+        guard services.contains("CloudKit"), containers.contains(container) else { return false }
         return !needsPush || (values["aps-environment"] as? String)?.isEmpty == false
     }
 }

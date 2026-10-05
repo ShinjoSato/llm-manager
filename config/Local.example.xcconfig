@@ -1,0 +1,14 @@
+// 手元の署名・識別子。このファイルを同じフォルダに Local.xcconfig という名前で写し、自分の値を書く（Local.xcconfig は git で追跡しない）。
+// 書かなかったキーは Deck.xcconfig の既定値のまま。mac/scripts/bundle.sh も読むので、`KEY = VALUE` と `//` のコメントだけで書く。
+
+// Apple Developer のチーム ID（10 文字）。developer.apple.com → Membership、または Xcode の Signing & Capabilities で分かる。
+// 空のままなら iPhone の実機向けは署名できず、mac の .app は ad-hoc 署名になる。
+DEVELOPMENT_TEAM = ABCDE12345
+
+// バンドル ID の頭。mac はこのまま、iPhone は末尾に .ios（試験は .iosTests）を付けて使う。App ID として登録する値と合わせる。
+// iPhone のペアリングはキーチェーンに「バンドル ID + .pairing」で置くので、変えると前のペアリングは読めなくなる（ペアリングし直す）。
+DECK_BUNDLE_PREFIX = com.example.claude-deck
+
+// 要対応の iPhone 通知に使う iCloud コンテナ（iCloud. で始まる）。空なら通知は無効のまま。
+// コンテナは一度作ると消せないので、登録を済ませてから書く（手順は mac/README.md「iPhone への通知」）。
+DECK_ICLOUD_CONTAINER =

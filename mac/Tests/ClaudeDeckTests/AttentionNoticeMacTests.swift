@@ -87,15 +87,25 @@ final class CloudKitNoticeStoreTests: XCTestCase {
     }
 
     func testEntitlementMatching() {
-        XCTAssertTrue(CloudKitAvailability.matches(services: ["CloudKit"], containers: [AttentionNoticeSchema.containerIdentifier]))
-        XCTAssertFalse(CloudKitAvailability.matches(services: ["CloudDocuments"], containers: [AttentionNoticeSchema.containerIdentifier]))
-        XCTAssertFalse(CloudKitAvailability.matches(services: ["CloudKit"], containers: ["iCloud.other"]))
-        XCTAssertFalse(CloudKitAvailability.matches(services: nil, containers: nil))
+        let container = "iCloud.example.claude-deck"
+        XCTAssertTrue(CloudKitAvailability.matches(services: ["CloudKit"], containers: [container], container: container))
+        XCTAssertFalse(CloudKitAvailability.matches(services: ["CloudDocuments"], containers: [container], container: container))
+        XCTAssertFalse(CloudKitAvailability.matches(services: ["CloudKit"], containers: ["iCloud.other"], container: container))
+        XCTAssertFalse(CloudKitAvailability.matches(services: nil, containers: nil, container: container))
+        XCTAssertFalse(CloudKitAvailability.matches(services: ["CloudKit"], containers: [""], container: ""))
     }
 
     /// 試験の実行ファイルは署名にエンタイトルメントを持たないので、CKContainer を作らずに無効と判断する。
     func testUnsignedProcessIsUnavailable() {
-        XCTAssertEqual(CloudKitAvailability.current(), .unavailable(CloudKitAvailability.missingEntitlementReason))
+        XCTAssertEqual(CloudKitAvailability.current(container: "iCloud.example.claude-deck"),
+                       .unavailable(CloudKitAvailability.missingEntitlementReason))
+    }
+
+    /// コンテナが設定されていない起動（swift run・試験・Local.xcconfig 無しの .app）は、その理由で無効にする。
+    func testMissingContainerIsUnavailable() {
+        XCTAssertEqual(CloudKitAvailability.current(container: nil), .unavailable(CloudKitAvailability.missingContainerReason))
+        XCTAssertNil(CloudKitAvailability.bundleContainer())
+        XCTAssertEqual(CloudKitAvailability.current(), .unavailable(CloudKitAvailability.missingContainerReason))
     }
 
     func testErrorMessages() {

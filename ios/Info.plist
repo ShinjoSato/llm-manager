@@ -6,13 +6,15 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.shinjosato.claude-deck.ios.pair</string>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER).pair</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>claude-deck</string>
 			</array>
 		</dict>
 	</array>
+	<key>DeckICloudContainer</key>
+	<string>$(DECK_ICLOUD_CONTAINER)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSAppTransportSecurity</key>

@@ -133,21 +133,35 @@ final class AttentionNotifications {
 
 /// 自分の iCloud のプライベート DB に、要対応の知らせが作られたらプッシュする購読を置く。
 final class CloudKitAttentionSubscription: AttentionSubscriptionService, @unchecked Sendable {
+    static let missingContainerReason =
+        "このビルドには iCloud コンテナが設定されていないため、通知を使えません。"
+        + "config/Local.xcconfig の DECK_ICLOUD_CONTAINER にコンテナを書いてビルドし直すと使えます。"
     static let missingEntitlementReason =
         "このビルドには iCloud（CloudKit）とプッシュ通知のエンタイトルメントが無いため、通知を使えません。"
         + "iCloud を有効にした App ID とプロファイルで署名したビルドで使えます。"
 
     // CKContainer は作った時点でエンタイトルメントを確かめる（無ければ落ちる）ので、確かめてから使う時まで作らない。
-    private lazy var container = CKContainer(identifier: AttentionNoticeSchema.containerIdentifier)
+    private lazy var container = CKContainer(identifier: containerIdentifier ?? "")
     private let lock = NSLock()
+    private let containerIdentifier: String?
     private let entitled: Bool
 
-    init(entitlements: [String: Any]? = ExecutableEntitlements.ofMainExecutable()) {
-        entitled = AttentionNoticeSchema.entitlementsAllowNotices(entitlements, needsPush: true)
+    init(containerIdentifier: String? = CloudKitAttentionSubscription.bundleContainer(),
+         entitlements: [String: Any]? = ExecutableEntitlements.ofMainExecutable()) {
+        self.containerIdentifier = containerIdentifier
+        entitled = containerIdentifier.map {
+            AttentionNoticeSchema.entitlementsAllowNotices(entitlements, container: $0, needsPush: true)
+        } ?? false
+    }
+
+    /// Info.plist の `DeckICloudContainer`（ビルド設定 `DECK_ICLOUD_CONTAINER` から入る）。
+    static func bundleContainer(_ bundle: Bundle = .main) -> String? {
+        AttentionNoticeSchema.containerIdentifier(infoValue: bundle.object(forInfoDictionaryKey: AttentionNoticeSchema.containerInfoKey))
     }
 
     func unavailableReason() -> String? {
-        entitled ? nil : Self.missingEntitlementReason
+        if containerIdentifier == nil { return Self.missingContainerReason }
+        return entitled ? nil : Self.missingEntitlementReason
     }
 
     private func ckContainer() throws -> CKContainer {
@@ -160,7 +174,7 @@ final class CloudKitAttentionSubscription: AttentionSubscriptionService, @unchec
     }
 
     func accountProblem() async -> String? {
-        guard entitled else { return Self.missingEntitlementReason }
+        if let reason = unavailableReason() { return reason }
         let status = try? await ckContainer().accountStatus()
         switch status {
         case .available: return nil

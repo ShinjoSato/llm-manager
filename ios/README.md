@@ -4,7 +4,7 @@
 API の仕様は `mac/docs/remote-api.md`、通信と型は共有パッケージ `packages/DeckCore`。
 
 - SwiftUI・iOS 17 以上・iPhone のみ・ダーク固定
-- バンドル ID `com.shinjosato.claude-deck.ios` / チーム `ZCYQMLA9HP` / 署名は自動 / 版は `MARKETING_VERSION`（0.1.0）と `CURRENT_PROJECT_VERSION`（1）
+- バンドル ID `$(DECK_BUNDLE_PREFIX).ios` / チーム `$(DEVELOPMENT_TEAM)`（どちらも `config/Local.xcconfig` に書く。下の「署名・識別子」）/ 署名は自動 / 版は `MARKETING_VERSION`（0.1.0）と `CURRENT_PROJECT_VERSION`（1）
 
 ## できること
 
@@ -68,6 +68,19 @@ ios/
 
 ファイルは `ios/ClaudeDeck/` か `ios/ClaudeDeckTests/` に置けば、プロジェクトの編集なしに入る（`PBXFileSystemSynchronizedRootGroup`）。
 
+## 署名・識別子
+
+チーム ID・バンドル ID・iCloud コンテナは `config/Local.xcconfig`（git 管理外。雛形は `config/Local.example.xcconfig`）に書く。
+プロジェクトの全構成が `config/Deck.xcconfig` を土台にし、その末尾で Local.xcconfig を読む（無ければ既定値のまま）。キーの意味は雛形と `mac/README.md`「署名・識別子」。
+
+```sh
+cp config/Local.example.xcconfig config/Local.xcconfig   # DEVELOPMENT_TEAM・DECK_BUNDLE_PREFIX・DECK_ICLOUD_CONTAINER を書く
+```
+
+- Local.xcconfig が無くてもシミュレータ向けのビルド・テストは通る（バンドル ID は `local.claude-deck.ios`・チーム無し）。実機・TestFlight にはチーム ID が要る。
+- Info.plist の URL type の名前は `$(PRODUCT_BUNDLE_IDENTIFIER).pair`、`DeckICloudContainer` は `$(DECK_ICLOUD_CONTAINER)`。
+- ペアリングのキーチェーンのサービス名は「バンドル ID + `.pairing`」。バンドル ID を変えると前のペアリングは読めない（ペアリングし直す）。
+
 ## 要対応の通知（iCloud）
 
 仕組み・レコードの形・登録の手順は `mac/README.md` の「iPhone への通知（iCloud・CloudKit）」。
@@ -81,7 +94,7 @@ ios/
 - アプリを開いている時は、今見ている会話のルームの知らせは出さない（`AttentionNoticePresentation`）。
 - **iCloud（通知）は既定で無効**。iCloud コンテナは作ると削除できないため、通常のビルドはエンタイトルメントを付けない（実機の自動署名がコンテナやプッシュの設定を勝手に登録しないように）。
   有効にする時は、`mac/README.md` の手順でコンテナを作ってから、ターゲットの Build Settings の `CODE_SIGN_ENTITLEMENTS` に `ClaudeDeck.iCloud.entitlements` を設定する（Debug / Release とも）。
-- エンタイトルメント `ios/ClaudeDeck.iCloud.entitlements`（`aps-environment`・コンテナ・CloudKit）。`CKContainer` は作った時点で無いと落ちるので、作る前に
+- エンタイトルメント `ios/ClaudeDeck.iCloud.entitlements`（`aps-environment`・コンテナ `$(DECK_ICLOUD_CONTAINER)`・CloudKit）。コンテナは Info.plist の `DeckICloudContainer` から読み、空なら「iCloud コンテナが設定されていない」旨を出して入れられない。`CKContainer` は作った時点で無いと落ちるので、作る前に
   実行ファイルの署名（シミュレータ向けは `__TEXT,__entitlements`）からエンタイトルメントを読んで確かめる（`DeckCore` の `ExecutableEntitlements`。
   TestFlight / App Store の版は embedded.mobileprovision を持たないので署名を読む）。無い版では通知を入れられず、設定に理由を出す（入れていた設定は残す）。
 - 通知から開くルームを預かるのは 30 分まで（過ぎてからつながっても開かない）。
@@ -101,9 +114,9 @@ cd packages/DeckCore && swift test
 
 ## TestFlight に出す
 
-1. Xcode で `ios/ClaudeDeck.xcodeproj` を開き、Signing & Capabilities でチーム `ZCYQMLA9HP`・自動署名を確かめる。
+1. `config/Local.xcconfig` にチーム ID とバンドル ID の頭を書き、Xcode で `ios/ClaudeDeck.xcodeproj` を開いて Signing & Capabilities でチーム・自動署名を確かめる。
    通知（iCloud）を有効にして出す場合だけ、上の手順でエンタイトルメントを設定し、TestFlight 版は CloudKit の **Production** を使うので先に CloudKit Console でスキーマを本番へ反映する（`mac/README.md` の手順 5）。
-2. App Store Connect にバンドル ID `com.shinjosato.claude-deck.ios` のアプリを作る（無ければ。名前は App Store 全体で一意）。
+2. App Store Connect にバンドル ID `<DECK_BUNDLE_PREFIX>.ios` のアプリを作る（無ければ。名前は App Store 全体で一意）。
 3. 送るたびに `CURRENT_PROJECT_VERSION` を上げる。Product → Archive → Distribute App → TestFlight & App Store。
 4. 輸出規制の質問は Info.plist の `ITSAppUsesNonExemptEncryption = false` で省かれる。外部テスターに配る時は Beta App Review があり、
    審査用のメモに「同じ Wi-Fi の Mac アプリとペアリングして使う。Mac 無しではペアリング画面まで」と書く。

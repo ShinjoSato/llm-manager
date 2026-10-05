@@ -41,6 +41,12 @@ private struct FakeAuthorizer: NotificationAuthorizing {
 
 @MainActor
 final class AttentionNotificationsTests: XCTestCase {
+    private static let container = "iCloud.example.claude-deck"
+    private static var entitled: [String: Any] {
+        ["aps-environment": "development",
+         "com.apple.developer.icloud-services": ["CloudKit"],
+         "com.apple.developer.icloud-container-identifiers": [container]]
+    }
     private var defaults: UserDefaults!
     private var suite: String!
     private var pushRegistrations = 0
@@ -163,7 +169,7 @@ final class AttentionNotificationsTests: XCTestCase {
 
     /// エンタイトルメントが無ければ CKContainer を作らずに断る（作ると落ちる）。
     func testCloudKitSubscriptionWithoutEntitlementsNeverTouchesCloudKit() async {
-        let subscription = CloudKitAttentionSubscription(entitlements: nil)
+        let subscription = CloudKitAttentionSubscription(containerIdentifier: Self.container, entitlements: nil)
         XCTAssertEqual(subscription.unavailableReason(), CloudKitAttentionSubscription.missingEntitlementReason)
         let problem = await subscription.accountProblem()
         XCTAssertEqual(problem, CloudKitAttentionSubscription.missingEntitlementReason)
@@ -174,14 +180,30 @@ final class AttentionNotificationsTests: XCTestCase {
             XCTAssertEqual((error as? CKError)?.code, .missingEntitlement)
         }
         try? await subscription.unsubscribe()
-        let partial = CloudKitAttentionSubscription(entitlements: ["com.apple.developer.icloud-services": ["CloudKit"]])
+        let partial = CloudKitAttentionSubscription(containerIdentifier: Self.container,
+                                                    entitlements: ["com.apple.developer.icloud-services": ["CloudKit"]])
         XCTAssertNotNil(partial.unavailableReason())
+    }
+
+    /// コンテナが設定されていなければ、エンタイトルメントがあっても CloudKit に触れずに断る。
+    func testCloudKitSubscriptionWithoutContainerNeverTouchesCloudKit() async {
+        let subscription = CloudKitAttentionSubscription(containerIdentifier: nil, entitlements: Self.entitled)
+        XCTAssertEqual(subscription.unavailableReason(), CloudKitAttentionSubscription.missingContainerReason)
+        let problem = await subscription.accountProblem()
+        XCTAssertEqual(problem, CloudKitAttentionSubscription.missingContainerReason)
+        do {
+            try await subscription.subscribe()
+            XCTFail("購読できてしまった")
+        } catch {
+            XCTAssertEqual((error as? CKError)?.code, .missingEntitlement)
+        }
     }
 
     /// この版のエンタイトルメントを読み、iCloud の有無に合わせて使える / 使えないを正しく判断すること（既定のビルドは iCloud を付けない）。
     func testThisBuildMatchesItsEntitlements() {
         let values = ExecutableEntitlements.ofMainExecutable()
-        if AttentionNoticeSchema.entitlementsAllowNotices(values, needsPush: true) {
+        let container = CloudKitAttentionSubscription.bundleContainer()
+        if let container, AttentionNoticeSchema.entitlementsAllowNotices(values, container: container, needsPush: true) {
             XCTAssertNil(CloudKitAttentionSubscription().unavailableReason())
         } else {
             XCTAssertNotNil(CloudKitAttentionSubscription().unavailableReason())
@@ -189,12 +211,10 @@ final class AttentionNotificationsTests: XCTestCase {
     }
 
     func testCloudKitSubscriptionWithEntitlementsIsAvailable() {
-        let subscription = CloudKitAttentionSubscription(entitlements: [
-            "aps-environment": "development",
-            "com.apple.developer.icloud-services": ["CloudKit"],
-            "com.apple.developer.icloud-container-identifiers": [AttentionNoticeSchema.containerIdentifier]
-        ])
+        let subscription = CloudKitAttentionSubscription(containerIdentifier: Self.container, entitlements: Self.entitled)
         XCTAssertNil(subscription.unavailableReason())
+        let other = CloudKitAttentionSubscription(containerIdentifier: "iCloud.example.other", entitlements: Self.entitled)
+        XCTAssertEqual(other.unavailableReason(), CloudKitAttentionSubscription.missingEntitlementReason)
     }
 
     func testSubscriptionFiresOnCreationWithRecordText() {
@@ -223,7 +243,7 @@ final class AttentionNotificationsTests: XCTestCase {
     func testRouteFromRawCloudKitPayload() {
         let userInfo: [AnyHashable: Any] = [
             "aps": ["alert": ["title-loc-key": "ATTENTION_TITLE", "title-loc-args": ["mirio"]]],
-            "ck": ["ce": 2, "cid": AttentionNoticeSchema.containerIdentifier, "nid": UUID().uuidString,
+            "ck": ["ce": 2, "cid": Self.container, "nid": UUID().uuidString,
                    "qry": ["af": ["roomId": "e:s1", "sessionId": "s1", "macName": "Mac"], "dbs": 1, "fo": 1,
                            "rid": "attn-e_s1-1", "sid": AttentionNoticeSchema.subscriptionID, "zid": "_defaultZone", "zoid": "_defaultOwner"]]
         ]
@@ -241,7 +261,7 @@ final class AppModelNoticeTests: XCTestCase {
     }
 
     func testUnpairedKeepsTheNoticeAndExplains() {
-        let keychain = PairingKeychain(service: "com.shinjosato.claude-deck.ios.tests.\(UUID().uuidString)")
+        let keychain = PairingKeychain(service: PairingKeychain.serviceName(suffix: "tests.\(UUID().uuidString)"))
         let model = AppModel(keychain: keychain, startMonitoring: false, notifications: notifications())
         model.openFromNotice(AttentionNoticeRoute(roomId: "h:1", sessionId: "s1", macName: "Mac"))
         XCTAssertNil(model.requestedRoomId)
