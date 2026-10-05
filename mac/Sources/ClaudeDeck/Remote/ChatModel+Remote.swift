@@ -85,7 +85,7 @@ extension ChatModel: RemoteControl {
             case .choose(let index): choice = index
             case .cancel: choice = nil
             }
-            return await RemoteOperation.wait { done in
+            return await RemoteOperationWait.wait { done in
                 answerMenu(session, menu: menu, choice: choice, report: false) { done($0) }
             }
         }
@@ -99,7 +99,7 @@ extension ChatModel: RemoteControl {
             return result
         case .success(let menu):
             let direction: MenuTabMover.Direction = request.direction == .next ? .next : .previous
-            return await RemoteOperation.wait { done in
+            return await RemoteOperationWait.wait { done in
                 moveMenuTab(session, menu: menu, direction: direction, report: false) { done($0) }
             }
         }
@@ -124,7 +124,7 @@ extension ChatModel: RemoteControl {
         }
         if session.isSending, let busy = ClaudeTerminalView.SendResult.busy.refusal { return .failure(busy.code, busy.message) }
         // mac の入力欄の書きかけ・添付には触れない（iPhone の本文だけを送る）。
-        return await RemoteOperation.wait { done in
+        return await RemoteOperationWait.wait { done in
             let result = session.send(text) { completion in done(Self.result(of: completion)) }
             if result == nil {
                 done(.failure("ended", "claude は動いていません。"))

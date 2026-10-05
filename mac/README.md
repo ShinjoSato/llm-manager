@@ -46,7 +46,8 @@ mac/
     MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
     Remote/                     iPhone 連携（設定ウィンドウ・QR・端末一覧・iPhone からの操作を ChatModel の既存の処理へ繋ぐ ChatModel+Remote）
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
-    MonitorModels.swift         ドメイン型
+    DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
+                                Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
     MonitorEvent.swift          監視からストアへ流れる変化（sessions / feed / usage / permissions / transcript）
     MonitorConfiguration.swift  読み取り元（CLAUDE_HOME）・使用量ファイル・受け口のポート・デバッグ出力
     MonitorStore.swift          @Observable ストア（監視の状態・受け口の状態・セッション・フィード・残量・権限確認・pid 対応付け）
@@ -68,7 +69,6 @@ mac/
       HookServerRoutes.swift      /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
       LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定
     Remote/                     iPhone 向けの口（同じ Wi-Fi・TLS・端末トークン）。仕様は docs/remote-api.md
-      API/                        iOS と共有する型（RemoteAPIModels: リクエスト・応答・状態 / RemotePinning: 指紋のピン留め）
       Server/                     SelfSignedCertificate（DER で X.509 を組む・鍵と証明書のファイル）・RemotePairingStore・
                                   RemoteAuthThrottle・RemoteRoutes（/v1 の振り分け）・RemoteEventHub（SSE）・RemoteControl（アプリへ頼む操作と照合）・
                                   RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces
@@ -81,17 +81,11 @@ mac/
     ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
                                 SceneKit のノードへの起こし（StageSceneRig）
-    Pixel/PixelCharacter.swift  キャラ・持ち物・マークのドット絵と配色（ルーム一覧のアイコンとステージの 3D で共有）
     LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
     EditorActions.swift         見出しの「VS Code / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
-      TranscriptBuffer.swift      会話履歴の取得と追記の統合（id で重複除去・reset で置換）
-      ChatTimeline.swift          発話の下にツールを畳む・実行中ツールの判定・送った伝言と記録待ちの画像付き発話の差し込み
-      ChatImages.swift            吹き出しの画像の出どころ（transcript / 手元の一時ファイル）・`[画像]` の印の除去・記録待ちの画像付き発話の突き合わせ
-      RelayNotes.swift            外部セッションへ送った伝言（transcript の写しとの重複排除・送信失敗の理由）
+      RelayNotes+Failure.swift    伝言の送信失敗の理由（監視の失敗種別を言葉にする。伝言そのものは DeckCore）
       SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
-      RoomGrouping.swift          要対応 / 稼働中 / 待機 のグループ化・並び順・検索・未読数・アイコン色
-      ChatMarkdown.swift          吹き出しの Markdown 解析（見出し・表・リスト・引用・区切り線・段落・コードブロック）
       Attachments.swift           添付: 送る形の組み立て（画像パスの貼り付け用エスケープ・本文へのパスの一覧）・ペーストボードからの拾い出し・一時保存と掃除
       AttachmentPasteTextView.swift 添付を受ける文字欄（⌘V のメニュー検証・貼り付け・ドロップ）。入力欄の SubmitTextView の土台
       PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの判定
@@ -165,6 +159,7 @@ mac/
 ## iPhone 連携（同じ Wi-Fi・`docs/remote-api.md`）
 
 同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信ができる口。
+iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共有パッケージ `packages/DeckCore`。
 **既定は無効**で、メニュー「claude-deck → iPhone 連携…」のウィンドウで有効にした時だけ開く。
 
 - **口**: フック・チャネルの口（127.0.0.1:8766）とは別のサーバー・別のポート（既定 8767・変更可。1024 未満と 8766 は不可）。
@@ -333,7 +328,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   端末画面からのローカル判定（作業中 / 権限プロンプト / 待機）で代わりに出す。
 - 各行: ドット絵キャラのアイコン・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
   （開いていない間に届いた応答の数）。アプリの外で動いているセッションには「外部」タグ（伝言・引き継ぎは下記「外部セッション」）。
-  - キャラはステージの 3D と同じ絵と配色（`Sources/MonitorKit/Pixel/PixelCharacter.swift`。マークの大きさ・位置・跳ね幅だけは小さいアイコンで読めるよう変えている）。稼働中=立ち・緑で跳ねる / 権限待ち=立ち・amber で「!」が点滅 / 入力待ち=立ち・青で「?」が点滅 / エラー=うずくまり・赤 / 待機=座り・灰で Zz が浮き沈み / 終了=座り・暗い灰 / 状態不明=座り・灰（マーク無し）
+  - キャラはステージの 3D と同じ絵と配色（`packages/DeckCore/Sources/DeckCore/Pixel/PixelCharacter.swift`。マークの大きさ・位置・跳ね幅だけは小さいアイコンで読めるよう変えている）。稼働中=立ち・緑で跳ねる / 権限待ち=立ち・amber で「!」が点滅 / 入力待ち=立ち・青で「?」が点滅 / エラー=うずくまり・赤 / 待機=座り・灰で Zz が浮き沈み / 終了=座り・暗い灰 / 状態不明=座り・灰（マーク無し）
   - SwiftUI の Canvas で整数ポイントのマスを補間なしに塗る。動く状態だけ、画面に出ている間だけ `TimelineView(.periodic)` で 4fps で描き直す（起点を固定時刻にして全行が同じ境目でコマを切り替える）。「動きを減らす」設定では止める。行と見出しでは状態名を隣の文字が読むので、アイコン自体は読み上げない
   - 会話の見出しのアイコンも同じキャラ。「+」のプロジェクト一覧はセッションを持たないので頭文字アイコンのまま
 - 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。

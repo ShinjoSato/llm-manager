@@ -313,13 +313,13 @@ public enum RemoteChecks {
 
 /// iPhone からの操作の待ち。戻らない操作で接続を握り続けないよう上限を設ける（操作自体はその後も続きうる）。
 @MainActor
-public enum RemoteOperation {
+public enum RemoteOperationWait {
     public static let timeout: Duration = .seconds(30)
     public static let timedOut = RemoteActionResult.failure("timeout", "mac での操作が時間内に終わりませんでした。"
         + "操作は続いている可能性があるため、一覧を取り直して端末の様子を確かめてください。")
 
     /// `start` に渡す完了の受け口は最初の 1 回だけ通す（上限を過ぎた後の完了は捨てる）。
-    public static func wait(timeout: Duration = RemoteOperation.timeout,
+    public static func wait(timeout: Duration = RemoteOperationWait.timeout,
                             _ start: (@escaping @MainActor (RemoteActionResult) -> Void) -> Void) async -> RemoteActionResult {
         await withCheckedContinuation { (continuation: CheckedContinuation<RemoteActionResult, Never>) in
             let gate = ResumeGate()

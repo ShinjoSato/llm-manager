@@ -12,7 +12,9 @@ let package = Package(
     ],
     dependencies: [
         // VT100/Xterm 端末エミュレータ。PTY ホスト（LocalProcessTerminalView）を提供。上流の変更で挙動が変わらないようリビジョンで固定する。
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "a3b8c9b680cb38d87d2a067b8ecd6427910538a6")
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "a3b8c9b680cb38d87d2a067b8ecd6427910538a6"),
+        // iPhone アプリと共有する型・Markdown の解析・ドット絵など（ios/ と同じものを使う）。
+        .package(path: "../packages/DeckCore")
     ],
     targets: [
         .executableTarget(
@@ -25,6 +27,7 @@ let package = Package(
         // セッション監視・会話・フックの受け口（アプリ内）。UI を持たないのでテストできるよう library に切り出す。
         .target(
             name: "MonitorKit",
+            dependencies: [.product(name: "DeckCore", package: "DeckCore")],
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         ),
         // Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー）。権限確認をアプリの受け口へ中継する。
@@ -38,7 +41,8 @@ let package = Package(
             name: "ClaudeDeckTests",
             // SwiftTerm はホスト中のセッションと同じ起動経路（forkpty）でシグナル設定の漏れを確かめるため。
             // チャネルは実行ファイルを stdin/stdout で繋いで確かめるので、先にビルドさせる。
-            dependencies: ["MonitorKit", "claude-deck-channel", .product(name: "SwiftTerm", package: "SwiftTerm")],
+            dependencies: ["MonitorKit", "claude-deck-channel", .product(name: "SwiftTerm", package: "SwiftTerm"),
+                           .product(name: "DeckCore", package: "DeckCore")],
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         )
     ]
