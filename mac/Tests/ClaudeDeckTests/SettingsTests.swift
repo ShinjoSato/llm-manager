@@ -34,13 +34,25 @@ final class SettingsFileTests: XCTestCase {
 
     func testSaveAndLoadRoundTripWithPrivatePermissions() throws {
         let settings = sample()
-        try file.save(settings)
-        XCTAssertEqual(file.load(), .loaded(settings))
+        let restricted = SettingsFile(url: file.url, restrictsDirectory: true)
+        try restricted.save(settings)
+        XCTAssertEqual(restricted.load(), .loaded(settings))
         XCTAssertEqual(try mode(file.url), 0o600)
         XCTAssertEqual(try mode(file.url.deletingLastPathComponent()), 0o700)
         // 書きかけの一時ファイルを残さない（置き換えで書く）。
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: file.url.deletingLastPathComponent().path)
         XCTAssertEqual(leftovers, ["settings.json"])
+    }
+
+    func testCustomLocationKeepsDirectoryPermissions() throws {
+        let parent = file.url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o755])
+        XCTAssertFalse(file.restrictsDirectory)
+        try file.save(sample())
+        XCTAssertEqual(try mode(file.url), 0o600)
+        XCTAssertEqual(try mode(parent), 0o755)
+        XCTAssertTrue(SettingsFile(url: DeckPaths.applicationSupport.appendingPathComponent("settings.json")).restrictsDirectory)
     }
 
     func testSaveReplacesFileAtomically() throws {
@@ -104,10 +116,14 @@ final class SettingsFileTests: XCTestCase {
         let legacy = Data(#"""
         [{"name":"mirio","path":"/p/mirio","status":"active","note":"中心","ghOwner":"x","ghNumber":4},
          {"name":"old","path":"/p/old","status":"weird","note":""},
-         {"name":"dup","path":"/p/mirio","status":"paused","note":""}]
+         {"name":"dup","path":"/p/mirio/","status":"paused","note":""},
+         {"name":"rel","path":"relative/path","status":"active","note":""}]
         """#.utf8)
         try legacy.write(to: file.legacyProjectsURL)
-        guard case .loaded(let settings) = file.bootstrap() else { return XCTFail() }
+        let boot = file.bootstrap()
+        guard case .loaded(let settings) = boot.result else { return XCTFail() }
+        XCTAssertNil(boot.saveFailure)
+        XCTAssertNil(boot.legacyProblem)
         XCTAssertEqual(settings.projects.map(\.name), ["mirio", "old"])
         XCTAssertEqual(settings.projects.map(\.status), [.active, .active])
         XCTAssertEqual(settings.projects[0].note, "中心")
@@ -115,12 +131,62 @@ final class SettingsFileTests: XCTestCase {
         XCTAssertEqual(file.load(), .loaded(settings))
         XCTAssertEqual(try Data(contentsOf: file.legacyProjectsURL), legacy)
         // 2 回目は作った設定をそのまま読む（取り込み直さない）。
-        XCTAssertEqual(file.bootstrap(), .loaded(settings))
+        XCTAssertEqual(file.bootstrap().result, .loaded(settings))
     }
 
     func testBootstrapWithoutAnythingStaysMissing() {
-        XCTAssertEqual(file.bootstrap(), .missing)
+        let boot = file.bootstrap()
+        XCTAssertEqual(boot.result, .missing)
+        XCTAssertNil(boot.legacyProblem)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.url.path))
+    }
+
+    func testBrokenLegacyFileIsReportedAndKept() throws {
+        try FileManager.default.createDirectory(at: file.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let legacy = Data("{broken".utf8)
+        try legacy.write(to: file.legacyProjectsURL)
+        let boot = file.bootstrap()
+        XCTAssertEqual(boot.result, .missing)
+        XCTAssertNotNil(boot.legacyProblem)
+        XCTAssertEqual(try Data(contentsOf: file.legacyProjectsURL), legacy)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.url.path))
+    }
+
+    func testBootstrapThatCannotWriteKeepsMigratedContent() throws {
+        let parent = file.url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        try Data(#"[{"name":"a","path":"/p/a","status":"paused"}]"#.utf8).write(to: file.legacyProjectsURL)
+        XCTAssertEqual(chmod(parent.path, 0o500), 0)
+        defer { chmod(parent.path, 0o700) }
+        let boot = file.bootstrap()
+        guard case .loaded(let settings) = boot.result else { return XCTFail() }
+        XCTAssertEqual(settings.projects.map(\.name), ["a"])
+        XCTAssertNotNil(boot.saveFailure)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.url.path))
+    }
+
+    func testInvalidContentIsUnreadableAndNotOverwritten() throws {
+        try FileManager.default.createDirectory(at: file.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let id = UUID().uuidString
+        let cases = [
+            #"{"version":1,"projects":[{"id":"\#(id)","name":"a","path":"/a","status":"active"},{"id":"\#(id)","name":"b","path":"/b","status":"active"}]}"#,
+            #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active"},{"id":"\#(UUID().uuidString)","name":"b","path":"/a","status":"active"}]}"#,
+            #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"a/b","status":"active"}]}"#,
+        ]
+        for text in cases {
+            let original = Data(text.utf8)
+            try original.write(to: file.url)
+            guard case .unreadable(let reason) = file.load() else { return XCTFail(text) }
+            XCTAssertTrue(reason.contains("中身に問題"), reason)
+            XCTAssertThrowsError(try file.save(sample()), text)
+            XCTAssertEqual(try Data(contentsOf: file.url), original, text)
+        }
+    }
+
+    func testLightProblemsStillLoad() {
+        let json = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"","path":"/a","status":"active","github":{"owner":"bad_owner","repo":"r"}}],"boards":[{"name":"x","owner":"o","number":0}]}"#
+        guard case .loaded(let settings) = SettingsFile.decode(Data(json.utf8)) else { return XCTFail() }
+        XCTAssertEqual(SettingsValidation.warnings(settings).count, 3)
     }
 }
 
@@ -194,6 +260,159 @@ final class SettingsStoreTests: XCTestCase {
         store.add(paths: ["/p/b"])
         XCTAssertNotNil(store.problem)
         XCTAssertEqual(try Data(contentsOf: store.file.url), Data("broken".utf8))
+    }
+
+    private func external(_ store: SettingsStore, _ change: (inout DeckSettings) -> Void) throws {
+        guard case .loaded(var current) = store.file.load() else { return XCTFail("読めない") }
+        change(&current)
+        try SettingsFile(url: store.file.url).save(current)
+    }
+
+    func testUpdateAfterExternalEditKeepsExternalAddition() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        try external(store) {
+            $0.projects.append(ManagedProject(name: "byClaude", path: "/p/claude"))
+            $0.boards.append(GitHubBoard(name: "overview", owner: "o", number: 5))
+        }
+        // 読み直していない古い一覧のまま編集しても、外の追加は残る。
+        XCTAssertEqual(store.projects.count, 1)
+        XCTAssertTrue(store.updateProject(id: store.projects[0].id) { $0.note = "メモ" })
+        XCTAssertEqual(store.projects.map(\.name), ["a", "byClaude"])
+        XCTAssertEqual(store.projects[0].note, "メモ")
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk, store.settings)
+        XCTAssertEqual(onDisk.boards.count, 1)
+        XCTAssertNil(store.notice)
+    }
+
+    func testChangeThatNoLongerAppliesIsDroppedWithNotice() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a", "/p/b"])
+        let removed = store.projects[0].id
+        try external(store) { $0.projects.removeFirst() }
+        XCTAssertFalse(store.updateProject(id: removed) { $0.note = "消えたもの" })
+        XCTAssertNotNil(store.notice)
+        XCTAssertEqual(store.projects.map(\.name), ["b"])
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk.projects.map(\.name), ["b"])
+    }
+
+    func testPendingEditsAreReappliedOnExternalContent() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        let id = store.projects[0].id
+        store.scheduleProject(id: id, field: "name") { $0.name = "途中" }
+        store.scheduleProject(id: id, field: "name") { $0.name = "確定" }
+        XCTAssertTrue(store.hasPendingEdits)
+        try external(store) { $0.projects.append(ManagedProject(name: "x", path: "/p/x")) }
+        store.flushPending()
+        XCTAssertFalse(store.hasPendingEdits)
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk.projects.map(\.name), ["確定", "x"])
+    }
+
+    func testPendingEditsWaitWhileComposing() async throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        let id = store.projects[0].id
+        var composing = true
+        store.isComposing = { composing }
+        store.scheduleProject(id: id, field: "note") { $0.note = "へんかんちゅう" }
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(store.projects[0].note, "")
+        XCTAssertTrue(store.hasPendingEdits)
+        composing = false
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(store.projects[0].note, "へんかんちゅう")
+        // 閉じる・終了の時は変換中でも書き切る。
+        composing = true
+        store.scheduleProject(id: id, field: "note") { $0.note = "閉じる時" }
+        store.flushPending(force: true)
+        XCTAssertEqual(SettingsFile(url: store.file.url).load(), .loaded(store.settings))
+        XCTAssertEqual(store.projects[0].note, "閉じる時")
+    }
+
+    func testCancelPendingDropsEdit() {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        let id = store.projects[0].id
+        store.scheduleProject(id: id, field: "name") { $0.name = "不正な途中" }
+        store.cancelPending(key: SettingsStore.projectKey(id: id, field: "name"))
+        store.flushPending()
+        XCTAssertEqual(store.projects[0].name, "a")
+    }
+
+    func testReloadKeepsBoardIDs() throws {
+        let store = makeStore()
+        store.addBoard(GitHubBoard(name: "overview", owner: "o", number: 5))
+        store.addBoard(GitHubBoard(name: "other", owner: "o", number: 6))
+        let ids = store.settings.boards.map(\.id)
+        try external(store) {
+            $0.boards[0].name = "renamed"
+            $0.boards.append(GitHubBoard(name: "new", owner: "o", number: 7))
+        }
+        store.reload()
+        XCTAssertEqual(store.settings.boards.map(\.name), ["renamed", "other", "new"])
+        XCTAssertEqual(Array(store.settings.boards.map(\.id).prefix(2)), ids)
+    }
+
+    func testMoveFollowsIDsAfterExternalReorder() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a", "/p/b", "/p/c"])
+        try external(store) { $0.projects.reverse() }
+        // 画面では a, b, c のまま。a を末尾へ動かす。
+        store.move(from: IndexSet(integer: 0), to: 3)
+        XCTAssertEqual(store.projects.map(\.name), ["c", "b", "a"])
+    }
+
+    func testRefusesToWriteBlockingContent() {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        XCTAssertFalse(store.update { $0.projects.append(ManagedProject(name: "rel", path: "relative")) })
+        XCTAssertNotNil(store.saveError)
+        XCTAssertEqual(store.projects.count, 1)
+    }
+
+    func testMigrationRetriedOnReloadAfterWriteFailure() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"[{"name":"a","path":"/p/a","status":"active"}]"#.utf8).write(to: dir.appendingPathComponent("projects.json"))
+        XCTAssertEqual(chmod(dir.path, 0o500), 0)
+        let store = makeStore()
+        XCTAssertNil(store.problem)
+        XCTAssertNotNil(store.saveError)
+        XCTAssertEqual(store.projects.map(\.name), ["a"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.file.url.path))
+        XCTAssertEqual(chmod(dir.path, 0o700), 0)
+        store.reload()
+        XCTAssertNil(store.saveError)
+        XCTAssertEqual(store.file.load(), .loaded(store.settings))
+        XCTAssertEqual(store.projects.map(\.name), ["a"])
+    }
+
+    func testBrokenLegacyIsShownAsNotice() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("nope".utf8).write(to: dir.appendingPathComponent("projects.json"))
+        let store = makeStore()
+        XCTAssertNil(store.problem)
+        XCTAssertNotNil(store.notice)
+        XCTAssertTrue(store.isEditable)
+    }
+
+    func testWatcherPicksUpExternalEditsWithoutReload() async throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        store.startWatching()
+        defer { store.stopWatching() }
+        try external(store) { $0.projects.append(ManagedProject(name: "byClaude", path: "/p/claude")) }
+        for _ in 0..<40 where store.projects.count < 2 {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(store.projects.map(\.name), ["a", "byClaude"])
+        // 自分の書き込みの後も内容はそのまま（読み直しで戻らない）。
+        store.add(paths: ["/p/b"])
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(store.projects.map(\.name), ["a", "byClaude", "b"])
     }
 
     func testExportThenImportRoundTrip() throws {
@@ -277,11 +496,12 @@ final class SettingsImportTests: XCTestCase {
         XCTAssertEqual(settings.projects.first { $0.name == "sandora" }?.github,
                        GitHubLink(owner: "ShinjoSato", repo: "random_talk", projectNumber: 3))
         XCTAssertNil(settings.projects.first { $0.name == "infra" }?.github)
-        // repo が - のものと、一致するプロジェクトが無いものはボードへ。
-        XCTAssertEqual(settings.boards, [GitHubBoard(name: "overview", owner: "ShinjoSato", number: 5),
-                                         GitHubBoard(name: "ai-manager", owner: "ShinjoSato", number: 8)])
+        // repo が - のものはボードへ。repo 付きで一致するプロジェクトが無いものは取り込まない（repo を落とさないため）。
+        XCTAssertEqual(settings.boards, [GitHubBoard(name: "overview", owner: "ShinjoSato", number: 5)])
         XCTAssertEqual(summary.linkedGitHub, 2)
-        XCTAssertEqual(summary.addedBoards, 2)
+        XCTAssertEqual(summary.addedBoards, 1)
+        XCTAssertEqual(summary.unmatched, 1)
+        XCTAssertTrue(summary.message.contains("先に registry.tsv を読み込んでください"))
 
         // 2 回目は何も足さず、手で直した紐づけも上書きしない。
         var edited = settings
@@ -289,7 +509,26 @@ final class SettingsImportTests: XCTestCase {
         let (again, second) = try SettingsImport.merge(Data(github.utf8), into: edited)
         XCTAssertEqual(again, edited)
         XCTAssertEqual(second.linkedGitHub + second.addedBoards, 0)
-        XCTAssertEqual(second.skipped, 4)
+        XCTAssertEqual(second.skipped, 3)
+        XCTAssertEqual(second.unmatched, 1)
+    }
+
+    func testGitHubProjectsBeforeRegistryDoesNotDropRepo() throws {
+        let (settings, summary) = try SettingsImport.merge(Data(github.utf8), into: DeckSettings())
+        XCTAssertEqual(settings.boards.map(\.name), ["overview"])
+        XCTAssertEqual(summary.unmatched, 3)
+        // registry を読んでからもう一度読めば紐づく。
+        let (withProjects, _) = try SettingsImport.merge(Data(registry.utf8), into: settings)
+        let (linked, again) = try SettingsImport.merge(Data(github.utf8), into: withProjects)
+        XCTAssertEqual(again.linkedGitHub, 2)
+        XCTAssertEqual(linked.projects.first { $0.name == "mirio" }?.github?.repo, "ailovei")
+    }
+
+    func testSettingsImportRejectsBlockingContent() {
+        let json = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"rel","status":"active"}]}"#
+        XCTAssertThrowsError(try SettingsImport.merge(Data(json.utf8), into: DeckSettings())) { error in
+            guard case .unreadable = error as? SettingsImport.Failure else { return XCTFail() }
+        }
     }
 
     func testBoardDedupIgnoresOwnerCase() throws {
@@ -376,6 +615,12 @@ final class SettingsValidationTests: XCTestCase {
         settings.projects.append(ManagedProject(name: " ", path: "relative"))
         settings.projects.append(ManagedProject(name: "dup", path: "/p/a"))
         settings.boards.append(GitHubBoard(name: "", owner: "-x", number: 0))
-        XCTAssertEqual(SettingsValidation.problems(settings).count, 6)
+        settings.boards.append(GitHubBoard(name: "b2", owner: "O", number: 1))
+        // 相対パス・同じパスは読めない扱い、残り（名前が空・ボードの 3 件・同じボード）は警告。
+        XCTAssertEqual(SettingsValidation.blockingProblems(settings).count, 2)
+        XCTAssertEqual(SettingsValidation.warnings(settings).count, 5)
+        XCTAssertEqual(SettingsValidation.problems(settings).count, 7)
+        settings.projects.append(ManagedProject(id: settings.projects[0].id, name: "same-id", path: "/p/other"))
+        XCTAssertEqual(SettingsValidation.blockingProblems(settings).count, 3)
     }
 }

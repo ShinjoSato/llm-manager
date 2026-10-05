@@ -631,11 +631,23 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 - `status` は `active` / `paused` / `archived`。`github` は省略でき、その中の `repo` / `projectNumber` もどちらか片方だけでよい。
   `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
-- 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600・ディレクトリは 0700。
-- **読めないファイル（JSON でない・形が違う・知らない `version`）は上書きしない**。設定画面と「+」に理由を出し、直して「読み直す」まで変更を受け付けない。
-- 外で編集された分（Claude が `jq` 等で書き換えた等）は、アプリが前に出た時・設定画面を開いた時に読み直す。
+- 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600。ディレクトリを 0700 に締めるのは既定の場所（`~/Library/Application Support/claude-deck/`）の時だけで、
+  `CLAUDE_DECK_SETTINGS` で向けた先のディレクトリの権限は変えない。
+- **読めないファイル（JSON でない・形が違う・知らない `version`・同じ `id` や同じ `path` のプロジェクトがある・`path` が絶対パスでない）は上書きしない**。
+  設定画面と「+」に理由を出し、直して「読み直す」まで変更を受け付けない。名前が空・owner / repo の文字種・番号などの軽いものは読み込んで、設定画面に警告として出す。
+- **外で編集された分**（Claude が `jq` 等で書き換えた等）: アプリは settings.json のあるディレクトリを監視して、変わったらすぐ読み直す（自分の書き込みでは読み直さない）。
+  さらに保存の直前にも読み直し、前に読んだ / 書いた内容から変わっていれば、外の内容に今の変更をかけ直してから保存する（外の追加・変更は残る）。
+  かけ直せない時（編集中のプロジェクトが外で消された等）は変更を捨て、「外で変更されたため読み直しました」と出す。
+- 文字欄（名前・メモ・GitHub の欄）は 0.5 秒まとめて保存する。⏎・フォーカスが外れた時・設定画面を閉じた時・アプリの終了時はすぐ書く。日本語の変換中は書かずに待つ。
 - **移行**: settings.json が無い時、以前の版の `projects.json`（同じ場所）があれば取り込んで settings.json を作る。`projects.json` は消さずに残す。
-  以前の版が書いた GitHub のキー（`ghOwner` / `ghNumber`）は取り込まない。
+  以前の版が書いた GitHub のキー（`ghOwner` / `ghNumber`）は取り込まない。settings.json に書けなかった時は、読んだ内容を表示したまま書けない旨を出し、
+  「読み直す」・次の読み直しで移行をやり直す。`projects.json` が読めない時は取り込まずに理由を出す。
+- **旧 TSV からの移し替え（移行後に一度だけ）**: 以前リポジトリにあった `projects/registry.tsv` / `projects/github-projects.tsv` は git の履歴から取り出して、
+  設定画面の「書き出し・読み込み」で **registry.tsv → github-projects.tsv の順**に読み込む（逆の順だと repo 付きの行は該当するプロジェクトが無く取り込まれない）。
+  ```sh
+  git show 34277bd~1:projects/registry.tsv > /tmp/registry.tsv
+  git show 34277bd~1:projects/github-projects.tsv > /tmp/github-projects.tsv
+  ```
 
 **設定画面**（メニュー「claude-deck → 設定…」⌘,。ウィンドウは 1 つ）のタブ:
 - **プロジェクト**: 一覧（ドラッグ・「上へ / 下へ」で並べ替え）、「+」でフォルダを追加、「−」/右クリックで削除（確認あり）、名前・状態・メモの編集。
@@ -644,8 +656,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - **iPhone 連携**: 下記「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）。
 - **書き出し・読み込み**: settings.json と同じ形で書き出す。読み込みは中身から形式を判断して、足りないものだけを足す（既にあるものは上書きしない）。
   - registry.tsv 形式（name / path / status / note。`#` の行と空行は無視）: 同じパスのプロジェクトは足さない。
-  - github-projects.tsv 形式（name / owner / number / repo / url）: repo が `-` ならボードへ。同じ名前のプロジェクトがあり、まだ紐づけが無ければその `github` に入れる。
-    同じ名前のプロジェクトが無ければボードへ。ボードは owner + 番号が同じものを足さない。
+  - github-projects.tsv 形式（name / owner / number / repo / url）: repo が `-`（または空）ならボードへ（owner + 番号が同じものは足さない）。
+    repo 付きは同じ名前のプロジェクトがあり、まだ紐づけが無ければその `github` に入れる。同じ名前のプロジェクトが無い行は取り込まず
+    （ボードにすると repo が落ちるため）、件数と「先に registry.tsv を読み込んでください」を出す。
   - 書き出した settings.json: プロジェクトはパス・ボードは owner + 番号で重複を除く。同じパスのプロジェクトに紐づけが無ければ紐づけだけ足す。
 
 型・読み書き・検証・移行・取り込みは `Sources/MonitorKit/Settings/`（テストあり）、画面は `Sources/ClaudeDeck/Settings/`。
@@ -670,7 +683,7 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - `auto` は通常の `swift build` を試し、失敗したら `--build-system native` で再ビルドする。Metal Toolchain が無い環境では通常ビルドが SwiftTerm の `Shaders.metal` のコンパイルで失敗するため（`xcodebuild -downloadComponent MetalToolchain` で入れれば通常ビルドが通る）。
 - 依存のリソースバンドル（`SwiftTerm_SwiftTerm.bundle`）は `Contents/Resources/` に同梱する。claude-deck は SwiftTerm の Metal レンダラーを有効にしていないため、現状このバンドルは参照されない（有効化する場合は SPM の `Bundle.module` が `.app` 直下を探す点に注意）。
 - 署名はこのアプリ用のプロビジョニングプロファイルがあれば Apple Development（iCloud のエンタイトルメント付き。上の「iPhone への通知」）、無ければ ad-hoc（`codesign -s -`）。Developer ID 署名・公証・配布・自動アップデートはしない。別の Mac へコピーすると Gatekeeper に止められる前提（右クリック → 開く）。
-- `/Applications` へ置く場合は `--out /Applications` またはコピー。その場合は実行ファイル位置から ai-manager を辿れないので、上記の `AI_MANAGER_ROOT` / UserDefaults / 既定パスで解決される（Finder 起動には環境変数が渡らないので、実質 UserDefaults か既定パス）。
+- `/Applications` へ置く場合は `--out /Applications` またはコピー。置き場所に関わらず、設定は `~/Library/Application Support/claude-deck/settings.json` を読む（上の「設定（settings.json）」。Finder 起動には環境変数が渡らないので `CLAUDE_DECK_SETTINGS` は効かない）。
 - 生成物 `mac/dist/` と `mac/.build/` は git 管理外。
 - アイコン（任意）: `mac/Resources/AppIcon.icns` を置くと同梱される。1024px の PNG から作る例:
   ```sh

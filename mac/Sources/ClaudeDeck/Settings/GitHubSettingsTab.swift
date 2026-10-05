@@ -2,7 +2,7 @@ import MonitorKit
 import SwiftUI
 
 /// GitHub: プロジェクトごとのリポジトリ・Project 番号と、リポジトリに紐づかないボード。
-/// 欄が正しい間だけ保存する（settings.json に不正な値を残さないため）。
+/// 欄が正しい間だけ保存する（settings.json に不正な値を残さないため）。文字欄は少し間を置いてまとめて書く。
 struct GitHubSettingsTab: View {
     let store: SettingsStore
 
@@ -45,32 +45,41 @@ private struct GitHubLinkEditor: View {
     @State private var repo = ""
     @State private var number = ""
     @State private var problems: [String] = []
+    @FocusState private var focused: Int?
+
+    private var key: String { SettingsStore.projectKey(id: project.id, field: "github") }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(project.name).font(.body.weight(.semibold))
             HStack(spacing: 8) {
-                field("owner", text: $owner)
+                field("owner", text: $owner).focused($focused, equals: 0)
                 Text("/").foregroundStyle(.secondary)
-                field("リポジトリ", text: $repo)
-                field("Project 番号", text: $number).frame(width: 100)
+                field("リポジトリ", text: $repo).focused($focused, equals: 1)
+                field("Project 番号", text: $number).focused($focused, equals: 2).frame(width: 100)
             }
             ForEach(problems, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
         }
         .padding(.vertical, 2)
         .onAppear { load(project.github) }
+        // 外で変わった時は欄を合わせ、溜めていた古い入力は捨てる。
         .onChange(of: project.github) { _, link in
-            if link != draft { load(link) }
+            guard link != draft else { return }
+            store.cancelPending(key: key)
+            load(link)
         }
         .onChange(of: owner) { commit() }
         .onChange(of: repo) { commit() }
         .onChange(of: number) { commit() }
+        .onChange(of: focused) { store.flushPending() }
+        .onDisappear { store.flushPending(force: true) }
     }
 
     private func field(_ title: String, text: Binding<String>) -> some View {
         TextField(title, text: text, prompt: Text(title))
             .labelsHidden()
             .textFieldStyle(.roundedBorder)
+            .onSubmit { store.flushPending() }
     }
 
     /// 欄の今の中身（全部空なら紐づけ無し）。
@@ -92,8 +101,11 @@ private struct GitHubLinkEditor: View {
     private func commit() {
         let link = draft
         problems = link.map(SettingsValidation.linkProblems) ?? []
-        guard problems.isEmpty, link != project.github else { return }
-        store.updateProject(id: project.id) { $0.github = link }
+        guard problems.isEmpty else {
+            store.cancelPending(key: key)
+            return
+        }
+        store.scheduleProject(id: project.id, field: "github") { $0.github = link }
     }
 }
 
@@ -104,11 +116,14 @@ private struct BoardEditor: View {
     @State private var owner = ""
     @State private var number = ""
     @State private var problems: [String] = []
+    @FocusState private var focused: Int?
+
+    private var key: String { SettingsStore.boardKey(id: board.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                BoardFields(name: $name, owner: $owner, number: $number)
+                BoardFields(name: $name, owner: $owner, number: $number, focused: $focused) { store.flushPending() }
                 Button(role: .destructive) { store.removeBoard(id: board.id) } label: { Image(systemName: "trash") }
                     .buttonStyle(.borderless)
                     .help("このボードを削除")
@@ -117,11 +132,15 @@ private struct BoardEditor: View {
         }
         .onAppear { load(board) }
         .onChange(of: board) { _, value in
-            if value != draft { load(value) }
+            guard value != draft else { return }
+            store.cancelPending(key: key)
+            load(value)
         }
         .onChange(of: name) { commit() }
         .onChange(of: owner) { commit() }
         .onChange(of: number) { commit() }
+        .onChange(of: focused) { store.flushPending() }
+        .onDisappear { store.flushPending(force: true) }
     }
 
     private var draft: GitHubBoard {
@@ -142,8 +161,11 @@ private struct BoardEditor: View {
         if problems.isEmpty, store.settings.boards.contains(where: { $0.id != board.id && $0.sameBoard(as: value) }) {
             problems = ["同じボードが既にあります"]
         }
-        guard problems.isEmpty, value != board else { return }
-        store.updateBoard(id: board.id) { $0 = GitHubBoard(id: board.id, name: value.name, owner: value.owner, number: value.number) }
+        guard problems.isEmpty else {
+            store.cancelPending(key: key)
+            return
+        }
+        store.scheduleBoard(id: board.id) { $0 = GitHubBoard(id: $0.id, name: value.name, owner: value.owner, number: value.number) }
     }
 }
 
@@ -152,6 +174,7 @@ private struct NewBoardRow: View {
     @State private var name = ""
     @State private var owner = ""
     @State private var number = ""
+    @FocusState private var focused: Int?
 
     private var draft: GitHubBoard {
         GitHubBoard(name: name.trimmingCharacters(in: .whitespaces), owner: owner.trimmingCharacters(in: .whitespaces),
@@ -170,7 +193,7 @@ private struct NewBoardRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                BoardFields(name: $name, owner: $owner, number: $number)
+                BoardFields(name: $name, owner: $owner, number: $number, focused: $focused) {}
                 Button("追加") {
                     store.addBoard(draft)
                     name = ""
@@ -188,11 +211,16 @@ private struct BoardFields: View {
     @Binding var name: String
     @Binding var owner: String
     @Binding var number: String
+    var focused: FocusState<Int?>.Binding
+    let onSubmit: () -> Void
 
     var body: some View {
         TextField("名前", text: $name, prompt: Text("名前")).labelsHidden().textFieldStyle(.roundedBorder)
+            .focused(focused, equals: 0).onSubmit(onSubmit)
         TextField("owner", text: $owner, prompt: Text("owner")).labelsHidden().textFieldStyle(.roundedBorder)
+            .focused(focused, equals: 1).onSubmit(onSubmit)
         TextField("Project 番号", text: $number, prompt: Text("Project 番号")).labelsHidden().textFieldStyle(.roundedBorder)
+            .focused(focused, equals: 2).onSubmit(onSubmit)
             .frame(width: 100)
     }
 }

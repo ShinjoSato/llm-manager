@@ -22,6 +22,18 @@ public struct DeckSettings: Codable, Equatable, Sendable {
         boards = try c.decodeIfPresent([GitHubBoard].self, forKey: .boards) ?? []
     }
 
+    /// 読み直した内容に、前から持っていたボードの画面用 id を引き継ぐ（owner + 番号が同じもの）。
+    public func carryingBoardIDs(from old: DeckSettings) -> DeckSettings {
+        var result = self
+        var used = Set<UUID>()
+        for index in result.boards.indices {
+            guard let match = old.boards.first(where: { !used.contains($0.id) && $0.sameBoard(as: result.boards[index]) }) else { continue }
+            used.insert(match.id)
+            result.boards[index].id = match.id
+        }
+        return result
+    }
+
     /// 人が読み書きしやすい形（整形・キー順固定）。
     public func encoded() throws -> Data {
         let encoder = JSONEncoder()

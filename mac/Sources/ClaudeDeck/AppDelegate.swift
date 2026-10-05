@@ -7,6 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
         MonitorBridge.start()
+        SettingsStore.shared.isComposing = {
+            (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+        }
+        SettingsStore.shared.startWatching()
 
         let main = MainViewController()
         window = NSWindow(
@@ -31,6 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            SettingsStore.shared.flushPending(force: true)
+            SettingsStore.shared.stopWatching()
+        }
         RemoteAccessController.shared.shutdown()
         AttentionNotifier.shared.stop()
         MonitorBridge.stop()
@@ -84,9 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindow.show(tab: .remote)
     }
 
-    // 外（Claude や手作業）で settings.json が書き換えられていたら拾う。
+    // 監視を張れなかった時の取りこぼしを拾う（外で書き換えられていた時だけ読み直す）。
     func applicationDidBecomeActive(_ notification: Notification) {
-        SettingsStore.shared.reload()
+        MainActor.assumeIsolated { SettingsStore.shared.reloadIfChanged() }
     }
 
     // MARK: - スクリーンショット

@@ -58,7 +58,7 @@ struct TransferSettingsTab: View {
                 Text("""
                 読めるのは registry.tsv（name / path / status / note）・github-projects.tsv（name / owner / number / repo / url）・\
                 書き出した settings.json です。形式は中身から判断します。既にあるプロジェクト（同じパス）・GitHub の紐づけ（同じ名前のプロジェクト）・\
-                ボード（同じ owner と番号）は上書きしません。
+                ボード（同じ owner と番号）は上書きしません。旧 TSV は registry.tsv → github-projects.tsv の順に読み込んでください。
                 """)
                 .font(.caption).foregroundStyle(.secondary)
             }

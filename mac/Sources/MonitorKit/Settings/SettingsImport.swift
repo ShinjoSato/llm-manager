@@ -16,6 +16,8 @@ public enum SettingsImport {
         public var addedBoards = 0
         /// 既にあった・読めなかったため足さなかった行。
         public var skipped = 0
+        /// repo 付きなのに同じ名前のプロジェクトが無く、取り込まなかった行。
+        public var unmatched = 0
 
         public var message: String {
             var parts: [String] = []
@@ -23,7 +25,11 @@ public enum SettingsImport {
             if linkedGitHub > 0 { parts.append("GitHub の紐づけ \(linkedGitHub) 件") }
             if addedBoards > 0 { parts.append("ボード \(addedBoards) 件") }
             let added = parts.isEmpty ? "足したものはありません" : parts.joined(separator: "・") + "を足しました"
-            return skipped > 0 ? "\(added)（既にある・読めない \(skipped) 件は飛ばしました）" : added
+            var result = skipped > 0 ? "\(added)（既にある・読めない \(skipped) 件は飛ばしました）" : added
+            if unmatched > 0 {
+                result += "。リポジトリ付きで該当するプロジェクトが無い \(unmatched) 件は取り込んでいません（先に registry.tsv を読み込んでください）"
+            }
+            return result
         }
     }
 
@@ -66,14 +72,17 @@ public enum SettingsImport {
             for cols in rows(text) {
                 guard cols.count >= 3, !cols[0].isEmpty, SettingsValidation.ownerProblem(cols[1]) == nil,
                       let number = Int(cols[2]), number > 0 else { summary.skipped += 1; continue }
-                let repo = cols.count >= 4 ? repoName(cols[3]) : nil
-                if let repo, let index = merged.projects.firstIndex(where: { $0.name == cols[0] }) {
-                    guard merged.projects[index].github == nil else { summary.skipped += 1; continue }
-                    merged.projects[index].github = GitHubLink(owner: cols[1], repo: repo, projectNumber: number)
-                    summary.linkedGitHub += 1
-                } else {
+                let rawRepo = cols.count >= 4 ? cols[3] : ""
+                guard !rawRepo.isEmpty, rawRepo != "-" else {
                     addBoard(GitHubBoard(name: cols[0], owner: cols[1], number: number), to: &merged, summary: &summary)
+                    continue
                 }
+                guard let repo = repoName(rawRepo) else { summary.skipped += 1; continue }
+                // ボードとして入れると repo が落ちるので、プロジェクトが揃ってから読み直してもらう。
+                guard let index = merged.projects.firstIndex(where: { $0.name == cols[0] }) else { summary.unmatched += 1; continue }
+                guard merged.projects[index].github == nil else { summary.skipped += 1; continue }
+                merged.projects[index].github = GitHubLink(owner: cols[1], repo: repo, projectNumber: number)
+                summary.linkedGitHub += 1
             }
         case .settingsJSON:
             let incoming: DeckSettings
@@ -112,9 +121,8 @@ public enum SettingsImport {
         summary.addedBoards += 1
     }
 
-    /// `owner/repo` か `repo`。`-` や空は「リポジトリ無し」。
+    /// `owner/repo` か `repo` から名前を取る（使えない名前なら nil）。
     private static func repoName(_ raw: String) -> String? {
-        guard !raw.isEmpty, raw != "-" else { return nil }
         let name = raw.split(separator: "/").last.map(String.init) ?? raw
         return SettingsValidation.repoProblem(name) == nil ? name : nil
     }

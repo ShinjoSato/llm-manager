@@ -328,6 +328,12 @@ struct ProjectLauncher: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(6)
                     }
+                    if let message = store.notice ?? store.saveError {
+                        Text(message)
+                            .font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(6)
+                    }
                 }
             }
             .frame(height: min(CGFloat(max(filtered.count, 1)) * 44, 320))
@@ -351,7 +357,7 @@ struct ProjectLauncher: View {
         .padding(12)
         .frame(width: 360)
         .background(ChatTheme.sidebar)
-        .onAppear { store.reload() }
+        .onAppear { store.reloadIfChanged() }
     }
 
     @ViewBuilder

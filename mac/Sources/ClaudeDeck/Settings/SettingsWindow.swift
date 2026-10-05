@@ -19,11 +19,12 @@ final class SettingsNavigation {
 enum SettingsWindow {
     private static var window: NSWindow?
     private static let navigation = SettingsNavigation()
+    private static var closeObserver: NSObjectProtocol?
 
     /// `tab` が nil なら前に開いていたタブのまま。
     static func show(tab: SettingsTab?) {
         if let tab { navigation.tab = tab }
-        SettingsStore.shared.reload()
+        SettingsStore.shared.reloadIfChanged()
         if let window {
             window.makeKeyAndOrderFront(nil)
             return
@@ -39,6 +40,14 @@ enum SettingsWindow {
         window.center()
         window.makeKeyAndOrderFront(nil)
         self.window = window
+        // 閉じる時は溜めていた文字欄の変更を書き切る。
+        closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                               queue: .main) { _ in
+            MainActor.assumeIsolated {
+                window.makeFirstResponder(nil)
+                SettingsStore.shared.flushPending(force: true)
+            }
+        }
     }
 }
 
@@ -50,6 +59,12 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             if let problem = store.problem {
                 SettingsProblemBanner(problem: problem, path: store.file.url.path) { store.reload() }
+            }
+            if let notice = store.notice {
+                SettingsNoticeBanner(messages: [notice], color: .blue)
+            }
+            if store.isEditable, case let warnings = store.warnings, !warnings.isEmpty {
+                SettingsNoticeBanner(messages: warnings, color: .yellow)
             }
             TabView(selection: $navigation.tab) {
                 ProjectSettingsTab(store: store)
@@ -68,6 +83,31 @@ struct SettingsView: View {
             .padding(12)
         }
         .frame(minWidth: 560, minHeight: 460)
+    }
+}
+
+/// 外の変更と重なった時・移行できなかった時の案内や、読めるが直した方がよい内容の帯。
+private struct SettingsNoticeBanner: View {
+    let messages: [String]
+    let color: Color
+    private static let maxShown = 5
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle.fill").foregroundStyle(color)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(messages.prefix(Self.maxShown).enumerated()), id: \.offset) { _, message in
+                    Text(message).font(.caption).fixedSize(horizontal: false, vertical: true)
+                }
+                if messages.count > Self.maxShown {
+                    Text("ほか \(messages.count - Self.maxShown) 件").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(color.opacity(0.12))
     }
 }
 

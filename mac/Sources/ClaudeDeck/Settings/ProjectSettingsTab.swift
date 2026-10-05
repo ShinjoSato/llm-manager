@@ -88,11 +88,15 @@ struct ProjectSettingsTab: View {
     }
 }
 
-/// 選んだプロジェクトの編集欄。名前は空にできないので、空の間は保存しない。
+/// 選んだプロジェクトの編集欄。文字欄は少し間を置いてまとめて保存し、確定・フォーカスが外れた時はすぐ書く。名前は空の間は保存しない。
 private struct ProjectDetailForm: View {
     let store: SettingsStore
     let project: ManagedProject
     @State private var name = ""
+    @State private var note = ""
+    @FocusState private var focused: Field?
+
+    private enum Field { case name, note }
 
     private var index: Int? { store.projects.firstIndex { $0.id == project.id } }
 
@@ -100,10 +104,15 @@ private struct ProjectDetailForm: View {
         Form {
             Section {
                 TextField("名前", text: $name)
+                    .focused($focused, equals: .name)
+                    .onSubmit { store.flushPending() }
                     .onChange(of: name) { _, value in
                         let trimmed = value.trimmingCharacters(in: .whitespaces)
-                        guard !trimmed.isEmpty, trimmed != project.name else { return }
-                        store.updateProject(id: project.id) { $0.name = trimmed }
+                        guard !trimmed.isEmpty else {
+                            store.cancelPending(key: key("name"))
+                            return
+                        }
+                        store.scheduleProject(id: project.id, field: "name") { $0.name = trimmed }
                     }
                 if name.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text("名前を入れてください").font(.caption).foregroundStyle(.red)
@@ -125,10 +134,12 @@ private struct ProjectDetailForm: View {
                 })) {
                     ForEach(ProjectStatus.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
-                TextField("メモ", text: Binding(get: { project.note }, set: { note in
-                    store.updateProject(id: project.id) { $0.note = note }
-                }), axis: .vertical)
-                .lineLimit(2...5)
+                TextField("メモ", text: $note, axis: .vertical)
+                    .lineLimit(2...5)
+                    .focused($focused, equals: .note)
+                    .onChange(of: note) { _, value in
+                        store.scheduleProject(id: project.id, field: "note") { $0.note = value }
+                    }
             }
             Section {
                 LabeledContent("並び順") {
@@ -144,11 +155,26 @@ private struct ProjectDetailForm: View {
         }
         .formStyle(.grouped)
         .disabled(!store.isEditable)
-        .onAppear { name = project.name }
+        .onAppear {
+            name = project.name
+            note = project.note
+        }
+        .onChange(of: focused) { store.flushPending() }
+        .onDisappear { store.flushPending(force: true) }
+        // 外で変わった時は欄を合わせ、溜めていた古い入力は捨てる（自分の保存では値が一致するので何もしない）。
         .onChange(of: project.name) { _, value in
-            if value != name.trimmingCharacters(in: .whitespaces) { name = value }
+            guard value != name.trimmingCharacters(in: .whitespaces) else { return }
+            store.cancelPending(key: key("name"))
+            name = value
+        }
+        .onChange(of: project.note) { _, value in
+            guard value != note else { return }
+            store.cancelPending(key: key("note"))
+            note = value
         }
     }
+
+    private func key(_ field: String) -> String { SettingsStore.projectKey(id: project.id, field: field) }
 
     private func moveBy(_ delta: Int) {
         guard let index else { return }

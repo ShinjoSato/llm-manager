@@ -60,17 +60,42 @@ public enum SettingsValidation {
         return problems
     }
 
-    /// 設定全体の問題（何件目の何か）。空なら問題なし。
-    public static func problems(_ settings: DeckSettings) -> [String] {
+    /// 読めない扱いにする問題（画面の一覧・削除が id とパスで行を見分けるため、重複や相対パスがあると壊れる）。
+    public static func blockingProblems(_ settings: DeckSettings) -> [String] {
         var result: [String] = []
+        var ids = Set<UUID>()
         var paths = Set<String>()
         for project in settings.projects {
-            for p in projectProblems(project) { result.append("「\(project.name)」: \(p)") }
-            if !paths.insert(project.path).inserted { result.append("「\(project.name)」: 同じパスのプロジェクトが他にもあります") }
-        }
-        for board in settings.boards {
-            for p in boardProblems(board) { result.append("ボード「\(board.name)」: \(p)") }
+            if !ids.insert(project.id).inserted { result.append("「\(project.name)」: 同じ id（\(project.id.uuidString)）のプロジェクトが他にもあります") }
+            if !project.path.hasPrefix("/") {
+                result.append("「\(project.name)」: パスが絶対パスではありません（\(project.path)）")
+            } else if !paths.insert(project.path).inserted {
+                result.append("「\(project.name)」: 同じパスのプロジェクトが他にもあります")
+            }
         }
         return result
+    }
+
+    /// 読めるが直した方がよいもの（名前が空・GitHub の文字種・番号など）。画面に警告として出す。
+    public static func warnings(_ settings: DeckSettings) -> [String] {
+        var result: [String] = []
+        for project in settings.projects {
+            if project.name.trimmingCharacters(in: .whitespaces).isEmpty { result.append("「\(project.path)」: 名前が空です") }
+            if let link = project.github {
+                for p in linkProblems(link) { result.append("「\(project.name)」の GitHub: \(p)") }
+            }
+        }
+        for (index, board) in settings.boards.enumerated() {
+            for p in boardProblems(board) { result.append("ボード「\(board.name)」: \(p)") }
+            if settings.boards[..<index].contains(where: { $0.sameBoard(as: board) }) {
+                result.append("ボード「\(board.name)」: 同じボード（\(board.owner) #\(board.number)）が他にもあります")
+            }
+        }
+        return result
+    }
+
+    /// 設定全体の問題（読めないもの + 警告）。空なら問題なし。
+    public static func problems(_ settings: DeckSettings) -> [String] {
+        blockingProblems(settings) + warnings(settings)
     }
 }
