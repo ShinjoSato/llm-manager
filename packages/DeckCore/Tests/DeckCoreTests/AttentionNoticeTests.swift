@@ -324,6 +324,20 @@ final class AttentionNoticeSyncTests: XCTestCase {
         XCTAssertEqual(store.records["a"]?.summary, "2")
     }
 
+    func testWithdrawAllDeletesWrittenAndDropsUnsent() async {
+        let store = FakeNoticeStore()
+        let ledger = MemoryNoticeLedger()
+        let sync = AttentionNoticeSync(store: store, ledger: ledger)
+        sync.submit([.save(notice("a"))])
+        await sync.tick()
+        sync.submit([.save(notice("b"))])
+        sync.withdrawAll()
+        await sync.tick()
+        XCTAssertEqual(store.calls, ["save a", "delete a"])
+        XCTAssertTrue(store.records.isEmpty)
+        XCTAssertEqual(ledger.names, [])
+    }
+
     func testPlannerAndSyncTogether() async {
         let store = FakeNoticeStore()
         let sync = AttentionNoticeSync(store: store, ledger: MemoryNoticeLedger())

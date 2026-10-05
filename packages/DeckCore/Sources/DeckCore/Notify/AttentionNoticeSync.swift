@@ -80,6 +80,13 @@ public final class AttentionNoticeSync {
         }
     }
 
+    /// 書いた知らせを全て消し、まだ書いていないものは書かない（通知を切った時）。
+    public func withdrawAll() {
+        var names = written
+        if let inFlight { names.insert(inFlight) }
+        pending = names.sorted().map { ($0, .delete) }
+    }
+
     /// 送れるものを順に送る。失敗したらそこで止め、間隔を空けて送り直す。
     public func tick(now: Date = Date()) async {
         guard !draining, !pending.isEmpty else { return }
