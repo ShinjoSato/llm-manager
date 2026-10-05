@@ -24,6 +24,7 @@
 		C0DE00000000000000001001 /* ClaudeDeck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeDeck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0DE00000000000000001002 /* ClaudeDeckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ClaudeDeckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0DE00000000000000001003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C0DE00000000000000001004 /* ClaudeDeck.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeDeck.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -64,6 +65,7 @@
 				C0DE00000000000000002001 /* ClaudeDeck */,
 				C0DE00000000000000002002 /* ClaudeDeckTests */,
 				C0DE00000000000000001003 /* Info.plist */,
+				C0DE00000000000000001004 /* ClaudeDeck.entitlements */,
 				C0DE00000000000000004002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -267,6 +269,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ClaudeDeck.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZCYQMLA9HP;
@@ -302,6 +305,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ClaudeDeck.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZCYQMLA9HP;

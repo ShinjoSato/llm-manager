@@ -47,6 +47,14 @@ final class AppModel {
     private(set) var onWiFi: Bool?
     /// 起動直後に開くルーム（画面確認用）。
     var launchRoomId: String?
+    /// 通知から開くルーム（一覧の画面が受け取って会話へ進む）。
+    var requestedRoomId: String?
+    /// 開いた通知のうち、まだルームが見つかっていないもの（つながって一覧が届いたら開く）。
+    private(set) var pendingNotice: AttentionNoticeRoute?
+    /// 通知から開けなかった時の案内。
+    var noticeHint: String?
+    /// 要対応の通知（iCloud の購読）の入り切り。
+    let notifications: AttentionNotifications
 
     /// ペアリングの失敗。設定へ導くかを決めるため、接続の失敗なら理由も持つ。
     struct PairingError: Equatable {
@@ -82,8 +90,10 @@ final class AppModel {
     /// 画面確認用のデータで動いている（通信しない）。
     private var isDemo = false
 
-    init(keychain: PairingKeychain = PairingKeychain(), startMonitoring: Bool = true) {
+    init(keychain: PairingKeychain = PairingKeychain(), startMonitoring: Bool = true,
+         notifications: AttentionNotifications? = nil) {
         self.keychain = keychain
+        self.notifications = notifications ?? .live()
         pairing = keychain.load()
         connection = pairing == nil ? .unpaired : .paused
         if startMonitoring { monitorNetwork() }
@@ -91,8 +101,10 @@ final class AppModel {
 
     #if DEBUG
     /// 画面の確認用（通信しない）。
-    init(demo state: RemoteState, pairing: RemotePairing, transcripts: [String: [TranscriptItem]], open: String?) {
+    init(demo state: RemoteState, pairing: RemotePairing, transcripts: [String: [TranscriptItem]], open: String?,
+         notifications: AttentionNotifications? = nil) {
         keychain = PairingKeychain(service: "demo")
+        self.notifications = notifications ?? .live()
         self.pairing = pairing
         self.state = state
         stateUpdatedAt = Date()
@@ -193,6 +205,7 @@ final class AppModel {
                 // 張り直した後は取りこぼしがあり得るので、持っている会話は全件を取り直す。
                 for sid in recentSessions { fetchTranscript(sid) }
             }
+            resolvePendingNotice()
         case .transcript(let event):
             if transcripts[event.sessionId] != nil {
                 transcripts[event.sessionId]?.append(event.items)
@@ -225,6 +238,43 @@ final class AppModel {
             }
         }
         pathMonitor.start(queue: DispatchQueue(label: "claude-deck.path"))
+    }
+
+    // MARK: - 通知から開く
+
+    /// 通知を開いた時。一覧にルームがあればそこへ進み、無ければつながって一覧が届くまで預かる。
+    func openFromNotice(_ route: AttentionNoticeRoute) {
+        noticeHint = nil
+        if let room = route.resolve(in: rooms) {
+            pendingNotice = nil
+            requestedRoomId = room.id
+            return
+        }
+        pendingNotice = route
+        if pairing == nil {
+            noticeHint = "通知のルームを開くには、Mac の claude-deck とペアリングしてください。"
+        } else if !connection.isConnected {
+            noticeHint = "Mac につながったら通知のルームを開きます。Mac と同じ Wi-Fi にいるか確かめてください。"
+        } else {
+            resolvePendingNotice()
+        }
+    }
+
+    /// 開いている会話のルーム（その会話の知らせはアプリの中では出さない）。
+    var openRoomId: String? {
+        guard let openSessionId else { return nil }
+        return rooms.first { $0.sessionId == openSessionId }?.id
+    }
+
+    private func resolvePendingNotice() {
+        guard let route = pendingNotice, connection.isConnected else { return }
+        pendingNotice = nil
+        if let room = route.resolve(in: rooms) {
+            noticeHint = nil
+            requestedRoomId = room.id
+        } else {
+            noticeHint = "通知のルームが見つかりません。もう解消したか、閉じられた可能性があります。"
+        }
     }
 
     // MARK: - ペアリング

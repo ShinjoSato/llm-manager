@@ -150,6 +150,7 @@ struct SettingsScreen: View {
                 if let note = unpairNote {
                     Section { Text(note).foregroundStyle(DeckTheme.permission) }
                 }
+                AttentionNotificationSection(notifications: model.notifications)
                 Section("このアプリ") {
                     row("版", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-")
                     Text("同じ Wi-Fi の中だけで Mac とやり取りします。外部のサーバーや API キーは使いません。")
