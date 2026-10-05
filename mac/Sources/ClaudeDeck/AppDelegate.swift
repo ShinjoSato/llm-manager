@@ -7,6 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
         MonitorBridge.start()
+        // チャット欄の変換中に設定の保存を止めないよう、設定画面がキーの時だけ見る。
+        SettingsStore.shared.isComposing = {
+            guard let window = NSApp.keyWindow, SettingsWindow.owns(window) else { return false }
+            return (window.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+        }
+        SettingsStore.shared.startWatching()
 
         let main = MainViewController()
         window = NSWindow(
@@ -31,6 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            SettingsStore.shared.flushPending(force: true)
+            SettingsStore.shared.stopWatching()
+        }
         RemoteAccessController.shared.shutdown()
         AttentionNotifier.shared.stop()
         MonitorBridge.stop()
@@ -47,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "claude-deck について", action: nil, keyEquivalent: "")
         appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "設定…", action: #selector(showSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: "iPhone 連携…", action: #selector(showRemoteAccess), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "claude-deck を終了",
@@ -75,8 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.mainMenu = mainMenu
     }
 
+    @MainActor @objc private func showSettings() {
+        SettingsWindow.show(tab: nil)
+    }
+
     @MainActor @objc private func showRemoteAccess() {
-        RemoteAccessWindow.show()
+        SettingsWindow.show(tab: .remote)
+    }
+
+    // 監視を張れなかった時の取りこぼしを拾う（外で書き換えられていた時だけ読み直す）。
+    func applicationDidBecomeActive(_ notification: Notification) {
+        MainActor.assumeIsolated { SettingsStore.shared.reloadIfChanged() }
     }
 
     // MARK: - スクリーンショット

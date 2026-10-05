@@ -552,8 +552,8 @@ final class ChatModel {
             return
         }
         handingOver.insert(sessionId)
-        let project = ProjectStore.load().first(where: { $0.path == room.cwd })
-            ?? ManagedProject(name: room.name, path: room.cwd, status: "active", note: "")
+        let project = SettingsStore.shared.projects.first(where: { $0.path == room.cwd })
+            ?? ManagedProject(name: room.name, path: room.cwd)
         let roomId = room.id
         Task {
             let outcome = await SessionTerminator().terminate(pid: pid, sessionId: sessionId)

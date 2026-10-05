@@ -1,18 +1,20 @@
 import Foundation
 
 /// 自分だけが読めるファイル（ディレクトリ 0700・ファイル 0600）。途中で落ちても壊れた中身を残さないよう置き換えで書く。
+/// `restrictDirectory` が false なら、ディレクトリは既定の権限で作るだけで締め直さない（人が選んだ場所の権限を変えないため）。
 enum SecureFile {
     enum Failure: Error, Equatable {
         case writeFailed(String)
     }
 
-    static func write(_ data: Data, to url: URL) throws {
+    static func write(_ data: Data, to url: URL, restrictDirectory: Bool = true) throws {
         let fm = FileManager.default
         let dir = url.deletingLastPathComponent()
         let failed = Failure.writeFailed(url.lastPathComponent)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true,
+                               attributes: restrictDirectory ? [.posixPermissions: 0o700] : nil)
         // 既にあったディレクトリも（後から広げられていても）毎回締め直す。
-        guard chmod(dir.path, 0o700) == 0 else { throw failed }
+        if restrictDirectory, chmod(dir.path, 0o700) != 0 { throw failed }
         let temp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         // 作った瞬間から 0600（作ってから権限を変えると、その間は他人に読める）。
         let fd = open(temp.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, 0o600)
