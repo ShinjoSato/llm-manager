@@ -4,29 +4,6 @@ import CoreImage.CIFilterBuiltins
 import MonitorKit
 import SwiftUI
 
-/// 「iPhone 連携」ウィンドウ。1 つだけ持つ。
-@MainActor
-enum RemoteAccessWindow {
-    private static var window: NSWindow?
-
-    static func show() {
-        if let window {
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-        let hosting = NSHostingView(rootView: RemoteAccessView(controller: .shared))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 640),
-                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "iPhone 連携"
-        window.contentView = hosting
-        window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("ClaudeDeckRemoteAccessWindow")
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        self.window = window
-    }
-}
-
 struct RemoteAccessView: View {
     let controller: RemoteAccessController
     @State private var portText = ""
