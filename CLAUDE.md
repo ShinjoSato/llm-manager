@@ -26,7 +26,7 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 | iPhone 連携の口（同じ Wi-Fi・TLS・ペアリング） | mac 側実装済み（既定は無効） | `mac/Sources/MonitorKit/Remote`・`mac/Sources/ClaudeDeck/Remote`・仕様 `mac/docs/remote-api.md` |
 | iPhone アプリ（claude-deck iOS） | 実装済み（シミュレータで確認・実機と TestFlight は未確認） | `ios/`（詳細 `ios/README.md`） |
 | mac / iPhone の共有パッケージ（DeckCore） | 稼働 | `packages/DeckCore` |
-| 要対応の iPhone 通知（iCloud・CloudKit のプライベート DB） | 実装済み（コンテナ・App ID・プロファイルの登録はユーザー待ち・実機未確認） | `mac/Sources/ClaudeDeck/Notify`・`ios/ClaudeDeck/Notify`・`packages/DeckCore/Sources/DeckCore/Notify`（手順 `mac/README.md`「iPhone への通知」） |
+| 要対応の iPhone 通知（iCloud・CloudKit のプライベート DB） | 実装済み・**保留中（既定で無効）**。コンテナ・App ID・プロファイルの登録を見送っている（2026-10-05 ユーザー判断） | `mac/Sources/ClaudeDeck/Notify`・`ios/ClaudeDeck/Notify`・`packages/DeckCore/Sources/DeckCore/Notify`（手順 `mac/README.md`「iPhone への通知」） |
 | スプレッドシート勉強管理 | 未着手 | - |
 
 構成は `mac/`（claude-deck）に一本化した。セッション監視・会話の記録・フックの受け口（127.0.0.1:8766）はアプリの中で動き、
@@ -99,7 +99,7 @@ SwiftUI・iOS 17 以上・iPhone のみ。バンドル ID `com.shinjosato.claude
 - 画面: ペアリング（カメラで QR・貼り付け・`claude-deck://pair` で開かれたリンク。**どれも名前と指紋の確認画面を経てから送る**）、ルーム一覧、会話、権限 / 選択肢カード、入力欄、接続の設定（解除）。見た目・文言は mac のチャット画面にそろえる（`ios/ClaudeDeck/Theme/DeckTheme.swift`）。
 - 接続: `/v1/events?transcripts=*` を 1 本張り、届いた `state` で一覧、`transcript` で開いている会話の追記と未読を数える。切れたら理由（別の Wi-Fi・スリープ・口が無効・回数制限・指紋違い・取り消し）と案内を出し、1→30 秒の指数的な待ち（回数制限は 1〜2 分）で張り直す。裏に回ったら閉じ、前に出たら張り直す。指紋違い・取り消しは再ペアリングを促して止まる。
 - 鍵: 接続先・指紋・端末トークンはキーチェーン（`AfterFirstUnlockThisDeviceOnly`）。
-- 通知: 設定の「要対応を通知する」（既定は切）で通知の許可と iCloud の購読（`ios/ClaudeDeck/Notify/`）。通知を開くと該当ルームへ（未接続なら案内を出して、つながったら開く）。エンタイトルメントは `ios/ClaudeDeck.entitlements`（`aps-environment`・iCloud）。
+- 通知: 設定の「要対応を通知する」（既定は切）で通知の許可と iCloud の購読（`ios/ClaudeDeck/Notify/`）。通知を開くと該当ルームへ（未接続なら案内を出して、つながったら開く）。エンタイトルメントは `ios/ClaudeDeck.iCloud.entitlements`（`aps-environment`・iCloud）で、**既定のビルドには付けない**（実機の自動署名が消せないコンテナを勝手に登録しないため。有効にする時に `CODE_SIGN_ENTITLEMENTS` に設定する）。
 - TLS: CA の検証はせず、証明書の SHA-256 がピンと一致した時だけ `.useCredential`。ATS の例外は `NSAllowsLocalNetworking` だけ。`ITSAppUsesNonExemptEncryption` は false（暗号は OS の TLS と、指紋の SHA-256 だけで、輸出規制の申告が要らない範囲のため）。
 - 画面確認用: Debug ビルドを `-demo rooms` / `-demo conversation` の起動引数で開くと、通信せずに見本のデータで描く。
 - ビルド / テスト: `xcodebuild -project ios/ClaudeDeck.xcodeproj -scheme ClaudeDeck -destination 'platform=iOS Simulator,name=iPhone 17' build`（`test` でユニットテスト。アプリの中で自己署名の TLS に指紋だけで繋がる試験を含む）。

@@ -178,12 +178,14 @@ final class AttentionNotificationsTests: XCTestCase {
         XCTAssertNotNil(partial.unavailableReason())
     }
 
-    /// シミュレータ向けの版は `__entitlements` にエンタイトルメントを持ち、それを読めること（署名した試験の時）。
-    func testThisBuildIsEntitled() throws {
+    /// この版のエンタイトルメントを読み、iCloud の有無に合わせて使える / 使えないを正しく判断すること（既定のビルドは iCloud を付けない）。
+    func testThisBuildMatchesItsEntitlements() {
         let values = ExecutableEntitlements.ofMainExecutable()
-        try XCTSkipIf(values?.isEmpty != false, "エンタイトルメントを付けずに作った版")
-        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(values, needsPush: true))
-        XCTAssertNil(CloudKitAttentionSubscription().unavailableReason())
+        if AttentionNoticeSchema.entitlementsAllowNotices(values, needsPush: true) {
+            XCTAssertNil(CloudKitAttentionSubscription().unavailableReason())
+        } else {
+            XCTAssertNotNil(CloudKitAttentionSubscription().unavailableReason())
+        }
     }
 
     func testCloudKitSubscriptionWithEntitlementsIsAvailable() {

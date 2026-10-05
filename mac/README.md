@@ -201,6 +201,8 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
 要対応（権限待ち・入力待ち・エラー）を、自分の iCloud（CloudKit の**プライベート DB**・既定のゾーン）を経由して iPhone に知らせる。
 同じ Wi-Fi にいなくても・iPhone アプリを閉じていても届く。コンテナは `iCloud.com.shinjosato.claude-deck`（チーム `ZCYQMLA9HP`）。
 
+**現在は保留中（既定で無効）**。iCloud コンテナは作ると削除できないため、登録は見送っている。mac は macOS のプロファイルが無ければ ad-hoc で署名して機能を止め、iPhone アプリの通常のビルドは iCloud のエンタイトルメントを付けない（`ios/README.md`）。有効にする時は下の手順で登録し、iPhone アプリの `CODE_SIGN_ENTITLEMENTS` に `ClaudeDeck.iCloud.entitlements` を設定する。
+
 - **mac（書き手）**: `ClaudeDeck/Notify/AttentionNotifier.swift` が 1 秒ごとにルーム一覧（`ChatModel.rooms`。ホスト中の端末の権限プロンプト・選択待ちも含む）を見て、
   `AttentionNoticePlanner`（DeckCore）で書く・消すを決め、`AttentionNoticeSync`（DeckCore）が `CloudKitNoticeStore`（MonitorKit）へ順に送る。
   - 書く時機: 要対応が **5 秒**続いたら（mac の前ですぐ答えたものは送らない）。その時に待っている他のルームも **1 件にまとめ**、見出し（と開くルーム）は
