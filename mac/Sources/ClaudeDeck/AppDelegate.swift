@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "claude-deck について", action: nil, keyEquivalent: "")
         appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "設定…", action: #selector(showSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: "iPhone 連携…", action: #selector(showRemoteAccess), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "claude-deck を終了",
@@ -75,8 +76,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.mainMenu = mainMenu
     }
 
+    @MainActor @objc private func showSettings() {
+        SettingsWindow.show(tab: nil)
+    }
+
     @MainActor @objc private func showRemoteAccess() {
-        RemoteAccessWindow.show()
+        SettingsWindow.show(tab: .remote)
+    }
+
+    // 外（Claude や手作業）で settings.json が書き換えられていたら拾う。
+    func applicationDidBecomeActive(_ notification: Notification) {
+        SettingsStore.shared.reload()
     }
 
     // MARK: - スクリーンショット

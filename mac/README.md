@@ -38,13 +38,11 @@ mac/
     Stage/                      右側のステージパネル（360px）
       StagePanel.swift            見出し（開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    ProjectStore.swift          プロジェクト一覧の永続化（Application Support の JSON）
     ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面の読み取り（ScreenState）+ 画面末尾の上限表示の監視
     LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
-    ProjectRegistry.swift       projects/registry.tsv のパーサ
-    AIManagerRoot.swift         ai-manager ルートの解決（.app 起動でも registry.tsv を引ける）
     MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
-    Remote/                     iPhone 連携（設定ウィンドウ・QR・端末一覧・iPhone からの操作を ChatModel の既存の処理へ繋ぐ ChatModel+Remote）
+    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・書き出し / 読み込み
+    Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の既存の処理へ繋ぐ ChatModel+Remote）
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
     DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
                                 Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
@@ -73,6 +71,8 @@ mac/
                                   RemoteAuthThrottle・RemoteRoutes（/v1 の振り分け）・RemoteEventHub（SSE）・RemoteControl（アプリへ頼む操作と照合）・
                                   RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces
     Channel/                    チャネル（claude-deck-channel）の中身。実行ファイルからはこれを呼ぶだけ
+    Settings/                   設定（settings.json）の型・読み書き（0600・原子的・読めないファイルは上書きしない）・検証・
+                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）
       ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
       ChannelServer.swift         stdin を行で読み、中継して判断を stdout に返す（ログは stderr）
@@ -160,7 +160,7 @@ mac/
 
 同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信ができる口。
 iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共有パッケージ `packages/DeckCore`。
-**既定は無効**で、メニュー「claude-deck → iPhone 連携…」のウィンドウで有効にした時だけ開く。
+**既定は無効**で、設定画面の「iPhone 連携」タブ（メニュー「claude-deck → iPhone 連携…」でも開く）で有効にした時だけ開く。
 
 - **口**: フック・チャネルの口（127.0.0.1:8766）とは別のサーバー・別のポート（既定 8767・変更可。1024 未満と 8766 は不可）。
   選んだ LAN のインターフェース（既定は自動: `en*` を優先。ポイントツーポイント・VPN（utun / tun / tap）・AirDrop（awdl / llw）・
@@ -217,7 +217,7 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   - 書き込みの失敗は 2・4・8…最大 300 秒の間隔で静かに送り直す。iCloud の判定は 1 秒ごとに続け、送信は別に流す（応答待ちで判定を止めない）。
   - 書く名前は**送る前に** UserDefaults（`attentionNotice.written`）に覚える（失敗・タイムアウトでも実は書けていることがあるため）。一度でも送ろうとした知らせは
     解消したら必ず消しに行き、送っている最中に終了しても次の起動で消す。
-  - 状態は「iPhone 連携」ウィンドウの下の「要対応を iCloud 経由で iPhone に知らせる」（入り切り・既定は入）に小さく出す。切ると置いてある知らせも消す。
+  - 状態は設定画面の「iPhone 連携」タブの下の「要対応を iCloud 経由で iPhone に知らせる」（入り切り・既定は入）に小さく出す。切ると置いてある知らせも消す。
   - **エンタイトルメントが無い起動（`swift run`・ad-hoc 署名の `.app`）では無効**（`CKContainer` を作る前に `SecTask` で
     `com.apple.developer.icloud-services` / `icloud-container-identifiers` を確かめ、無ければ理由を出す）。
 - **iPhone（受け手）**: 設定の「要対応を通知する」（既定は切）で通知の許可を求め、`CKQuerySubscription`（`firesOnRecordCreation` のみ・ID `attention-notice-created`）を作る。
@@ -373,9 +373,10 @@ Claude Code の **Channels**（research preview の permission relay）を使う
 
 - 追加: 「+」→「フォルダを追加…」（複数可）。選んだディレクトリで `claude` を起動するエントリになる。
 - 削除: 「+」の一覧で各行の「…」（または右クリック）→「一覧から削除」。一覧から外すだけでフォルダは消さない。
-- 取り込み: 「+」の下部「registry.tsv を取り込む」。`projects/registry.tsv` の行を足す（既にあるパスは重複させない）。
+- 編集: 「+」の下部「設定を開く…」（またはメニュー「claude-deck → 設定…」⌘,）。名前・状態・メモ・並び順・GitHub の紐づけは設定画面で変える。
+  「+」と設定画面は同じデータ（`SettingsStore`）を見るので、どちらで変えてもすぐ揃う。
 - 同じプロジェクトを選ぶと、動いているルームがあれば新しく起動せずそのルームに移る（終了済みのルームしか無ければ新しく起動する）。
-- 永続化先・初回の取り込みは下記（「プロジェクト一覧の永続化」）。
+- 保存先・取り込みは下記（「設定（settings.json）」）。
 
 ## メイン画面: チャット
 
@@ -616,27 +617,38 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
     安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。
 
-### プロジェクト一覧の永続化
+### 設定（settings.json）
 
-**永続化先**: `~/Library/Application Support/claude-deck/projects.json`（人が読める JSON）。試験用に別の一覧を使うときは環境変数 `CLAUDE_DECK_PROJECTS`（JSON のパス）で差し替える。
-**初回のみ** `registry.tsv` から取り込んで空にしない（以降は完全にユーザー管理）。以前の版が書いた GitHub Project のキー（`ghOwner` / `ghNumber`）は読み込み時に無視し、次に保存した時に消える。
+管理対象のプロジェクトと GitHub の紐づけは **`~/Library/Application Support/claude-deck/settings.json` だけ**に持つ（アプリにもリポジトリにも埋め込まない）。
+試験用に別のファイルを使うときは環境変数 `CLAUDE_DECK_SETTINGS`（JSON のパス）で差し替える。場所は `claude-deck --print-settings-path` で GUI を出さずに確かめられる。
 
-### registry.tsv の解決順（初回取り込み / 取り込みボタン）
+```json
+{ "version": 1,
+  "projects": [ { "id": "<UUID>", "name": "mirio", "path": "/abs/path", "status": "active", "note": "…",
+                  "github": { "owner": "ShinjoSato", "repo": "ailovei", "projectNumber": 4 } } ],
+  "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
+```
 
-1. 環境変数 `CLAUDE_DECK_REGISTRY`（絶対パス）
-2. ai-manager ルート配下の `projects/registry.tsv`（下記）
+- `status` は `active` / `paused` / `archived`。`github` は省略でき、その中の `repo` / `projectNumber` もどちらか片方だけでよい。
+  `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
+- 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600・ディレクトリは 0700。
+- **読めないファイル（JSON でない・形が違う・知らない `version`）は上書きしない**。設定画面と「+」に理由を出し、直して「読み直す」まで変更を受け付けない。
+- 外で編集された分（Claude が `jq` 等で書き換えた等）は、アプリが前に出た時・設定画面を開いた時に読み直す。
+- **移行**: settings.json が無い時、以前の版の `projects.json`（同じ場所）があれば取り込んで settings.json を作る。`projects.json` は消さずに残す。
+  以前の版が書いた GitHub のキー（`ghOwner` / `ghNumber`）は取り込まない。
 
-### ai-manager ルートの解決（`AIManagerRoot.swift`）
+**設定画面**（メニュー「claude-deck → 設定…」⌘,。ウィンドウは 1 つ）のタブ:
+- **プロジェクト**: 一覧（ドラッグ・「上へ / 下へ」で並べ替え）、「+」でフォルダを追加、「−」/右クリックで削除（確認あり）、名前・状態・メモの編集。
+- **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号と、リポジトリに紐づかないボードの追加・編集・削除。
+  owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
+- **iPhone 連携**: 下記「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）。
+- **書き出し・読み込み**: settings.json と同じ形で書き出す。読み込みは中身から形式を判断して、足りないものだけを足す（既にあるものは上書きしない）。
+  - registry.tsv 形式（name / path / status / note。`#` の行と空行は無視）: 同じパスのプロジェクトは足さない。
+  - github-projects.tsv 形式（name / owner / number / repo / url）: repo が `-` ならボードへ。同じ名前のプロジェクトがあり、まだ紐づけが無ければその `github` に入れる。
+    同じ名前のプロジェクトが無ければボードへ。ボードは owner + 番号が同じものを足さない。
+  - 書き出した settings.json: プロジェクトはパス・ボードは owner + 番号で重複を除く。同じパスのプロジェクトに紐づけが無ければ紐づけだけ足す。
 
-`.app` から起動すると cwd が `/` になるため、ai-manager ルート（`projects/registry.tsv` を持つディレクトリ）の解決を `AIManagerRoot` に集約している。TSV はこのルートからの相対で引く。
-
-1. 環境変数 `AI_MANAGER_ROOT`
-2. UserDefaults `aiManagerRoot`（`defaults write com.shinjosato.claude-deck aiManagerRoot /path/to/ai-manager`）
-3. 実行ファイルの位置 → カレントディレクトリの順に親へ遡り、`projects/registry.tsv` を持つディレクトリ
-4. 既定 `/Users/shinjo/project/ai-manager`
-
-各候補は `projects/registry.tsv` が実在するときだけ採用する。API は `AIManagerRoot.url`（ルート URL）と `AIManagerRoot.file("相対パス", envOverride: "環境変数名")`。
-解決結果は `claude-deck --print-ai-manager-root` で GUI を出さずに確認できる（`.app` なら `claude-deck.app/Contents/MacOS/claude-deck --print-ai-manager-root`）。
+型・読み書き・検証・移行・取り込みは `Sources/MonitorKit/Settings/`（テストあり）、画面は `Sources/ClaudeDeck/Settings/`。
 
 ## ビルド / 実行
 

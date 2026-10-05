@@ -18,7 +18,7 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 
 | 機能 | 状態 | 場所 |
 |------|------|------|
-| 他プロジェクト管理 | 手動運用 | `projects/`（mac アプリの「+」も参照） |
+| 他プロジェクト管理 | 手動運用 | `~/Library/Application Support/claude-deck/settings.json`（mac アプリの設定画面で編集） |
 | claude-deck（Claude Code 司令塔アプリ） | PoC（Swift/macOS・ビルド可） | `mac/` |
 | Claude Code セッション監視（リアルタイム） | 稼働（mac アプリの中・:8766 でフックを受ける） | `mac/Sources/MonitorKit/Hub`・`Server` |
 | 権限確認の中継（Channels） | 実装済み（実機の claude では未確認） | `mac/Sources/ClaudeDeckChannel`・`mac/Sources/MonitorKit/Channel` |
@@ -31,29 +31,26 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 
 構成は `mac/`（claude-deck）に一本化した。セッション監視・会話の記録・フックの受け口（127.0.0.1:8766）はアプリの中で動き、
 Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts/statusline.sh`）も mac 側にある。旧 `monitor/`（Node）は削除済み。
-`projects/registry.tsv` は mac アプリが読み、使用量は statusLine が `~/Library/Application Support/claude-deck/usage.json` に書いて mac アプリが読む。
+管理対象と GitHub の紐づけは mac アプリの設定（`settings.json`）に持ち、使用量は statusLine が `~/Library/Application Support/claude-deck/usage.json` に書いて mac アプリが読む。
 
 ## 他プロジェクト管理
 
-- 管理対象は `projects/registry.tsv`（TSV）に登録する。1行1プロジェクト。mac アプリの「+」の一覧は初回にここから取り込む。
-- **管理対象の追加依頼を受けたら**: `projects/registry.tsv` に行を追記する。パスは絶対パスで、status は active/paused/archived のいずれか。
+- 管理対象とボードの紐づけは mac アプリの設定 `~/Library/Application Support/claude-deck/settings.json` が唯一の正（形は `mac/README.md`「設定（settings.json）」）。リポジトリには置かない。
+- **管理対象・ボードを知りたい時は settings.json を `jq` で読む**:
+  - 管理対象: `jq -r '.projects[] | [.name, .path, .status] | @tsv' ~/Library/Application\ Support/claude-deck/settings.json`
+  - ボード: プロジェクトに紐づくものは `.projects[].github`（owner / repo / projectNumber）、リポジトリに紐づかないものは `.boards[]`（name / owner / number）。
+    例: `jq -r '(.projects[] | select(.github.projectNumber) | [.name, .github.owner, .github.projectNumber, (.github.repo // "-")]), (.boards[] | [.name, .owner, .number, "-"]) | @tsv' <settings.json>`
+- **管理対象の追加依頼を受けたら**: 基本はユーザーにアプリの設定画面（「claude-deck → 設定…」⌘,）で追加してもらう。頼まれたら settings.json を編集する（id は新しい UUID・パスは絶対パス・status は active / paused / archived・`version` は変えない）。アプリが動いていれば、前に出た時・設定画面を開いた時の読み直しで反映される。壊れた JSON や知らない version はアプリが上書きせず読めない旨を出すので、編集後は `jq . <settings.json>` で確かめる。
 - 兄弟プロジェクトは `/Users/shinjo/project/` 配下にある。ローカルの様子を補足で見る時は `git -C <path> status -sb` 等を直接使う。
-
-### 管理対象（2026-06-04 時点）
-- **mirio** — 中心プロダクト（develop）。
-- **sandora** — develop。
-- **infra** — インフラ構成。mirio-prod の deploy などを含む。
-- **blog** — main。Mirio 関連ページを扱う。
-- infra / blog は mirio に関連する作業を含むため、mirio の動きと連動して見ると良い。
+- mirio が中心プロダクト。infra（mirio-prod の deploy など）と blog（Mirio 関連ページ）は mirio に関連する作業を含むため、mirio の動きと連動して見ると良い。
 
 ### GitHub Project（ボード）連携
-- 管理対象とボードの紐づけは `projects/github-projects.tsv`（name / owner / number / repo / url）。
-- ボード状況は `gh` で直接取る。`projects/github-projects.tsv` で number を引き、
-  `gh project item-list <number> --owner ShinjoSato --format json --limit 200` を実行する（既定の件数は 30 なので `--limit` を付ける）。
+- 管理対象とボードの紐づけは settings.json の `.projects[].github` と `.boards[]`（上の `jq` の手順で引く）。
+- ボード状況は `gh` で直接取る。settings.json で owner と number を引き、
+  `gh project item-list <number> --owner <owner> --format json --limit 200` を実行する（既定の件数は 30 なので `--limit` を付ける）。
   - 未完了だけ: `... --jq '.items[] | select(.status != "Done") | [.status, .title, (.content.number // "-")] | @tsv'`
 - 前提: `gh` CLI 認証済み（`ShinjoSato`、`project` スコープ）。ステータスは Todo / In Progress / Debug / Done。
-- 紐づき: sandora→Project #3 (random_talk) / mirio→Project #4 (ailovei) / overview→Project #5（横断・複数リポジトリ包括）/ ai-manager→Project #8 (llm-manager)。
-- **infra は専用ボード未作成**。横断作業は overview(#5) で追う。専用ボードを作ったら `github-projects.tsv` に追記する。
+- **infra は専用ボード未作成**。横断作業は overview（リポジトリに紐づかないボード）で追う。専用ボードを作ったら設定画面の GitHub タブで紐づけてもらう。
 - overview はステータスが Todo / In Progress / **Review** / Done（Debug ではない）。
 - 停滞検知（In Progress のN日放置）は item-list に更新日時が無いため未実装。GraphQL で `updatedAt` を取れば追加可能（将来）。
 - 現状は**手動運用**。ユーザーが話しかけたときに動く。定期実行などの自動化は未導入。
@@ -62,7 +59,7 @@ Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts
 
 `mac/` にある Swift/macOS ネイティブアプリ。プロジェクトごとに `claude`（Claude Code）を PTY でホストし、セッションをチャットアプリの操作感（トークルーム）で扱う。SwiftTerm（VT100 エミュレータ + PTY ホスト）使用。詳細は `mac/README.md`。
 
-- **配置**: ai-manager 内 `mac/`（SPM 実行ファイル `claude-deck`）。`registry.tsv` に管理対象として登録済み。
+- **配置**: ai-manager 内 `mac/`（SPM 実行ファイル `claude-deck`）。
 - **メイン画面 = チャット（画面案B）**: セッション 1 つ = トークルーム 1 つ。SwiftUI（`mac/Sources/ClaudeDeck/Chat/`）を NSHostingView で載せる。
   - **ルーム一覧（左 312px）**: 監視のセッション + アプリでホスト中のセッションを「要対応（権限待ち・入力待ち）/ 稼働中 / 待機」に分けて表示。行はドット絵キャラのアイコン（ステージの 3D と同じ絵・配色。状態で姿勢と色が変わり、稼働中は跳ね、要対応はマークが点滅、待機は Zz が浮く。画面内の行だけ 4fps で描き直す。会話の見出しも同じ。絵は `packages/DeckCore/Sources/DeckCore/Pixel/PixelCharacter.swift`。iPhone アプリも同じ絵）・ブランチ・状態 + 直近の一行・時刻・未読数。外部セッションは「外部」タグ。検索・「+」（プロジェクト一覧から選んで `claude` 起動。動いているルームがある同じプロジェクトは重複起動せずそのルームへ移る）。検索欄の下に、監視の開始中はその旨、フックの受け口（:8766）を別のプロセスが使っている間はフックが届かない旨を出す。上限の残り% は出さない（statusLine はターミナル起動のセッションでしか更新されず値がずれるため。上限到達の強制終了の判定は別で従来どおり）。
   - **会話（中央）**: アプリ内の `TranscriptStore` から組み立てる（ルームを開いたら追記の購読を張ってから全件を取得。会話を持ち・購読するのは直近に開いた 4 ルームだけで、他は開き直した時に取り直す。監視を始め直した後は全件を取り直して置き換える）。ユーザー発話は右の青、Claude は左の暗色の吹き出し（Markdown の見出し・表・リスト・引用・区切り線・コードブロック・リンクを描く。解析は `packages/DeckCore/Sources/DeckCore/Chat/ChatMarkdown.swift`、描画は `ClaudeDeck/Chat/MarkdownView.swift`。表は広い時だけ横スクロール）、ツールは「ツール N件 ▸」に畳む。表示の切替は無く常にチャット（端末ビューは画面に載せず、PTY の受信と画面読み取りだけに使う。ビュー階層に無くても動く）。claude が終了したルームも最後の sessionId で会話を出し続ける。
@@ -72,16 +69,17 @@ Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts
   - **外部セッション（ターミナル等で起動したもの）**: 見出しに「外部セッション」タグとバナー。入力欄は黄色の「伝言」モードで `store.sendMessage`（受信箱ソケットへ直接書く）で送る（受け手には「別セッションからのメッセージ」として届き、本人の指示・権限承認にはならない）。受け手は伝言を isMeta で記録するため transcript には出ないので、送った伝言はアプリが覚えて点線の吹き出しで差し込む（写しが出ても `RelayNotes` で重複排除）。権限は監視の permissions（Channels）がある時だけ許可 / 拒否、無ければ「Channels を載せていない」旨を出す。
   - **アプリに引き継ぐ**: 確認ダイアログ → pid が今も同じ sessionId の claude か（uid・argv[0]/実行ファイル・`~/.claude/sessions/<pid>.json` の sessionId・`procStart` と起動時刻）を確かめてから SIGINT → 5 秒 → 同じプロセスのままなら SIGTERM → 終了を確認でき、同じ sessionId の生存 pid が他に無い時だけ同じ cwd で `claude --resume=<sessionId>`（UUID 形式のみ。API キー除去は維持）を PTY で起動し、通常のルームに切り替わる。終了を確認できなければ再開しない。上限到達中は引き継がない。引き継げるのはターミナル起動（`entrypoint: cli`）の対話セッションだけで、VS Code 拡張等は理由を出してボタンを出さない。npm 版（node）の claude は確かめられないので引き継げない。判定は `mac/Sources/MonitorKit/Chat/SessionHandover.swift`（テストあり）。
   - **ステージパネル（右 360px）**: 選択ルームのセッションの 3D ステージ（段々のピラミッド・最上段に親・1 つ下の段にサブエージェント最大 4 体・稼働中は持ち物・要対応は頭上の「!」「?」と光・段の縁取りが状態の色で脈打つ）を **アプリが SceneKit で描く**（3D 固定・背景透過）。寸法・色・カメラ・動きの数値は three.js で描いていた頃の見た目に合わせ、ACES トーンマッピングと sRGB での重ね方も揃えてある。組み立ては MonitorKit の純粋なロジック（`StageBlueprint`・`StageScene`）、SceneKit への起こしは `StageSceneRig`（オフスクリーン描画のテストあり。`STAGE_SNAPSHOT_DIR` で状態ごとの画像を書き出せる）、画面は `mac/Sources/ClaudeDeck/Stage/`（`StageSceneView`）。中身が変わった時だけ組み直し、表示中・ウィンドウが見えている・動くものがある時だけ 30fps で回す。「動きを減らす」設定では止める。下に「いまの動き」（スキル > 説明 > ツールの動作）・随伴するサブエージェント（職業名・状態）・ライブフィード（新しい順）。開閉は UserDefaults に保存し、ウィンドウ幅 1100px 未満では自動で畳む。監視の開始中・未解決はプレースホルダー。文言・判定は `mac/Sources/MonitorKit/Stage/StageLogic.swift`。
-  - **プロジェクト一覧（「+」の中）**: ユーザーが自由に追加（「フォルダを追加…」）・削除（各行の「…」/右クリック →「一覧から削除」）でき、`~/Library/Application Support/claude-deck/projects.json` に永続化（試験時は `CLAUDE_DECK_PROJECTS` で差し替え）。初回のみ `registry.tsv` から取り込み、以降は「registry.tsv を取り込む」でマージ。GitHub Project の紐づけ・ボード表示はアプリには無い（ボードは上の `gh` の手順で見る）。
+  - **プロジェクト一覧（「+」の中）**: ユーザーが自由に追加（「フォルダを追加…」）・削除（各行の「…」/右クリック →「一覧から削除」）でき、下部の「設定を開く…」で設定画面へ。設定画面と同じデータ（`SettingsStore`）を見るので即座に揃う。ボード表示はアプリには無い（ボードは上の `gh` の手順で見る）。
+  - **設定画面（「claude-deck → 設定…」⌘,）**: ウィンドウは 1 つ。タブは「プロジェクト」（追加・名前 / 状態 / メモの編集・削除（確認あり）・並べ替え）・「GitHub」（プロジェクトごとの owner / repo / Project 番号とリポジトリに紐づかないボード。入力は GitHub の文字種・正の整数で検証し、正しい間だけ保存。gh での存在確認はしない）・「iPhone 連携」（「iPhone 連携…」メニューもここを開く）・「書き出し・読み込み」（settings.json と同じ形で書き出し。読み込みは registry.tsv / github-projects.tsv / 書き出した settings.json を中身で判別し、足りないものだけ足す）。
+  - **設定ファイル**: `~/Library/Application Support/claude-deck/settings.json`（`CLAUDE_DECK_SETTINGS` で差し替え・`claude-deck --print-settings-path` で場所を出す）。原子的に 0600 で書く。壊れた・知らない version のファイルは上書きせず理由を出す。無い時は以前の `projects.json` を取り込んで作る（`projects.json` は残す）。アプリが前に出た時・設定画面を開いた時に読み直す。型・読み書き・検証・移行・取り込みは `mac/Sources/MonitorKit/Settings/`（テストあり）、画面は `mac/Sources/ClaudeDeck/Settings/`。
 - **「Xcode」「閉じる」ボタン**: プロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリ含む）に `.xcworkspace`/`.xcodeproj` があるルームだけ、見出しにラベル付きの「Xcode」「閉じる」を出す（「VS Code」は常に出す）（`mac/Sources/MonitorKit/Hub/XcodeFinder.swift`）。「Xcode」は `NSWorkspace.open` で Xcode の GUI を開く（実行＝Cmd+R はユーザー操作）。「閉じる」は確認ダイアログの後、AppleScript をアプリから `osascript` で実行してそのワークスペースだけを閉じる（Xcode 本体は終了しない・未起動なら立ち上げない）。結果は見出しに数秒出す。判定と文言は `mac/Sources/MonitorKit/EditorActions.swift`（テストあり）。初回は macOS のオートメーション許可が要る。`.xcworkspace` 優先・最も浅い階層を選択。SPM のみ（claude-deck 自身等）は非表示。ワンクリックでのシミュレータ自動実行（`xcodebuild`/`simctl`）は将来。
 - **設計の絶対方針（料金事故ゼロ）**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する（Claude Code の中から起動された時の `CLAUDE_CODE_*` 等の子セッション印も除く）。API 課金経路を作らないため、Max 枠の上限に達しても課金は発生しない（待つだけ）。**headless（`claude -p` / Agent SDK）の起動口は設けない方針**。
 - **上限到達で強制終了**: 公式の残量（アプリ内の監視が statusLine の書いた使用量ファイルから読む `MonitorStore.usage`。5 時間 / 7 日間が 100% 以上かつ取得 10 分以内）を主、端末の実画面の末尾に出た上限表示（Claude Code v2.1.286 のバイナリで確認した文言のみ・会話本文は見ない）を補助として、ホスト中の全セッションを `terminate()`。到達はリセット時刻まで覚え、その間の新規起動も止める。判定は `mac/Sources/MonitorKit/LimitGuard.swift`（テストあり）、購読は `LimitWatch.swift`。残量経路は statusLine（`mac/scripts/statusline.sh`）の設定が前提。
 - **ビルド/実行**: `cd mac && swift build` / `swift run`。ビルドは Swift 6.3 / Xcode 26.5 で確認済み（共有パッケージ化の後は Swift 6.4 / Xcode 27 で `swift build --build-system native` / `swift test --build-system native` を確認）。
 - **`.app` 化**: `mac/scripts/bundle.sh` → `mac/dist/claude-deck.app`（バンドル ID `com.shinjosato.claude-deck`。このアプリ用の macOS のプロビジョニングプロファイル（`--profile`・`CLAUDE_DECK_PROFILE`・`mac/Resources/claude-deck.provisionprofile`（追跡しない）・Xcode のプロファイル置き場の順）があれば Apple Development で署名して iCloud のエンタイトルメント（`mac/Resources/claude-deck.entitlements`）を付け、無ければ ad-hoc。チャネル `Contents/MacOS/claude-deck-channel` も同梱）→ `open mac/dist/claude-deck.app`。Metal Toolchain が無い環境では通常ビルドが SwiftTerm のシェーダーで失敗するため、自動で `--build-system native` に切り替える。Developer ID 署名・公証・配布・自動更新はしない。
 - **アプリ内サーバー（:8766）**: 起動時に `127.0.0.1:8766` で小さな HTTP サーバー（Network.framework）を開き、外から叩かれる口だけを出す: `POST /hook`（`~/.claude/settings.json` のフックの宛先そのまま）・`POST /api/channel/permissions`（Channels の `claude-deck-channel` が使う）・`GET /api/health`。全口で Host / Origin / 接続元（ループバックのみ）を確かめ、POST は `content-type: application/json` 必須・本文 8MB まで・同時接続 64 まで（超えたら即切断）。`/hook` は本文を確かめたら反映を待たずに 200 を返し、反映は届いた順に後から流す（初回走査中でも curl の 1 秒に間に合わせるため）。フックの時刻は受け口に届いた時刻で数え（時刻の取得と積み込みは一続きで、待ち行列の順＝時刻の順）、届いた後のログ活動を反映前に読んでいれば権限待ち等は答え済みとして出さない。未知のセッションのメタ読み込みで後ろのフックを待たせない。止めて開き直す時は前の待ち受けがポートを手放すのを待つ（最大 2 秒）。振り分け後の相手の FIN は切断とみなさない（半閉じの相手にも応答を返す。長ポーリングは早めに timeout を返し、全閉じなら送信の失敗で閉じて待ち手を外す）。ポートは `CLAUDE_DECK_SERVER_PORT`（`off` で開かない）。**8766 を別のプロセスが使っている時は奪わず・止めず**、ルーム一覧にフックが届かない旨を出して監視は続け、5 秒ごとに取り直す（そのプロセスを止めれば自動で引き継ぐ）。アプリが動いていない間のフックは取りこぼす（curl は 1 秒で諦めるだけ）。アプリ側の SIGTERM / SIGINT は `SIG_IGN` にしない（exec を越えてホスト中の claude に残り、上限到達時の `terminate()` が効かなくなる。何もしないハンドラで捕捉して通常の終了経路に乗せる）。実装は `mac/Sources/MonitorKit/Server/`、状態は `MonitorStore.serverState`。
-- **iPhone 連携の口**: メニュー「claude-deck → iPhone 連携…」で有効にした時だけ（**既定は無効**）、選んだ LAN のインターフェースの IPv4 アドレス・既定ポート 8767 で **TLS のみ**で待ち受ける（0.0.0.0 にはしない。:8766 のフック・チャネルの口とは別のサーバーで、`/hook` 等は LAN に出さない）。初回に自己署名の証明書（P-256。DER を自前で組む）を作って `~/Library/Application Support/claude-deck/remote/` に 0600 で置き（キーチェーンは使わない）、QR（`claude-deck://pair?...`: 接続先・5 分で失効の 1 回限りの一時トークン・証明書の SHA-256 指紋）で iPhone にピン留めさせる。`POST /v1/pair` で端末トークン（256bit。mac にはハッシュだけ）を発行し、全 API は Bearer。失敗は接続元ごとに回数制限。ウィンドウで端末一覧（接続中・最後に使った時刻）と取り消し。API は `/v1`（一覧・状態・要対応、SSE の変化、会話・画像、権限の許可 / 拒否、選択肢の回答、メッセージ送信）で、仕様は `mac/docs/remote-api.md`、共有の型とクライアントは `packages/DeckCore`（`Remote/`・`Client/`）。**iPhone からの操作は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理（`MonitorStore.decide`・`answerOnTerminal`・`answerMenu`・`HostedSession.send`・伝言）に渡す**（`promptId` / `menuId` が今のものと一致する時だけ・選択待ちでは送らない。ID には表示の世代を混ぜ、同じ文面で出し直された確認に古い表示から答えさせない。答えた ID の押し直しは `answered` で送らない）。有効にした時のネットワーク（アドレス帯 + ルーターの MAC）を覚え、別のネットワークでは開かずに画面で確かめさせる。新しい claude の起動口・headless の口は無い。実機ではファイアウォールの「受信接続を許可」を確かめる。
-- **要対応の iPhone 通知（iCloud）**: 要対応（権限待ち・入力待ち・エラー）が 5 秒続いたら、自分の iCloud（コンテナ `iCloud.com.shinjosato.claude-deck`・CloudKit のプライベート DB）にレコード `AttentionNotice`（ルーム名・定型文・時刻・ルーム / セッション ID だけ。**会話の本文・ツールの入力は載せない**）を書き、解消したら消す。同じ要対応は 1 回、その時に待っている他のルームは 1 件にまとめ、1 件書いたら 30 秒は次を書かない（`AttentionNoticePlanner`）。失敗は静かに送り直す（`AttentionNoticeSync`）。iPhone は `CKQuerySubscription`（作成時のみ）でプッシュを受け、開くと該当ルームへ。**エンタイトルメントの無い起動（`swift run`・ad-hoc）では無効**で、「iPhone 連携」ウィンドウに理由を出す。**iCloud コンテナ・App ID・プロファイルの登録はユーザーが行う**（コンテナは消せない。Claude は `-allowProvisioningUpdates` も実行しない）。手順は `mac/README.md`「iPhone への通知（iCloud・CloudKit）」。
-- **ai-manager ルートの解決**: `.app` 起動は cwd が `/` なので、TSV 等は `AIManagerRoot`（`mac/Sources/ClaudeDeck/AIManagerRoot.swift`）経由で引く。順序は 環境変数 `AI_MANAGER_ROOT` → `defaults write com.shinjosato.claude-deck aiManagerRoot <path>` → 実行ファイル位置/cwd から親へ遡る → `/Users/shinjo/project/ai-manager`。確認は `claude-deck --print-ai-manager-root`。
+- **iPhone 連携の口**: 設定画面の「iPhone 連携」タブ（メニュー「claude-deck → iPhone 連携…」でも開く）で有効にした時だけ（**既定は無効**）、選んだ LAN のインターフェースの IPv4 アドレス・既定ポート 8767 で **TLS のみ**で待ち受ける（0.0.0.0 にはしない。:8766 のフック・チャネルの口とは別のサーバーで、`/hook` 等は LAN に出さない）。初回に自己署名の証明書（P-256。DER を自前で組む）を作って `~/Library/Application Support/claude-deck/remote/` に 0600 で置き（キーチェーンは使わない）、QR（`claude-deck://pair?...`: 接続先・5 分で失効の 1 回限りの一時トークン・証明書の SHA-256 指紋）で iPhone にピン留めさせる。`POST /v1/pair` で端末トークン（256bit。mac にはハッシュだけ）を発行し、全 API は Bearer。失敗は接続元ごとに回数制限。ウィンドウで端末一覧（接続中・最後に使った時刻）と取り消し。API は `/v1`（一覧・状態・要対応、SSE の変化、会話・画像、権限の許可 / 拒否、選択肢の回答、メッセージ送信）で、仕様は `mac/docs/remote-api.md`、共有の型とクライアントは `packages/DeckCore`（`Remote/`・`Client/`）。**iPhone からの操作は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理（`MonitorStore.decide`・`answerOnTerminal`・`answerMenu`・`HostedSession.send`・伝言）に渡す**（`promptId` / `menuId` が今のものと一致する時だけ・選択待ちでは送らない。ID には表示の世代を混ぜ、同じ文面で出し直された確認に古い表示から答えさせない。答えた ID の押し直しは `answered` で送らない）。有効にした時のネットワーク（アドレス帯 + ルーターの MAC）を覚え、別のネットワークでは開かずに画面で確かめさせる。新しい claude の起動口・headless の口は無い。実機ではファイアウォールの「受信接続を許可」を確かめる。
+- **要対応の iPhone 通知（iCloud）**: 要対応（権限待ち・入力待ち・エラー）が 5 秒続いたら、自分の iCloud（コンテナ `iCloud.com.shinjosato.claude-deck`・CloudKit のプライベート DB）にレコード `AttentionNotice`（ルーム名・定型文・時刻・ルーム / セッション ID だけ。**会話の本文・ツールの入力は載せない**）を書き、解消したら消す。同じ要対応は 1 回、その時に待っている他のルームは 1 件にまとめ、1 件書いたら 30 秒は次を書かない（`AttentionNoticePlanner`）。失敗は静かに送り直す（`AttentionNoticeSync`）。iPhone は `CKQuerySubscription`（作成時のみ）でプッシュを受け、開くと該当ルームへ。**エンタイトルメントの無い起動（`swift run`・ad-hoc）では無効**で、設定画面の「iPhone 連携」タブに理由を出す。**iCloud コンテナ・App ID・プロファイルの登録はユーザーが行う**（コンテナは消せない。Claude は `-allowProvisioningUpdates` も実行しない）。手順は `mac/README.md`「iPhone への通知（iCloud・CloudKit）」。
 
 ## 共有パッケージ DeckCore（`packages/DeckCore`）
 
