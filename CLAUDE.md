@@ -130,4 +130,8 @@ SwiftUI・iOS 17 以上・iPhone のみ。バンドル ID `com.shinjosato.claude
 ## メモ
 - GitHub リポジトリは `ShinjoSato/llm-manager`（ベースブランチは develop）。`.gitignore` で `secrets/*`・`node_modules/`・ビルド成果物・削除済みの `monitor/` の残骸を除外。
 - 秘密情報は `secrets/`（いまは置くもの無し）。中身は git 追跡外（README のみ追跡）。
+- 開発フロー（developer-plugin）の設定 `.claude/github-project.json` は **git で追跡せず手元で持つ**（GitHub の owner・リポジトリ・Project の各 ID を含むため）。
+  新しい clone では `.claude/github-project.example.json` をコピーして値を入れるか、developer-plugin の `project-init` で作る。無いと Issue〜PR の skill は動かない。
+  - スクリプトはカレントから上へ探すので、`.claude/worktrees/` の中からでも本体のファイルを読む。
+  - このファイルを追跡していた頃のコミット・ブランチと行き来すると git が手元のファイルを消すことがある。消えたら作り直す。
 - 旧ダッシュボード（データ中核 server・Web・MCP・App Store / Google カレンダー連携・補助シェル）は使われていなかったため削除済み。App Store の確認は appstore-plugin の skill、カレンダーは claude.ai の Google Calendar MCP を使う。

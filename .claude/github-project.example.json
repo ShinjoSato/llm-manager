@@ -1,0 +1,19 @@
+{
+  "repoOwner": "<GitHub のユーザー名か Org>",
+  "repoName": "<リポジトリ名>",
+  "projectNumber": 0,
+  "projectId": "<PVT_...>",
+  "statusFieldId": "<PVTSSF_...>",
+  "statusOptions": {
+    "todo": "<option id>",
+    "in-progress": "<option id>",
+    "debug": "<option id>",
+    "done": "<option id>"
+  },
+  "branches": {
+    "base": "develop",
+    "preview": "preview",
+    "production": "main"
+  },
+  "preSubmitChecks": []
+}
