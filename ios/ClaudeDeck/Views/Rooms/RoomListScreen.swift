@@ -14,6 +14,13 @@ struct RoomListScreen: View {
                 if model.state?.monitoring == false {
                     InlineNotice(symbol: "bolt.horizontal.circle", text: "Mac のセッション監視が止まっています。一覧が古い可能性があります。")
                 }
+                if let hint = model.noticeHint {
+                    Button { model.noticeHint = nil } label: {
+                        InlineNotice(symbol: "bell.badge", text: hint)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("押すと閉じます")
+                }
                 list
             }
             .background(DeckTheme.sidebar.ignoresSafeArea())
@@ -37,7 +44,16 @@ struct RoomListScreen: View {
                 path = [id]
                 model.launchRoomId = nil
             }
+            openRequestedRoom()
         }
+        .onChange(of: model.requestedRoomId) { _, _ in openRequestedRoom() }
+    }
+
+    /// 通知から開くルーム。開いている会話の上に積まず、一覧から入り直す。
+    private func openRequestedRoom() {
+        guard let id = model.requestedRoomId else { return }
+        model.requestedRoomId = nil
+        path = [id]
     }
 
     private var list: some View {

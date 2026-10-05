@@ -98,7 +98,7 @@ mac/
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test。共通の補助は TestSupport.swift・FakeClaudeHome.swift）
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   Resources/Info.plist          .app 用 Info.plist（バンドル ID com.shinjosato.claude-deck）
-  scripts/bundle.sh             claude-deck.app を組み立てて ad-hoc 署名する（チャネルの実行ファイルも同梱）
+  scripts/bundle.sh             claude-deck.app を組み立てて署名する（プロファイルがあれば Apple Development + iCloud、無ければ ad-hoc。チャネルの実行ファイルも同梱）
   scripts/statusline.sh         Claude Code の statusLine。表示に加えて使用量を Application Support に残す
 ```
 
@@ -195,6 +195,67 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   インターフェースの除外・ネットワークの判定・鍵ファイルの権限・取り消しの書き直し・TLS の設定・操作の待ちの上限）と `RemoteServerTests`
   （ループバックの OS 割り当てのポートに TLS で立て、指紋でピン留めした URLSession / NWConnection で叩く。別の指紋・平文は繋がらない・
   未認証 / 不正 / 取り消し後は 401・回数制限・接続元ごとの上限・ストリームの入れ替え・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること）。LAN には立てない。
+
+## iPhone への通知（iCloud・CloudKit）
+
+要対応（権限待ち・入力待ち・エラー）を、自分の iCloud（CloudKit の**プライベート DB**・既定のゾーン）を経由して iPhone に知らせる。
+同じ Wi-Fi にいなくても・iPhone アプリを閉じていても届く。コンテナは `iCloud.com.shinjosato.claude-deck`（チーム `ZCYQMLA9HP`）。
+
+**現在は保留中（既定で無効）**。iCloud コンテナは作ると削除できないため、登録は見送っている。mac は macOS のプロファイルが無ければ ad-hoc で署名して機能を止め、iPhone アプリの通常のビルドは iCloud のエンタイトルメントを付けない（`ios/README.md`）。有効にする時は下の手順で登録し、iPhone アプリの `CODE_SIGN_ENTITLEMENTS` に `ClaudeDeck.iCloud.entitlements` を設定する。
+
+- **mac（書き手）**: `ClaudeDeck/Notify/AttentionNotifier.swift` が 1 秒ごとにルーム一覧（`ChatModel.rooms`。ホスト中の端末の権限プロンプト・選択待ちも含む）を見て、
+  `AttentionNoticePlanner`（DeckCore）で書く・消すを決め、`AttentionNoticeSync`（DeckCore）が `CloudKitNoticeStore`（MonitorKit）へ順に送る。
+  - 書く時機: 要対応が **5 秒**続いたら（mac の前ですぐ答えたものは送らない）。その時に待っている他のルームも **1 件にまとめ**、見出し（と開くルーム）は
+    5 秒続いたルームの中で一番新しいもの（「mirio ほか 2 件」。まだ 5 秒経っていないルームは「ほか」に回す）。
+  - 1 件書いたら **30 秒**は次を書かず、その間に増えた要対応は明けた時に 1 件にまとめる。
+  - 同じ要対応（待ち始めから解消まで。権限待ち→入力待ちのように種類が変わっても同じ）は 1 回だけ。解消は **3 秒**続けて要対応でなくなってから確定する
+    （その間に戻れば同じ要対応のまま。状態の揺れで消して出し直さない）。まとめた全ルームが解消したらレコードを消す。
+  - ルーム名はホスト中のルームなら登録したプロジェクト名、外部セッションはフォルダ名（`~/.claude/sessions/<pid>.json` の name は会話から付くことがあるので使わない）。
+  - レコード（型 `AttentionNotice`）: `roomId`・`sessionId`・`roomName`・`kind`（permission / waiting / error）・`summary`（定型文。権限待ちはツール名だけ添える）・
+    `title`・`body`・`since`（epoch ミリ秒）・`roomIds`・`macName`・`version`。**会話の本文・一覧の一行・タイトル・ツールの入力や説明は載せない**
+    （ツール名は権限待ちの時だけ、Channels・フックの `tool_name`・通知文 `… permission to use X` のどれかから取り、`Bash`・`mcp__x__y` の形だけ通す。`AttentionNoticeText`）。
+  - 書き込みの失敗は 2・4・8…最大 300 秒の間隔で静かに送り直す。iCloud の判定は 1 秒ごとに続け、送信は別に流す（応答待ちで判定を止めない）。
+  - 書く名前は**送る前に** UserDefaults（`attentionNotice.written`）に覚える（失敗・タイムアウトでも実は書けていることがあるため）。一度でも送ろうとした知らせは
+    解消したら必ず消しに行き、送っている最中に終了しても次の起動で消す。
+  - 状態は「iPhone 連携」ウィンドウの下の「要対応を iCloud 経由で iPhone に知らせる」（入り切り・既定は入）に小さく出す。切ると置いてある知らせも消す。
+  - **エンタイトルメントが無い起動（`swift run`・ad-hoc 署名の `.app`）では無効**（`CKContainer` を作る前に `SecTask` で
+    `com.apple.developer.icloud-services` / `icloud-container-identifiers` を確かめ、無ければ理由を出す）。
+- **iPhone（受け手）**: 設定の「要対応を通知する」（既定は切）で通知の許可を求め、`CKQuerySubscription`（`firesOnRecordCreation` のみ・ID `attention-notice-created`）を作る。
+  見出し・本文はレコードの `title` / `body`（`ATTENTION_TITLE` / `ATTENTION_BODY` = `%@`）、同じルームの通知は `collapseIDKey = roomId` で置き換え、
+  `desiredKeys`（roomId・sessionId・macName）で開く先を受け取る。切ると購読を消す（以後プッシュは来ない）。詳細は `ios/README.md`。
+- **料金事故ゼロの方針はそのまま**（API キー・headless の口は無い。iCloud は自分のアカウントのプライベート DB だけ）。
+
+### 署名とエンタイトルメント
+
+- mac: `mac/Resources/claude-deck.entitlements`（`com.apple.application-identifier` = `ZCYQMLA9HP.com.shinjosato.claude-deck`・team-identifier・
+  `icloud-container-identifiers`・`icloud-services` = CloudKit）。mac は書くだけなので `aps-environment` は入れない（プロファイルに無いと起動できなくなるため）。
+- `scripts/bundle.sh` は次の順でこのアプリ用のプロファイルを探す。条件は Platform が OSX・App ID 一致・コンテナ入り・期限内・この Mac の Provisioning UDID が
+  `ProvisionedDevices` に入っている（`ProvisionsAllDevices` なら不要）・`DeveloperCertificates` の SHA-1 がキーチェーンの `Apple Development:` の
+  署名 ID（`security find-identity -v -p codesigning`）と一致する。見つかれば `Contents/embedded.provisionprofile` に入れて、**一致した証明書**で署名する
+  （チャネルはエンタイトルメント無しで先に署名。`CLAUDE_DECK_SIGN_IDENTITY` でハッシュか名前の一部に絞れる）。見つからなければ従来どおり ad-hoc（iCloud は無効）。
+  `--adhoc` で強制。`--profile` / `CLAUDE_DECK_PROFILE` で指定したものが合わない時は理由を出して止まる（ad-hoc には落とさない）。
+  1. `--profile <path>` / 環境変数 `CLAUDE_DECK_PROFILE`
+  2. `mac/Resources/claude-deck.provisionprofile`（git 管理外）
+  3. `~/Library/Developer/Xcode/UserData/Provisioning Profiles/` と `~/Library/MobileDevice/Provisioning Profiles/` の `*.provisionprofile` / `*.mobileprovision`（新しい順）
+- iOS: `ios/ClaudeDeck.entitlements`（`aps-environment` = development・コンテナ・CloudKit）。`CODE_SIGN_ENTITLEMENTS` に設定済み。
+
+### ユーザーが行う登録（Apple Developer。コンテナは作ると消せない）
+
+1. **iCloud コンテナ**: Xcode で `ios/ClaudeDeck.xcodeproj` を開き、ClaudeDeck ターゲット → Signing & Capabilities → iCloud の
+   Containers で「+」→ `iCloud.com.shinjosato.claude-deck` を作ってチェック（または developer.apple.com → Identifiers → iCloud Containers）。
+2. **iOS の App ID / プロファイル**: 同じ画面で Push Notifications と iCloud（CloudKit）が有効なことを確かめ、自動署名に任せる
+   （コマンドなら `xcodebuild -project ios/ClaudeDeck.xcodeproj -scheme ClaudeDeck -destination 'generic/platform=iOS' -allowProvisioningUpdates build`）。
+3. **mac の App ID**: developer.apple.com → Identifiers で `com.shinjosato.claude-deck`（macOS）を作り、iCloud（CloudKit・上のコンテナを割り当て）を有効にする。
+   SPM の実行ファイルは Xcode の自動署名が使えないので、Profiles で **macOS App Development** のプロファイルを作り（この Mac を Devices に登録・
+   証明書は `Apple Development: Shinjo Sato`）、ダウンロードして `mac/Resources/claude-deck.provisionprofile` に置く（またはダブルクリックで
+   `~/Library/Developer/Xcode/UserData/Provisioning Profiles/` に入れる）。
+4. `mac/scripts/bundle.sh` → 「署名: Apple Development（iCloud 有効）」と出ることを確かめ、`open mac/dist/claude-deck.app`。
+5. **CloudKit のスキーマ**: 開発環境（Development）はレコードを初めて保存した時に型とフィールドが自動で作られる（mac で一度要対応を 5 秒以上出す）。
+   その後 iPhone で通知を入れる（型が無いうちは購読を作れず、画面に理由が出る）。購読の作成に失敗する場合は CloudKit Console
+   （icloud.developer.apple.com）→ Schema → Indexes で `AttentionNotice` の `recordName` に Queryable を足す。
+   Xcode から入れた iPhone と Apple Development 署名の mac はどちらも **Development** 環境を使う。TestFlight / App Store 版の iPhone は
+   **Production** を使うので、その前に CloudKit Console の「Deploy Schema Changes」で本番へ反映し、mac も本番の環境で書く必要がある
+   （`com.apple.developer.icloud-container-environment` = Production。今の bundle.sh は Development のみ）。
 
 ## Claude Code 側の設定（フック・statusLine・Channels）
 
@@ -589,14 +650,14 @@ swift run            # 起動（ウィンドウが開く）
 
 ```sh
 cd /Users/shinjo/project/ai-manager/mac
-./scripts/bundle.sh            # → mac/dist/claude-deck.app（ad-hoc 署名済み）
+./scripts/bundle.sh            # → mac/dist/claude-deck.app（プロファイルがあれば Apple Development、無ければ ad-hoc）
 open dist/claude-deck.app      # Finder からのダブルクリックでも可
 ```
 
-- オプション: `--build-system auto|default|native`（既定 auto）/ `--debug` / `--out <dir>`。
+- オプション: `--build-system auto|default|native`（既定 auto）/ `--debug` / `--out <dir>` / `--profile <path>` / `--adhoc`。
 - `auto` は通常の `swift build` を試し、失敗したら `--build-system native` で再ビルドする。Metal Toolchain が無い環境では通常ビルドが SwiftTerm の `Shaders.metal` のコンパイルで失敗するため（`xcodebuild -downloadComponent MetalToolchain` で入れれば通常ビルドが通る）。
 - 依存のリソースバンドル（`SwiftTerm_SwiftTerm.bundle`）は `Contents/Resources/` に同梱する。claude-deck は SwiftTerm の Metal レンダラーを有効にしていないため、現状このバンドルは参照されない（有効化する場合は SPM の `Bundle.module` が `.app` 直下を探す点に注意）。
-- 署名は ad-hoc（`codesign -s -`）のみ。Developer ID 署名・公証・配布・自動アップデートはしない。別の Mac へコピーすると Gatekeeper に止められる前提（右クリック → 開く）。
+- 署名はこのアプリ用のプロビジョニングプロファイルがあれば Apple Development（iCloud のエンタイトルメント付き。上の「iPhone への通知」）、無ければ ad-hoc（`codesign -s -`）。Developer ID 署名・公証・配布・自動アップデートはしない。別の Mac へコピーすると Gatekeeper に止められる前提（右クリック → 開く）。
 - `/Applications` へ置く場合は `--out /Applications` またはコピー。その場合は実行ファイル位置から ai-manager を辿れないので、上記の `AI_MANAGER_ROOT` / UserDefaults / 既定パスで解決される（Finder 起動には環境変数が渡らないので、実質 UserDefaults か既定パス）。
 - 生成物 `mac/dist/` と `mac/.build/` は git 管理外。
 - アイコン（任意）: `mac/Resources/AppIcon.icns` を置くと同梱される。1024px の PNG から作る例:
@@ -614,7 +675,8 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 
 ## 現状の制約 / TODO
 
-- `.app` は ad-hoc 署名のローカル起動のみ。配布時は Developer ID 署名・公証を検討。
+- `.app` は Apple Development / ad-hoc 署名のローカル起動のみ。配布時は Developer ID 署名・公証を検討。
+- iCloud 経由の通知は実機（登録済みのコンテナ・プロファイル）では未確認。
 - 上限到達の画面表示は実際の上限で出たものを未確認（文言はバイナリから、`⎿` の位置は TUI の描画コードから推定）。表示の形が違えば補助経路だけ効かない（主経路の残量判定は効く）。
 - 追加時の表示名はフォルダ名固定（リネーム UI は未実装）。
 - ホスト中のルームはアプリを終了すると claude ごと終わる（ルームの保存・復元は未実装）。

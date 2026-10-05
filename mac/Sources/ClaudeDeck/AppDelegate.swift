@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         RemoteAccessController.shared.shutdown()
+        AttentionNotifier.shared.stop()
         MonitorBridge.stop()
     }
 

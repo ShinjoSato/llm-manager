@@ -44,6 +44,8 @@ struct RemoteAccessView: View {
                 pairingSection
                 Divider()
                 devicesSection
+                Divider()
+                AttentionNoticeSection(notifier: .shared)
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -1,0 +1,3 @@
+/* 要対応の通知（iCloud のプッシュ）。見出し・本文は Mac が組み立てた文をそのまま出す。 */
+"ATTENTION_TITLE" = "%@";
+"ATTENTION_BODY" = "%@";

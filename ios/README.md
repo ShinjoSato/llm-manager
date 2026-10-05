@@ -15,7 +15,8 @@ API の仕様は `mac/docs/remote-api.md`、通信と型は共有パッケージ
 | 会話 | ユーザーは右の青、Claude は左の暗色（Markdown の見出し・表・リスト・引用・コード）、画像のサムネイル（押すと全画面）、ツールは「ツール N件 ▸」、外部セッションへ送った伝言は点線の吹き出し |
 | カード | 権限（Channels → 端末のプロンプトの順。許可 / 拒否）、選択肢（選択・複数選択・問いのタブ・キャンセル。Esc が終了になるメニューは確認してから `confirmExit`）、読めない選択肢（閉じるだけ）、Channels の無い外部セッションの案内 |
 | 入力欄 | ホスト中のセッションはメッセージ、外部セッションは伝言。Mac が送れない理由（選択待ち等）を出している間は無効 |
-| 接続 | Mac 名・再接続・ペアリングの解除（Mac から取り消し + 鍵を消す） |
+| 接続 | Mac 名・再接続・ペアリングの解除（Mac から取り消し + 鍵を消す）・要対応の通知の入り切り |
+| 通知 | Mac で要対応が続くと iCloud 経由でプッシュ（アプリを閉じていても・外出先でも）。開くと該当ルームへ（つながっていなければ案内を出し、つながって一覧が届いたら開く） |
 
 操作の結果は `RemoteResultText`（DeckCore）で日本語にして会話の末尾に出す（`answered` / `gone` / `changed` / `busy` / `timeout` / `blocked_menu` …）。
 `timeout` は「後から反映されることがある」旨を出し、自動では送り直さない。
@@ -55,7 +56,9 @@ ios/
   Info.plist                  上の追加分だけ（GENERATE_INFOPLIST_FILE と合わせる。フォルダ同期の外に置いてリソース扱いさせない）
   ClaudeDeck/
     App/                      @main・RootView・画面確認用の見本データ（Debug のみ）
-    Model/                    AppModel（接続・一覧・会話・操作）・PairingKeychain・RoomCards（カードの優先順・リンクの解析）
+    Model/                    AppModel（接続・一覧・会話・操作・通知から開く）・PairingKeychain・RoomCards（カードの優先順・リンクの解析）
+    Notify/                   要対応の通知（iCloud の購読・通知の受け口 DeckAppDelegate・設定の欄）
+    ja.lproj/                 通知の見出し・本文のキー
     Theme/DeckTheme.swift     mac のチャット画面と同じトークン
     Views/                    PixelAvatar・接続の帯と設定・Pairing/・Rooms/・Conversation/（MarkdownView は mac から移植）
     Assets.xcassets           アプリアイコン（scripts/make-app-icon.sh で DeckCore のドット絵から描く）・AccentColor
@@ -64,6 +67,24 @@ ios/
 ```
 
 ファイルは `ios/ClaudeDeck/` か `ios/ClaudeDeckTests/` に置けば、プロジェクトの編集なしに入る（`PBXFileSystemSynchronizedRootGroup`）。
+
+## 要対応の通知（iCloud）
+
+仕組み・レコードの形・登録の手順は `mac/README.md` の「iPhone への通知（iCloud・CloudKit）」。
+- 設定 → 通知「要対応を通知する」（既定は切）: 通知の許可を求め、iCloud のアカウントを確かめ、`registerForRemoteNotifications` してから
+  `CKQuerySubscription`（作成時だけ・`attention-notice-created`）を置く。切ると購読を消す。前に出るたびに入っていれば購読を置き直す（同じ ID なので重複しない）。
+  許可が無い・iCloud にサインインしていない・購読を作れない時は理由を出す（許可は「設定を開く」）。`ios/ClaudeDeck/Notify/AttentionNotifications.swift`。
+- 通知の文: 見出し `title`・本文 `body` をそのまま出す（`ja.lproj/Localizable.strings` の `ATTENTION_TITLE` / `ATTENTION_BODY` = `%@`）。
+  同じルームの通知は後から来たもので置き換わる（`collapseIDKey = roomId`）。
+- 通知を開く: `DeckAppDelegate` が `ck.qry.af` の `roomId` / `sessionId` を読み、`AppModel.openFromNotice` が一覧のルームへ進む（mac の起動し直しで
+  ホスト中のルームの id が替わっていればセッションで辿る）。未接続なら預かって案内を出し、つながって一覧が届いた時に開く（無ければ「見つかりません」）。
+- アプリを開いている時は、今見ている会話のルームの知らせは出さない（`AttentionNoticePresentation`）。
+- **iCloud（通知）は既定で無効**。iCloud コンテナは作ると削除できないため、通常のビルドはエンタイトルメントを付けない（実機の自動署名がコンテナやプッシュの設定を勝手に登録しないように）。
+  有効にする時は、`mac/README.md` の手順でコンテナを作ってから、ターゲットの Build Settings の `CODE_SIGN_ENTITLEMENTS` に `ClaudeDeck.iCloud.entitlements` を設定する（Debug / Release とも）。
+- エンタイトルメント `ios/ClaudeDeck.iCloud.entitlements`（`aps-environment`・コンテナ・CloudKit）。`CKContainer` は作った時点で無いと落ちるので、作る前に
+  実行ファイルの署名（シミュレータ向けは `__TEXT,__entitlements`）からエンタイトルメントを読んで確かめる（`DeckCore` の `ExecutableEntitlements`。
+  TestFlight / App Store の版は embedded.mobileprovision を持たないので署名を読む）。無い版では通知を入れられず、設定に理由を出す（入れていた設定は残す）。
+- 通知から開くルームを預かるのは 30 分まで（過ぎてからつながっても開かない）。
 
 ## ビルド・テスト
 
@@ -81,6 +102,7 @@ cd packages/DeckCore && swift test
 ## TestFlight に出す
 
 1. Xcode で `ios/ClaudeDeck.xcodeproj` を開き、Signing & Capabilities でチーム `ZCYQMLA9HP`・自動署名を確かめる。
+   通知（iCloud）を有効にして出す場合だけ、上の手順でエンタイトルメントを設定し、TestFlight 版は CloudKit の **Production** を使うので先に CloudKit Console でスキーマを本番へ反映する（`mac/README.md` の手順 5）。
 2. App Store Connect にバンドル ID `com.shinjosato.claude-deck.ios` のアプリを作る（無ければ。名前は App Store 全体で一意）。
 3. 送るたびに `CURRENT_PROJECT_VERSION` を上げる。Product → Archive → Distribute App → TestFlight & App Store。
 4. 輸出規制の質問は Info.plist の `ITSAppUsesNonExemptEncryption = false` で省かれる。外部テスターに配る時は Beta App Review があり、

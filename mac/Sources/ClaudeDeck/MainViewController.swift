@@ -7,6 +7,7 @@ final class MainViewController: NSViewController {
 
     override func loadView() {
         RemoteAccessController.shared.attach(model)
+        AttentionNotifier.shared.start(model)
         let hosting = NSHostingView(rootView: ChatRootView(model: model) { StagePanel(model: model) })
         hosting.frame = NSRect(x: 0, y: 0, width: 1240, height: 780)
         view = hosting
