@@ -11,9 +11,17 @@ final class AttentionNoticeTextTests: XCTestCase {
         XCTAssertNil(AttentionNoticeText.toolName(String(repeating: "a", count: 65)))
     }
 
-    func testToolNameFromDetailDropsTheDescription() {
-        XCTAssertEqual(AttentionNoticeText.toolName(fromDetail: "Bash: secret-token を使って deploy"), "Bash")
+    func testToolNameFromDetailOnlyReadsThePermissionMessage() {
         XCTAssertEqual(AttentionNoticeText.toolName(fromDetail: "Claude needs your permission to use Write"), "Write")
+        XCTAssertEqual(AttentionNoticeText.toolName(fromDetail: "Claude needs your permission to use Bash."), "Bash")
+        XCTAssertEqual(AttentionNoticeText.toolName(fromDetail: "Claude needs your permission to use Bash: git push"), "Bash")
+        XCTAssertEqual(AttentionNoticeText.toolName(fromDetail: "Claude needs your permission to use mcp__gh__create_issue"),
+                       "mcp__gh__create_issue")
+        // 頭の語がツール名の形をしていても、通知文の形でなければ拾わない。
+        XCTAssertNil(AttentionNoticeText.toolName(fromDetail: "Bash: secret-token を使って deploy"))
+        XCTAssertNil(AttentionNoticeText.toolName(fromDetail: "Error: rate limited"))
+        XCTAssertNil(AttentionNoticeText.toolName(fromDetail: "foo.env"))
+        XCTAssertNil(AttentionNoticeText.toolName(fromDetail: "Claude needs your permission to use Bash to read foo.env"))
         XCTAssertNil(AttentionNoticeText.toolName(fromDetail: "ファイルを消してよいですか: x"))
         XCTAssertNil(AttentionNoticeText.toolName(fromDetail: nil))
     }
@@ -105,8 +113,10 @@ final class AttentionNoticePlannerTests: XCTestCase {
         // 続いている間は書き直さない（同じ要対応は 1 回）。
         XCTAssertTrue(planner.update([c], now: 60 * s).isEmpty)
         XCTAssertTrue(planner.update([c], now: 120 * s).isEmpty)
-        XCTAssertEqual(deletes(planner.update([], now: 121 * s)), [written[0].recordName])
-        XCTAssertTrue(planner.update([], now: 122 * s).isEmpty)
+        // 解消は少し続いてから決める。
+        XCTAssertTrue(planner.update([], now: 121 * s).isEmpty)
+        XCTAssertEqual(deletes(planner.update([], now: 124 * s)), [written[0].recordName])
+        XCTAssertTrue(planner.update([], now: 125 * s).isEmpty)
     }
 
     func testAnsweredBeforeSettleIsNeverWritten() {
@@ -131,19 +141,70 @@ final class AttentionNoticePlannerTests: XCTestCase {
         XCTAssertEqual(written[0].roomIds, ["h:1"])
     }
 
-    func testSimultaneousAttentionIsGroupedUnderTheNewest() {
+    func testSimultaneousAttentionIsGroupedUnderTheNewestSettled() {
         var planner = AttentionNoticePlanner(macName: "Mac")
         _ = planner.update([candidate("h:a", name: "alpha")], now: 0)
         _ = planner.update([candidate("h:a", name: "alpha"), candidate("e:b", .waiting, name: "beta")], now: 1 * s)
         let all = [candidate("h:a", name: "alpha"), candidate("e:b", .waiting, name: "beta"), candidate("h:c", .error, name: "gamma")]
         _ = planner.update(all, now: 2 * s)
         XCTAssertTrue(planner.update(all, now: 4 * s).isEmpty)
-        let written = saves(planner.update(all, now: 5 * s))
+        let written = saves(planner.update(all, now: 6 * s))
         XCTAssertEqual(written.count, 1)
-        XCTAssertEqual(written[0].roomId, "h:c")
-        XCTAssertEqual(written[0].title, "gamma ほか 2 件")
-        XCTAssertEqual(written[0].body, "エラーで止まっています。beta、alpha も対応を待っています")
-        XCTAssertEqual(written[0].roomIds, ["h:c", "e:b", "h:a"])
+        // beta まで続いたので見出しは beta。まだ続いていない gamma は「ほか」に回す。
+        XCTAssertEqual(written[0].roomId, "e:b")
+        XCTAssertEqual(written[0].kind, .waiting)
+        XCTAssertEqual(written[0].since, 1 * s)
+        XCTAssertEqual(written[0].title, "beta ほか 2 件")
+        XCTAssertEqual(written[0].body, "入力を待っています。gamma、alpha も対応を待っています")
+        XCTAssertEqual(written[0].roomIds, ["e:b", "h:c", "h:a"])
+    }
+
+    func testHeadlineIsNeverARoomThatHasNotSettled() {
+        var planner = AttentionNoticePlanner(macName: "Mac")
+        _ = planner.update([candidate("h:a", name: "alpha")], now: 0)
+        let both = [candidate("h:a", name: "alpha"), candidate("h:b", .waiting, name: "beta", session: "sb")]
+        _ = planner.update(both, now: 4 * s)
+        let written = saves(planner.update(both, now: 5 * s))
+        XCTAssertEqual(written.count, 1)
+        XCTAssertEqual(written[0].roomId, "h:a")
+        XCTAssertNil(written[0].sessionId)
+        XCTAssertEqual(written[0].kind, .permission)
+        XCTAssertEqual(written[0].title, "alpha ほか 1 件")
+        XCTAssertEqual(written[0].roomIds, ["h:a", "h:b"])
+    }
+
+    func testFlappingWithinResolveKeepsTheSameEpisode() {
+        var planner = AttentionNoticePlanner(config: .init(settle: 5, cooldown: 30, resolve: 3), macName: "Mac")
+        _ = planner.update([candidate("h:a")], now: 0)
+        let first = saves(planner.update([candidate("h:a")], now: 5 * s))
+        XCTAssertEqual(first.count, 1)
+        // 要対応と作業中を行き来しても、3 秒続けて外れない限り同じ要対応（消しも出し直しもしない）。
+        var t = 6 * s
+        for _ in 0..<30 {
+            XCTAssertTrue(planner.update([], now: t).isEmpty)
+            XCTAssertTrue(planner.update([], now: t + 2 * s).isEmpty)
+            XCTAssertTrue(planner.update([candidate("h:a")], now: t + 2.5 * s).isEmpty)
+            t += 3 * s
+        }
+        XCTAssertTrue(planner.update([], now: t).isEmpty)
+        XCTAssertEqual(deletes(planner.update([], now: t + 3 * s)), [first[0].recordName])
+    }
+
+    func testFlappingBeforeSettleStillCountsFromTheFirstStart() {
+        var planner = AttentionNoticePlanner(macName: "Mac")
+        _ = planner.update([candidate("h:a")], now: 0)
+        _ = planner.update([], now: 2 * s)
+        XCTAssertTrue(planner.update([candidate("h:a")], now: 4 * s).isEmpty)
+        let written = saves(planner.update([candidate("h:a")], now: 5 * s))
+        XCTAssertEqual(written.first?.since, 0)
+    }
+
+    func testPendingResolveIsNotAHeadline() {
+        var planner = AttentionNoticePlanner(config: .init(settle: 5, cooldown: 0, resolve: 3), macName: "Mac")
+        _ = planner.update([candidate("h:a")], now: 0)
+        // 外れたばかり（解消を待っている）のルームでは知らせない。
+        XCTAssertTrue(planner.update([], now: 5 * s).isEmpty)
+        XCTAssertTrue(planner.update([], now: 9 * s).isEmpty)
     }
 
     func testCooldownDefersAndThenGroupsLaterAttention() {
@@ -168,7 +229,9 @@ final class AttentionNoticePlannerTests: XCTestCase {
         let written = saves(planner.update(both, now: 5 * s))
         XCTAssertEqual(written.count, 1)
         XCTAssertTrue(planner.update([candidate("h:b")], now: 6 * s).isEmpty)
-        XCTAssertEqual(deletes(planner.update([], now: 7 * s)), [written[0].recordName])
+        XCTAssertTrue(planner.update([candidate("h:b")], now: 9 * s).isEmpty)
+        XCTAssertTrue(planner.update([], now: 10 * s).isEmpty)
+        XCTAssertEqual(deletes(planner.update([], now: 13 * s)), [written[0].recordName])
     }
 
     func testReturningAttentionIsANewNoticeAfterCooldown() {
@@ -176,12 +239,13 @@ final class AttentionNoticePlannerTests: XCTestCase {
         _ = planner.update([candidate("h:a")], now: 0)
         let first = saves(planner.update([candidate("h:a")], now: 5 * s))
         _ = planner.update([], now: 8 * s)
-        _ = planner.update([candidate("h:a")], now: 9 * s)
+        XCTAssertEqual(deletes(planner.update([], now: 11 * s)), [first[0].recordName])
+        _ = planner.update([candidate("h:a")], now: 12 * s)
         XCTAssertTrue(planner.update([candidate("h:a")], now: 20 * s).isEmpty)
         let second = saves(planner.update([candidate("h:a")], now: 40 * s))
         XCTAssertEqual(second.count, 1)
         XCTAssertNotEqual(second[0].recordName, first[0].recordName)
-        XCTAssertEqual(second[0].since, 9 * s)
+        XCTAssertEqual(second[0].since, 12 * s)
     }
 
     func testNoticeCarriesNoFreeTextFromTheSession() {
@@ -208,6 +272,8 @@ final class FakeNoticeStore: AttentionNoticeStore, @unchecked Sendable {
     private var _records: [String: AttentionNotice] = [:]
     private var _calls: [String] = []
     var failuresLeft = 0
+    /// 書けたのに失敗が返る（タイムアウト等）回数。
+    var lostRepliesLeft = 0
 
     var records: [String: AttentionNotice] { lock.withLock { _records } }
     var calls: [String] { lock.withLock { _calls } }
@@ -221,6 +287,7 @@ final class FakeNoticeStore: AttentionNoticeStore, @unchecked Sendable {
             _calls.append("save \(notice.recordName)")
             if failuresLeft > 0 { failuresLeft -= 1; throw Failure() }
             _records[notice.recordName] = notice
+            if lostRepliesLeft > 0 { lostRepliesLeft -= 1; throw Failure() }
         }
     }
 
@@ -230,6 +297,38 @@ final class FakeNoticeStore: AttentionNoticeStore, @unchecked Sendable {
             if failuresLeft > 0 { failuresLeft -= 1; throw Failure() }
             _records[recordName] = nil
         }
+    }
+}
+
+/// 保存の途中で止まったままの置き場（送っている最中に終了したのと同じ）。
+final class StalledNoticeStore: AttentionNoticeStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    var isSaving: Bool { lock.withLock { continuation != nil } }
+
+    func save(_ notice: AttentionNotice) async throws {
+        await withCheckedContinuation { c in
+            let resumeNow = lock.withLock { () -> Bool in
+                if released { return true }
+                continuation = c
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
+        throw FakeNoticeStore.Failure()
+    }
+
+    func delete(recordName: String) async throws {}
+
+    func release() {
+        let c = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            released = true
+            defer { continuation = nil }
+            return continuation
+        }
+        c?.resume()
     }
 }
 
@@ -270,6 +369,60 @@ final class AttentionNoticeSyncTests: XCTestCase {
         await sync.tick()
         XCTAssertEqual(store.calls, [])
         XCTAssertEqual(sync.pendingCount, 0)
+    }
+
+    func testDeleteAfterAFailedSaveIsStillSent() async {
+        let store = FakeNoticeStore()
+        store.failuresLeft = 1
+        let ledger = MemoryNoticeLedger()
+        let sync = AttentionNoticeSync(store: store, ledger: ledger)
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        sync.submit([.save(notice("a"))])
+        await sync.tick(now: t0)
+        XCTAssertEqual(ledger.names, ["a"])
+        // 届いたか分からないので、解消したら消しに行く。
+        sync.submit([.delete(recordName: "a")])
+        await sync.tick(now: t0.addingTimeInterval(2))
+        XCTAssertEqual(store.calls, ["save a", "delete a"])
+        XCTAssertEqual(ledger.names, [])
+    }
+
+    func testDeleteAfterATimedOutSaveRemovesTheRecord() async {
+        let store = FakeNoticeStore()
+        store.lostRepliesLeft = 1
+        let ledger = MemoryNoticeLedger()
+        let sync = AttentionNoticeSync(store: store, ledger: ledger)
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        sync.submit([.save(notice("a"))])
+        await sync.tick(now: t0)
+        XCTAssertEqual(Array(store.records.keys), ["a"])
+        sync.submit([.delete(recordName: "a")])
+        await sync.tick(now: t0.addingTimeInterval(2))
+        XCTAssertEqual(store.calls, ["save a", "delete a"])
+        XCTAssertTrue(store.records.isEmpty)
+        XCTAssertEqual(ledger.names, [])
+        if case .synced = sync.status {} else { XCTFail("\(sync.status)") }
+    }
+
+    func testSaveInterruptedByQuitIsCleanedUpOnTheNextRun() async {
+        let stalled = StalledNoticeStore()
+        let ledger = MemoryNoticeLedger()
+        let sync = AttentionNoticeSync(store: stalled, ledger: ledger)
+        sync.submit([.save(notice("a"))])
+        let sending = Task { await sync.tick() }
+        for _ in 0..<1000 where !stalled.isSaving { await Task.yield() }
+        XCTAssertTrue(stalled.isSaving)
+        XCTAssertEqual(ledger.names, ["a"])
+
+        // 送っている最中に終了した、次の起動。
+        let store = FakeNoticeStore()
+        let next = AttentionNoticeSync(store: store, ledger: ledger)
+        await next.tick()
+        XCTAssertEqual(store.calls, ["delete a"])
+        XCTAssertEqual(ledger.names, [])
+
+        stalled.release()
+        await sending.value
     }
 
     func testFailureIsRetriedQuietlyWithBackoff() async {
@@ -350,6 +503,7 @@ final class AttentionNoticeSyncTests: XCTestCase {
         XCTAssertEqual(store.records.count, 1)
         XCTAssertEqual(store.records.values.first?.summary, "権限の確認を待っています（Edit）")
         sync.submit(planner.update([], now: 11_000))
+        sync.submit(planner.update([], now: 14_000))
         await sync.tick()
         XCTAssertTrue(store.records.isEmpty)
     }

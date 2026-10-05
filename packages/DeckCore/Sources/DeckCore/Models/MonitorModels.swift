@@ -70,6 +70,8 @@ public struct SessionSnapshot: Codable, Sendable, Hashable, Identifiable {
     public var statusDetail: String?
     /// 要対応（権限待ち・入力待ち・エラー）になった時刻（epoch ミリ秒）。それ以外の状態では nil。
     public var attentionSince: Double? = nil
+    /// 権限待ちの時、フックの tool_name に入っていたツール名（未検証の値）。
+    public var permissionTool: String? = nil
     public var entrypoint: String?
     public var version: String?
     public var startedAt: Double
@@ -84,7 +86,7 @@ public struct SessionSnapshot: Codable, Sendable, Hashable, Identifiable {
 
     public init(sessionId: String, pid: Int32, alive: Bool, name: String, project: String, cwd: String, branch: String?,
                 title: String?, lastPrompt: String?, status: SessionStatus, statusSource: StatusSource, statusDetail: String?,
-                attentionSince: Double? = nil, entrypoint: String?, version: String?, startedAt: Double, lastActivityAt: Double?,
+                attentionSince: Double? = nil, permissionTool: String? = nil, entrypoint: String?, version: String?, startedAt: Double, lastActivityAt: Double?,
                 currentTool: String?, currentSkill: String?, currentAction: String?, tokens: TokenUsage?, agents: [AgentInfo],
                 canReceive: Bool, xcodeProject: String?) {
         self.sessionId = sessionId
@@ -100,6 +102,7 @@ public struct SessionSnapshot: Codable, Sendable, Hashable, Identifiable {
         self.statusSource = statusSource
         self.statusDetail = statusDetail
         self.attentionSince = attentionSince
+        self.permissionTool = permissionTool
         self.entrypoint = entrypoint
         self.version = version
         self.startedAt = startedAt

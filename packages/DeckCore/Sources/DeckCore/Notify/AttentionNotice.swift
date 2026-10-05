@@ -144,14 +144,16 @@ public enum AttentionNoticeText {
         return raw
     }
 
-    /// 状態の補足（「Bash: 説明」・「Claude needs your permission to use Bash」）からツール名だけを取り出す。
+    /// 権限待ちの通知文（`Claude needs your permission to use Bash.`）の形の時だけ、ツール名を取り出す。
+    /// 他の形（エラー文・説明文・ファイル名）はツール名と見分けられないので拾わない。
     public static func toolName(fromDetail detail: String?) -> String? {
-        guard let detail, !detail.isEmpty else { return nil }
-        if let range = detail.range(of: #"permission to use [A-Za-z0-9_.-]+"#, options: [.regularExpression, .caseInsensitive]) {
-            return toolName(String(detail[range].dropFirst("permission to use ".count)))
-        }
-        let head = detail.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init)
-        return toolName(head)
+        guard let detail, let head = detail.split(separator: ":", maxSplits: 1).first,
+              let range = head.range(of: #"permission to use [A-Za-z][A-Za-z0-9_.-]*[.!?。\s]*$"#,
+                                     options: [.regularExpression, .caseInsensitive])
+        else { return nil }
+        var name = head[range].dropFirst("permission to use ".count)
+        while let last = name.last, !(last.isASCII && (last.isLetter || last.isNumber)) { name = name.dropLast() }
+        return toolName(String(name))
     }
 
     public static func summary(kind: AttentionKind, toolName raw: String?) -> String {

@@ -7,7 +7,7 @@ public protocol AttentionNoticeStore: Sendable {
     func delete(recordName: String) async throws
 }
 
-/// 書いた知らせの名前を覚えておく所。終了の前に消せなかった知らせを、次の起動で消すために使う。
+/// 書こうとした知らせの名前を覚えておく所。終了の前に消せなかった知らせを、次の起動で消すために使う。
 public protocol AttentionNoticeLedger: Sendable {
     func load() -> [String]
     func store(_ names: [String])
@@ -45,6 +45,7 @@ public final class AttentionNoticeSync {
     public private(set) var status: Status = .idle
     /// recordName → まだ送っていない操作（届いた順）。
     private(set) var pending: [(name: String, op: Op)] = []
+    /// 一度でも書こうとした名前（届いたか分からないものも含む。消し終えたら外す）。
     private(set) var written: Set<String>
     private var failures = 0
     private var retryAt: Date?
@@ -73,7 +74,7 @@ public final class AttentionNoticeSync {
             case .delete(let name):
                 let unsent = inFlight != name && pending.contains { $0.name == name && $0.op != .delete }
                 pending.removeAll { $0.name == name }
-                // まだ書いていないなら、書かずに済ませる（書いてから消すと通知だけ届く）。
+                // 一度も送っていないなら、書かずに済ませる（書いてから消すと通知だけ届く）。
                 if unsent && !written.contains(name) { continue }
                 pending.append((name, .delete))
             }
@@ -99,13 +100,14 @@ public final class AttentionNoticeSync {
             do {
                 switch op {
                 case .save(let notice):
+                    // 送る前に覚える。失敗・タイムアウトでも実は書けていることがあり、終了しても次の起動で消せる。
+                    if written.insert(name).inserted { ledger.store(written.sorted()) }
                     try await store.save(notice)
-                    written.insert(name)
                 case .delete:
                     try await store.delete(recordName: name)
                     written.remove(name)
+                    ledger.store(written.sorted())
                 }
-                ledger.store(written.sorted())
                 // 送っている間に同じ名前の操作が入れ替わっていたら、新しい方を残す。
                 if let index = pending.firstIndex(where: { $0.name == name }), pending[index].op == op {
                     pending.remove(at: index)

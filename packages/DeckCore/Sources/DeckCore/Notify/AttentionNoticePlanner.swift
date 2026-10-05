@@ -4,16 +4,20 @@ import Foundation
 ///
 /// - 同じ要対応（待ち始めから解消まで）は 1 回だけ知らせる。待つ種類が変わっても（権限待ち→入力待ち）同じ要対応とみなす。
 /// - `settle` 秒続いた要対応が出たら知らせる（mac の前ですぐ答えたものは送らない）。その時に待っている他のルームも含める。
-/// - 知らせてから `cooldown` 秒は次を出さず、その間に溜まった要対応は明けた時に 1 件にまとめる（見出しは一番新しいもの）。
+/// - 見出し（と開くルーム）は `settle` 秒続いたものの中で一番新しいもの。まだ続いていないものは「ほか N 件」に回す。
+/// - 知らせてから `cooldown` 秒は次を出さず、その間に溜まった要対応は明けた時に 1 件にまとめる。
+/// - 解消は `resolve` 秒続けて要対応でなくなってから確定する（その間に戻れば同じ要対応のまま）。
 /// - 知らせがまとめたルームが全て解消したら、その知らせを消す。
 public struct AttentionNoticePlanner: Sendable {
     public struct Config: Sendable, Equatable {
         public var settle: TimeInterval
         public var cooldown: TimeInterval
+        public var resolve: TimeInterval
 
-        public init(settle: TimeInterval = 5, cooldown: TimeInterval = 30) {
+        public init(settle: TimeInterval = 5, cooldown: TimeInterval = 30, resolve: TimeInterval = 3) {
             self.settle = settle
             self.cooldown = cooldown
+            self.resolve = resolve
         }
     }
 
@@ -25,6 +29,8 @@ public struct AttentionNoticePlanner: Sendable {
     struct Episode: Sendable, Equatable {
         var since: Double
         var candidate: AttentionCandidate
+        /// 要対応でなくなった時刻。`resolve` 秒経つまでは解消と決めない。
+        var clearedAt: Double?
     }
 
     public let config: Config
@@ -45,7 +51,10 @@ public struct AttentionNoticePlanner: Sendable {
         for candidate in candidates where current[candidate.roomId] == nil { current[candidate.roomId] = candidate }
 
         var changes: [Change] = []
-        for roomId in episodes.keys where current[roomId] == nil {
+        for (roomId, episode) in episodes where current[roomId] == nil {
+            let clearedAt = episode.clearedAt ?? now
+            episodes[roomId]?.clearedAt = clearedAt
+            guard now - clearedAt >= config.resolve * 1000 else { continue }
             episodes[roomId] = nil
             for (recordName, rooms) in coverage where rooms.contains(roomId) {
                 var rest = rooms
@@ -61,6 +70,7 @@ public struct AttentionNoticePlanner: Sendable {
         for (roomId, candidate) in current {
             if var episode = episodes[roomId] {
                 episode.candidate = candidate
+                episode.clearedAt = nil
                 episodes[roomId] = episode
             } else {
                 episodes[roomId] = Episode(since: now, candidate: candidate)
@@ -69,14 +79,15 @@ public struct AttentionNoticePlanner: Sendable {
 
         let covered = coverage.values.reduce(into: Set<String>()) { $0.formUnion($1) }
         // 新しい順。同時刻はルーム id で決める（並びを毎回同じにする）。
-        let ripe = episodes.values
-            .filter { !covered.contains($0.candidate.roomId) }
+        let waiting = episodes.values
+            .filter { $0.clearedAt == nil && !covered.contains($0.candidate.roomId) }
             .sorted { ($0.since, $0.candidate.roomId) > ($1.since, $1.candidate.roomId) }
         // 1 つでも続いたら、その時に待っている他のルームも同じ知らせにまとめる。
-        guard let newest = ripe.first, ripe.contains(where: { now - $0.since >= config.settle * 1000 }) else { return changes }
+        guard let newest = waiting.first(where: { now - $0.since >= config.settle * 1000 }) else { return changes }
         if let lastAlertAt, now - lastAlertAt < config.cooldown * 1000 { return changes }
 
-        let others = ripe.dropFirst().map(\.candidate.roomName)
+        let rest = waiting.filter { $0.candidate.roomId != newest.candidate.roomId }
+        let others = rest.map(\.candidate.roomName)
         let primary = newest.candidate
         let summary = AttentionNoticeText.summary(kind: primary.kind, toolName: primary.toolName)
         let notice = AttentionNotice(
@@ -89,7 +100,7 @@ public struct AttentionNoticePlanner: Sendable {
             title: AttentionNoticeText.title(roomName: primary.roomName, others: others.count),
             body: AttentionNoticeText.body(summary: summary, otherNames: Array(others)),
             since: newest.since,
-            roomIds: ripe.map(\.candidate.roomId),
+            roomIds: [primary.roomId] + rest.map(\.candidate.roomId),
             macName: macName
         )
         coverage[notice.recordName] = Set(notice.roomIds)
