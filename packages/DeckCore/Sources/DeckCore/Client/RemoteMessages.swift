@@ -140,8 +140,10 @@ public struct RemoteIssue: Sendable, Equatable {
                 return RemoteIssue(kind: .unreachable, title: "Mac との接続が切れました",
                                    detail: "通信が途中で切れました。失敗が続いて Mac が一時的に接続を断っている場合は、数分で戻ります。\n" + unreachableHelp)
             case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
-                return RemoteIssue(kind: .unreachable, title: "Wi-Fi につながっていません",
-                                   detail: "iPhone を Mac と同じ Wi-Fi につないでください。")
+                // iOS はローカルネットワークの許可が無い時も Wi-Fi 上でこのエラーを返す。
+                return RemoteIssue(kind: .unreachable, title: "Mac に届きません（ローカルネットワークの許可か Wi-Fi）",
+                                   detail: "iPhone の「設定 → アプリ → claude-deck → ローカルネットワーク」がオンかを確かめてください。"
+                                       + "オフならオンにしてアプリを開き直します。\nWi-Fi につながっていない時は、Mac と同じ Wi-Fi につないでください。")
             default:
                 return RemoteIssue(kind: .unreachable, title: "Mac に接続できません", detail: unreachableHelp)
             }
