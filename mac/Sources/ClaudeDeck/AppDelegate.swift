@@ -7,8 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
         MonitorBridge.start()
+        // チャット欄の変換中に設定の保存を止めないよう、設定画面がキーの時だけ見る。
         SettingsStore.shared.isComposing = {
-            (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+            guard let window = NSApp.keyWindow, SettingsWindow.owns(window) else { return false }
+            return (window.firstResponder as? NSTextView)?.hasMarkedText() ?? false
         }
         SettingsStore.shared.startWatching()
 

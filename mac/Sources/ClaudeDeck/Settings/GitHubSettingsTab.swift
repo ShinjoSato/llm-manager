@@ -62,7 +62,7 @@ private struct GitHubLinkEditor: View {
         }
         .padding(.vertical, 2)
         .onAppear { load(project.github) }
-        // 外で変わった時は欄を合わせ、溜めていた古い入力は捨てる。
+        // 外で変わった時は欄を外の値に合わせる（溜めていた入力はストアが捨てて案内を出す）。
         .onChange(of: project.github) { _, link in
             guard link != draft else { return }
             store.cancelPending(key: key)
@@ -105,7 +105,7 @@ private struct GitHubLinkEditor: View {
             store.cancelPending(key: key)
             return
         }
-        store.scheduleProject(id: project.id, field: "github") { $0.github = link }
+        store.scheduleProject(id: project.id, field: "github", \.github, link)
     }
 }
 
@@ -165,7 +165,7 @@ private struct BoardEditor: View {
             store.cancelPending(key: key)
             return
         }
-        store.scheduleBoard(id: board.id) { $0 = GitHubBoard(id: $0.id, name: value.name, owner: value.owner, number: value.number) }
+        store.scheduleBoard(id: board.id, value)
     }
 }
 

@@ -21,6 +21,12 @@ enum SettingsWindow {
     private static let navigation = SettingsNavigation()
     private static var closeObserver: NSObjectProtocol?
 
+    /// 設定画面のウィンドウか（変換中の判定をこの画面に絞るため）。
+    static func owns(_ candidate: NSWindow?) -> Bool {
+        guard let window, let candidate else { return false }
+        return window === candidate
+    }
+
     /// `tab` が nil なら前に開いていたタブのまま。
     static func show(tab: SettingsTab?) {
         if let tab { navigation.tab = tab }
@@ -60,8 +66,12 @@ struct SettingsView: View {
             if let problem = store.problem {
                 SettingsProblemBanner(problem: problem, path: store.file.url.path) { store.reload() }
             }
+            if store.hasUnsavedInput {
+                SettingsNoticeBanner(messages: ["まだ保存していない入力があります（欄には残っています）。設定ファイルを読める・書けるようになったら保存します"],
+                                     color: .orange)
+            }
             if let notice = store.notice {
-                SettingsNoticeBanner(messages: [notice], color: .blue)
+                SettingsNoticeBanner(messages: [notice], color: .blue) { store.dismissNotice() }
             }
             if store.isEditable, case let warnings = store.warnings, !warnings.isEmpty {
                 SettingsNoticeBanner(messages: warnings, color: .yellow)
@@ -90,6 +100,7 @@ struct SettingsView: View {
 private struct SettingsNoticeBanner: View {
     let messages: [String]
     let color: Color
+    var onClose: (() -> Void)?
     private static let maxShown = 5
 
     var body: some View {
@@ -104,6 +115,11 @@ private struct SettingsNoticeBanner: View {
                 }
             }
             Spacer()
+            if let onClose {
+                Button(action: onClose) { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless)
+                    .help("この案内を閉じる")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

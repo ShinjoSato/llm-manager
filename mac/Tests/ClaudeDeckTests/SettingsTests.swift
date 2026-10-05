@@ -302,8 +302,8 @@ final class SettingsStoreTests: XCTestCase {
         let store = makeStore()
         store.add(paths: ["/p/a"])
         let id = store.projects[0].id
-        store.scheduleProject(id: id, field: "name") { $0.name = "途中" }
-        store.scheduleProject(id: id, field: "name") { $0.name = "確定" }
+        store.scheduleProject(id: id, field: "name", \.name, "途中")
+        store.scheduleProject(id: id, field: "name", \.name, "確定")
         XCTAssertTrue(store.hasPendingEdits)
         try external(store) { $0.projects.append(ManagedProject(name: "x", path: "/p/x")) }
         store.flushPending()
@@ -312,32 +312,61 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(onDisk.projects.map(\.name), ["確定", "x"])
     }
 
+    /// 条件を満たすまで待つ（期限付き）。
+    private func waitUntil(_ timeout: Duration = .seconds(5), _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            guard ContinuousClock.now < deadline else { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
     func testPendingEditsWaitWhileComposing() async throws {
         let store = makeStore()
         store.add(paths: ["/p/a"])
         let id = store.projects[0].id
         var composing = true
         store.isComposing = { composing }
-        store.scheduleProject(id: id, field: "note") { $0.note = "へんかんちゅう" }
-        try await Task.sleep(for: .milliseconds(800))
+        store.scheduleProject(id: id, field: "note", \.note, "へんかんちゅう")
+        try await waitUntil { store.flushAttempts >= 1 }
+        XCTAssertGreaterThanOrEqual(store.flushAttempts, 1)
         XCTAssertEqual(store.projects[0].note, "")
         XCTAssertTrue(store.hasPendingEdits)
         composing = false
-        try await Task.sleep(for: .milliseconds(800))
+        try await waitUntil { store.projects[0].note == "へんかんちゅう" }
         XCTAssertEqual(store.projects[0].note, "へんかんちゅう")
         // 閉じる・終了の時は変換中でも書き切る。
         composing = true
-        store.scheduleProject(id: id, field: "note") { $0.note = "閉じる時" }
+        store.scheduleProject(id: id, field: "note", \.note, "閉じる時")
         store.flushPending(force: true)
         XCTAssertEqual(SettingsFile(url: store.file.url).load(), .loaded(store.settings))
         XCTAssertEqual(store.projects[0].note, "閉じる時")
+    }
+
+    func testImmediateChangeWhileComposingKeepsPendingUnwritten() async throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        let id = store.projects[0].id
+        var composing = true
+        store.isComposing = { composing }
+        store.scheduleProject(id: id, field: "note", \.note, "へんかん")
+        XCTAssertTrue(store.updateProject(id: id) { $0.status = .paused })
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk.projects[0].status, .paused)
+        XCTAssertEqual(onDisk.projects[0].note, "")
+        XCTAssertTrue(store.hasPendingEdits)
+        composing = false
+        try await waitUntil { store.projects[0].note == "へんかん" }
+        guard case .loaded(let later) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(later.projects[0].note, "へんかん")
+        XCTAssertEqual(later.projects[0].status, .paused)
     }
 
     func testCancelPendingDropsEdit() {
         let store = makeStore()
         store.add(paths: ["/p/a"])
         let id = store.projects[0].id
-        store.scheduleProject(id: id, field: "name") { $0.name = "不正な途中" }
+        store.scheduleProject(id: id, field: "name", \.name, "不正な途中")
         store.cancelPending(key: SettingsStore.projectKey(id: id, field: "name"))
         store.flushPending()
         XCTAssertEqual(store.projects[0].name, "a")
@@ -378,12 +407,13 @@ final class SettingsStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data(#"[{"name":"a","path":"/p/a","status":"active"}]"#.utf8).write(to: dir.appendingPathComponent("projects.json"))
         XCTAssertEqual(chmod(dir.path, 0o500), 0)
+        defer { chmod(dir.path, 0o700) }
         let store = makeStore()
         XCTAssertNil(store.problem)
         XCTAssertNotNil(store.saveError)
         XCTAssertEqual(store.projects.map(\.name), ["a"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.file.url.path))
-        XCTAssertEqual(chmod(dir.path, 0o700), 0)
+        chmod(dir.path, 0o700)
         store.reload()
         XCTAssertNil(store.saveError)
         XCTAssertEqual(store.file.load(), .loaded(store.settings))
@@ -405,14 +435,168 @@ final class SettingsStoreTests: XCTestCase {
         store.startWatching()
         defer { store.stopWatching() }
         try external(store) { $0.projects.append(ManagedProject(name: "byClaude", path: "/p/claude")) }
-        for _ in 0..<40 where store.projects.count < 2 {
-            try await Task.sleep(for: .milliseconds(100))
-        }
+        try await waitUntil { store.projects.count >= 2 }
         XCTAssertEqual(store.projects.map(\.name), ["a", "byClaude"])
-        // 自分の書き込みの後も内容はそのまま（読み直しで戻らない）。
+        // 自分の書き込みの通知では読み直さない（回数が増えない）。
+        let reloads = store.reloadCount
         store.add(paths: ["/p/b"])
         try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(store.reloadCount, reloads)
         XCTAssertEqual(store.projects.map(\.name), ["a", "byClaude", "b"])
+    }
+
+    /// その場で書き換える（truncate して書く）。`>` のリダイレクトや一部のエディタの保存と同じ。
+    private func overwriteInPlace(_ store: SettingsStore, _ data: Data) throws {
+        let handle = try FileHandle(forWritingTo: store.file.url)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: data)
+        try handle.close()
+    }
+
+    func testWatcherPicksUpInPlaceOverwrite() async throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        store.startWatching()
+        defer { store.stopWatching() }
+        var edited = store.settings
+        edited.projects[0].name = "inplace"
+        try overwriteInPlace(store, try edited.encoded())
+        try await waitUntil { store.projects.first?.name == "inplace" }
+        XCTAssertEqual(store.projects.map(\.name), ["inplace"])
+        // 置き換えた後の新しいファイルも、その場の書き換えを拾い続ける。
+        try external(store) { $0.projects[0].note = "置き換え" }
+        try await waitUntil { store.projects.first?.note == "置き換え" }
+        edited = store.settings
+        edited.projects[0].name = "again"
+        try overwriteInPlace(store, try edited.encoded())
+        try await waitUntil { store.projects.first?.name == "again" }
+        XCTAssertEqual(store.projects.first?.name, "again")
+    }
+
+    func testHalfWrittenFileKeepsPendingAndSavesLater() async throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        let id = store.projects[0].id
+        store.scheduleProject(id: id, field: "note", \.note, "打った値")
+        let complete = try store.settings.encoded()
+        // 書きかけ（空）の間に保存しようとしても、入力は残す。
+        try overwriteInPlace(store, Data())
+        store.flushPending()
+        XCTAssertNotNil(store.problem)
+        XCTAssertTrue(store.hasPendingEdits)
+        XCTAssertTrue(store.hasUnsavedInput)
+        // 書き終わったら読み直して、残していた入力を書く。
+        try overwriteInPlace(store, complete)
+        try await waitUntil { !store.hasPendingEdits && store.problem == nil }
+        XCTAssertNil(store.problem)
+        XCTAssertFalse(store.hasPendingEdits)
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk.projects.map(\.note), ["打った値"])
+    }
+
+    func testDeletedFileIsNotMigratedAgain() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"[{"name":"legacy","path":"/p/legacy","status":"active"}]"#.utf8).write(to: dir.appendingPathComponent("projects.json"))
+        let store = makeStore()
+        XCTAssertEqual(store.projects.map(\.name), ["legacy"])
+        try FileManager.default.removeItem(at: store.file.url)
+        store.reloadIfChanged()
+        XCTAssertEqual(store.projects, [])
+        XCTAssertEqual(store.notice, SettingsStore.deletedNotice)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.file.url.path))
+        // 次の変更で作り直す（以前の projects.json は取り込まない）。
+        store.add(paths: ["/p/new"])
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk.projects.map(\.name), ["new"])
+    }
+
+    func testDeletedDuringUpdateDoesNotMigrate() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"[{"name":"legacy","path":"/p/legacy","status":"active"}]"#.utf8).write(to: dir.appendingPathComponent("projects.json"))
+        let store = makeStore()
+        try FileManager.default.removeItem(at: store.file.url)
+        store.add(paths: ["/p/new"])
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk.projects.map(\.name), ["new"])
+        XCTAssertEqual(store.notice, SettingsStore.deletedNotice)
+    }
+
+    func testPartiallyReappliedPendingShowsNotice() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a", "/p/b"])
+        let (a, b) = (store.projects[0].id, store.projects[1].id)
+        store.scheduleProject(id: a, field: "note", \.note, "消えるもの")
+        store.scheduleProject(id: b, field: "note", \.note, "残るもの")
+        try external(store) { $0.projects.removeAll { $0.id == a } }
+        store.flushPending()
+        XCTAssertNotNil(store.notice)
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk.projects.map(\.note), ["残るもの"])
+    }
+
+    func testPartiallyLostChangesShowNotice() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a", "/p/b"])
+        let (a, b) = (store.projects[0].id, store.projects[1].id)
+        // 欄の照合を持たない変更でも、効かなくなったものが 1 つでもあれば知らせる。
+        store.schedule(key: "a") { s in if let i = s.projects.firstIndex(where: { $0.id == a }) { s.projects[i].note = "消える" } }
+        store.schedule(key: "b") { s in if let i = s.projects.firstIndex(where: { $0.id == b }) { s.projects[i].note = "残る" } }
+        try external(store) { $0.projects.removeAll { $0.id == a } }
+        store.flushPending()
+        XCTAssertEqual(store.notice, SettingsStore.droppedNotice)
+        guard case .loaded(let onDisk) = store.file.load() else { return XCTFail() }
+        XCTAssertEqual(onDisk.projects.map(\.note), ["残る"])
+    }
+
+    func testExternalEditOfSameFieldWinsOnFlush() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        let id = store.projects[0].id
+        store.scheduleProject(id: id, field: "note", \.note, "入力")
+        store.scheduleProject(id: id, field: "name", \.name, "名前")
+        try external(store) { $0.projects[0].note = "外" }
+        store.flushPending()
+        XCTAssertEqual(store.notice, SettingsStore.droppedInputNotice)
+        XCTAssertEqual(store.projects[0].note, "外")
+        XCTAssertEqual(store.projects[0].name, "名前")
+    }
+
+    func testExternalEditOfSameFieldWinsOnReload() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a"])
+        let id = store.projects[0].id
+        store.scheduleProject(id: id, field: "note", \.note, "入力")
+        try external(store) { $0.projects[0].note = "外" }
+        store.reloadIfChanged()
+        XCTAssertFalse(store.hasPendingEdits)
+        XCTAssertEqual(store.notice, SettingsStore.droppedInputNotice)
+        XCTAssertEqual(store.projects[0].note, "外")
+        // 同じ値になっただけなら入力は捨てない。
+        store.scheduleProject(id: id, field: "note", \.note, "同じ")
+        try external(store) { $0.projects[0].note = "同じ" }
+        store.reloadIfChanged()
+        XCTAssertNil(store.notice)
+        XCTAssertTrue(store.hasPendingEdits)
+    }
+
+    func testNoticeAndSaveErrorClearOnReloadAndSuccess() throws {
+        let store = makeStore()
+        store.add(paths: ["/p/a", "/p/b"])
+        let removed = store.projects[0].id
+        try external(store) { $0.projects.removeFirst() }
+        XCTAssertFalse(store.updateProject(id: removed) { $0.note = "x" })
+        XCTAssertNotNil(store.notice)
+        store.add(paths: ["/p/c"])
+        XCTAssertNil(store.notice)
+        XCTAssertFalse(store.update { $0.projects.append(ManagedProject(name: "rel", path: "relative")) })
+        XCTAssertNotNil(store.saveError)
+        store.reload()
+        XCTAssertNil(store.saveError)
+        try external(store) { $0.projects.removeAll() }
+        XCTAssertFalse(store.updateProject(id: store.projects[0].id) { $0.note = "y" })
+        XCTAssertNotNil(store.notice)
+        store.dismissNotice()
+        XCTAssertNil(store.notice)
     }
 
     func testExportThenImportRoundTrip() throws {

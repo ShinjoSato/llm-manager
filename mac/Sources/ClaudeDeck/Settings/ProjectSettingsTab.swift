@@ -112,7 +112,7 @@ private struct ProjectDetailForm: View {
                             store.cancelPending(key: key("name"))
                             return
                         }
-                        store.scheduleProject(id: project.id, field: "name") { $0.name = trimmed }
+                        store.scheduleProject(id: project.id, field: "name", \.name, trimmed)
                     }
                 if name.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text("名前を入れてください").font(.caption).foregroundStyle(.red)
@@ -138,7 +138,7 @@ private struct ProjectDetailForm: View {
                     .lineLimit(2...5)
                     .focused($focused, equals: .note)
                     .onChange(of: note) { _, value in
-                        store.scheduleProject(id: project.id, field: "note") { $0.note = value }
+                        store.scheduleProject(id: project.id, field: "note", \.note, value)
                     }
             }
             Section {
@@ -161,7 +161,7 @@ private struct ProjectDetailForm: View {
         }
         .onChange(of: focused) { store.flushPending() }
         .onDisappear { store.flushPending(force: true) }
-        // 外で変わった時は欄を合わせ、溜めていた古い入力は捨てる（自分の保存では値が一致するので何もしない）。
+        // 外で変わった時は欄を外の値に合わせる（溜めていた入力はストアが捨てて案内を出す。自分の保存では値が一致するので何もしない）。
         .onChange(of: project.name) { _, value in
             guard value != name.trimmingCharacters(in: .whitespaces) else { return }
             store.cancelPending(key: key("name"))
