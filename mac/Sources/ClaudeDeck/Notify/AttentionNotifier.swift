@@ -11,7 +11,7 @@ final class AttentionNotifier {
     enum State: Equatable {
         /// 設定で切っている。
         case off
-        /// この起動では使えない（エンタイトルメントが無い等）。
+        /// この起動では使えない（コンテナが設定されていない・エンタイトルメントが無い等）。
         case unavailable(String)
         case active(AttentionNoticeSync.Status)
     }
@@ -39,8 +39,8 @@ final class AttentionNotifier {
     func start(_ model: ChatModel) {
         self.model = model
         guard timer == nil else { return }
-        if case .available = availability {
-            sync = AttentionNoticeSync(store: CloudKitNoticeStore(), ledger: UserDefaultsNoticeLedger())
+        if case .available(let container) = availability {
+            sync = AttentionNoticeSync(store: CloudKitNoticeStore(containerIdentifier: container), ledger: UserDefaultsNoticeLedger())
         }
         refreshState()
         timer = Task { [weak self] in

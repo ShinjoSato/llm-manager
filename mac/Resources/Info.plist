@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>claude-deck</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.shinjosato.claude-deck</string>
+	<string>$(DECK_BUNDLE_PREFIX)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -20,6 +20,8 @@
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>DeckICloudContainer</key>
+	<string>$(DECK_ICLOUD_CONTAINER)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>

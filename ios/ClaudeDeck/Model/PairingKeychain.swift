@@ -5,11 +5,16 @@ import Security
 /// ペアリング（接続先・ピン留めした指紋・端末トークン）をキーチェーンに置く。
 /// この端末だけ・起動後に一度ロック解除した後なら読める（裏から戻った時に画面ロック中でも張り直すため。iCloud やバックアップで他の端末へ渡さない）。
 struct PairingKeychain {
-    var service = "com.shinjosato.claude-deck.ios.pairing"
+    var service = PairingKeychain.serviceName(suffix: "pairing")
     var account = "default"
 
     enum Failure: Error, Equatable {
         case status(OSStatus)
+    }
+
+    /// バンドル ID から作る（バンドル ID が同じなら保存済みのペアリングを読める）。
+    static func serviceName(suffix: String, bundle: Bundle = .main) -> String {
+        "\(bundle.bundleIdentifier ?? "claude-deck.ios").\(suffix)"
     }
 
     private var query: [String: Any] {

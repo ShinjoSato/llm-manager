@@ -16,7 +16,7 @@ final class PairingLinkTests: XCTestCase {
     private var keychain: PairingKeychain!
 
     override func setUp() {
-        keychain = PairingKeychain(service: "com.shinjosato.claude-deck.ios.tests.\(UUID().uuidString)")
+        keychain = PairingKeychain(service: PairingKeychain.serviceName(suffix: "tests.\(UUID().uuidString)"))
     }
 
     override func tearDown() {
@@ -77,7 +77,7 @@ private extension Result {
 
 final class PairingKeychainTests: XCTestCase {
     func testSaveLoadReplaceDelete() throws {
-        let keychain = PairingKeychain(service: "com.shinjosato.claude-deck.ios.tests.\(UUID().uuidString)")
+        let keychain = PairingKeychain(service: PairingKeychain.serviceName(suffix: "tests.\(UUID().uuidString)"))
         defer { keychain.delete() }
         XCTAssertNil(keychain.load())
         var pairing = RemotePairing(host: "192.168.1.5", port: 8767, localHostName: nil, fingerprint: fingerprint, serverName: "Mac",
@@ -89,6 +89,13 @@ final class PairingKeychainTests: XCTestCase {
         XCTAssertEqual(keychain.load()?.deviceToken, "secret2", "上書きできる")
         keychain.delete()
         XCTAssertNil(keychain.load())
+    }
+
+    /// 既定のサービス名は「バンドル ID + .pairing」（バンドル ID が同じなら保存済みのペアリングを読める）。
+    func testDefaultServiceFollowsTheBundleIdentifier() throws {
+        let bundleId = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        XCTAssertFalse(bundleId.contains("$("))
+        XCTAssertEqual(PairingKeychain().service, bundleId + ".pairing")
     }
 }
 

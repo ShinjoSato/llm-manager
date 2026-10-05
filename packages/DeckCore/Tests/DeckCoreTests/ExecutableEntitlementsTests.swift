@@ -2,11 +2,12 @@ import XCTest
 @testable import DeckCore
 
 final class ExecutableEntitlementsTests: XCTestCase {
-    private let cloudKit: [String: Any] = [
-        "aps-environment": "development",
-        "com.apple.developer.icloud-services": ["CloudKit"],
-        "com.apple.developer.icloud-container-identifiers": [AttentionNoticeSchema.containerIdentifier]
-    ]
+    private let container = "iCloud.example.claude-deck"
+    private var cloudKit: [String: Any] {
+        ["aps-environment": "development",
+         "com.apple.developer.icloud-services": ["CloudKit"],
+         "com.apple.developer.icloud-container-identifiers": [container]]
+    }
 
     private func xml(_ values: [String: Any]) -> Data {
         try! PropertyListSerialization.data(fromPropertyList: values, format: .xml, options: 0)
@@ -64,10 +65,10 @@ final class ExecutableEntitlementsTests: XCTestCase {
 
     func testEmptySignatureFallsBackToTheSimulatorSection() {
         let simulator = ExecutableEntitlements.read(bothMachO(signature: [:], section: cloudKit))
-        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(simulator, needsPush: true))
+        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(simulator, container: container, needsPush: true))
         // 署名に中身があれば署名が優先（実機では署名だけが効く）。
         let device = ExecutableEntitlements.read(bothMachO(signature: ["get-task-allow": true], section: cloudKit))
-        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(device, needsPush: false))
+        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(device, container: container, needsPush: false))
     }
 
     private func fat(_ slice: Data, cpu: UInt32) -> Data {
@@ -79,17 +80,17 @@ final class ExecutableEntitlementsTests: XCTestCase {
     func testReadsEntitlementsFromTheSignature() {
         let values = ExecutableEntitlements.read(signedMachO(cloudKit))
         XCTAssertEqual(values?["aps-environment"] as? String, "development")
-        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(values, needsPush: true))
+        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(values, container: container, needsPush: true))
     }
 
     func testReadsTheSimulatorSection() {
         let values = ExecutableEntitlements.read(sectionMachO(cloudKit))
-        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(values, needsPush: true))
+        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(values, container: container, needsPush: true))
     }
 
     func testReadsAFatSlice() {
         let values = ExecutableEntitlements.read(fat(signedMachO(cloudKit), cpu: ExecutableEntitlements.hostCPUType))
-        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(values, needsPush: false))
+        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(values, container: container, needsPush: false))
     }
 
     func testMissingOrBrokenIsNil() {
@@ -98,25 +99,34 @@ final class ExecutableEntitlementsTests: XCTestCase {
         var truncated = signedMachO(cloudKit)
         truncated.removeLast(40)
         XCTAssertNil(ExecutableEntitlements.read(truncated))
-        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(nil, needsPush: false))
+        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(nil, container: container, needsPush: false))
     }
 
     func testRequiresCloudKitContainerAndPush() {
         var noPush = cloudKit
         noPush["aps-environment"] = nil
-        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(noPush, needsPush: true))
-        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(noPush, needsPush: false))
+        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(noPush, container: container, needsPush: true))
+        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(noPush, container: container, needsPush: false))
         var otherContainer = cloudKit
         otherContainer["com.apple.developer.icloud-container-identifiers"] = ["iCloud.other"]
-        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(otherContainer, needsPush: false))
+        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(otherContainer, container: container, needsPush: false))
         var documentsOnly = cloudKit
         documentsOnly["com.apple.developer.icloud-services"] = ["CloudDocuments"]
-        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(documentsOnly, needsPush: false))
+        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(documentsOnly, container: container, needsPush: false))
+        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(cloudKit, container: "", needsPush: false))
+    }
+
+    func testContainerFromInfoPlist() {
+        XCTAssertEqual(AttentionNoticeSchema.containerIdentifier(infoValue: " iCloud.example.claude-deck "), "iCloud.example.claude-deck")
+        XCTAssertNil(AttentionNoticeSchema.containerIdentifier(infoValue: nil))
+        XCTAssertNil(AttentionNoticeSchema.containerIdentifier(infoValue: ""))
+        XCTAssertNil(AttentionNoticeSchema.containerIdentifier(infoValue: "$(DECK_ICLOUD_CONTAINER)"))
+        XCTAssertNil(AttentionNoticeSchema.containerIdentifier(infoValue: 1))
     }
 
     /// 試験の実行ファイルは iCloud のエンタイトルメントを持たない。
     func testTheTestRunnerHasNoCloudKit() {
-        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(ExecutableEntitlements.ofMainExecutable(), needsPush: false))
+        XCTAssertFalse(AttentionNoticeSchema.entitlementsAllowNotices(ExecutableEntitlements.ofMainExecutable(), container: container, needsPush: false))
     }
 
     #if os(macOS)

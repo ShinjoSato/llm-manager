@@ -5,6 +5,8 @@ secrets/*
 # ビルド成果物
 node_modules/
 mac/dist/
+# 署名・識別子の手元の値（雛形は config/Local.example.xcconfig）。
+config/Local.xcconfig
 # mac アプリの署名に使うプロビジョニングプロファイル（各自の手元のもの）。
 mac/Resources/*.provisionprofile
 # 削除済みの monitor の残骸（手元に残る node_modules・UI のビルド成果物）を拾わないため。

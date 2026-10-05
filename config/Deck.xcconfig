@@ -1,0 +1,11 @@
+// claude-deck（mac / iPhone）の署名・識別子の既定値。手元の値は Local.xcconfig に書く（追跡しない。雛形は Local.example.xcconfig）。
+// mac/scripts/bundle.sh もこのファイルを読むので、`KEY = VALUE` と `//` のコメントだけで書く。
+
+// 空なら署名のチームを決めない（シミュレータ向けのビルドと、mac の ad-hoc 署名はこれで通る）。
+DEVELOPMENT_TEAM =
+// 他人の App ID とぶつからない既定。iOS は末尾に .ios / .iosTests を付け、mac はそのまま使う。
+DECK_BUNDLE_PREFIX = local.claude-deck
+// 空なら iCloud 経由の通知は無効（アプリが画面で理由を出す）。
+DECK_ICLOUD_CONTAINER =
+
+#include? "Local.xcconfig"

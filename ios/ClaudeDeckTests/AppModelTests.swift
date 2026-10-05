@@ -11,7 +11,7 @@ final class AppModelConnectionTests: XCTestCase {
     private let accepted = AcceptedConnections()
 
     override func setUp() {
-        keychain = PairingKeychain(service: "com.shinjosato.claude-deck.ios.tests.\(UUID().uuidString)")
+        keychain = PairingKeychain(service: PairingKeychain.serviceName(suffix: "tests.\(UUID().uuidString)"))
     }
 
     override func tearDown() {
@@ -173,7 +173,7 @@ final class PairingAddressOnIOSTests: XCTestCase {
 
     @MainActor
     func testOutsideLinkShowsReasonWithoutOffer() {
-        let keychain = PairingKeychain(service: "com.shinjosato.claude-deck.ios.tests.\(UUID().uuidString)")
+        let keychain = PairingKeychain(service: PairingKeychain.serviceName(suffix: "tests.\(UUID().uuidString)"))
         defer { keychain.delete() }
         let model = AppModel(keychain: keychain, startMonitoring: false)
         model.offerLink(link(host: "203.0.113.5"), source: .pasted)

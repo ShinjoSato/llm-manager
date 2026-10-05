@@ -13,6 +13,9 @@
 #   --adhoc         プロファイルがあっても ad-hoc で署名する
 #   署名の証明書はプロファイルに入っているものとキーチェーンの「Apple Development:」で一致するもの
 #   （環境変数 CLAUDE_DECK_SIGN_IDENTITY でハッシュか名前の一部に絞れる）
+#   チーム ID・バンドル ID・iCloud コンテナは config/Deck.xcconfig と config/Local.xcconfig（あれば）から読む。
+#   環境変数 CLAUDE_DECK_TEAM_ID / CLAUDE_DECK_BUNDLE_PREFIX / CLAUDE_DECK_ICLOUD_CONTAINER があれば（空でも）そちらを使う。
+#   チーム ID かコンテナが空なら ad-hoc で署名する。
 set -euo pipefail
 
 MAC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,10 +25,11 @@ CHANNEL_NAME="claude-deck-channel"
 BUILD_SYSTEM="auto"
 CONFIG="release"
 OUT_DIR="$MAC_DIR/dist"
-TEAM_ID="ZCYQMLA9HP"
-BUNDLE_ID="com.shinjosato.claude-deck"
-ICLOUD_CONTAINER="iCloud.com.shinjosato.claude-deck"
-ENTITLEMENTS="$MAC_DIR/Resources/claude-deck.entitlements"
+CONFIG_DIR="$(cd "$MAC_DIR/.." && pwd)/config"
+TEAM_ID=""
+BUNDLE_ID=""
+ICLOUD_CONTAINER=""
+ENTITLEMENTS_TEMPLATE="$MAC_DIR/Resources/claude-deck.entitlements"
 PROFILE="${CLAUDE_DECK_PROFILE:-}"
 FORCE_ADHOC=0
 
@@ -36,10 +40,46 @@ while [[ $# -gt 0 ]]; do
     --out) OUT_DIR="${2:?}"; shift 2 ;;
     --profile) PROFILE="${2:?}"; shift 2 ;;
     --adhoc) FORCE_ADHOC=1; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "不明なオプション: $1" >&2; exit 2 ;;
   esac
 done
+
+# xcconfig は `KEY = VALUE` と `//` のコメントだけを扱う（#include は読む側で順に渡す）。
+read_xcconfig() {
+  local file="$1" line key value
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%//*}"
+    [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    value="${value%"${value##*[![:space:]]}"}"
+    case "$key" in
+      DEVELOPMENT_TEAM) TEAM_ID="$value" ;;
+      DECK_BUNDLE_PREFIX) BUNDLE_ID="$value" ;;
+      DECK_ICLOUD_CONTAINER) ICLOUD_CONTAINER="$value" ;;
+    esac
+  done < "$file"
+}
+
+read_xcconfig "$CONFIG_DIR/Deck.xcconfig"
+read_xcconfig "$CONFIG_DIR/Local.xcconfig"
+TEAM_ID="${CLAUDE_DECK_TEAM_ID-$TEAM_ID}"
+BUNDLE_ID="${CLAUDE_DECK_BUNDLE_PREFIX-$BUNDLE_ID}"
+ICLOUD_CONTAINER="${CLAUDE_DECK_ICLOUD_CONTAINER-$ICLOUD_CONTAINER}"
+
+# Info.plist・エンタイトルメント・プロファイルの照合にそのまま入るので、形の崩れた値はここで止める。
+if [[ ! "$BUNDLE_ID" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
+  echo "DECK_BUNDLE_PREFIX がバンドル ID の形ではありません: '${BUNDLE_ID}'（config/Local.xcconfig を確かめてください）" >&2; exit 2
+fi
+if [[ -n "$TEAM_ID" && ! "$TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+  echo "DEVELOPMENT_TEAM がチーム ID（英大文字と数字の 10 文字）ではありません: '${TEAM_ID}'" >&2; exit 2
+fi
+if [[ -n "$ICLOUD_CONTAINER" && ! "$ICLOUD_CONTAINER" =~ ^iCloud\.[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$ ]]; then
+  echo "DECK_ICLOUD_CONTAINER が iCloud コンテナの形（iCloud. で始まる）ではありません: '${ICLOUD_CONTAINER}'" >&2; exit 2
+fi
+echo "==> バンドル ID: ${BUNDLE_ID} / チーム: ${TEAM_ID:-（なし）} / iCloud コンテナ: ${ICLOUD_CONTAINER:-（なし）}"
 
 cd "$MAC_DIR"
 
@@ -70,6 +110,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 cp "$BIN_DIR/$CHANNEL_NAME" "$APP/Contents/MacOS/$CHANNEL_NAME"
 cp "$MAC_DIR/Resources/Info.plist" "$APP/Contents/Info.plist"
+plutil -replace CFBundleIdentifier -string "$BUNDLE_ID" "$APP/Contents/Info.plist"
+plutil -replace DeckICloudContainer -string "$ICLOUD_CONTAINER" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # 依存パッケージのリソースバンドル（SwiftTerm_SwiftTerm.bundle 等）を同梱する。
@@ -171,15 +213,31 @@ select_profile() {
 }
 
 SIGNED_WITH="ad-hoc"
-if [[ "$FORCE_ADHOC" == 0 ]] && select_profile; then
+MISSING_IDS=""
+if [[ -z "$TEAM_ID" || -z "$ICLOUD_CONTAINER" ]]; then
+  MISSING_IDS="チーム ID（DEVELOPMENT_TEAM）か iCloud コンテナ（DECK_ICLOUD_CONTAINER）が設定されていない"
+  if [[ -n "$PROFILE" && "$FORCE_ADHOC" == 0 ]]; then
+    echo "==> 指定のプロファイルは使えません（${MISSING_IDS}ため照合できません）: ${PROFILE}" >&2
+    exit 1
+  fi
+fi
+if [[ "$FORCE_ADHOC" == 0 && -z "$MISSING_IDS" ]] && select_profile; then
   echo "==> Apple Development（${IDENTITY}）で署名します（プロファイル: ${FOUND_PROFILE}）"
+  ENTITLEMENTS="$TMP_DIR/claude-deck.entitlements"
+  cp "$ENTITLEMENTS_TEMPLATE" "$ENTITLEMENTS"
+  plutil -replace 'com\.apple\.application-identifier' -string "$TEAM_ID.$BUNDLE_ID" "$ENTITLEMENTS"
+  plutil -replace 'com\.apple\.developer\.team-identifier' -string "$TEAM_ID" "$ENTITLEMENTS"
+  plutil -replace 'com\.apple\.developer\.icloud-container-identifiers' -json "[\"$ICLOUD_CONTAINER\"]" "$ENTITLEMENTS"
+  if grep -q '\$(' "$ENTITLEMENTS"; then echo "==> エンタイトルメントに埋まっていない値があります: ${ENTITLEMENTS_TEMPLATE}" >&2; exit 1; fi
   cp "$FOUND_PROFILE" "$APP/Contents/embedded.provisionprofile"
   # 同梱のチャネルは iCloud を使わないので、エンタイトルメント無しで先に署名する（--deep で同じ権限を配らない）。
   codesign --force --timestamp=none --sign "$IDENTITY" "$APP/Contents/MacOS/$CHANNEL_NAME"
   codesign --force --timestamp=none --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" "$APP"
   SIGNED_WITH="Apple Development（iCloud 有効）"
 else
-  if [[ "$FORCE_ADHOC" == 0 ]]; then
+  if [[ -n "$MISSING_IDS" && "$FORCE_ADHOC" == 0 ]]; then
+    echo "==> ${MISSING_IDS}ため ad-hoc で署名します（iCloud 経由の通知は無効）" >&2
+  elif [[ "$FORCE_ADHOC" == 0 ]]; then
     echo "==> このアプリ・この Mac・手元の証明書に合うプロビジョニングプロファイルが無いため ad-hoc で署名します（iCloud 経由の通知は無効）" >&2
   fi
   codesign --force --deep --sign - "$APP"
