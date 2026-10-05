@@ -99,6 +99,11 @@ final class QRCameraController: UIViewController, AVCaptureMetadataOutputObjects
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        #if targetEnvironment(simulator)
+        // シミュレータのカメラは映像が来ず黒いままになるので、貼り付けに回す。
+        onUnavailable?()
+        return
+        #else
         guard let device = AVCaptureDevice.default(for: .video), let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else {
             onUnavailable?()
@@ -117,6 +122,12 @@ final class QRCameraController: UIViewController, AVCaptureMetadataOutputObjects
         layer.videoGravity = .resizeAspectFill
         view.layer.addSublayer(layer)
         preview = layer
+        NotificationCenter.default.addObserver(self, selector: #selector(sessionFailed), name: AVCaptureSession.runtimeErrorNotification, object: session)
+        #endif
+    }
+
+    @objc private func sessionFailed(_ note: Notification) {
+        DispatchQueue.main.async { [weak self] in self?.onUnavailable?() }
     }
 
     override func viewDidLayoutSubviews() {

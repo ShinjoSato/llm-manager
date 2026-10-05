@@ -179,6 +179,11 @@ struct RemoteAccessView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
+                    Button("リンクをコピー") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(offer.url.absoluteString, forType: .string)
+                    }
+                    .help("カメラが使えない時（シミュレータ等）に iPhone アプリの「ペースト」で使う")
                     Text("QR には一時的なコードと証明書の指紋が入っています。他の人に見せないでください。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
