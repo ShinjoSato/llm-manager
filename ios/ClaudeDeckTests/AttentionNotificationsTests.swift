@@ -7,11 +7,14 @@ private final class FakeSubscriptionService: AttentionSubscriptionService, @unch
     private let lock = NSLock()
     private var _calls: [String] = []
     var problem: String?
+    var unavailable: String?
     var subscribeError: Error?
     var unsubscribeError: Error?
 
     var calls: [String] { lock.withLock { _calls } }
     private func record(_ call: String) { lock.withLock { _calls.append(call) } }
+
+    func unavailableReason() -> String? { unavailable }
 
     func accountProblem() async -> String? {
         record("account")
@@ -130,6 +133,68 @@ final class AttentionNotificationsTests: XCTestCase {
         XCTAssertTrue(text.contains("もう一度切って"), text)
     }
 
+    func testBuildWithoutEntitlementsCannotTurnOn() async {
+        let service = FakeSubscriptionService()
+        service.unavailable = "エンタイトルメントが無い"
+        let notifications = make(service)
+        XCTAssertEqual(notifications.unavailableReason, "エンタイトルメントが無い")
+        await notifications.setEnabled(true)
+        XCTAssertFalse(notifications.enabled)
+        XCTAssertEqual(notifications.state, .problem("エンタイトルメントが無い", needsSettings: false))
+        XCTAssertEqual(service.calls, [])
+        XCTAssertEqual(pushRegistrations, 0)
+        await notifications.setEnabled(false)
+        XCTAssertEqual(notifications.state, .off)
+        XCTAssertEqual(service.calls, [])
+    }
+
+    func testPreviouslyEnabledButUnentitledStartsDisabledWithTheReason() async {
+        defaults.set(true, forKey: AttentionNotifications.enabledKey)
+        let service = FakeSubscriptionService()
+        service.unavailable = "エンタイトルメントが無い"
+        let notifications = make(service)
+        XCTAssertFalse(notifications.enabled)
+        XCTAssertEqual(notifications.state, .problem("エンタイトルメントが無い", needsSettings: false))
+        await notifications.refresh()
+        XCTAssertEqual(service.calls, [])
+        // 使えるビルドに戻ったら入ったまま始まるよう、設定は消さない。
+        XCTAssertTrue(defaults.bool(forKey: AttentionNotifications.enabledKey))
+    }
+
+    /// エンタイトルメントが無ければ CKContainer を作らずに断る（作ると落ちる）。
+    func testCloudKitSubscriptionWithoutEntitlementsNeverTouchesCloudKit() async {
+        let subscription = CloudKitAttentionSubscription(entitlements: nil)
+        XCTAssertEqual(subscription.unavailableReason(), CloudKitAttentionSubscription.missingEntitlementReason)
+        let problem = await subscription.accountProblem()
+        XCTAssertEqual(problem, CloudKitAttentionSubscription.missingEntitlementReason)
+        do {
+            try await subscription.subscribe()
+            XCTFail("購読できてしまった")
+        } catch {
+            XCTAssertEqual((error as? CKError)?.code, .missingEntitlement)
+        }
+        try? await subscription.unsubscribe()
+        let partial = CloudKitAttentionSubscription(entitlements: ["com.apple.developer.icloud-services": ["CloudKit"]])
+        XCTAssertNotNil(partial.unavailableReason())
+    }
+
+    /// シミュレータ向けの版は `__entitlements` にエンタイトルメントを持ち、それを読めること（署名した試験の時）。
+    func testThisBuildIsEntitled() throws {
+        let values = ExecutableEntitlements.ofMainExecutable()
+        try XCTSkipIf(values?.isEmpty != false, "エンタイトルメントを付けずに作った版")
+        XCTAssertTrue(AttentionNoticeSchema.entitlementsAllowNotices(values, needsPush: true))
+        XCTAssertNil(CloudKitAttentionSubscription().unavailableReason())
+    }
+
+    func testCloudKitSubscriptionWithEntitlementsIsAvailable() {
+        let subscription = CloudKitAttentionSubscription(entitlements: [
+            "aps-environment": "development",
+            "com.apple.developer.icloud-services": ["CloudKit"],
+            "com.apple.developer.icloud-container-identifiers": [AttentionNoticeSchema.containerIdentifier]
+        ])
+        XCTAssertNil(subscription.unavailableReason())
+    }
+
     func testSubscriptionFiresOnCreationWithRecordText() {
         let subscription = CloudKitAttentionSubscription.makeSubscription()
         XCTAssertEqual(subscription.subscriptionID, AttentionNoticeSchema.subscriptionID)
@@ -213,6 +278,31 @@ final class AppModelNoticeTests: XCTestCase {
         XCTAssertNil(model.requestedRoomId)
         XCTAssertNil(model.pendingNotice)
         XCTAssertTrue(model.noticeHint?.contains("見つかりません") == true)
+    }
+
+    func testPendingNoticeOpensAfterReconnecting() {
+        let model = connectedModel([room("h:1", session: "s1")])
+        model.simulateDisconnected()
+        model.openFromNotice(AttentionNoticeRoute(roomId: "h:2", sessionId: "s2", macName: nil))
+        XCTAssertEqual(model.pendingNotice?.roomId, "h:2")
+        XCTAssertTrue(model.noticeHint?.contains("つながったら") == true)
+        model.simulateReceived(RemoteState(rooms: [room("h:1", session: "s1"), room("h:2", session: "s2")], usage: nil, monitoring: true))
+        XCTAssertEqual(model.requestedRoomId, "h:2")
+        XCTAssertNil(model.pendingNotice)
+        XCTAssertNil(model.noticeHint)
+    }
+
+    func testPendingNoticeExpires() {
+        let model = connectedModel([room("h:1", session: "s1")])
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        model.clock = { now }
+        model.simulateDisconnected()
+        model.openFromNotice(AttentionNoticeRoute(roomId: "h:2", sessionId: "s2", macName: nil))
+        now = now.addingTimeInterval(AppModel.pendingNoticeLifetime + 1)
+        model.simulateReceived(RemoteState(rooms: [room("h:1", session: "s1"), room("h:2", session: "s2")], usage: nil, monitoring: true))
+        XCTAssertNil(model.requestedRoomId)
+        XCTAssertNil(model.pendingNotice)
+        XCTAssertNil(model.noticeHint)
     }
 
     func testOpenRoomIdFollowsTheOpenConversation() {

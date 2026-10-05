@@ -7,6 +7,8 @@ import UserNotifications
 
 /// iCloud の購読（mac が要対応を書いたらプッシュが届く）。試験では偽物に差し替える。
 protocol AttentionSubscriptionService: Sendable {
+    /// このビルドで iCloud の購読を使えない理由（署名にエンタイトルメントが無い等）。使えれば nil。
+    func unavailableReason() -> String?
     /// iCloud を使えない理由。使えれば nil。
     func accountProblem() async -> String?
     func subscribe() async throws
@@ -33,6 +35,8 @@ final class AttentionNotifications {
 
     private(set) var enabled: Bool
     private(set) var state: State
+    /// このビルドでは使えない理由。あれば入れられない（設定は残し、使えるビルドで戻す）。
+    let unavailableReason: String?
 
     private let service: AttentionSubscriptionService
     private let authorizer: NotificationAuthorizing
@@ -46,9 +50,15 @@ final class AttentionNotifications {
         self.authorizer = authorizer
         self.defaults = defaults
         self.registerForPush = registerForPush
-        let on = defaults.bool(forKey: Self.enabledKey)
+        let reason = service.unavailableReason()
+        unavailableReason = reason
+        let on = reason == nil && defaults.bool(forKey: Self.enabledKey)
         enabled = on
-        state = on ? .working : .off
+        if let reason, defaults.bool(forKey: Self.enabledKey) {
+            state = .problem(reason, needsSettings: false)
+        } else {
+            state = on ? .working : .off
+        }
     }
 
     static func live() -> AttentionNotifications {
@@ -58,6 +68,11 @@ final class AttentionNotifications {
     }
 
     func setEnabled(_ on: Bool) async {
+        if let unavailableReason {
+            enabled = false
+            state = on ? .problem(unavailableReason, needsSettings: false) : .off
+            return
+        }
         enabled = on
         defaults.set(on, forKey: Self.enabledKey)
         if on {
@@ -118,19 +133,34 @@ final class AttentionNotifications {
 
 /// 自分の iCloud のプライベート DB に、要対応の知らせが作られたらプッシュする購読を置く。
 final class CloudKitAttentionSubscription: AttentionSubscriptionService, @unchecked Sendable {
-    // CKContainer は作った時点でエンタイトルメントを確かめる（無ければ落ちる）ので、使う時まで作らない。
+    static let missingEntitlementReason =
+        "このビルドには iCloud（CloudKit）とプッシュ通知のエンタイトルメントが無いため、通知を使えません。"
+        + "iCloud を有効にした App ID とプロファイルで署名したビルドで使えます。"
+
+    // CKContainer は作った時点でエンタイトルメントを確かめる（無ければ落ちる）ので、確かめてから使う時まで作らない。
     private lazy var container = CKContainer(identifier: AttentionNoticeSchema.containerIdentifier)
     private let lock = NSLock()
+    private let entitled: Bool
 
-    private func ckContainer() -> CKContainer {
-        lock.withLock { container }
+    init(entitlements: [String: Any]? = ExecutableEntitlements.ofMainExecutable()) {
+        entitled = AttentionNoticeSchema.entitlementsAllowNotices(entitlements, needsPush: true)
     }
 
-    private func database() -> CKDatabase {
-        ckContainer().privateCloudDatabase
+    func unavailableReason() -> String? {
+        entitled ? nil : Self.missingEntitlementReason
+    }
+
+    private func ckContainer() throws -> CKContainer {
+        guard entitled else { throw CKError(.missingEntitlement) }
+        return lock.withLock { container }
+    }
+
+    private func database() throws -> CKDatabase {
+        try ckContainer().privateCloudDatabase
     }
 
     func accountProblem() async -> String? {
+        guard entitled else { return Self.missingEntitlementReason }
         let status = try? await ckContainer().accountStatus()
         switch status {
         case .available: return nil
@@ -146,6 +176,8 @@ final class CloudKitAttentionSubscription: AttentionSubscriptionService, @unchec
     }
 
     func unsubscribe() async throws {
+        // 使えないビルドでは購読を作れていないので、消すものも無い。
+        guard entitled else { return }
         do {
             _ = try await database().deleteSubscription(withID: AttentionNoticeSchema.subscriptionID)
         } catch let error as CKError where error.code == .unknownItem {

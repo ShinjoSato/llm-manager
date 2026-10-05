@@ -51,6 +51,11 @@ final class AppModel {
     var requestedRoomId: String?
     /// 開いた通知のうち、まだルームが見つかっていないもの（つながって一覧が届いたら開く）。
     private(set) var pendingNotice: AttentionNoticeRoute?
+    private var pendingNoticeAt: Date?
+    /// 預かった通知の行き先を開く期限。過ぎてからつながっても、もう関係の無いルームへ急に移らないようにする。
+    static let pendingNoticeLifetime: TimeInterval = 30 * 60
+    /// 時刻（試験で差し替える）。
+    var clock: () -> Date = Date.init
     /// 通知から開けなかった時の案内。
     var noticeHint: String?
     /// 要対応の通知（iCloud の購読）の入り切り。
@@ -118,6 +123,10 @@ final class AppModel {
         unread = ["s-sandora": 2]
         isDemo = true
     }
+
+    /// 試験用: 切れた・つながって一覧が届いた、を起こす。
+    func simulateDisconnected() { connection = .paused }
+    func simulateReceived(_ state: RemoteState) { handle(.state(state)) }
     #endif
 
     var serverName: String { pairing?.serverName ?? "Mac" }
@@ -251,6 +260,7 @@ final class AppModel {
             return
         }
         pendingNotice = route
+        pendingNoticeAt = clock()
         if pairing == nil {
             noticeHint = "通知のルームを開くには、Mac の claude-deck とペアリングしてください。"
         } else if !connection.isConnected {
@@ -269,6 +279,10 @@ final class AppModel {
     private func resolvePendingNotice() {
         guard let route = pendingNotice, connection.isConnected else { return }
         pendingNotice = nil
+        if let at = pendingNoticeAt, clock().timeIntervalSince(at) > Self.pendingNoticeLifetime {
+            noticeHint = nil
+            return
+        }
         if let room = route.resolve(in: rooms) {
             noticeHint = nil
             requestedRoomId = room.id

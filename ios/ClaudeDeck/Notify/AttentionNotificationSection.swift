@@ -15,7 +15,12 @@ struct AttentionNotificationSection: View {
                 }
             }
             .accessibilityIdentifier("attention-notifications-toggle")
-            if case .problem(let text, let needsSettings) = notifications.state {
+            .disabled(notifications.unavailableReason != nil)
+            if let reason = notifications.unavailableReason {
+                Text(reason)
+                    .font(DeckTheme.caption)
+                    .foregroundStyle(DeckTheme.permission)
+            } else if case .problem(let text, let needsSettings) = notifications.state {
                 Text(text)
                     .font(DeckTheme.caption)
                     .foregroundStyle(DeckTheme.permission)
