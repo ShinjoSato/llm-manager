@@ -217,6 +217,7 @@ final class SessionHubTests: XCTestCase {
         XCTAssertEqual(s.status, .permission)
         XCTAssertEqual(s.statusSource, .hook)
         XCTAssertEqual(s.statusDetail, "Bash: テストを実行", "同じツールなら説明を添える")
+        XCTAssertEqual(s.permissionTool, "Bash")
         XCTAssertEqual(s.attentionSince, hookAt)
         XCTAssertTrue(feedTexts(events).contains("権限の確認待ち: Bash: テストを実行"))
 
@@ -227,6 +228,7 @@ final class SessionHubTests: XCTestCase {
         s = try await required(hub)
         XCTAssertEqual(s.status, .waiting)
         XCTAssertEqual(s.statusDetail, "Claude is waiting for your input")
+        XCTAssertNil(s.permissionTool)
         XCTAssertEqual(s.attentionSince, hookAt)
 
         // 未知の通知はフィードに出す（フック層が効いていないことに気づけるように）。状態は変えない。

@@ -785,6 +785,8 @@ public actor SessionHub {
                 statusSource: source,
                 statusDetail: detail,
                 attentionSince: Attention.needsAttention(status) ? (state.attentionSince ?? state.hookAt) : nil,
+                permissionTool: status == .permission && state.hookStatus == .permission && state.hookTool?.isEmpty == false
+                    ? state.hookTool : nil,
                 entrypoint: state.raw.entrypoint,
                 version: state.raw.version,
                 startedAt: state.raw.startedAt,

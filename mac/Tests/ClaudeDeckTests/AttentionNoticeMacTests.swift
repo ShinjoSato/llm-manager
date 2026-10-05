@@ -3,10 +3,10 @@ import XCTest
 @testable import MonitorKit
 
 final class AttentionNoticeSourceTests: XCTestCase {
-    private func candidate(status: SessionStatus, ended: Bool = false, detail: String? = nil,
+    private func candidate(status: SessionStatus, ended: Bool = false, hookTool: String? = nil, detail: String? = nil,
                            tools: [String] = []) -> AttentionCandidate? {
         AttentionNoticeSource.candidate(roomId: "h:1", sessionId: "s1", name: "mirio", status: status, ended: ended,
-                                        statusDetail: detail, permissionToolNames: tools)
+                                        hookToolName: hookTool, statusDetail: detail, permissionToolNames: tools)
     }
 
     func testOnlyAttentionStatusesBecomeCandidates() {
@@ -21,16 +21,49 @@ final class AttentionNoticeSourceTests: XCTestCase {
         XCTAssertNil(candidate(status: .permission, ended: true))
     }
 
-    func testToolNameComesFromChannelsThenFromTheDetailHead() {
-        XCTAssertEqual(candidate(status: .permission, detail: "Bash: x", tools: ["Edit"])?.toolName, "Edit")
-        XCTAssertEqual(candidate(status: .permission, detail: "Bash: git push --force")?.toolName, "Bash")
+    func testToolNameComesFromChannelsThenHookThenPermissionMessage() {
+        XCTAssertEqual(candidate(status: .permission, hookTool: "Bash", detail: "Bash: x", tools: ["Edit"])?.toolName, "Edit")
+        XCTAssertEqual(candidate(status: .permission, hookTool: "Bash", detail: "Bash: git push --force")?.toolName, "Bash")
+        XCTAssertEqual(candidate(status: .permission, detail: "Claude needs your permission to use Write.")?.toolName, "Write")
+        // フックの tool_name が無い時、補足の頭の語はツール名と見分けられないので使わない。
+        XCTAssertNil(candidate(status: .permission, detail: "Bash: git push --force")?.toolName)
+        XCTAssertNil(candidate(status: .permission, detail: "Error: rate limited")?.toolName)
+        XCTAssertNil(candidate(status: .permission, detail: "foo.env")?.toolName)
+        XCTAssertNil(candidate(status: .permission, hookTool: "rm -rf /")?.toolName)
         XCTAssertNil(candidate(status: .permission, detail: "削除してよいですか")?.toolName)
-        // 入力待ちの補足（通知文）は使わない。
-        XCTAssertNil(candidate(status: .waiting, detail: "Claude is waiting for your input")?.toolName)
+        // 権限待ち以外ではツール名を付けない。
+        XCTAssertNil(candidate(status: .waiting, hookTool: "Bash", detail: "Claude needs your permission to use Bash")?.toolName)
+        XCTAssertNil(candidate(status: .error, detail: "Error: x")?.toolName)
+    }
+
+    func testRoomNameIsTheFolderOrTheRegisteredProject() {
+        XCTAssertEqual(AttentionNoticeSource.roomName(hostedProjectName: "mirio", project: "repo", cwd: "/a/repo"), "mirio")
+        XCTAssertEqual(AttentionNoticeSource.roomName(hostedProjectName: nil, project: "repo", cwd: "/a/repo"), "repo")
+        XCTAssertEqual(AttentionNoticeSource.roomName(hostedProjectName: nil, project: "", cwd: "/a/folder/"), "folder")
+        XCTAssertEqual(AttentionNoticeSource.roomName(hostedProjectName: nil, project: nil, cwd: "/"), "")
+    }
+
+    @MainActor
+    func testExternalRoomNameIgnoresTheSessionName() {
+        // セッション名（会話から付くことがある）ではなくフォルダ名を載せる。
+        let snapshot = SessionSnapshot(sessionId: "s1", pid: 1, alive: true, name: "fix secret-token leak", project: "sandora",
+                                       cwd: "/Users/x/sandora", branch: nil, title: nil, lastPrompt: nil, status: .waiting,
+                                       statusSource: .hook, statusDetail: nil, entrypoint: nil, version: nil, startedAt: 0,
+                                       lastActivityAt: nil, currentTool: nil, currentSkill: nil, currentAction: nil, tokens: nil,
+                                       agents: [], canReceive: false, xcodeProject: nil)
+        let name = AttentionNoticeSource.roomName(hostedProjectName: nil, project: snapshot.project, cwd: snapshot.cwd)
+        XCTAssertEqual(name, "sandora")
+        let c = AttentionNoticeSource.candidate(roomId: "e:s1", sessionId: "s1", name: name, status: snapshot.status, ended: false,
+                                                hookToolName: nil, statusDetail: nil, permissionToolNames: [])!
+        var planner = AttentionNoticePlanner(config: .init(settle: 0, cooldown: 0), macName: "Mac")
+        guard case .save(let notice) = planner.update([c], now: 0).first else { return XCTFail() }
+        for case .string(let value) in AttentionNoticeSchema.fields(of: notice).values {
+            XCTAssertFalse(value.contains("secret"), value)
+        }
     }
 
     func testSummaryCarriesNoDetailText() {
-        let c = candidate(status: .permission, detail: "Bash: cat ~/.ssh/id_ed25519")!
+        let c = candidate(status: .permission, hookTool: "Bash", detail: "Bash: cat ~/.ssh/id_ed25519")!
         var planner = AttentionNoticePlanner(config: .init(settle: 0, cooldown: 0), macName: "Mac")
         guard case .save(let notice) = planner.update([c], now: 0).first else { return XCTFail() }
         XCTAssertEqual(notice.summary, "権限の確認を待っています（Bash）")

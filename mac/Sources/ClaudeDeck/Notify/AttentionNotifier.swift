@@ -23,6 +23,7 @@ final class AttentionNotifier {
     @ObservationIgnored private var planner = AttentionNoticePlanner(macName: RemoteAccessController.computerName())
     @ObservationIgnored private var sync: AttentionNoticeSync?
     @ObservationIgnored private var timer: Task<Void, Never>?
+    @ObservationIgnored private var drain: Task<Void, Never>?
     @ObservationIgnored private let availability: CloudKitAvailability
 
     private static let enabledKey = "attentionNotice.enabled"
@@ -44,7 +45,7 @@ final class AttentionNotifier {
         refreshState()
         timer = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.tick()
+                self?.tick()
                 try? await Task.sleep(for: Self.interval)
             }
         }
@@ -67,21 +68,32 @@ final class AttentionNotifier {
         refreshState()
     }
 
-    private func tick() async {
+    private func tick() {
         guard let sync else { return }
         // 監視が止まっている間の一覧は古いので、要対応の移り変わりとして読まない。
         if enabled, let model, model.store.connection.isConnected {
             sync.submit(planner.update(candidates(model), now: Date().timeIntervalSince1970 * 1000))
         }
-        await sync.tick()
+        // iCloud の応答を待つ間も判定は毎秒続ける（送信は別の流れで、前の送信が終わるまで重ねない）。
+        if drain == nil {
+            drain = Task { [weak self] in
+                await sync.tick()
+                self?.drain = nil
+                self?.refreshState()
+            }
+        }
         refreshState()
     }
 
     private func candidates(_ model: ChatModel) -> [AttentionCandidate] {
         model.rooms.compactMap { room in
-            AttentionNoticeSource.candidate(roomId: room.id.string, sessionId: room.sessionId, name: room.name, status: room.status,
-                                            ended: room.hosted?.end != nil, statusDetail: room.snapshot?.statusDetail,
-                                            permissionToolNames: model.monitorPermissions(for: room).map(\.toolName))
+            AttentionNoticeSource.candidate(
+                roomId: room.id.string, sessionId: room.sessionId,
+                name: AttentionNoticeSource.roomName(hostedProjectName: room.hosted?.project.name,
+                                                     project: room.snapshot?.project, cwd: room.cwd),
+                status: room.status, ended: room.hosted?.end != nil, hookToolName: room.snapshot?.permissionTool,
+                statusDetail: room.snapshot?.statusDetail,
+                permissionToolNames: model.monitorPermissions(for: room).map(\.toolName))
         }
     }
 
