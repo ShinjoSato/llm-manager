@@ -166,9 +166,7 @@ struct RemoteAccessView: View {
                 if let image = QRCodeImage.make(offer.url.absoluteString) {
                     Image(nsImage: image)
                         .interpolation(.none)
-                        .resizable()
-                        .frame(width: 220, height: 220)
-                        .background(Color.white)
+                        .accessibilityLabel("ペアリング用の QR")
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("iPhone の claude-deck アプリで読み取ってください。")
@@ -242,15 +240,21 @@ struct RemoteAccessView: View {
     }
 }
 
-/// QR の画像（拡大してもぼけないよう整数倍で描く）。
+/// QR の画像。生成器の余白は 1 マスしかなく暗いウィンドウでは読めないので、規格どおり 4 マスの白い余白を足し、1 マスを整数ポイントで描く。
 enum QRCodeImage {
-    static func make(_ text: String, modulePixels: CGFloat = 8) -> NSImage? {
+    static let quietModules = 4
+
+    static func make(_ text: String, modulePoints: Int = 5, scale: Int = 2) -> NSImage? {
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(text.utf8)
-        filter.correctionLevel = "M"
+        filter.correctionLevel = "L"
         guard let output = filter.outputImage else { return nil }
-        let scaled = output.transformed(by: CGAffineTransform(scaleX: modulePixels, y: modulePixels))
-        guard let cg = CIContext().createCGImage(scaled, from: scaled.extent) else { return nil }
-        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        let pixels = CGFloat(modulePoints * scale)
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: pixels, y: pixels))
+        let margin = pixels * CGFloat(quietModules - 1)
+        let canvas = scaled.extent.insetBy(dx: -margin, dy: -margin)
+        let padded = scaled.composited(over: CIImage(color: .white).cropped(to: canvas))
+        guard let cg = CIContext().createCGImage(padded, from: canvas) else { return nil }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width / scale, height: cg.height / scale))
     }
 }

@@ -5,6 +5,7 @@ import SwiftUI
 struct PairingView: View {
     @Bindable var model: AppModel
     @State private var scanning = false
+    @State private var scanned: String?
 
     var body: some View {
         ScrollView {
@@ -71,10 +72,15 @@ struct PairingView: View {
         }
         .scrollIndicators(.never)
         .background(DeckTheme.background.ignoresSafeArea())
-        .fullScreenCover(isPresented: $scanning) {
+        // カメラ画面を閉じる途中に確認のシートを出すと iOS が表示を断るので、閉じ終わってから渡す。
+        .fullScreenCover(isPresented: $scanning, onDismiss: {
+            guard let text = scanned else { return }
+            scanned = nil
+            model.offerLink(text, source: .camera)
+        }) {
             QRScannerScreen { text in
+                scanned = text
                 scanning = false
-                model.offerLink(text, source: .camera)
             } onCancel: {
                 scanning = false
             }
