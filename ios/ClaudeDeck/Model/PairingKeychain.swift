@@ -12,7 +12,7 @@ struct PairingKeychain {
         case status(OSStatus)
     }
 
-    /// バンドル ID から作る（今の版と同じバンドル ID なら、前に保存したペアリングをそのまま読める）。
+    /// バンドル ID から作る（バンドル ID が同じなら保存済みのペアリングを読める）。
     static func serviceName(suffix: String, bundle: Bundle = .main) -> String {
         "\(bundle.bundleIdentifier ?? "claude-deck.ios").\(suffix)"
     }

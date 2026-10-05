@@ -662,6 +662,7 @@ cp config/Local.example.xcconfig config/Local.xcconfig   # 雛形を写して自
 | `DECK_BUNDLE_PREFIX` | バンドル ID の頭。mac はそのまま、iPhone は `.ios` / `.iosTests` を付ける | `local.claude-deck` |
 | `DECK_ICLOUD_CONTAINER` | 要対応の通知に使う iCloud コンテナ | 空（通知は無効） |
 
+- **既に使っている環境では、先に Local.xcconfig に今までの値を書く**。無いまま作るとバンドル ID が `local.claude-deck` に変わり、mac の設定（UserDefaults）・オートメーションの許可・iPhone のペアリングが引き継がれない。
 - Local.xcconfig が無くても、シミュレータ向けの iPhone ビルド・テストと、mac の ad-hoc の `.app` は作れる。
 - bundle.sh では環境変数 `CLAUDE_DECK_TEAM_ID` / `CLAUDE_DECK_BUNDLE_PREFIX` / `CLAUDE_DECK_ICLOUD_CONTAINER` が（空でも）優先する。
 - iPhone のペアリングはキーチェーンに「バンドル ID + `.pairing`」で置くので、`DECK_BUNDLE_PREFIX` を変えるとペアリングし直しになる。

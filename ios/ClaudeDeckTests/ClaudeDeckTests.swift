@@ -91,7 +91,7 @@ final class PairingKeychainTests: XCTestCase {
         XCTAssertNil(keychain.load())
     }
 
-    /// 既定のサービス名は「バンドル ID + .pairing」（前の版が決め打ちしていた名前と同じ形で、保存済みのペアリングを読める）。
+    /// 既定のサービス名は「バンドル ID + .pairing」（バンドル ID が同じなら保存済みのペアリングを読める）。
     func testDefaultServiceFollowsTheBundleIdentifier() throws {
         let bundleId = try XCTUnwrap(Bundle.main.bundleIdentifier)
         XCTAssertFalse(bundleId.contains("$("))

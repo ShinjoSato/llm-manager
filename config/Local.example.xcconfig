@@ -1,5 +1,5 @@
 // 手元の署名・識別子。このファイルを同じフォルダに Local.xcconfig という名前で写し、自分の値を書く（Local.xcconfig は git で追跡しない）。
-// 書かなかったキーは Deck.xcconfig の既定値のまま。mac/scripts/bundle.sh も読むので、`KEY = VALUE` と `//` のコメントだけで書く。
+// 書かなかったキーは Deck.xcconfig の既定値のまま。mac/scripts/bundle.sh も読むので、`KEY = VALUE` と `//` のコメントだけで書く（値に `$(…)`・条件付きのキー `KEY[sdk=…]`・`#include` は bundle.sh が読まない）。
 
 // Apple Developer のチーム ID（10 文字）。developer.apple.com → Membership、または Xcode の Signing & Capabilities で分かる。
 // 空のままなら iPhone の実機向けは署名できず、mac の .app は ad-hoc 署名になる。
