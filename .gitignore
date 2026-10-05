@@ -17,6 +17,8 @@ mac/Resources/*.provisionprofile
 
 # Claude Code の個人設定と作業用（agent の隔離 worktree）
 .claude/settings.local.json
+# 開発フロー（developer-plugin）の設定。GitHub の ID を含むので手元で持つ（雛形は github-project.example.json）。
+.claude/github-project.json
 .claude/worktrees/
 
 # Xcode のユーザー別データ
