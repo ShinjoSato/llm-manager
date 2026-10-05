@@ -79,8 +79,10 @@ ios/
 - 通知を開く: `DeckAppDelegate` が `ck.qry.af` の `roomId` / `sessionId` を読み、`AppModel.openFromNotice` が一覧のルームへ進む（mac の起動し直しで
   ホスト中のルームの id が替わっていればセッションで辿る）。未接続なら預かって案内を出し、つながって一覧が届いた時に開く（無ければ「見つかりません」）。
 - アプリを開いている時は、今見ている会話のルームの知らせは出さない（`AttentionNoticePresentation`）。
-- エンタイトルメント `ios/ClaudeDeck.entitlements`（`aps-environment`・コンテナ・CloudKit）。`CKContainer` は使う時まで作らない（エンタイトルメントの無い
-  ビルドでも、通知を入れない限り落ちない）。
+- エンタイトルメント `ios/ClaudeDeck.entitlements`（`aps-environment`・コンテナ・CloudKit）。`CKContainer` は作った時点で無いと落ちるので、作る前に
+  実行ファイルの署名（シミュレータ向けは `__TEXT,__entitlements`）からエンタイトルメントを読んで確かめる（`DeckCore` の `ExecutableEntitlements`。
+  TestFlight / App Store の版は embedded.mobileprovision を持たないので署名を読む）。無い版では通知を入れられず、設定に理由を出す（入れていた設定は残す）。
+- 通知から開くルームを預かるのは 30 分まで（過ぎてからつながっても開かない）。
 
 ## ビルド・テスト
 

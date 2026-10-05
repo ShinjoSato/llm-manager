@@ -203,13 +203,18 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
 
 - **mac（書き手）**: `ClaudeDeck/Notify/AttentionNotifier.swift` が 1 秒ごとにルーム一覧（`ChatModel.rooms`。ホスト中の端末の権限プロンプト・選択待ちも含む）を見て、
   `AttentionNoticePlanner`（DeckCore）で書く・消すを決め、`AttentionNoticeSync`（DeckCore）が `CloudKitNoticeStore`（MonitorKit）へ順に送る。
-  - 書く時機: 要対応が **5 秒**続いたら（mac の前ですぐ答えたものは送らない）。その時に待っている他のルームも **1 件にまとめ**、見出しは一番新しいルーム（「mirio ほか 2 件」）。
+  - 書く時機: 要対応が **5 秒**続いたら（mac の前ですぐ答えたものは送らない）。その時に待っている他のルームも **1 件にまとめ**、見出し（と開くルーム）は
+    5 秒続いたルームの中で一番新しいもの（「mirio ほか 2 件」。まだ 5 秒経っていないルームは「ほか」に回す）。
   - 1 件書いたら **30 秒**は次を書かず、その間に増えた要対応は明けた時に 1 件にまとめる。
-  - 同じ要対応（待ち始めから解消まで。権限待ち→入力待ちのように種類が変わっても同じ）は 1 回だけ。まとめた全ルームが解消したらレコードを消す。
+  - 同じ要対応（待ち始めから解消まで。権限待ち→入力待ちのように種類が変わっても同じ）は 1 回だけ。解消は **3 秒**続けて要対応でなくなってから確定する
+    （その間に戻れば同じ要対応のまま。状態の揺れで消して出し直さない）。まとめた全ルームが解消したらレコードを消す。
+  - ルーム名はホスト中のルームなら登録したプロジェクト名、外部セッションはフォルダ名（`~/.claude/sessions/<pid>.json` の name は会話から付くことがあるので使わない）。
   - レコード（型 `AttentionNotice`）: `roomId`・`sessionId`・`roomName`・`kind`（permission / waiting / error）・`summary`（定型文。権限待ちはツール名だけ添える）・
     `title`・`body`・`since`（epoch ミリ秒）・`roomIds`・`macName`・`version`。**会話の本文・一覧の一行・タイトル・ツールの入力や説明は載せない**
-    （ツール名は `Bash`・`mcp__x__y` の形だけ通す。`AttentionNoticeText`）。
-  - 書き込みの失敗は 2・4・8…最大 300 秒の間隔で静かに送り直す。書いた名前は UserDefaults（`attentionNotice.written`）に覚え、次の起動で残りを消す。
+    （ツール名は権限待ちの時だけ、Channels・フックの `tool_name`・通知文 `… permission to use X` のどれかから取り、`Bash`・`mcp__x__y` の形だけ通す。`AttentionNoticeText`）。
+  - 書き込みの失敗は 2・4・8…最大 300 秒の間隔で静かに送り直す。iCloud の判定は 1 秒ごとに続け、送信は別に流す（応答待ちで判定を止めない）。
+  - 書く名前は**送る前に** UserDefaults（`attentionNotice.written`）に覚える（失敗・タイムアウトでも実は書けていることがあるため）。一度でも送ろうとした知らせは
+    解消したら必ず消しに行き、送っている最中に終了しても次の起動で消す。
   - 状態は「iPhone 連携」ウィンドウの下の「要対応を iCloud 経由で iPhone に知らせる」（入り切り・既定は入）に小さく出す。切ると置いてある知らせも消す。
   - **エンタイトルメントが無い起動（`swift run`・ad-hoc 署名の `.app`）では無効**（`CKContainer` を作る前に `SecTask` で
     `com.apple.developer.icloud-services` / `icloud-container-identifiers` を確かめ、無ければ理由を出す）。
@@ -222,12 +227,14 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
 
 - mac: `mac/Resources/claude-deck.entitlements`（`com.apple.application-identifier` = `ZCYQMLA9HP.com.shinjosato.claude-deck`・team-identifier・
   `icloud-container-identifiers`・`icloud-services` = CloudKit）。mac は書くだけなので `aps-environment` は入れない（プロファイルに無いと起動できなくなるため）。
-- `scripts/bundle.sh` は次の順でこのアプリ用（Platform が OSX・App ID 一致・コンテナ入り・期限内）のプロファイルを探し、見つかれば
-  `Contents/embedded.provisionprofile` に入れて **Apple Development**（`CLAUDE_DECK_SIGN_IDENTITY`、既定はキーチェーンの最初の `Apple Development:`）で署名する
-  （チャネルはエンタイトルメント無しで先に署名）。見つからなければ従来どおり ad-hoc（iCloud は無効）。`--adhoc` で強制。
+- `scripts/bundle.sh` は次の順でこのアプリ用のプロファイルを探す。条件は Platform が OSX・App ID 一致・コンテナ入り・期限内・この Mac の Provisioning UDID が
+  `ProvisionedDevices` に入っている（`ProvisionsAllDevices` なら不要）・`DeveloperCertificates` の SHA-1 がキーチェーンの `Apple Development:` の
+  署名 ID（`security find-identity -v -p codesigning`）と一致する。見つかれば `Contents/embedded.provisionprofile` に入れて、**一致した証明書**で署名する
+  （チャネルはエンタイトルメント無しで先に署名。`CLAUDE_DECK_SIGN_IDENTITY` でハッシュか名前の一部に絞れる）。見つからなければ従来どおり ad-hoc（iCloud は無効）。
+  `--adhoc` で強制。`--profile` / `CLAUDE_DECK_PROFILE` で指定したものが合わない時は理由を出して止まる（ad-hoc には落とさない）。
   1. `--profile <path>` / 環境変数 `CLAUDE_DECK_PROFILE`
   2. `mac/Resources/claude-deck.provisionprofile`（git 管理外）
-  3. `~/Library/Developer/Xcode/UserData/Provisioning Profiles/*.provisionprofile`（新しい順）
+  3. `~/Library/Developer/Xcode/UserData/Provisioning Profiles/` と `~/Library/MobileDevice/Provisioning Profiles/` の `*.provisionprofile` / `*.mobileprovision`（新しい順）
 - iOS: `ios/ClaudeDeck.entitlements`（`aps-environment` = development・コンテナ・CloudKit）。`CODE_SIGN_ENTITLEMENTS` に設定済み。
 
 ### ユーザーが行う登録（Apple Developer。コンテナは作ると消せない）
