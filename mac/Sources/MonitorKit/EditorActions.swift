@@ -1,6 +1,6 @@
 import Foundation
 
-/// 見出しの「VS Code」「Xcode」「閉じる」を押した結果。見出しに短く出す。
+/// 見出しの「VS Code」「GitHub」「Xcode」「閉じる」を押した結果。見出しに短く出す。
 public enum EditorOutcome: Sendable, Equatable {
     case opened
     /// 未保存の変更があると Xcode が確認を出すので、閉じたとは断定しない。
