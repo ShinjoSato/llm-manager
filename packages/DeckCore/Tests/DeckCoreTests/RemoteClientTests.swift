@@ -247,6 +247,54 @@ final class RemoteMessagesTests: XCTestCase {
         XCTAssertFalse(RemoteIssue.from(RemoteClientError.pinMismatch).retryable)
     }
 
+    func testOfflineErrorIsSplitByPathCheck() {
+        let offline = RemoteClientError.transport(.notConnectedToInternet)
+        XCTAssertTrue(RemoteIssue.needsPathCheck(offline))
+        XCTAssertTrue(RemoteIssue.needsPathCheck(RemoteClientError.transport(.dataNotAllowed)))
+        XCTAssertFalse(RemoteIssue.needsPathCheck(RemoteClientError.transport(.timedOut)))
+        XCTAssertFalse(RemoteIssue.needsPathCheck(RemoteClientError.pinMismatch))
+        XCTAssertFalse(RemoteIssue.needsPathCheck(URLError(.notConnectedToInternet)), "RemoteClient を通ったものだけ")
+
+        // 許可が無いと確かめられた時は、Wi-Fi の判定に関わらず許可を案内する。
+        for wifi in [true, false, nil] as [Bool?] {
+            let denied = RemoteIssue.diagnose(offline, path: .localNetworkDenied, onWiFi: wifi)
+            XCTAssertEqual(denied, .localNetworkDenied)
+            XCTAssertTrue(denied.needsSettings)
+            XCTAssertTrue(denied.retryable)
+            XCTAssertFalse(denied.needsPairing)
+        }
+        // 経路が無い・Wi-Fi でないと分かっている時は Wi-Fi。
+        XCTAssertEqual(RemoteIssue.diagnose(offline, path: .notAvailable, onWiFi: true), .offline)
+        XCTAssertEqual(RemoteIssue.diagnose(offline, path: .inconclusive, onWiFi: false), .offline)
+        XCTAssertEqual(RemoteIssue.diagnose(offline, path: nil, onWiFi: false), .offline)
+        XCTAssertFalse(RemoteIssue.offline.needsSettings)
+        XCTAssertTrue(RemoteIssue.offline.retryable)
+        // 確かめられなければ言い切らない。
+        XCTAssertEqual(RemoteIssue.diagnose(offline, path: .inconclusive, onWiFi: true), .ambiguousOffline)
+        XCTAssertEqual(RemoteIssue.diagnose(offline, path: nil, onWiFi: nil), .ambiguousOffline)
+        XCTAssertEqual(RemoteIssue.from(offline), .ambiguousOffline)
+        XCTAssertFalse(RemoteIssue.ambiguousOffline.needsSettings)
+        // 他のエラーは経路の判定に左右されない。
+        let timedOut = RemoteClientError.transport(.timedOut)
+        XCTAssertEqual(RemoteIssue.diagnose(timedOut, path: .localNetworkDenied, onWiFi: false), RemoteIssue.from(timedOut))
+        XCTAssertEqual(RemoteIssue.diagnose(RemoteClientError.pinMismatch, path: .notAvailable, onWiFi: false).kind, .pinMismatch)
+    }
+
+    func testOfflineTexts() {
+        XCTAssertEqual(RemoteIssue.localNetworkDenied.title, "ローカルネットワークの使用が許可されていません")
+        XCTAssertEqual(RemoteIssue.localNetworkDenied.detail, "設定 → アプリ → claude-deck →『ローカルネットワーク』をオンにして、アプリに戻ってください。")
+        XCTAssertFalse(RemoteIssue.localNetworkDenied.title.contains("Wi-Fi"), "許可が原因の時に Wi-Fi のせいにしない")
+        XCTAssertEqual(RemoteIssue.offline.title, "Wi-Fi につながっていません")
+        XCTAssertEqual(RemoteIssue.offline.detail, "iPhone を Mac と同じ Wi-Fi につないでください。")
+        XCTAssertFalse(RemoteIssue.offline.title.contains("許可"))
+        let ambiguous = RemoteIssue.ambiguousOffline
+        XCTAssertTrue(ambiguous.title.contains("ローカルネットワークの許可") && ambiguous.title.contains("Wi-Fi"), "両方を挙げる")
+        XCTAssertTrue(ambiguous.detail.contains("ローカルネットワーク") && ambiguous.detail.contains("同じ Wi-Fi"))
+        XCTAssertNotEqual(ambiguous.title, RemoteIssue.offline.title)
+        // 張り直しの途中で切れたのか最初からつながらないのか分からないので、片方に言い切らない。
+        XCTAssertTrue(RemoteIssue.from(RemoteClientError.transport(.secureConnectionFailed)).title.contains("か、"))
+    }
+
     func testBackoffGrowsAndCaps() {
         var backoff = RemoteBackoff(base: 1, cap: 30)
         let delays = (0..<8).map { _ in backoff.next(jitter: 0.5) }

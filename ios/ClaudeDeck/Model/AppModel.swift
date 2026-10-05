@@ -40,12 +40,27 @@ final class AppModel {
     /// 確認待ちのペアリング（読み取った・開かれたリンク）。確認するまで使わない。
     var pendingOffer: PairingOffer?
     private(set) var pairingInProgress = false
-    var pairingError: String?
+    var pairingError: PairingError?
     /// 今開いている会話（未読を数えない・取り直す対象）。
     private(set) var openSessionId: String?
-    private(set) var onWiFi = true
+    /// 端末全体の経路が Wi-Fi（有線）か。最初の判定が届くまでは nil。
+    private(set) var onWiFi: Bool?
     /// 起動直後に開くルーム（画面確認用）。
     var launchRoomId: String?
+
+    /// ペアリングの失敗。設定へ導くかを決めるため、接続の失敗なら理由も持つ。
+    struct PairingError: Equatable {
+        var text: String
+        var issue: RemoteIssue?
+
+        init(_ text: String) { self.text = text }
+        init(issue: RemoteIssue) {
+            text = issue.title + "\n" + issue.detail
+            self.issue = issue
+        }
+
+        var needsSettings: Bool { issue?.needsSettings == true }
+    }
 
     struct Notice: Equatable {
         var text: String
@@ -151,7 +166,8 @@ final class AppModel {
                 issue = RemoteIssue(kind: .unreachable, title: "Mac が接続を閉じました", detail: RemoteIssue.unreachableHelp)
             } catch {
                 guard isCurrent(generation), !(error is CancellationError) else { return }
-                issue = RemoteIssue.from(error)
+                issue = await diagnose(error, host: host, port: pairing.port)
+                guard isCurrent(generation) else { return }
                 if issue.needsPairing {
                     connection = .failed(issue)
                     return
@@ -190,6 +206,13 @@ final class AppModel {
         }
     }
 
+    /// 許可と Wi-Fi のどちらか分からないエラーの時だけ、接続先への経路を確かめて言い分ける。
+    private func diagnose(_ error: Error, host: String, port: Int) async -> RemoteIssue {
+        guard RemoteIssue.needsPathCheck(error) else { return RemoteIssue.from(error) }
+        let path = await PathProbe.check(host: host, port: port)
+        return RemoteIssue.diagnose(error, path: path, onWiFi: onWiFi)
+    }
+
     private func monitorNetwork() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let wifi = path.status == .satisfied && (path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet))
@@ -214,7 +237,7 @@ final class AppModel {
     func offerLink(_ text: String, source: PairingOffer.Source) {
         switch PairingOffer.parse(text, source: source) {
         case .success(let offer): self.offer(offer)
-        case .failure(let error): pairingError = error.message
+        case .failure(let error): pairingError = PairingError(error.message)
         }
     }
 
@@ -222,7 +245,7 @@ final class AppModel {
     func confirmPairing(_ offer: PairingOffer) async {
         let payload = offer.payload
         if let problem = payload.addressProblem ?? payload.problem(now: Date().timeIntervalSince1970 * 1000) {
-            pairingError = problem
+            pairingError = PairingError(problem)
             return
         }
         pairingInProgress = true
@@ -237,10 +260,9 @@ final class AppModel {
             pairingError = nil
             adopt(pairing)
         } catch let error as PairingKeychain.Failure {
-            pairingError = "キーチェーンに保存できませんでした（\(error)）。"
+            pairingError = PairingError("キーチェーンに保存できませんでした（\(error)）。")
         } catch {
-            let issue = RemoteIssue.from(error)
-            pairingError = issue.title + "\n" + issue.detail
+            pairingError = PairingError(issue: await diagnose(error, host: payload.host, port: payload.port))
         }
     }
 

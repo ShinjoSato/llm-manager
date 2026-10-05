@@ -53,17 +53,17 @@ final class PairingLinkTests: XCTestCase {
         let model = AppModel(keychain: keychain, startMonitoring: false)
         model.offerLink("claude-deck://pair?v=1", source: .openedURL)
         XCTAssertNil(model.pendingOffer)
-        XCTAssertEqual(model.pairingError, PairingLinkError.malformed.message)
+        XCTAssertEqual(model.pairingError?.text, PairingLinkError.malformed.message)
     }
 
     func testExpiredAndNewerQRAreRefusedBeforeSending() async {
         let model = AppModel(keychain: keychain, startMonitoring: false)
         let expired = try! PairingOffer.parse(pairingURL(exp: 1), source: .camera).get()
         await model.confirmPairing(expired)
-        XCTAssertEqual(model.pairingError, "この QR は期限切れです。mac で新しい QR を出してください。")
+        XCTAssertEqual(model.pairingError?.text, "この QR は期限切れです。mac で新しい QR を出してください。")
         let newer = try! PairingOffer.parse(pairingURL(version: RemoteAPI.version + 1), source: .camera).get()
         await model.confirmPairing(newer)
-        XCTAssertTrue(model.pairingError?.contains("iPhone アプリを更新") == true)
+        XCTAssertTrue(model.pairingError?.text.contains("iPhone アプリを更新") == true)
         XCTAssertNil(model.pairing)
     }
 }
@@ -171,5 +171,33 @@ final class SharedClientOnIOSTests: XCTestCase {
             XCTAssertNotNil(text, code)
             XCTAssertFalse(text!.contains(code), code)
         }
+    }
+}
+
+/// 許可と Wi-Fi のどちらが原因かの言い分けと、その出し方。
+@MainActor
+final class OfflineDiagnosisTests: XCTestCase {
+    func testWiFiNoteDoesNotContradictDiagnosis() {
+        XCTAssertEqual(ConnectionBanner.wifiNote(for: .localNetworkDenied, onWiFi: false), "", "許可が無い時に Wi-Fi のせいにしない")
+        XCTAssertEqual(ConnectionBanner.wifiNote(for: .offline, onWiFi: false), "", "題と重ねない")
+        XCTAssertEqual(ConnectionBanner.wifiNote(for: .ambiguousOffline, onWiFi: true), "")
+        XCTAssertEqual(ConnectionBanner.wifiNote(for: .ambiguousOffline, onWiFi: nil), "", "判定が届く前は言わない")
+        XCTAssertTrue(ConnectionBanner.wifiNote(for: .ambiguousOffline, onWiFi: false).contains("Wi-Fi"))
+    }
+
+    func testPairingErrorKnowsWhenSettingsHelp() {
+        let denied = AppModel.PairingError(issue: .localNetworkDenied)
+        XCTAssertTrue(denied.needsSettings)
+        XCTAssertTrue(denied.text.contains("ローカルネットワーク") && denied.text.contains("設定"))
+        XCTAssertFalse(AppModel.PairingError(issue: .offline).needsSettings)
+        XCTAssertFalse(AppModel.PairingError(issue: .ambiguousOffline).needsSettings)
+        XCTAssertFalse(AppModel.PairingError("この QR は期限切れです。").needsSettings)
+    }
+
+    func testProbeDoesNotGuessWhenPathIsUsable() async {
+        // 誰も待ち受けていないループバックは拒否されるだけで、経路の理由は無い。
+        let reason = await PathProbe.check(host: "127.0.0.1", port: 1, timeout: 2)
+        XCTAssertEqual(reason, .inconclusive)
+        XCTAssertEqual(PathProbe.reason(nil), .inconclusive)
     }
 }

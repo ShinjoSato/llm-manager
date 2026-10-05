@@ -76,6 +76,10 @@ public struct RemoteIssue: Sendable, Equatable {
     public enum Kind: Sendable, Equatable {
         /// mac に届かない（別の Wi-Fi・スリープ・口が無効・ローカルネットワークの許可）。
         case unreachable
+        /// iPhone の「ローカルネットワーク」の許可が無い（経路の判定で確かめた時だけ）。
+        case localNetworkDenied
+        /// iPhone が Wi-Fi につながっていない（経路の判定で確かめた時だけ）。
+        case offline
         /// 回数制限・接続数の上限で切られた。
         case throttled
         /// 証明書の指紋が違う。
@@ -93,7 +97,9 @@ public struct RemoteIssue: Sendable, Equatable {
     /// 再ペアリングしないと直らない。
     public var needsPairing: Bool { kind == .pinMismatch || kind == .revoked }
     /// 自動で張り直して意味がある。
-    public var retryable: Bool { kind == .unreachable || kind == .throttled || kind == .other }
+    public var retryable: Bool { kind != .pinMismatch && kind != .revoked && kind != .incompatible }
+    /// iPhone の設定を開いてもらうと直る。
+    public var needsSettings: Bool { kind == .localNetworkDenied }
 
     public init(kind: Kind, title: String, detail: String) {
         self.kind = kind
@@ -107,6 +113,42 @@ public struct RemoteIssue: Sendable, Equatable {
     ・Mac の claude-deck で「iPhone 連携」が有効か（別のネットワークでは止まっています）
     ・iPhone の 設定 → プライバシーとセキュリティ → ローカルネットワーク で claude-deck が許可されているか
     """
+
+    public static let localNetworkDenied = RemoteIssue(
+        kind: .localNetworkDenied, title: "ローカルネットワークの使用が許可されていません",
+        detail: "設定 → アプリ → claude-deck →『ローカルネットワーク』をオンにして、アプリに戻ってください。")
+
+    public static let offline = RemoteIssue(
+        kind: .offline, title: "Wi-Fi につながっていません", detail: "iPhone を Mac と同じ Wi-Fi につないでください。")
+
+    /// 許可と Wi-Fi のどちらか確かめられなかった時。
+    public static let ambiguousOffline = RemoteIssue(
+        kind: .unreachable, title: "Mac に届きません（ローカルネットワークの許可か、Wi-Fi）",
+        detail: "iPhone の「設定 → アプリ → claude-deck → ローカルネットワーク」がオンかを確かめてください。"
+            + "オフならオンにしてアプリに戻ってください。\nWi-Fi につながっていない時は、Mac と同じ Wi-Fi につないでください。")
+
+    /// 接続先への経路を確かめた結果（Network.framework の `NWPath.UnsatisfiedReason` を写したもの）。
+    public enum PathReason: Sendable, Equatable {
+        case localNetworkDenied
+        /// 使える経路が無い。
+        case notAvailable
+        /// 経路はある（つながった）・時間切れ・その他の理由。何も言い切れない。
+        case inconclusive
+    }
+
+    /// このエラーだけでは許可と Wi-Fi のどちらが原因か分からない（iOS はローカルネットワークの許可が無い時も Wi-Fi 上で -1009 を返す）。
+    public static func needsPathCheck(_ error: Error) -> Bool {
+        guard case .transport(let code)? = error as? RemoteClientError else { return false }
+        return [.notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff].contains(code)
+    }
+
+    /// エラーと、経路の確かめ（`path`）・端末全体の Wi-Fi の判定（`onWiFi`。分からなければ nil）から理由を決める。
+    public static func diagnose(_ error: Error, path: PathReason?, onWiFi: Bool?) -> RemoteIssue {
+        guard needsPathCheck(error) else { return from(error) }
+        if path == .localNetworkDenied { return localNetworkDenied }
+        if path == .notAvailable || onWiFi == false { return offline }
+        return ambiguousOffline
+    }
 
     public static func from(_ error: Error) -> RemoteIssue {
         guard let error = error as? RemoteClientError else {
@@ -137,13 +179,10 @@ public struct RemoteIssue: Sendable, Equatable {
             switch code {
             case .networkConnectionLost, .secureConnectionFailed:
                 // 接続元が塞がれている間、mac は受け入れた時点で切る（TLS の握手もさせない）。
-                return RemoteIssue(kind: .unreachable, title: "Mac との接続が切れました",
-                                   detail: "通信が途中で切れました。失敗が続いて Mac が一時的に接続を断っている場合は、数分で戻ります。\n" + unreachableHelp)
+                return RemoteIssue(kind: .unreachable, title: "Mac との接続が切れたか、つながりませんでした",
+                                   detail: "通信が成り立たないか、途中で切れました。失敗が続いて Mac が一時的に接続を断っている場合は、数分で戻ります。\n" + unreachableHelp)
             case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
-                // iOS はローカルネットワークの許可が無い時も Wi-Fi 上でこのエラーを返す。
-                return RemoteIssue(kind: .unreachable, title: "Mac に届きません（ローカルネットワークの許可か Wi-Fi）",
-                                   detail: "iPhone の「設定 → アプリ → claude-deck → ローカルネットワーク」がオンかを確かめてください。"
-                                       + "オフならオンにしてアプリを開き直します。\nWi-Fi につながっていない時は、Mac と同じ Wi-Fi につないでください。")
+                return ambiguousOffline
             default:
                 return RemoteIssue(kind: .unreachable, title: "Mac に接続できません", detail: unreachableHelp)
             }

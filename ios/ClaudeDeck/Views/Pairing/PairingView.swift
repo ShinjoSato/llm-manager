@@ -59,7 +59,7 @@ struct PairingView: View {
                 }
 
                 if let error = model.pairingError, model.pendingOffer == nil {
-                    ErrorNote(text: error)
+                    ErrorNote(text: error.text, opensSettings: error.needsSettings)
                 }
 
                 Text("通信は同じ Wi-Fi の中だけで、Mac の証明書を QR の指紋で確かめて暗号化します。外部のサーバーは使いません。")
@@ -104,14 +104,30 @@ struct PairingView: View {
 
 struct ErrorNote: View {
     let text: String
+    var opensSettings = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(DeckTheme.error)
-            Text(text)
-                .font(DeckTheme.caption)
-                .foregroundStyle(DeckTheme.text)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                Text(text)
+                    .font(DeckTheme.caption)
+                    .foregroundStyle(DeckTheme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                if opensSettings {
+                    Button { ConnectionBanner.openSettings() } label: {
+                        Text("設定を開く")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(DeckTheme.text)
+                            .padding(.horizontal, 12)
+                            .frame(height: 32)
+                            .background(RoundedRectangle(cornerRadius: 9).fill(DeckTheme.inputSurface))
+                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(DeckTheme.inputBorder))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("open-settings")
+                }
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -156,7 +172,10 @@ struct PairingConfirmView: View {
                         .font(DeckTheme.caption)
                         .foregroundStyle(DeckTheme.tertiary)
                     if let problem { ErrorNote(text: problem) }
-                    if let error = model.pairingError { ErrorNote(text: error) }
+                    if let error = model.pairingError {
+                        ErrorNote(text: error.text + (error.needsSettings ? "\nオンにしたら、もう一度「ペアリングする」を押してください。" : ""),
+                                  opensSettings: error.needsSettings)
+                    }
                     Button {
                         Task { await model.confirmPairing(offer) }
                     } label: {

@@ -178,7 +178,7 @@ final class PairingAddressOnIOSTests: XCTestCase {
         let model = AppModel(keychain: keychain, startMonitoring: false)
         model.offerLink(link(host: "203.0.113.5"), source: .pasted)
         XCTAssertNil(model.pendingOffer)
-        XCTAssertTrue(model.pairingError?.contains("203.0.113.5") == true)
+        XCTAssertTrue(model.pairingError?.text.contains("203.0.113.5") == true)
     }
 
     func testPastedLinksAreWarnedLikeOpenedOnes() throws {
