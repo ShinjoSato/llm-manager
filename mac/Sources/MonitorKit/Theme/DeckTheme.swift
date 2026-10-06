@@ -76,10 +76,6 @@ public struct ThemePalette: Sendable, Equatable {
 
     public var avatarPalette: [UInt32]
 
-    /// ルーム一覧の枠の地。
-    public var sectionSurface: UInt32
-    /// 枠の見出しの帯（アバター色と同じ並び）。
-    public var sectionBands: [UInt32]
 
     public var cardFill: ThemeFill
     public var cardBorder: ThemeFill
@@ -89,7 +85,7 @@ public struct ThemePalette: Sendable, Equatable {
     public var permissionChip: ThemeFill
     /// 選択肢カードの今の問いのタブ。
     public var menuTabCurrent: ThemeFill
-    /// 枠の見出しの要対応バッジ（権限待ち・入力待ち）。
+    /// ディレクトリの行の要対応バッジ（権限待ち・入力待ち）。
     public var permissionBadge: ThemeFill
     public var waitingBadge: ThemeFill
     /// 「ツール N件」の地と縁（実行中は稼働の色）。
@@ -114,7 +110,6 @@ public struct ThemePalette: Sendable, Equatable {
         accent: 0x34d399, onAccent: 0x053321, onPermission: 0x053321, codeSurface: 0x0d1320, stagePanel: 0x0b111d,
         feedTool: 0x7dd3fc, feedPrompt: 0xc4b5fd, feedStatus: 0xfcd34d, feedSession: 0x6ee7b7, feedAgent: 0xf0abfc,
         avatarPalette: [0x60a5fa, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0xf87171],
-        sectionSurface: 0x0a0f1a, sectionBands: Array(repeating: 0x0a0f1a, count: 8),
         cardFill: .tint(0xfbbf24, 0.06), cardBorder: .solid(0xfbbf24), pendingCardFill: .tint(0xfbbf24, 0.04),
         permissionChip: .tint(0xfbbf24, 0.14), menuTabCurrent: .tint(0xfbbf24, 0.25),
         permissionBadge: .tint(0xfbbf24, 0.18), waitingBadge: .tint(0x7cc4ff, 0.18),
@@ -135,8 +130,6 @@ public struct ThemePalette: Sendable, Equatable {
         accent: 0xa6e9c4, onAccent: 0x0b4a2c, onPermission: 0xffffff, codeSurface: 0xebe7de, stagePanel: 0xebe7f2,
         feedTool: 0x0d639c, feedPrompt: 0x6b3fc4, feedStatus: 0x8a5100, feedSession: 0x0d6c4c, feedAgent: 0x9c3196,
         avatarPalette: [0x1c57cd, 0x732cec, 0xaf236f, 0xa83909, 0x8a5100, 0x0d6c4c, 0x0c6780, 0xad3327],
-        sectionSurface: 0xedf1f7,
-        sectionBands: [0xdce6fa, 0xe7defa, 0xf8dcea, 0xfbe3d2, 0xf8edc6, 0xd6f0e2, 0xd3eef2, 0xf8dad7],
         cardFill: .solid(0xfbefc9), cardBorder: .solid(0xe2b84f), pendingCardFill: .solid(0xfbefc9),
         permissionChip: .solid(0xf6dd99), menuTabCurrent: .solid(0xf3d888),
         permissionBadge: .solid(0xf9e2a6), waitingBadge: .solid(0xd6e4fb),

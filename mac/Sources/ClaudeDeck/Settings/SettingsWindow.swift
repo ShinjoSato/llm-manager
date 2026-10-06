@@ -12,6 +12,8 @@ enum SettingsTab: Hashable {
 @Observable
 final class SettingsNavigation {
     var tab: SettingsTab = .projects
+    /// プロジェクトタブで選ばせたいプロジェクト。タブが受け取ったら nil に戻す。
+    var focusProject: UUID?
 }
 
 /// 設定画面（⌘,）。1 つだけ持つ。
@@ -27,9 +29,10 @@ enum SettingsWindow {
         return window === candidate
     }
 
-    /// `tab` が nil なら前に開いていたタブのまま。
-    static func show(tab: SettingsTab?) {
+    /// `tab` が nil なら前に開いていたタブのまま。`project` を渡すとプロジェクトタブでそれを選ぶ。
+    static func show(tab: SettingsTab?, project: UUID? = nil) {
         if let tab { navigation.tab = tab }
+        if let project { navigation.focusProject = project }
         SettingsStore.shared.reloadIfChanged()
         if let window {
             window.makeKeyAndOrderFront(nil)
@@ -77,7 +80,7 @@ struct SettingsView: View {
                 SettingsNoticeBanner(messages: warnings, color: .yellow)
             }
             TabView(selection: $navigation.tab) {
-                ProjectSettingsTab(store: store)
+                ProjectSettingsTab(store: store, navigation: navigation)
                     .tabItem { Label("プロジェクト", systemImage: "folder") }
                     .tag(SettingsTab.projects)
                 GitHubSettingsTab(store: store)

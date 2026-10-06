@@ -5,6 +5,7 @@ import SwiftUI
 /// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・リンク。
 struct ProjectSettingsTab: View {
     let store: SettingsStore
+    let navigation: SettingsNavigation
     @State private var selection: UUID?
     @State private var deleting: ManagedProject?
 
@@ -59,6 +60,11 @@ struct ProjectSettingsTab: View {
         }
         .onAppear {
             if selection == nil { selection = store.projects.first?.id }
+        }
+        .onChange(of: navigation.focusProject, initial: true) { _, id in
+            guard let id else { return }
+            if store.projects.contains(where: { $0.id == id }) { selection = id }
+            navigation.focusProject = nil
         }
         .confirmationDialog("「\(deleting?.name ?? "")」を一覧から削除しますか？",
                             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {

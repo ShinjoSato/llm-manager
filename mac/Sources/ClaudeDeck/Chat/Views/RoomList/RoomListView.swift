@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 左カラム: ルーム一覧（検索・新規・接続状態・グループ）。
+/// 左カラム: 検索・新規・接続状態と、状態別のルームか登録ディレクトリの一覧。
 struct RoomListView: View {
     @Bindable var model: ChatModel
     @State private var showingLauncher = false
@@ -14,36 +14,9 @@ struct RoomListView: View {
             if let notice = HookServerNotice.text(for: model.store.serverState) { HookServerNotice(text: notice) }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    let items = model.listItems
-                    if items.isEmpty { emptyState }
-                    ForEach(items) { item in
-                        switch item.kind {
-                        case .header(let section, let collapsed):
-                            ProjectSectionHeader(section: section, collapsed: collapsed,
-                                                 onToggle: { model.toggleSection(section.id) },
-                                                 onLaunch: section.project.map { project in { model.launch(project) } })
-                                .padding(.top, 10)
-                        case .row(let room, let last):
-                            Button { model.select(room.id) } label: {
-                                RoomRow(room: room, selected: model.selection == room.id)
-                                    .equatable()
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu { contextMenu(for: room) }
-                            .padding(.horizontal, 4)
-                            .padding(.top, 2)
-                            .padding(.bottom, last ? 4 : 0)
-                            .background(SectionFrame(bottom: last))
-                        case .empty:
-                            Text("スレッドなし")
-                                .font(ChatTheme.caption)
-                                .foregroundStyle(ChatTheme.tertiary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(SectionFrame(bottom: true))
-                        }
+                    switch model.listMode {
+                    case .rooms: roomItems
+                    case .directories: directoryItems
                     }
                 }
                 .padding(.horizontal, 8)
@@ -56,7 +29,7 @@ struct RoomListView: View {
 
     private var header: some View {
         HStack {
-            Text("ルーム")
+            Text(model.listMode.title)
                 .font(ChatTheme.headline)
                 .foregroundStyle(ChatTheme.heading)
             Spacer()
@@ -86,7 +59,7 @@ struct RoomListView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12))
                 .foregroundStyle(ChatTheme.tertiary)
-            TextField("", text: $model.query, prompt: Text("ルームを検索").foregroundStyle(ChatTheme.tertiary))
+            TextField("", text: $model.query, prompt: Text(model.listMode == .rooms ? "ルームを検索" : "名前・パスで絞り込む").foregroundStyle(ChatTheme.tertiary))
                 .textFieldStyle(.plain)
                 .font(ChatTheme.body)
                 .foregroundStyle(ChatTheme.text)
@@ -97,6 +70,68 @@ struct RoomListView: View {
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
         .padding(.horizontal, 16)
         .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private var roomItems: some View {
+        let items = model.listItems
+        if items.isEmpty { emptyState }
+        ForEach(items) { item in
+            switch item.kind {
+            case .phase(let phase, let count):
+                sectionTitle("\(phase.title)  \(count)")
+            case .row(let room):
+                row(room)
+                    .padding(.vertical, 1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var directoryItems: some View {
+        let entries = model.directoryEntries
+        if entries.isEmpty { directoryEmptyState }
+        ForEach(entries) { entry in
+            switch entry {
+            case .directory(let directory):
+                Button { model.selectDirectory(directory.id) } label: {
+                    DirectoryRow(directory: directory, selected: model.center == .directory(directory.id))
+                        .equatable()
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Claude Code を起動") { model.launch(directory.project) }
+                    Button("Finder で表示") { model.editors.revealInFinder(directory.project.editorTarget) }
+                }
+                .padding(.vertical, 1)
+            case .inactiveHeader(let count):
+                sectionTitle("\(ProjectDirectories.inactiveTitle)  \(count)")
+            }
+        }
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(ChatTheme.tertiary)
+            .padding(.horizontal, 12)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+    }
+
+    private var directoryEmptyState: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(model.query.isEmpty ? "ディレクトリがありません" : "一致するディレクトリがありません")
+                .font(ChatTheme.body)
+                .foregroundStyle(ChatTheme.secondary)
+            if model.query.isEmpty {
+                Text("「+」の「フォルダを追加…」か設定画面で登録します。")
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.tertiary)
+            }
+        }
+        .padding(16)
     }
 
     private var emptyState: some View {
@@ -111,6 +146,16 @@ struct RoomListView: View {
             }
         }
         .padding(16)
+    }
+
+    private func row(_ room: Room) -> some View {
+        Button { model.select(room.id) } label: {
+            RoomRow(room: room, selected: model.center == .room && model.selection == room.id)
+                .equatable()
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu { contextMenu(for: room) }
     }
 
     @ViewBuilder

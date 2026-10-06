@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// メイン画面: ルーム一覧（左 312px）| 会話（中央）| 右パネル（任意。ステージパネルはここに差し込む）。
+/// メイン画面: 一覧の切り替えバー（左端 48px）| ルームかディレクトリの一覧（312px）| 会話かディレクトリの詳細（中央）| 右パネル（任意。ステージパネルはここに差し込む）。
 struct ChatRootView<Trailing: View>: View {
     @Bindable var model: ChatModel
     private let trailing: Trailing
@@ -13,6 +13,9 @@ struct ChatRootView<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            // 吹き出しを右の一覧の上に重ねるため手前に置く。
+            ListModeBar(model: model).zIndex(1)
+            Rectangle().fill(ChatTheme.border).frame(width: 1)
             RoomListView(model: model)
                 .frame(width: 312)
             Rectangle().fill(ChatTheme.border).frame(width: 1)
@@ -30,6 +33,7 @@ struct ChatRootView<Trailing: View>: View {
         }
         .onChange(of: model.store.feed.last?.id) { model.markSelectedSeen() }
         .onChange(of: model.rooms.count) { selectFirstIfNeeded() }
+        .onChange(of: model.firstVisibleRoom?.id) { selectFirstIfNeeded() }
         .alert("claude-deck", isPresented: Binding(get: { model.alerts.message != nil },
                                                    set: { if !$0 { model.alerts.message = nil } })) {
             Button("OK") { model.alerts.message = nil }
@@ -40,7 +44,14 @@ struct ChatRootView<Trailing: View>: View {
 
     @ViewBuilder
     private var center: some View {
-        if let room = model.selectedRoom {
+        if let selected = model.selectedDirectory {
+            if let directory = selected.directory {
+                DirectoryDetailView(model: model, directory: directory)
+                    .id(selected.id)
+            } else {
+                DirectoryMissingView()
+            }
+        } else if let room = model.selectedRoom {
             ConversationView(model: model, room: room)
                 .id(room.id)
         } else {
@@ -56,9 +67,9 @@ struct ChatRootView<Trailing: View>: View {
         }
     }
 
-    /// 何も選んでいない時だけ先頭を選ぶ。選択中のルームが一覧から消えても別のルームへ移さない（戻ってきた時に書きかけごと続けられるように）。
+    /// 会話を出していて何も選んでいない時だけ先頭を選ぶ。選択中のルームが一覧から消えても別のルームへ移さない（戻ってきた時に書きかけごと続けられるように）。
     private func selectFirstIfNeeded() {
-        if model.selection == nil, let first = model.firstVisibleRoom {
+        if model.center == .room, model.selection == nil, let first = model.firstVisibleRoom {
             model.select(first.id)
         }
     }
