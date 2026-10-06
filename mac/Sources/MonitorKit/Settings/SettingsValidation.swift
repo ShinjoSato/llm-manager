@@ -49,7 +49,32 @@ public enum SettingsValidation {
         if project.name.trimmingCharacters(in: .whitespaces).isEmpty { problems.append("名前を入れてください") }
         if !project.path.hasPrefix("/") { problems.append("パスは絶対パスにしてください") }
         if let link = project.github { problems += linkProblems(link) }
+        for row in projectLinkRowProblems(project.links) { problems += row }
         return problems
+    }
+
+    /// リンクの URL: http / https で host があるもの。
+    public static func linkURLProblem(_ url: String) -> String? {
+        if url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "URL を入れてください" }
+        return ProjectLinks.url(from: url) == nil ? "URL は http:// か https:// で始まるアドレスにしてください" : nil
+    }
+
+    public static func projectLinkProblems(_ link: ProjectLink) -> [String] {
+        var problems: [String] = []
+        if link.name.trimmingCharacters(in: .whitespaces).isEmpty { problems.append("リンクの名前を入れてください") }
+        if let p = linkURLProblem(link.url) { problems.append(p) }
+        return problems
+    }
+
+    /// 行ごとの問題。同じ名前が前の行にもあれば、後の行の問題にする。
+    public static func projectLinkRowProblems(_ links: [ProjectLink]) -> [[String]] {
+        var seen = Set<String>()
+        return links.map { link in
+            var problems = projectLinkProblems(link)
+            let name = link.name.trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty, !seen.insert(name).inserted { problems.append("同じ名前のリンクが他にもあります") }
+            return problems
+        }
     }
 
     public static func boardProblems(_ board: GitHubBoard) -> [String] {
@@ -83,6 +108,9 @@ public enum SettingsValidation {
             if project.name.trimmingCharacters(in: .whitespaces).isEmpty { result.append("「\(project.path)」: 名前が空です") }
             if let link = project.github {
                 for p in linkProblems(link) { result.append("「\(project.name)」の GitHub: \(p)") }
+            }
+            for (link, problems) in zip(project.links, projectLinkRowProblems(project.links)) {
+                for p in problems { result.append("「\(project.name)」のリンク「\(link.name)」: \(p)") }
             }
         }
         for (index, board) in settings.boards.enumerated() {

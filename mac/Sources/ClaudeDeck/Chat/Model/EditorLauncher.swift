@@ -2,11 +2,11 @@ import AppKit
 import Observation
 import MonitorKit
 
-/// 見出しの「VS Code」「GitHub」「Xcode」「閉じる」。押した結果はルームごとに数秒だけ出す。
+/// 見出しの「VS Code」「GitHub」「リンク」「Xcode」「閉じる」。押した結果はルームごとに数秒だけ出す。
 @MainActor
 @Observable
 final class EditorLauncher {
-    /// ルーム → 見出しの「VS Code / GitHub / Xcode / 閉じる」の結果。数秒で消す。
+    /// ルーム → 見出しの「VS Code / GitHub / リンク / Xcode / 閉じる」の結果。数秒で消す。
     private(set) var notes: [RoomID: EditorNote] = [:]
     /// Xcode に閉じるよう頼んでいる最中のルーム。二度押しさせない。
     private(set) var closingXcode: Set<RoomID> = []
@@ -75,6 +75,25 @@ final class EditorLauncher {
             self.openingGitHub.remove(roomId)
             self.openGitHubURL(destination.url(ownerKind: kind), unknownKind: kind == nil, for: roomId)
         }
+    }
+
+    /// 紐づいたプロジェクトのリンクのうち開けるもの（設定の変化を見出しへすぐ映すため、描画の中で毎回引く）。
+    func projectLinks(for room: Room) -> [ProjectLink] {
+        guard let project = ProjectMatcher.project(for: room.cwd, in: SettingsStore.shared.projects) else { return [] }
+        return ProjectLinks.openable(project.links)
+    }
+
+    /// 設定が外で書き換わっていても開く直前に URL を確かめる。
+    func openLink(_ link: ProjectLink, for room: Room) {
+        guard let url = ProjectLinks.url(from: link.url) else {
+            showNote(.failed("「\(link.name)」の URL が開ける形ではありません（http / https のアドレスにしてください）"), for: room.id)
+            return
+        }
+        guard NSWorkspace.shared.open(url) else {
+            showNote(.failed("ブラウザで開けませんでした: \(url.absoluteString)"), for: room.id)
+            return
+        }
+        showNote(.opened, for: room.id)
     }
 
     private func openGitHubURL(_ url: URL?, unknownKind: Bool, for roomId: RoomID) {

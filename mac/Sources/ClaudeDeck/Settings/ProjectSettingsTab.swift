@@ -2,7 +2,7 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ。
+/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・リンク。
 struct ProjectSettingsTab: View {
     let store: SettingsStore
     @State private var selection: UUID?
@@ -71,7 +71,7 @@ struct ProjectSettingsTab: View {
             }
             Button("キャンセル", role: .cancel) { deleting = nil }
         } message: {
-            Text("フォルダそのものは消えません。GitHub の紐づけもいっしょに外れます。")
+            Text("フォルダそのものは消えません。GitHub の紐づけとリンクもいっしょに外れます。")
         }
     }
 
@@ -141,6 +141,7 @@ private struct ProjectDetailForm: View {
                         store.scheduleProject(id: project.id, field: "note", \.note, value)
                     }
             }
+            ProjectLinksEditor(store: store, project: project)
             Section {
                 LabeledContent("並び順") {
                     HStack {

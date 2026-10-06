@@ -13,21 +13,30 @@ public enum SettingsImport {
         public var format: Format
         public var addedProjects = 0
         public var linkedGitHub = 0
+        public var addedLinks = 0
         public var addedBoards = 0
         /// 既にあった・読めなかったため足さなかった行。
         public var skipped = 0
         /// repo 付きなのに同じ名前のプロジェクトが無く、取り込まなかった行。
         public var unmatched = 0
+        /// 名前が空・URL が開ける形でないため足さなかったリンク。
+        public var invalidLinks = 0
 
         public var message: String {
             var parts: [String] = []
             if addedProjects > 0 { parts.append("プロジェクト \(addedProjects) 件") }
             if linkedGitHub > 0 { parts.append("GitHub の紐づけ \(linkedGitHub) 件") }
+            if addedLinks > 0 {
+                parts.append(invalidLinks > 0 ? "リンク \(addedLinks) 件（不正 \(invalidLinks) 件は除外）" : "リンク \(addedLinks) 件")
+            }
             if addedBoards > 0 { parts.append("ボード \(addedBoards) 件") }
             let added = parts.isEmpty ? "足したものはありません" : parts.joined(separator: "・") + "を足しました"
             var result = skipped > 0 ? "\(added)（既にある・読めない \(skipped) 件は飛ばしました）" : added
             if unmatched > 0 {
                 result += "。リポジトリ付きで該当するプロジェクトが無い \(unmatched) 件は取り込んでいません（先に registry.tsv を読み込んでください）"
+            }
+            if addedLinks == 0, invalidLinks > 0 {
+                result += "。名前が空・URL が http / https でないリンク \(invalidLinks) 件は取り込んでいません"
             }
             return result
         }
@@ -93,15 +102,24 @@ public enum SettingsImport {
             }
             for var project in incoming.projects {
                 if let index = merged.projects.firstIndex(where: { $0.path == project.path }) {
+                    var filled = false
                     if merged.projects[index].github == nil, let link = project.github {
                         merged.projects[index].github = link
                         summary.linkedGitHub += 1
-                    } else {
-                        summary.skipped += 1
+                        filled = true
                     }
+                    let added = addLinks(project.links, to: &merged.projects[index].links, summary: &summary)
+                    if added > 0 {
+                        summary.addedLinks += added
+                        filled = true
+                    }
+                    if !filled { summary.skipped += 1 }
                     continue
                 }
                 if merged.projects.contains(where: { $0.id == project.id }) { project.id = UUID() }
+                var links: [ProjectLink] = []
+                _ = addLinks(project.links, to: &links, summary: &summary)
+                project.links = links
                 addProject(project, to: &merged, summary: &summary)
             }
             for board in incoming.boards { addBoard(board, to: &merged, summary: &summary) }
@@ -113,6 +131,19 @@ public enum SettingsImport {
         guard !settings.projects.contains(where: { $0.path == project.path }) else { summary.skipped += 1; return }
         settings.projects.append(project)
         summary.addedProjects += 1
+    }
+
+    /// 名前（前後の空白は除く）の無いものだけ末尾に足し、足した数を返す。名前が空・URL が開けないものは数えるだけで足さない。
+    private static func addLinks(_ incoming: [ProjectLink], to links: inout [ProjectLink], summary: inout Summary) -> Int {
+        var names = Set(links.map { $0.name.trimmingCharacters(in: .whitespaces) })
+        var added = 0
+        for link in incoming {
+            guard SettingsValidation.projectLinkProblems(link).isEmpty else { summary.invalidLinks += 1; continue }
+            guard names.insert(link.name.trimmingCharacters(in: .whitespaces)).inserted else { continue }
+            links.append(link)
+            added += 1
+        }
+        return added
     }
 
     private static func addBoard(_ board: GitHubBoard, to settings: inout DeckSettings, summary: inout Summary) {

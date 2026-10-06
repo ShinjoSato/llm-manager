@@ -41,7 +41,7 @@ mac/
         ChatHandover.swift          外部セッションの claude を止めてアプリで再開する（引き継ぎ）
         PromptResponder.swift       権限確認（Channels・端末）と選択肢メニューへの回答（画面のカードと iPhone が同じ経路）
         TranscriptCache.swift       開いたルームの会話の取得と追記の購読（直近 4 ルームだけ持つ）・吹き出しの画像の読み込み
-        EditorLauncher.swift        見出しの「VS Code」「GitHub」「Xcode」「閉じる」と結果の短い一言
+        EditorLauncher.swift        見出しの「VS Code」「GitHub」「リンク」「Xcode」「閉じる」と結果の短い一言
         HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
       Views/                      画面（SwiftUI）
         ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
@@ -52,7 +52,7 @@ mac/
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
         Conversation/               中央の会話
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）
-          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「Xcode」「閉じる」のボタン
+          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」のボタン
           MessageList.swift           吹き出しの一覧（末尾への自動スクロール・カードの差し込み・空の時の案内）
           MessageBubbles.swift        発話 1 件（EntryView）・自分 / Claude の吹き出し
           ToolsRow.swift              「ツール N件 ▸」の畳み
@@ -119,7 +119,8 @@ mac/
                                 projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）
     Projects/                   ルームとプロジェクトの照合と、見出しのボタンの先
       GitHubLinks.swift           ルームの cwd と設定のプロジェクトの対応（ProjectMatcher）と GitHub の URL（ボード / リポジトリ）
-      EditorActions.swift         見出しの「VS Code / GitHub / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
+      ProjectLinks.swift          設定のリンク（LP 等）の URL の検証（http / https で host のあるものだけ）と、見出しの「リンク」に出すもの
+      EditorActions.swift         見出しの「VS Code / GitHub / リンク / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
     Limit/
       LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
@@ -485,7 +486,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「Xcode」「閉じる」。表示の切替は無く、どのルームも常にチャット。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」。表示の切替は無く、どのルームも常にチャット。
   「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層）。「閉じる」は確認ダイアログの後、
   AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
   （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。ホスト中のルームでも使える。
@@ -495,6 +496,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   そのプロジェクトに GitHub の紐づけがある時だけ出す。Project 番号とリポジトリの両方があればメニューで選び、片方ならそのまま既定のブラウザで開く。
   ボードは owner の種類を `https://api.github.com/users/<owner>` の `type` で引いて `users/` か `orgs/` の URL にする
   （認証なし・3 秒で諦める・owner ごとにアプリが動いている間だけ覚える・取れなければ `users/`）。判定と URL は `Sources/MonitorKit/Projects/GitHubLinks.swift`。
+  「リンク」は、同じ照合で紐づいたプロジェクトに `links`（LP 等の名前と URL）がある時だけ「GitHub」の隣に出す。1 つならそのまま既定のブラウザで開き、
+  複数なら名前のメニューで選ぶ。開く直前にも URL を確かめ、http / https で host のあるものだけ開く（`javascript:` や `file:` は開かず理由を出す）。
+  設定で不正なリンク（名前が空・URL の形）はボタンに含めない。設定の変更はすぐ映る。判定は `Sources/MonitorKit/Projects/ProjectLinks.swift`。
   ルームを移っても各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
 - 端末ビュー（`ClaudeTerminalView`）は画面に載せない。PTY の受信は main キューで端末バッファに流れ、状態・権限プロンプト・選択待ち・上限表示は
   0.3 秒ごとのタイマーと受信時にバッファ末尾の `rows` 行を読むので、ビュー階層に無くても動く。桁数は作成時の 960×640pt のまま固定。
@@ -681,11 +685,17 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 ```json
 { "version": 1,
   "projects": [ { "id": "<UUID>", "name": "mirio", "path": "/abs/path", "status": "active", "note": "…",
-                  "github": { "owner": "ShinjoSato", "repo": "ailovei", "projectNumber": 4 } } ],
+                  "github": { "owner": "ShinjoSato", "repo": "ailovei", "projectNumber": 4 },
+                  "links": [ { "name": "LP", "url": "https://example.com/lp" },
+                             { "name": "Figma", "url": "https://www.figma.com/file/…" } ] } ],
   "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
 ```
 
 - `status` は `active` / `paused` / `archived`。`github` は省略でき、その中の `repo` / `projectNumber` もどちらか片方だけでよい。
+  `links` は会話の見出しの「リンク」から開くもの（LP・デザイン等）で、省略できる（空ならアプリも書かない）。並びは配列の順。
+  `url` は http / https で host のあるものだけ（それ以外や `user:pass@` 付きは警告として読み込み、ボタンには出さない）。`name` は同じプロジェクトの中で重ねない（重なれば先のものだけボタンに出す）。
+  `links` の形が崩れている（配列でない・要素に `name` か `url` の文字列が無い）ファイルは読めない扱いになる。
+  **リンクを使い始めたら、`links` を知らない前のビルドで設定を保存しない**（`links` を落として書くため）。
   `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
 - 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600。ディレクトリを 0700 に締めるのは既定の場所（`~/Library/Application Support/claude-deck/`）の時だけで、
   `CLAUDE_DECK_SETTINGS` で向けた先のディレクトリの権限は変えない。
@@ -701,7 +711,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - **書きかけのファイル**（その場の書き換えの途中で空・途中までの JSON）を読んだ時は、読めない旨を出しつつ 0.2 秒・1 秒後に読み直す。溜めていた入力は捨てずに残し
   （欄にも残る。画面に「まだ保存していない入力があります」と出す）、読めるようになったら保存する。
 - 案内（青の帯）と書き込みの失敗は、「読み直す」・次の読み直しや保存の成功で消える。案内は × で閉じられる。
-- 文字欄（名前・メモ・GitHub の欄）は 0.5 秒まとめて保存する。⏎・フォーカスが外れた時・設定画面を閉じた時・アプリの終了時はすぐ書く。
+- 文字欄（名前・メモ・GitHub の欄・リンクの名前と URL）は 0.5 秒まとめて保存する。⏎・フォーカスが外れた時・設定画面を閉じた時・アプリの終了時はすぐ書く。
   日本語の変換中（設定画面がキーウィンドウで、その入力欄に未確定の文字がある間）は書かずに待つ。変換中に状態の切り替え・並べ替え・削除をした時は、
   その操作だけを書き、溜めていた文字欄の変更は変換が終わってから書く。
 - **settings.json を外で消した時**: 一度読めた・書けた後に消された場合は、空の一覧として扱い「外で消されました」と出す（`projects.json` から移行し直さない）。
@@ -718,6 +728,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 **設定画面**（メニュー「claude-deck → 設定…」⌘,。ウィンドウは 1 つ）のタブ:
 - **プロジェクト**: 一覧（ドラッグ・「上へ / 下へ」で並べ替え）、「+」でフォルダを追加、「−」/右クリックで削除（確認あり）、名前・状態・メモの編集。
+  「リンク」の節で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
+  全行が正しい間だけ保存し、途中の行がある間はファイルは前の内容のまま（行ごとに理由を赤で出す）。名前と URL が両方空の行は画面に残すだけで保存しない。
+  開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
 - **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号と、リポジトリに紐づかないボードの追加・編集・削除。
   owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
 - **iPhone 連携**: 下記「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）。
@@ -726,7 +739,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   - github-projects.tsv 形式（name / owner / number / repo / url）: repo が `-`（または空）ならボードへ（owner + 番号が同じものは足さない）。
     repo 付きは同じ名前のプロジェクトがあり、まだ紐づけが無ければその `github` に入れる。同じ名前のプロジェクトが無い行は取り込まず
     （ボードにすると repo が落ちるため）、件数と「先に registry.tsv を読み込んでください」を出す。
-  - 書き出した settings.json: プロジェクトはパス・ボードは owner + 番号で重複を除く。同じパスのプロジェクトに紐づけが無ければ紐づけだけ足す。
+  - 書き出した settings.json: プロジェクトはパス・ボードは owner + 番号で重複を除く。同じパスのプロジェクトに紐づけが無ければ紐づけだけ足し、
+    リンクは同じ名前（前後の空白は除く）の無いものだけ末尾に足す（同じ名前は手元を残す。ファイルの中で重なる名前も 1 つだけ）。
+    名前が空・URL が http / https でないリンクは足さず、件数を「不正 N 件は除外」と出す。
 
 型・読み書き・検証・移行・取り込みは `Sources/MonitorKit/Settings/`（テストあり）、画面は `Sources/ClaudeDeck/Settings/`。
 
