@@ -34,8 +34,10 @@ struct ConversationHeader: View {
         }
         .padding(.horizontal, 20)
         .frame(height: 64)
-        .background(ChatTheme.background)
-        .overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
+        // 下線は背景側に置き、ボタンの吹き出しが線の下に潜らないようにする。
+        .background {
+            ChatTheme.background.overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
+        }
     }
 }
 
@@ -165,7 +167,7 @@ struct ProjectLinkButton: View {
     }
 }
 
-/// 見出しのアイコンボタンの見た目。名前は出さずホバーの help と VoiceOver に回す。
+/// 見出しのアイコンボタンの見た目。名前は出さずホバーの吹き出しと VoiceOver に回す。
 struct HeaderButtonLabel: View {
     let symbol: String
     let busy: Bool
@@ -197,12 +199,113 @@ struct HeaderButtonLabel: View {
 }
 
 extension View {
-    /// ホバーの help は名前を先頭に、処理中は状態、そうでなければ開く先を続ける。
+    /// 名前と開く先（処理中は状態）を自前のツールチップで出し、VoiceOver には名前と状態を渡す。
     func headerButtonHelp(name: String, detail: String?, busyStatus: String?) -> some View {
-        let lines = [name, busyStatus ?? detail].compactMap { $0 }.filter { !$0.isEmpty }
-        return help(lines.joined(separator: "\n"))
+        modifier(HeaderTooltipModifier(name: name, details: HeaderTooltip.details(detail: detail, busyStatus: busyStatus)))
             .accessibilityLabel(name)
             .accessibilityValue(busyStatus ?? "")
+    }
+}
+
+/// ホバーが少し続いたらボタンの下に出す吹き出し。
+struct HeaderTooltip: View {
+    let name: String
+    let details: [String]
+
+    static let delay: Duration = .milliseconds(400)
+    private static let maxWidth: CGFloat = 340
+
+    /// 処理中は状態、そうでなければ開く先を、空行を除いて 1 行ずつ。
+    static func details(detail: String?, busyStatus: String?) -> [String] {
+        (busyStatus ?? detail ?? "").split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(name)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ChatTheme.heading)
+            ForEach(Array(details.enumerated()), id: \.offset) { _, line in
+                Text(line)
+                    .font(.system(size: 11))
+                    .foregroundStyle(ChatTheme.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: Self.maxWidth, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.claudeBubble))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.claudeBubbleBorder))
+    }
+}
+
+/// AppKit のツールチップは頻繁な再描画で待ち時間がやり直しになるため、ホバーとタイマーをここで持って自前で出す。
+private struct HeaderTooltipModifier: ViewModifier {
+    let name: String
+    let details: [String]
+    @State private var hovering = false
+    @State private var shown = false
+    /// クリックした後はカーソルが一度離れるまで出さない（開いたメニューに重ねない）。
+    @State private var suppressed = false
+    @State private var timer: Task<Void, Never>?
+    @State private var clickMonitor: Any?
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                guard inside != hovering else { return }
+                hovering = inside
+                if inside { schedule() } else { reset() }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if shown {
+                    HeaderTooltip(name: name, details: details)
+                        // 右端をボタンにそろえて左へ伸ばし、ウィンドウの右端で切れないようにする。
+                        .alignmentGuide(.bottom) { $0[.top] - 6 }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .transition(.opacity)
+                }
+            }
+            .onDisappear { reset() }
+    }
+
+    private func schedule() {
+        timer?.cancel()
+        installClickMonitor()
+        guard !suppressed else { return }
+        timer = Task { @MainActor in
+            try? await Task.sleep(for: HeaderTooltip.delay)
+            guard !Task.isCancelled, hovering, !suppressed else { return }
+            withAnimation(.easeOut(duration: 0.12)) { shown = true }
+        }
+    }
+
+    private func reset() {
+        timer?.cancel()
+        timer = nil
+        shown = false
+        suppressed = false
+        removeClickMonitor()
+    }
+
+    /// ホバー中のクリックはこのボタンへのものなので、メニューや確認が開く前に吹き出しを消す。
+    private func installClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+            timer?.cancel()
+            shown = false
+            suppressed = true
+            return event
+        }
+    }
+
+    private func removeClickMonitor() {
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        clickMonitor = nil
     }
 }
 
