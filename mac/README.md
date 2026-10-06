@@ -49,7 +49,7 @@ mac/
         SiteThumbnailStore.swift    「ディレクトリ」の行の LP のサムネイル（オフスクリーンの WKWebView で撮って縮小・キャッシュ・1 つずつ）
         DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める。ルームを閉じても止めない）
       Views/                      画面（SwiftUI）
-        ChatRootView.swift          骨組み（切り替えバー | 一覧 | 会話かディレクトリの詳細 | 右パネルの差し込み口）
+        ChatRootView.swift          骨組み（切り替えバー | 一覧（境界のドラッグで幅を変える）| 会話かディレクトリの詳細 | 右パネルの差し込み口）
         RoomList/                   左の一覧（ルーム / ディレクトリ）
           ListModeBar.swift           左端の切り替えバー（「ルーム」/「ディレクトリ」・要対応のバッジ）
           RoomListView.swift          一覧（状態別のルームか登録ディレクトリ）・検索・「+」のポップオーバー・右クリックメニュー
@@ -64,6 +64,7 @@ mac/
         Conversation/               中央の会話
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）
           ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」のボタン
+          HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
           MessageList.swift           吹き出しの一覧（末尾への自動スクロール・カードの差し込み・空の時の案内）
           MessageBubbles.swift        発話 1 件（EntryView）・自分 / Claude の吹き出し
           ToolsRow.swift              「ツール N件 ▸」の畳み
@@ -137,7 +138,7 @@ mac/
       SiteLocator.swift           LP の場所の自動検出と、設定の `site`（相対パス）の検証・解決（プロジェクトの外を指さない）
       SiteFiles.swift             配信のパスの解決（書き出しの外・隠しファイルは返さない・フォルダは index.html・拡張子なしは .html）と Content-Type
       SiteServer.swift            書き出しの静的配信（サイトごとに 127.0.0.1 のランダムなポート・GET / HEAD のみ。SitePreviewServers）
-      SiteViewport.swift          表示幅（PC / タブレット / スマホ）と縮める率・サムネイルのキャッシュの名前・プレビューの中で開いてよい行き先
+      SiteViewport.swift          表示幅（PC / タブレット / スマホ）と縮める率・欄の幅と見えている高さからの高さの上限・サムネイルのキャッシュの名前・プレビューの中で開いてよい行き先
       DevServerRules.swift        開発サーバーの起動条件（dev スクリプト）・子の環境・出力からのアドレスの読み取り・失敗の理由・出力の末尾・止める手順
       DevServerProcess.swift      開発サーバーの子プロセス（新しいプロセスグループで起動・出力と終了の通知・グループごとの停止）
     Limit/
@@ -157,6 +158,8 @@ mac/
       MenuScreenLog.swift         選択肢カードを出した・読めなかった画面の写しを直近数件残す
       ScreenPane.swift            画面の右に縦線で区切って出る別の欄（差分パネル）を除いて左だけにする
       ComposerSync.swift          入力欄とモデルの下書きの同期判定（変換中は本当の外部変更の時だけ書き戻す）
+      ListPaneWidth.swift         左の一覧の幅（範囲・保存値の収め方・ドラッグで中央の最小幅を割らない計算）
+      HeaderOverflow.swift        見出しのボタンが入りきらない時に「…」へ回す順（優先度の低いものから）
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
                                 SceneKit のノードへの起こし（StageSceneRig）
     Notify/                     通知にする要対応の組み立て（AttentionNoticeSource）と iCloud を使えるかの確認・失敗の文言（CloudKitNoticeStore）
@@ -470,8 +473,12 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 - 「+」・監視の案内・選択中のルーム・未読は両方の一覧で共通（検索欄は見方ごとに対象が違うので、切り替えたら空に戻す）。切り替えても中央の表示と選択中のルームは変えない（会話を出していて未選択の時だけ、「ルーム」で見えている最初の行を選ぶ）。
 - 見方の型と件数は `Sources/MonitorKit/Chat/RoomListMode.swift`（テストあり）、画面は `Sources/ClaudeDeck/Chat/Views/RoomList/ListModeBar.swift`。
 
-### ルーム一覧（312px）
+### ルーム一覧（既定 312px・幅は変えられる）
 
+- 幅: 一覧と中央の境界（1pt の線の左右 4pt ずつをつかめる。カーソルは左右の矢印）をドラッグして 240〜480px で変える（ルーム / ディレクトリ共通）。
+  広げるのは中央（会話・ディレクトリの詳細）が 420px を保てる分まで。ダブルクリックで既定の 312px に戻す。幅は UserDefaults（`roomList.width`）に保存し、
+  知らない値・範囲外は範囲に収める。ステージパネルを自動で畳む幅もこの幅を使う（下記「ステージパネル」）。範囲と計算は `Sources/MonitorKit/Chat/ListPaneWidth.swift`（テストあり）、
+  つかむ所は `ChatRootView.swift` の `ListPaneDivider`。
 - 見出しは今の見方の名前（「ルーム」/「ディレクトリ」）。
 - **「ルーム」**: 監視が見つけたセッション + アプリでホスト中のセッションを **要対応（権限待ち・入力待ち）→ 稼働中 → 待機** の見出しで並べる
   （空の段は出さない・各段は最後に動いた順・同時刻は名前順）。組み立ては DeckCore の `RoomGrouping`。
@@ -487,6 +494,12 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
     本文は概要（フルパス・状態・メモ）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンクの一覧（押すとブラウザで開く。開けない形・名前が重なるものは出さず件数だけ）、
     そのプロジェクトのスレッド（ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）。
+    本文は中央の欄の幅いっぱいに使う（文章の節は読みやすいよう 900px まで、サイトのプレビューは欄いっぱい）。
+  - **見出しのボタンが入りきらない時**（会話の見出しも同じ）: 名前とパスは省略表示（最小 140px）まで縮め、それでも入らなければ優先度の低いボタンから
+    「…」（`ellipsis.circle`。ホバーで「ほかの操作」と回したボタンの名前）のメニューにまとめる。メニューの項目は同じ動作を呼ぶ
+    （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
+    回す順は、詳細が「設定で編集」→「Finder」→「リンク」→「GitHub」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→「リンク」→「GitHub」→「Xcode」→「VS Code」。
+    候補は `ViewThatFits` で入るものを選ぶ（`Views/Conversation/HeaderActions.swift`）。回す順の計算は `Sources/MonitorKit/Chat/HeaderOverflow.swift`（テストあり）。
   - **サイト**（概要の下）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
     - 場所: 設定の `site`（下記「設定（settings.json）」）があればそれ、無ければプロジェクト直下と 2 階層までのサブフォルダから探す
       （`next.config.{js,mjs,ts,cjs}` があるか、`package.json` と `out/index.html` がある所。`node_modules`・`.next`・`out`・隠しフォルダ等の中は見ず、
@@ -499,6 +512,8 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
       転送のクエリに制御文字があれば 400。大きさは属性から取り（HEAD では読まない）、`Range: bytes=` の単一範囲に 206 で答える（不正・範囲外・複数範囲は 416）。
       配信はアプリが動いている間だけ使い回す（待ち受けが後から落ちたら外し、次に開く時に別のポートで開き直す）。実装は `Sources/MonitorKit/Sites/`（テストあり。配信はループバックに立てて実際に取得・拒否を確かめる）。
     - 表示幅: PC 1280 / タブレット 820 / スマホ 390（CSS ピクセル）で組ませ、枠に収まるよう `pageZoom` で縮めて表示する（拡大はしない。スマホは角丸の端末の枠）。選んだ幅は UserDefaults（`sitePreview.viewport`）。
+      高さの上限は欄の幅から決める（その幅で横いっぱいに収まる高さ）。ただし詳細のスクロール欄の見えている高さの 8 割を超えない（最小 320px は保つ。`SiteViewport.heightLimit`。テストあり）。
+    - 見出しの行（「サイト」・見る元 / 幅の切り替え・再読み込み・ブラウザで開く）は 1 行に入らなければ 2 段に折り返す（見る元の名前は省略表示）。
     - 再読み込み（場所と更新時刻も確かめ直す）・ブラウザで開く（今開いているページ。http / https だけ）・書き出しの更新時刻（`out/index.html`）。
       `out/` が無ければ「`npm run build` で書き出すと見られます」の案内。
     - **開発サーバー**（見る元の 1 つ）: ▶ を押した時だけ、サイトの場所で `npm run dev` を起動する（`package.json` に `dev` スクリプトがある時だけ。
@@ -577,7 +592,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   （ログ更新が 15 秒以内なら「作業中」、それ以外は最終更新からの経過）。
 - **ライブフィード**: そのセッションの feed の直近 60 件を新しい順（新着が先頭に入る）。時刻・種別（ツール / 指示 / 応答 / 状態 / セッション / 随伴）・内容を mono で。
 - **開閉**: 見出しのボタンで畳む（幅 36px の帯になり、帯のボタンで開く。UserDefaults `stagePanel.open`）。
-  ウィンドウ幅が 1150px 未満なら自動で畳む（左端の切り替えバーの分を含む）。狭いまま開いた時はそれに従い（パネルは最小 240px まで縮む）、広げれば通常に戻る。
+  ウィンドウ幅が 838px + 一覧の幅（既定の 312px なら 1150px）未満なら自動で畳む（左端の切り替えバー・会話の最小 420px・パネル 360px の分。`StageLogic.autoCollapseWidth(listWidth:)`）。狭いまま開いた時はそれに従い（パネルは最小 240px まで縮む）、広げれば通常に戻る。
 
 ### 会話（中央）
 

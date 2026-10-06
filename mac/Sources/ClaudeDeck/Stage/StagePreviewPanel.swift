@@ -155,7 +155,7 @@ private struct StageSitePreview: View {
         } else if let target {
             GeometryReader { proxy in
                 SitePreviewFrame(url: target.url, origin: target.origin, viewport: viewport, reloadToken: reloadToken, state: preview,
-                                 maxHeight: max(proxy.size.height, 120))
+                                 height: .fixed(max(proxy.size.height, 120)))
             }
         } else {
             guidance

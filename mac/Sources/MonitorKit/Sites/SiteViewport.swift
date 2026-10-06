@@ -53,6 +53,19 @@ public enum SiteViewport: String, CaseIterable, Identifiable, Sendable {
         return SiteViewportLayout(scale: scale, frameWidth: (width * scale).rounded(.down),
                                   frameHeight: (fullHeight * scale).rounded(.down))
     }
+
+    /// 見えている高さに対してこの割合までに抑える（スクロールせずに全体を見渡せるように）。
+    public static let visibleHeightFraction = 0.8
+    /// 見えている高さが小さくても、これより低くはしない。
+    public static let minimumPreviewHeight = 320.0
+
+    /// 欄の幅いっぱいに収まる高さを上限とし、見えている高さの `visibleHeightFraction` を超えない（`minimumPreviewHeight` は保つ）。
+    public func heightLimit(available: Double, visibleHeight: Double?) -> Double {
+        let fill = layout(available: available, maxHeight: .infinity).frameHeight + bezel * 2
+        guard let visibleHeight, visibleHeight.isFinite, visibleHeight > 0 else { return fill }
+        let cap = max(visibleHeight * Self.visibleHeightFraction, Self.minimumPreviewHeight)
+        return min(fill, cap)
+    }
 }
 
 /// 縮めた後の大きさ（画面のポイント）と縮める率。

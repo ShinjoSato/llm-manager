@@ -82,6 +82,14 @@ struct SegmentButton: View {
     }
 }
 
+/// プレビューの高さの上限の決め方。
+enum SitePreviewHeight: Equatable {
+    /// 決まった高さまで（ステージパネルのように枠の高さが先に決まる時）。
+    case fixed(Double)
+    /// 欄の幅いっぱいに収まる高さまで。見えている高さが分かればそれに対して大きくしすぎない。
+    case fillWidth(visibleHeight: Double?)
+}
+
 /// 表示幅で組ませたページを、与えられた幅と高さに縮めて収める枠。
 struct SitePreviewFrame: View {
     let url: URL
@@ -90,8 +98,15 @@ struct SitePreviewFrame: View {
     let viewport: SiteViewport
     let reloadToken: Int
     let state: SitePreviewState
-    let maxHeight: Double
+    let height: SitePreviewHeight
     @State private var availableWidth: Double = 0
+
+    private var maxHeight: Double {
+        switch height {
+        case .fixed(let value): return value
+        case .fillWidth(let visibleHeight): return viewport.heightLimit(available: max(availableWidth, 1), visibleHeight: visibleHeight)
+        }
+    }
 
     var body: some View {
         let layout = viewport.layout(available: max(availableWidth, 1), maxHeight: maxHeight)

@@ -29,8 +29,10 @@ struct ConversationHeader: View {
                 .foregroundStyle(ChatTheme.secondary)
                 .lineLimit(1)
             }
+            .frame(minWidth: HeaderLayout.titleMinWidth, alignment: .leading)
             Spacer(minLength: 12)
-            EditorButtons(model: model, room: room)
+            // 名前を最小幅まで縮めてからボタンを「…」に回す。
+            EditorButtons(model: model, room: room).layoutPriority(1)
         }
         .padding(.horizontal, 20)
         .frame(height: 64)
@@ -69,27 +71,30 @@ struct EditorButtons: View {
         let xcodeProject = editors.xcodeProject(for: room)
         let closing = editors.closingXcode.contains(room.id)
         let target = room.editorTarget
-        HStack(spacing: 6) {
-            EditorNoteText(note: editors.notes[target.key])
-            VSCodeButton(editors: editors, target: target)
-            GitHubButton(editors: editors, target: target, destinations: editors.githubDestinations(for: target),
-                         opening: editors.openingGitHub.contains(target.key))
-            ProjectLinkButton(editors: editors, target: target, links: editors.projectLinks(for: target))
-            if let xcodeProject {
-                HeaderButton(symbol: "hammer", name: "Xcode",
-                             detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) }
-                HeaderButton(symbol: "xmark.rectangle", name: "閉じる",
-                             detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
-                             busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true }
-                    .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
-                        Button("閉じる", role: .destructive) { editors.closeInXcode(room) }
-                        Button("やめる", role: .cancel) {}
-                    } message: {
-                        Text("\(xcodeProject.lastPathComponent) を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
-                    }
-            }
+        var actions: [HeaderAction] = [
+            .button(id: "vscode", priority: 5, symbol: VSCodeButton.symbol, name: VSCodeButton.name,
+                    detail: VSCodeButton.detail(target)) { editors.openInVSCode(target) },
+        ]
+        if let github = HeaderAction.github(priority: 3, editors: editors, target: target) { actions.append(github) }
+        if let links = HeaderAction.links(priority: 2, editors: editors, target: target) { actions.append(links) }
+        if let xcodeProject {
+            actions.append(.button(id: "xcode", priority: 4, symbol: "hammer", name: "Xcode",
+                                   detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) })
+            actions.append(.button(id: "xcode-close", priority: 1, symbol: "xmark.rectangle", name: "閉じる",
+                                   detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
+                                   busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true })
         }
-        .fixedSize()
+        return HStack(spacing: 6) {
+            EditorNoteText(note: editors.notes[target.key])
+            HeaderActionRow(actions: actions).layoutPriority(1)
+        }
+        // メニューから押しても確認を出せるよう、ボタンではなく列に付ける。
+        .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
+            Button("閉じる", role: .destructive) { editors.closeInXcode(room) }
+            Button("やめる", role: .cancel) {}
+        } message: {
+            Text("\(xcodeProject?.lastPathComponent ?? "ワークスペース") を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
+        }
     }
 }
 
@@ -114,9 +119,12 @@ struct VSCodeButton: View {
     let editors: EditorLauncher
     let target: EditorTarget
 
+    static let symbol = "chevron.left.forwardslash.chevron.right"
+    static let name = "VS Code"
+    static func detail(_ target: EditorTarget) -> String { "VS Code で開く: \(target.cwd)" }
+
     var body: some View {
-        HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", name: "VS Code",
-                     detail: "VS Code で開く: \(target.cwd)") { editors.openInVSCode(target) }
+        HeaderButton(symbol: Self.symbol, name: Self.name, detail: Self.detail(target)) { editors.openInVSCode(target) }
     }
 }
 
@@ -128,8 +136,8 @@ struct GitHubButton: View {
     let opening: Bool
     @State private var hovering = false
 
-    private static let symbol = "rectangle.3.group"
-    private static let name = "GitHub"
+    static let symbol = "rectangle.3.group"
+    static let name = "GitHub"
 
     private var busyStatus: String? { opening ? "開いています…" : nil }
 
@@ -162,8 +170,8 @@ struct ProjectLinkButton: View {
     let links: [ProjectLink]
     @State private var hovering = false
 
-    private static let symbol = "link"
-    private static let name = "リンク"
+    static let symbol = "link"
+    static let name = "リンク"
 
     var body: some View {
         if links.count == 1, let only = links.first {

@@ -13,14 +13,18 @@ struct StagePanel: View {
 
     @AppStorage("stagePanel.open") private var preferOpen = true
     @AppStorage(StagePanelView.defaultsKey) private var viewRaw = StagePanelView.stage.rawValue
+    @AppStorage(ListPaneWidth.defaultsKey) private var listWidth = ListPaneWidth.standard
     @State private var windowWidth: CGFloat?
     @State private var openedWhileNarrow = false
 
     private var store: MonitorStore { model.store }
     private var expanded: Bool {
-        StageLogic.isExpanded(preference: preferOpen, windowWidth: windowWidth, openedWhileNarrow: openedWhileNarrow)
+        StageLogic.isExpanded(preference: preferOpen, windowWidth: windowWidth,
+                              listWidth: ListPaneWidth.clamped(listWidth), openedWhileNarrow: openedWhileNarrow)
     }
-    private var isNarrow: Bool { (windowWidth ?? .infinity) < StageLogic.autoCollapseWidth }
+    private var isNarrow: Bool {
+        (windowWidth ?? .infinity) < StageLogic.autoCollapseWidth(listWidth: ListPaneWidth.clamped(listWidth))
+    }
     private var view: StagePanelView { StagePanelView(rawValue: viewRaw) ?? .stage }
 
     var body: some View {

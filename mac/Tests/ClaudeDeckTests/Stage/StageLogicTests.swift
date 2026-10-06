@@ -97,10 +97,21 @@ final class StageLogicTests: XCTestCase {
     // MARK: - 開閉
 
     func testExpandedFollowsPreferenceAndWindowWidth() {
-        XCTAssertFalse(StageLogic.isExpanded(preference: false, windowWidth: 1600, openedWhileNarrow: false))
-        XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: 1600, openedWhileNarrow: false))
-        XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: nil, openedWhileNarrow: false))
-        XCTAssertFalse(StageLogic.isExpanded(preference: true, windowWidth: 900, openedWhileNarrow: false))
-        XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: 900, openedWhileNarrow: true))
+        XCTAssertFalse(StageLogic.isExpanded(preference: false, windowWidth: 1600, listWidth: 312, openedWhileNarrow: false))
+        XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: 1600, listWidth: 312, openedWhileNarrow: false))
+        XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: nil, listWidth: 312, openedWhileNarrow: false))
+        XCTAssertFalse(StageLogic.isExpanded(preference: true, windowWidth: 900, listWidth: 312, openedWhileNarrow: false))
+        XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: 900, listWidth: 312, openedWhileNarrow: true))
+    }
+
+    func testAutoCollapseWidthFollowsListWidth() {
+        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 312), 1150)
+        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 240), 1078)
+        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 480), 1318)
+        // 一覧を広げると、同じウィンドウ幅でもパネルを畳む。
+        XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: 1200, listWidth: 312, openedWhileNarrow: false))
+        XCTAssertFalse(StageLogic.isExpanded(preference: true, windowWidth: 1200, listWidth: 400, openedWhileNarrow: false))
+        // 一覧を狭めると、既定では畳む幅でも開いたまま。
+        XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: 1100, listWidth: 240, openedWhileNarrow: false))
     }
 }

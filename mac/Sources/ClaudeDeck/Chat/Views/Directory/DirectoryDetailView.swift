@@ -6,25 +6,36 @@ struct DirectoryDetailView: View {
     let model: ChatModel
     let directory: ProjectDirectory
 
+    @State private var visibleHeight: Double?
+
     private var project: ManagedProject { directory.project }
+
+    /// 文章の節を抑える幅（サイトのプレビューは欄いっぱい）。
+    private static let readableWidth: CGFloat = 900
 
     var body: some View {
         VStack(spacing: 0) {
             DirectoryDetailHeader(model: model, project: project)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    overview
+                    overview.frame(maxWidth: Self.readableWidth, alignment: .leading)
                     // 別のプロジェクトへ移ったら見る元と表示中のページを持ち越さない。
-                    SitePreviewSection(project: project).id(project.id)
-                    github
-                    links
-                    threads
+                    SitePreviewSection(project: project, visibleHeight: visibleHeight).id(project.id)
+                    github.frame(maxWidth: Self.readableWidth, alignment: .leading)
+                    links.frame(maxWidth: Self.readableWidth, alignment: .leading)
+                    threads.frame(maxWidth: Self.readableWidth, alignment: .leading)
                 }
                 .padding(20)
-                .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.automatic)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { visibleHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { _, height in visibleHeight = height }
+                }
+            }
         }
         .background(ChatTheme.background)
     }
@@ -145,24 +156,14 @@ private struct DirectoryDetailHeader: View {
                     .foregroundStyle(ChatTheme.secondary)
                     .lineLimit(1)
             }
+            .frame(minWidth: HeaderLayout.titleMinWidth, alignment: .leading)
             Spacer(minLength: 12)
             HStack(spacing: 6) {
                 EditorNoteText(note: editors.notes[target.key])
-                HeaderButton(symbol: running ? "arrow.right.circle" : "play.fill",
-                             name: running ? "ルームへ移る" : "Claude Code を起動",
-                             detail: running ? "このプロジェクトで動いているルームを開く" : "このプロジェクトで claude を起動して新しいルームを開く") {
-                    model.launch(project)
-                }
-                VSCodeButton(editors: editors, target: target)
-                HeaderButton(symbol: "folder", name: "Finder", detail: "Finder で表示: \(project.path)") { editors.revealInFinder(target) }
-                GitHubButton(editors: editors, target: target, destinations: editors.githubDestinations(for: target),
-                             opening: editors.openingGitHub.contains(target.key))
-                ProjectLinkButton(editors: editors, target: target, links: editors.projectLinks(for: target))
-                HeaderButton(symbol: "gearshape", name: "設定で編集", detail: "設定画面のプロジェクトタブで開く") {
-                    SettingsWindow.show(tab: .projects, project: project.id)
-                }
+                HeaderActionRow(actions: actions(editors: editors, target: target, running: running)).layoutPriority(1)
             }
-            .fixedSize()
+            // 名前を最小幅まで縮めてからボタンを「…」に回す。
+            .layoutPriority(1)
         }
         .padding(.horizontal, 20)
         .frame(height: 64)
@@ -171,6 +172,28 @@ private struct DirectoryDetailHeader: View {
             ChatTheme.background.overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
         }
         .zIndex(1)
+    }
+
+    private func actions(editors: EditorLauncher, target: EditorTarget, running: Bool) -> [HeaderAction] {
+        let project = project
+        var actions: [HeaderAction] = [
+            .button(id: "launch", priority: 6, symbol: running ? "arrow.right.circle" : "play.fill",
+                    name: running ? "ルームへ移る" : "Claude Code を起動",
+                    detail: running ? "このプロジェクトで動いているルームを開く" : "このプロジェクトで claude を起動して新しいルームを開く") {
+                model.launch(project)
+            },
+            .button(id: "vscode", priority: 5, symbol: VSCodeButton.symbol, name: VSCodeButton.name,
+                    detail: VSCodeButton.detail(target)) { editors.openInVSCode(target) },
+            .button(id: "finder", priority: 2, symbol: "folder", name: "Finder",
+                    detail: "Finder で表示: \(project.path)") { editors.revealInFinder(target) },
+        ]
+        if let github = HeaderAction.github(priority: 4, editors: editors, target: target) { actions.append(github) }
+        if let links = HeaderAction.links(priority: 3, editors: editors, target: target) { actions.append(links) }
+        actions.append(.button(id: "settings", priority: 1, symbol: "gearshape", name: "設定で編集",
+                               detail: "設定画面のプロジェクトタブで開く") {
+            SettingsWindow.show(tab: .projects, project: project.id)
+        })
+        return actions
     }
 }
 

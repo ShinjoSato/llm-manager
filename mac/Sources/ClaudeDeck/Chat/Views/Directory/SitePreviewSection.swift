@@ -5,6 +5,8 @@ import SwiftUI
 /// ディレクトリの詳細の「サイト」: LP を開発サーバー・書き出し（アプリ内の静的配信）・公開 URL で、幅を切り替えて見る。
 struct SitePreviewSection: View {
     let project: ManagedProject
+    /// 詳細のスクロール欄の見えている高さ（プレビューを大きくしすぎないため）。
+    var visibleHeight: Double? = nil
 
     /// 見る元。開発サーバーか、書き出しか、設定のリンク（http / https）のどれか。
     private enum Source: Hashable {
@@ -19,8 +21,6 @@ struct SitePreviewSection: View {
     @State private var reloadToken = 0
     @State private var preview = SitePreviewState()
     @AppStorage(SitePreviewDefaults.viewportKey) private var viewportRaw = SiteViewport.desktop.rawValue
-
-    private static let maxPreviewHeight = 620.0
 
     private var viewport: SiteViewport { SiteViewport(rawValue: viewportRaw) ?? .desktop }
     private var links: [ProjectLink] { ProjectLinks.openable(project.links) }
@@ -58,15 +58,42 @@ struct SitePreviewSection: View {
 
     // MARK: - 見出しの行
 
+    /// 1 行に入らなければ、見出しと見る元 / 幅の切り替えと操作の 2 段に折り返す。
     private var toolbar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                toolbarTitle(compact: false)
+                Spacer(minLength: 8)
+                toolbarControls
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    toolbarTitle(compact: true)
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    toolbarControls
+                }
+            }
+        }
+        .zIndex(1)
+    }
+
+    private func toolbarTitle(compact: Bool) -> some View {
         HStack(spacing: 8) {
             Text("サイト")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(ChatTheme.tertiary)
+                .fixedSize()
             if location != nil || !links.isEmpty {
-                sourcePicker
+                sourcePicker(compact: compact)
             }
-            Spacer(minLength: 8)
+        }
+    }
+
+    private var toolbarControls: some View {
+        HStack(spacing: 8) {
             if targetURL != nil {
                 SiteViewportPicker(raw: $viewportRaw)
                 HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの場所と更新時刻も確かめ直す") {
@@ -82,10 +109,11 @@ struct SitePreviewSection: View {
                 }
             }
         }
-        .zIndex(1)
+        .fixedSize()
     }
 
-    private var sourcePicker: some View {
+    /// 2 段の時は見る元の名前を省略表示にして、欄の幅を超えないようにする。
+    private func sourcePicker(compact: Bool) -> some View {
         Menu {
             if location != nil {
                 Button { source = .devServer } label: { sourceLabel(.devServer) }
@@ -107,7 +135,7 @@ struct SitePreviewSection: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
+        .fixedSize(horizontal: !compact, vertical: true)
         .accessibilityLabel("見る元: \(sourceTitle(source))")
     }
 
@@ -197,7 +225,7 @@ struct SitePreviewSection: View {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
         } else if let url = targetURL {
             SitePreviewFrame(url: url, origin: source == .devServer ? url : nil, viewport: viewport, reloadToken: reloadToken,
-                             state: preview, maxHeight: Self.maxPreviewHeight)
+                             state: preview, height: .fillWidth(visibleHeight: visibleHeight))
         } else if source == .devServer, location != nil {
             if devServer?.isActive == true {
                 hint("開発サーバーがアドレス（http://localhost:…）を出すとここに映ります。")

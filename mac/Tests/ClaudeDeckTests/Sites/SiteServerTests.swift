@@ -296,6 +296,38 @@ final class SiteViewportTests: XCTestCase {
         XCTAssertEqual(SiteViewport.allCases.map(\.width), [1280, 820, 390])
     }
 
+    func testHeightLimitFillsWidthOnWideColumns() {
+        // 欄が 1000pt なら PC 表示（1280×800）は 0.78 倍で横いっぱい、高さは 625。
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 1200), 625)
+        let layout = SiteViewport.desktop.layout(available: 1000,
+                                                 maxHeight: SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 1200))
+        XCTAssertEqual(layout.frameWidth, 1000)
+        // 1280pt を超える欄でも拡大はしないので 800 で止まる。
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1800, visibleHeight: 2000), 800)
+    }
+
+    func testHeightLimitStaysWithinVisibleHeight() {
+        // 見えている高さが 600 なら 480 まで（幅は高さに合わせて縮む）。
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 600), 480)
+        let layout = SiteViewport.desktop.layout(available: 1000, maxHeight: 480)
+        XCTAssertEqual(layout.frameHeight, 480)
+        XCTAssertEqual(layout.frameWidth, 768)
+        // とても低い時も最小の高さは保つ。
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 200), 320)
+        // 最小の高さより幅で決まる高さが低ければそちら。
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 320, visibleHeight: 200), 200)
+        // 見えている高さが分からなければ幅だけで決める。
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: nil), 625)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 0), 625)
+    }
+
+    func testHeightLimitForPhoneIncludesBezel() {
+        // スマホは拡大しないので 844 + 枠 20 まで。
+        XCTAssertEqual(SiteViewport.phone.heightLimit(available: 1000, visibleHeight: 5000), 864)
+        XCTAssertEqual(SiteViewport.phone.heightLimit(available: 1000, visibleHeight: 800), 640)
+        XCTAssertEqual(SiteViewport.phone.layout(available: 1000, maxHeight: 640).frameHeight, 620, accuracy: 1)
+    }
+
     func testThumbnailNamesChangeWithModificationTime() {
         let a = SiteThumbnails.fileName(exportDir: "/p/site/out", modified: Date(timeIntervalSince1970: 100))
         let b = SiteThumbnails.fileName(exportDir: "/p/site/out", modified: Date(timeIntervalSince1970: 200))
