@@ -101,65 +101,18 @@ public actor SessionHub {
     /// サブエージェント数の走査は syscall が多いので実況ポーリングより粗くする。
     static let agentScanInterval: Double = 2_000
 
-    /// ログの終わり方。busy はモデルの番（ツール実行中・長考中）で、無音でも動いている。
-    enum TurnState { case busy, settled }
-
-    final class State {
-        var raw: RawSession
-        var reader: TranscriptReader?
-        var transcriptPath: String?
-        var branch: String?
-        var title: String?
-        var lastPrompt: String?
-        var lastActivityAt: Double?
-        var currentTool: String?
-        var currentSkill: String?
-        var currentAction: String?
-        var tokens: TokenUsage?
-        var hookStatus: SessionStatus?
-        var hookDetail: String?
-        var hookAt: Double = 0
-        /// 権限待ちで届いた素の値。ログの読み取りが追い付いてから説明を添えるため、組み立ては配信時に行う。
-        var hookTool: String?
-        var hookMessage: String?
-        /// 要対応になった時刻。要対応どうしの移り変わりでは引き継ぐ。
-        var attentionSince: Double?
-        var agents: [AgentInfo] = []
-        var agentsCheckedAt: Double = 0
-        /// サブエージェントのログが最後に動いた時刻。親が Agent 実行中は親ログが無音になるため。
-        var lastAgentActivityAt: Double?
-        var socketPath: String?
-        /// cwd は変わらないのでセッション生成時に一度だけ調べる。
-        var xcodeProject: String?
-        /// 最初の在庫走査で見つけた（起動前から動いていた）セッションか。時刻の無いログ行の新旧の見分けに使う。
-        var knownAtStart = false
-        /// メタ情報（ai-title 等）の遡り読みを、この位置のログについて始めたか。
-        var metaRequestedFor: String?
-        var endedAt: Double?
-        var turnState: TurnState?
-
-        init(raw: RawSession) {
-            self.raw = raw
-        }
-
-        /// 親ログとサブエージェントのうち新しい方。無ければ 0。
-        var lastActivity: Double { max(lastActivityAt ?? 0, lastAgentActivityAt ?? 0) }
-    }
-
     public let home: ClaudeHome
-    private let usageFile: URL?
     private let now: @Sendable () -> Double
     private let isAlive: @Sendable (Int32) -> Bool
     private let transcripts: TranscriptStore?
     public typealias MetaResult = (meta: (title: String?, lastPrompt: String?)?, xcodeProject: String?)
     private let metaLoader: @Sendable (_ cwd: String, _ transcriptPath: String?) -> MetaResult
 
-    private var sessions: [String: State] = [:]
+    private var sessions: [String: SessionState] = [:]
     private var permissions = PermissionRegistry()
     private var feedSeq = 0
     private var agentTypes: [String: String] = [:]
-    private var usage: UsageSnapshot?
-    private var usageRead = false
+    private var usagePoller: UsagePoller
     private var locator: TranscriptLocator
     private var tasks: [Task<Void, Never>] = []
     /// `start` の途中（初回走査の await 中）に再び呼ばれても二重に回さないため。
@@ -192,7 +145,7 @@ public actor SessionHub {
                 hookBufferLimit: Int = SessionHub.hookBufferLimit,
                 metaLoader: @escaping @Sendable (_ cwd: String, _ transcriptPath: String?) -> MetaResult = SessionHub.loadMetaFromDisk) {
         self.home = home
-        self.usageFile = usageFile
+        usagePoller = UsagePoller(file: usageFile)
         self.transcripts = transcripts
         self.now = now
         self.isAlive = isAlive
@@ -317,7 +270,7 @@ public actor SessionHub {
                 sessions[raw.sessionId] = state
                 created.append(raw.sessionId)
                 changed = true
-                push(raw.sessionId, .session, "セッション検出: \(Self.basename(raw.cwd))")
+                push(raw.sessionId, .session, "セッション検出: \(HubText.basename(raw.cwd))")
                 continue
             }
             if existing.raw.alive != raw.alive {
@@ -361,8 +314,8 @@ public actor SessionHub {
     }
 
     /// 重い読み（ログの遡り・Xcode の走査）は `loadMeta` に回し、ここでは軽いものだけ埋める。
-    private func createState(_ raw: RawSession) -> State {
-        let state = State(raw: raw)
+    private func createState(_ raw: RawSession) -> SessionState {
+        let state = SessionState(raw: raw)
         state.transcriptPath = locator.resolve(sessionId: raw.sessionId, cwd: raw.cwd)
         if let path = state.transcriptPath { state.reader = TranscriptReader(path: path) }
         state.metaRequestedFor = state.transcriptPath
@@ -407,7 +360,7 @@ public actor SessionHub {
 
     /// 末尾読みで既に新しい値を拾っていればそちらを残す。
     @discardableResult
-    private func applyMeta(_ meta: (title: String?, lastPrompt: String?), to state: State) -> Bool {
+    private func applyMeta(_ meta: (title: String?, lastPrompt: String?), to state: SessionState) -> Bool {
         let before = (state.title, state.lastPrompt)
         state.title = state.title ?? meta.title
         state.lastPrompt = state.lastPrompt ?? meta.lastPrompt
@@ -451,7 +404,7 @@ public actor SessionHub {
                 }
                 if let prompt = ev.lastPrompt, prompt != state.lastPrompt {
                     state.lastPrompt = prompt
-                    push(id, .prompt, Self.truncate(prompt, 160))
+                    push(id, .prompt, HubText.truncate(prompt, 160))
                 }
                 if let at = ev.at { state.lastActivityAt = max(state.lastActivityAt ?? 0, at) }
                 if let usage = ev.usage { state.tokens = usage }
@@ -470,13 +423,7 @@ public actor SessionHub {
                     state.currentAction = ev.toolDetail?.description
                     for tool in tools { push(id, .tool, tool, tool: tool) }
                     // フックより新しい行を読んだ時だけ「待ち」を解く。古い行で権限待ちを消さない。
-                    if (ev.at ?? .infinity) > state.hookAt {
-                        state.hookStatus = nil
-                        state.hookDetail = nil
-                        state.hookTool = nil
-                        state.hookMessage = nil
-                        state.attentionSince = nil
-                    }
+                    if (ev.at ?? .infinity) > state.hookAt { state.clearHookWait() }
                 } else if ev.type == "user" {
                     // tool_result が返った = ツールは終わっている
                     state.currentTool = nil
@@ -487,7 +434,7 @@ public actor SessionHub {
                     // スキルは途中で一言述べても続いている。解除は次のユーザー指示だけに任せる。
                     state.currentTool = nil
                     state.currentAction = nil
-                    push(id, .message, Self.truncate(text, 160))
+                    push(id, .message, HubText.truncate(text, 160))
                 }
             }
 
@@ -530,7 +477,7 @@ public actor SessionHub {
     }
 
     /// 稼働中のサブエージェント一覧と、サブエージェント側の最終更新時刻を返す。
-    private func scanAgents(_ state: State, now: Double) -> ([AgentInfo], Double) {
+    private func scanAgents(_ state: SessionState, now: Double) -> ([AgentInfo], Double) {
         guard let path = state.transcriptPath else { return ([], 0) }
         let dir = ClaudeHome.subagentDirectory(forTranscript: path)
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return ([], 0) }
@@ -565,13 +512,9 @@ public actor SessionHub {
 
     // MARK: - 使用量
 
-    /// statusline スクリプトが書いたファイルを読み直す。内容が変わった時だけ配る。
+    /// 内容が変わった時だけ配る。
     func pollUsage() {
-        let next = UsageReader.read(usageFile)
-        if usageRead && next == usage { return }
-        usageRead = true
-        usage = next
-        sink?(.usage(next))
+        if let change = usagePoller.poll() { sink?(.usage(change.usage)) }
     }
 
     // MARK: - フック層
@@ -661,7 +604,7 @@ public actor SessionHub {
     private func push(_ sessionId: String, _ kind: FeedKind, _ text: String, tool: String? = nil, local: Bool = false) {
         feedSeq += 1
         let item = FeedItem(id: feedSeq, sessionId: sessionId,
-                            project: sessions[sessionId].map { Self.basename($0.raw.cwd) } ?? "?",
+                            project: sessions[sessionId].map { HubText.basename($0.raw.cwd) } ?? "?",
                             at: now(), kind: kind, text: text, tool: tool, local: local ? true : nil)
         sink?(.feed(item))
     }
@@ -688,7 +631,7 @@ public actor SessionHub {
         let state = sessionId.flatMap { sessions[$0] }
         // セッションを引けなくても、どのリポジトリの確認かは申請元の cwd から出す。
         let cwd = state?.raw.cwd ?? input.cwd
-        let reg = permissions.register(input, sessionId: sessionId, project: cwd.map(Self.basename), now: now)
+        let reg = permissions.register(input, sessionId: sessionId, project: cwd.map(HubText.basename), now: now)
         if reg.linked, let sessionId {
             push(sessionId, .status, "権限の確認が届きました: \(reg.pending.toolName)", local: true)
         }
@@ -748,7 +691,7 @@ public actor SessionHub {
 
     // MARK: - 状態の合成
 
-    private func statusOf(_ state: State) -> (SessionStatus, StatusSource) {
+    private func statusOf(_ state: SessionState) -> (SessionStatus, StatusSource) {
         guard state.raw.alive else { return (.stopped, .inventory) }
         // Agent 実行中は親ログが無音になるので、サブエージェント側の更新も活動として数える。
         let last = state.lastActivity
@@ -775,8 +718,8 @@ public actor SessionHub {
                 sessionId: state.raw.sessionId,
                 pid: state.raw.pid,
                 alive: state.raw.alive,
-                name: state.raw.name ?? Self.basename(state.raw.cwd),
-                project: Self.basename(state.raw.cwd),
+                name: state.raw.name ?? HubText.basename(state.raw.cwd),
+                project: HubText.basename(state.raw.cwd),
                 cwd: state.raw.cwd,
                 branch: state.branch,
                 title: state.title,
@@ -841,21 +784,7 @@ public actor SessionHub {
         }
         let error = await SessionMessaging.send(socketPath: socket, text: text)
         // 受理されたかまでは分からないので、送ったことだけを記録する。
-        push(sessionId, .status, error == nil ? "伝言を送信: \(Self.truncate(text, 60))" : "送信失敗: \(error!)")
+        push(sessionId, .status, error == nil ? "伝言を送信: \(HubText.truncate(text, 60))" : "送信失敗: \(error!)")
         if let error { throw HubFailure(code: "unreachable", message: error) }
-    }
-
-    // MARK: - 下請け
-
-    static func basename(_ path: String) -> String {
-        var trimmed = Substring(path)
-        while trimmed.count > 1 && trimmed.hasSuffix("/") { trimmed = trimmed.dropLast() }
-        return trimmed.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? String(trimmed)
-    }
-
-    static func truncate(_ text: String, _ max: Int) -> String {
-        let flat = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        guard flat.utf16.count > max else { return flat }
-        return String(decoding: Array(flat.utf16.prefix(max)), as: UTF16.self) + "…"
     }
 }
