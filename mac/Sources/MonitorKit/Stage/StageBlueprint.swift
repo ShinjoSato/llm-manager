@@ -126,14 +126,6 @@ public enum StageBlueprint {
     public static let spacingX = footprintX + 1
     public static let spacingZ = clearSpacingZ(height: kidY + kidHeight, depth: footprintZ, elevation: elevation)
 
-    public static let groundColor: UInt32 = 0x16243a
-    public static let gridCenterColor: UInt32 = 0x1e3a5f
-    public static let gridColor: UInt32 = 0x142234
-    public static let fogColor: UInt32 = 0x070c14
-    public static let stoneColor: UInt32 = 0xaeb9cc
-    public static let shadeColor: UInt32 = 0x8b97ab
-    public static let capColor: UInt32 = 0x0d1726
-
     // MARK: - 配置
 
     /// ピラミッドを並べる格子。横長の画面に合わせて奥より先に横へ広げる。

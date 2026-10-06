@@ -107,7 +107,7 @@ struct Composer: View {
             Button(action: submit) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(ChatTheme.onAccent)
+                    .foregroundStyle(relay ? ChatTheme.onPermission : ChatTheme.onAccent)
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(relay ? ChatTheme.permission : ChatTheme.accent))
             }

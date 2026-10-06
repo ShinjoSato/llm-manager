@@ -6,13 +6,14 @@ import MonitorKit
 /// ステージの 3D（SceneKit）。中身は `StageSceneModel`、組み立てと動きは `StageSceneRig` が持つ。
 struct StageSceneView: NSViewRepresentable {
     let model: StageSceneModel
+    var backdrop: StageBackdrop = .night
 
     func makeNSView(context: Context) -> StageSCNView {
         StageSCNView(frame: .zero)
     }
 
     func updateNSView(_ view: StageSCNView, context: Context) {
-        view.show(model)
+        view.show(model, backdrop: backdrop)
     }
 
     static func dismantleNSView(_ view: StageSCNView, coordinator: ()) {
@@ -55,7 +56,8 @@ final class StageSCNView: SCNView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func show(_ model: StageSceneModel) {
+    func show(_ model: StageSceneModel, backdrop: StageBackdrop) {
+        rig.setBackdrop(backdrop)
         rig.show(model)
         refreshPlayback()
         needsDisplay = true

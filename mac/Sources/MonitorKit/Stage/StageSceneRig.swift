@@ -30,6 +30,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
     private let world = SCNNode()
     private let ground = SCNNode()
     private let grid = SCNNode()
+    private var backdrop = StageBackdrop.night
 
     // three.js の光は物理単位（拡散は 1/π 倍）なので、元の強さ（0.85 / 1.7 / 0.5）を SceneKit の 1000 = 1 に直す。
     static let ambientIntensity = CGFloat(0.85 / Double.pi * 1000)
@@ -76,7 +77,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         view = StageView(aspect: aspect)
         super.init()
         buildWorld()
-        applyView(lines: Self.gridNodes(size: view.groundWidth, divisions: view.gridDivisions))
+        applyView(lines: Self.gridNodes(size: view.groundWidth, divisions: view.gridDivisions, backdrop: backdrop))
     }
 
     // MARK: - 外から
@@ -90,13 +91,29 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         let next = StageView(aspect: aspect)
         guard next != view else { return }
         view = next
-        let lines = Self.gridNodes(size: next.groundWidth, divisions: next.gridDivisions)
+        let lines = Self.gridNodes(size: next.groundWidth, divisions: next.gridDivisions, backdrop: backdrop)
         Self.withSceneLock { applyView(lines: lines) }
+    }
+
+    /// 背景側の色（テーマ）。変わった時だけ地面・格子・霧を塗り直し、段を組み直す。
+    public func setBackdrop(_ next: StageBackdrop) {
+        guard next != backdrop else { return }
+        backdrop = next
+        let lines = Self.gridNodes(size: view.groundWidth, divisions: view.gridDivisions, backdrop: next)
+        Self.withSceneLock {
+            paintBackdrop()
+            applyView(lines: lines)
+        }
+        rebuild(lock.withLock { moving.model })
     }
 
     /// 中身が変わった時だけ組み直す。nil なら何も立てない。
     public func show(_ next: StageSceneModel?) {
         guard next != lock.withLock({ moving.model }) else { return }
+        rebuild(next)
+    }
+
+    private func rebuild(_ next: StageSceneModel?) {
         var built = Moving(model: next)
         let node = next.map { buildZiggurat($0, into: &built) }
         let old = ziggurat
@@ -169,16 +186,23 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
 
         ground.eulerAngles.x = -.pi / 2
         ground.geometry = SCNPlane(width: 1, height: 1)
-        let groundMaterial = Self.lambert(StageBlueprint.groundColor)
-        // three.js の地面（MeshStandardMaterial）には奥からの青い光（rim）の照り返しが乗る。lambert には無いので一定量を足す。
-        groundMaterial.emission.contents = Self.linearColor(0.0085, 0.0080, 0.0105)
-        ground.geometry?.firstMaterial = groundMaterial
+        ground.geometry?.firstMaterial = Self.toneMapped(SCNMaterial())
+        ground.geometry?.firstMaterial?.lightingModel = .lambert
         world.addChildNode(ground)
         grid.position.y = 0.005
         world.addChildNode(grid)
         scene.rootNode.addChildNode(world)
-        scene.fogColor = Self.color(StageBlueprint.fogColor)
         scene.fogDensityExponent = 1
+        paintBackdrop()
+    }
+
+    private func paintBackdrop() {
+        let groundMaterial = ground.geometry?.firstMaterial
+        groundMaterial?.diffuse.contents = Self.color(backdrop.ground)
+        // three.js の地面（MeshStandardMaterial）には奥からの光（rim）の照り返しが乗る。lambert には無いので一定量を足す。
+        let glow = backdrop.groundEmission
+        groundMaterial?.emission.contents = Self.linearColor(CGFloat(glow.r), CGFloat(glow.g), CGFloat(glow.b))
+        scene.fogColor = Self.color(backdrop.fog)
     }
 
     private func directional(at position: SCNVector3, intensity: CGFloat, color: NSColor) -> SCNNode {
@@ -209,16 +233,16 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         typealias B = StageBlueprint
         let root = SCNNode()
 
-        let halo = Self.halo(color: model.glow)
+        let halo = Self.halo(color: model.glow, ground: backdrop.groundUnderHalo)
         halo.position.y = 0.02
         root.addChildNode(halo)
         parts.halo = Self.haloMaterials(halo)
 
-        let cap = Self.lambert(B.capColor)
+        let cap = Self.lambert(backdrop.cap)
         cap.emission.contents = Self.color(model.glow)
         parts.cap = cap
-        let stone = Self.lambert(B.stoneColor)
-        let shade = Self.lambert(B.shadeColor)
+        let stone = Self.lambert(backdrop.stone)
+        let shade = Self.lambert(backdrop.shade)
         for step in B.stepList {
             let body = SCNNode(geometry: SCNBox(width: step.width, height: step.top - step.base - B.cap,
                                                 length: step.depth, chamferRadius: 0))
@@ -334,8 +358,9 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
 
     /// 足元の影と光の輪。three.js は半透明を sRGB のまま重ね、線形で重ねる SceneKit では明るく出るので、
     /// 下を残す割合を掛ける板と足りない分を足す板の 2 枚に分けて sRGB の重ね結果に合わせる。
-    static func haloShading(adding: Bool) -> String {
-        """
+    static func haloShading(adding: Bool, ground hex: UInt32) -> String {
+        let ground = rgb(hex)
+        return """
         #pragma arguments
         float3 haloColor;
         float haloOpacity;
@@ -345,7 +370,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         \(aces)
         c = saturate(c);
         float3 halo = select(1.055 * pow(c, float3(1.0 / 2.4)) - 0.055, 12.92 * c, c <= float3(0.0031308));
-        float3 ground = float3(\(groundUnderHalo.r), \(groundUnderHalo.g), \(groundUnderHalo.b));
+        float3 ground = float3(\(ground[0]), \(ground[1]), \(ground[2]));
         float remain = (r < \(StageBlueprint.shadowRadius / StageBlueprint.groundRadius) ? 0.65 : 1.0) * (1.0 - haloOpacity);
         float3 mixed = ground * remain + halo * haloOpacity;
         float3 wanted = select(pow((mixed + 0.055) / 1.055, float3(2.4)), mixed / 12.92, mixed <= float3(0.04045));
@@ -354,11 +379,8 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         """
     }
 
-    /// 光の輪の下に見える地面の色（sRGB）。比べ撮りで測った地面の色に合わせる。
-    static let groundUnderHalo = (r: 0x0a / 255.0, g: 0x14 / 255.0, b: 0x26 / 255.0)
-
     /// 掛ける板と足す板を持つノード。どちらも深度を書かず、地面とグリッドの後にこの順で描く。
-    static func halo(color hex: UInt32) -> SCNNode {
+    static func halo(color hex: UInt32, ground: UInt32) -> SCNNode {
         let node = SCNNode()
         node.eulerAngles.x = -.pi / 2
         let c = rgb(hex).map(decodeSRGB)
@@ -372,7 +394,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
             material.diffuse.contents = NSColor.white
             material.blendMode = adding ? .add : .multiply
             material.writesToDepthBuffer = false
-            material.shaderModifiers = [.fragment: haloShading(adding: adding)]
+            material.shaderModifiers = [.fragment: haloShading(adding: adding, ground: ground)]
             material.setValue(NSValue(scnVector3: SCNVector3(c[0], c[1], c[2])), forKey: "haloColor")
             material.setValue(NSNumber(value: Float(0.1)), forKey: "haloOpacity")
             plane.firstMaterial = material
@@ -393,7 +415,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
 
     /// three.js の GridHelper と同じ線（中心の 2 本だけ明るい色）。色ごとに 1 形状にする。
     /// 1px の線は tone map すると地面に沈む（three.js では地面より明るく見えた）ので、色をそのまま出す。
-    static func gridNodes(size: Double, divisions: Int) -> [SCNNode] {
+    static func gridNodes(size: Double, divisions: Int, backdrop: StageBackdrop) -> [SCNNode] {
         let half = size / 2
         let step = size / Double(divisions)
         let center = divisions / 2
@@ -404,7 +426,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
             let lines = [SCNVector3(-half, 0, k), SCNVector3(half, 0, k), SCNVector3(k, 0, -half), SCNVector3(k, 0, half)]
             if i == center { middle += lines } else { plain += lines }
         }
-        return [(plain, StageBlueprint.gridColor), (middle, StageBlueprint.gridCenterColor)].compactMap { vertices, hex in
+        return [(plain, backdrop.grid), (middle, backdrop.gridCenter)].compactMap { vertices, hex in
             guard !vertices.isEmpty else { return nil }
             let element = SCNGeometryElement(indices: (0..<Int32(vertices.count)).map { $0 }, primitiveType: .line)
             let geometry = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices)], elements: [element])

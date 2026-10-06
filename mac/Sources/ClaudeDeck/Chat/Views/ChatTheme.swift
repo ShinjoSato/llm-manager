@@ -1,48 +1,45 @@
 import SwiftUI
 import MonitorKit
 
-/// チャット画面のトークン（ダーク固定）。
+/// チャット画面のトークン。色はテーマ（ナイト / ライト）ごとの値を持ち、描く時の外観で選ばれる。
 enum ChatTheme {
-    /// AppKit 側（ウィンドウ・入力欄）と共有する色。
-    private enum Hex {
-        static let background: UInt32 = 0x0a0f1a
-        static let text: UInt32 = 0xe6ebf2
-    }
+    static let background = color(\.background)
+    static let nsBackground = nsColor(\.background)
+    static let sidebar = color(\.sidebar)
+    static let border = color(\.border)
+    static let inputSurface = color(\.inputSurface)
+    static let inputBorder = color(\.inputBorder)
+    static let selectedRow = color(\.selectedRow)
 
-    static let background = Color(hex: Hex.background)
-    static let nsBackground = NSColor(hex: Hex.background)
-    static let sidebar = Color(hex: 0x0d1320)
-    static let border = Color(hex: 0x1c2433)
-    static let inputSurface = Color(hex: 0x121a29)
-    static let inputBorder = Color(hex: 0x26324a)
-    static let selectedRow = Color(hex: 0x1a2335)
+    static let text = color(\.text)
+    static let nsText = nsColor(\.text)
+    static let secondary = color(\.secondary)
+    static let tertiary = color(\.tertiary)
+    static let heading = color(\.heading)
 
-    static let text = Color(hex: Hex.text)
-    static let nsText = NSColor(hex: Hex.text)
-    static let secondary = Color(hex: 0x97a3b6)
-    static let tertiary = Color(hex: 0x7c889b)
-    static let heading = Color(hex: 0xf1f5f9)
+    static let permission = color(\.permission)
+    static let waiting = color(\.waiting)
+    static let working = color(\.working)
+    static let idle = color(\.idle)
+    static let error = color(\.error)
 
-    static let permission = Color(hex: 0xfbbf24)
-    static let waiting = Color(hex: 0x7cc4ff)
-    static let working = Color(hex: 0x34d399)
-    static let idle = Color(hex: 0x97a3b6)
-    static let error = Color(hex: 0xf87171)
-
-    static let userBubble = Color(hex: 0x2563eb)
-    static let claudeBubble = Color(hex: 0x172033)
-    static let claudeBubbleBorder = Color(hex: 0x222d42)
-    static let accent = Color(hex: 0x34d399)
-    static let onAccent = Color(hex: 0x053321)
-    static let codeSurface = Color(hex: 0x0d1320)
-    static let stagePanel = Color(hex: 0x0b111d)
+    static let userBubble = color(\.userBubble)
+    static let userBubbleText = color(\.userBubbleText)
+    static let claudeBubble = color(\.claudeBubble)
+    static let claudeBubbleBorder = color(\.claudeBubbleBorder)
+    static let accent = color(\.accent)
+    static let onAccent = color(\.onAccent)
+    /// 権限色の塗りの上に載せる文字・記号。
+    static let onPermission = color(\.onPermission)
+    static let codeSurface = color(\.codeSurface)
+    static let stagePanel = color(\.stagePanel)
 
     /// ライブフィードの種類ごとの色。
-    static let feedTool = Color(hex: 0x7dd3fc)
-    static let feedPrompt = Color(hex: 0xc4b5fd)
-    static let feedStatus = Color(hex: 0xfcd34d)
-    static let feedSession = Color(hex: 0x6ee7b7)
-    static let feedAgent = Color(hex: 0xf0abfc)
+    static let feedTool = color(\.feedTool)
+    static let feedPrompt = color(\.feedPrompt)
+    static let feedStatus = color(\.feedStatus)
+    static let feedSession = color(\.feedSession)
+    static let feedAgent = color(\.feedAgent)
 
     static let body = Font.system(size: 14)
     static let caption = Font.system(size: 12)
@@ -50,10 +47,36 @@ enum ChatTheme {
     static let mono = Font.system(size: 12, design: .monospaced)
 
     /// プロジェクトの頭文字アイコンの色（名前から決定的に選ぶ）。
-    static let avatarPalette: [Color] = [
-        Color(hex: 0x60a5fa), Color(hex: 0xa78bfa), Color(hex: 0xf472b6), Color(hex: 0xfb923c),
-        Color(hex: 0xfacc15), Color(hex: 0x34d399), Color(hex: 0x22d3ee), Color(hex: 0xf87171),
-    ]
+    static let avatarPalette: [Color] = ThemePalette.night.avatarPalette.indices.map { index in
+        Color(nsColor: dynamic(night: ThemePalette.night.avatarPalette[index], light: ThemePalette.light.avatarPalette[index]))
+    }
+
+    // MARK: - テーマと外観
+
+    /// テーマごとのウィンドウの外観。色はこの外観から引くので、切り替えは外観を差し替えるだけで全画面に届く。
+    static func appearance(for theme: DeckTheme) -> NSAppearance? {
+        NSAppearance(named: theme == .light ? .aqua : .darkAqua)
+    }
+
+    static func colorScheme(for theme: DeckTheme) -> ColorScheme {
+        theme == .light ? .light : .dark
+    }
+
+    private static func color(_ key: KeyPath<ThemePalette, UInt32>) -> Color {
+        Color(nsColor: nsColor(key))
+    }
+
+    private static func nsColor(_ key: KeyPath<ThemePalette, UInt32>) -> NSColor {
+        dynamic(night: ThemePalette.night[keyPath: key], light: ThemePalette.light[keyPath: key])
+    }
+
+    private static func dynamic(night: UInt32, light: UInt32) -> NSColor {
+        let nightColor = NSColor(hex: night)
+        let lightColor = NSColor(hex: light)
+        return NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua ? lightColor : nightColor
+        }
+    }
 
     static func avatarColor(for name: String) -> Color {
         avatarPalette[RoomGrouping.colorIndex(for: name, paletteSize: avatarPalette.count)]

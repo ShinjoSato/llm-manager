@@ -57,7 +57,7 @@ struct UserBubble: View {
             if !text.isEmpty {
                 Text(ChatMarkdown.inline(text))
                     .font(ChatTheme.body)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(ChatTheme.userBubbleText)
                     .textSelection(.enabled)
                     .lineSpacing(3)
                     .padding(.horizontal, 14)
