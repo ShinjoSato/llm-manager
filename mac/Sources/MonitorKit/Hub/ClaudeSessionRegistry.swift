@@ -12,9 +12,13 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
     public var entrypoint: String?
     /// `interactive` など。
     public var kind: String?
+    /// `busy` / `idle` / `waiting`。
+    public var status: String?
+    /// 返事待ちの中身（`dialog open` 等）。
+    public var waitingFor: String?
 
     public init(pid: Int32, sessionId: String, cwd: String? = nil, startedAt: Double? = nil, procStart: String? = nil,
-                entrypoint: String? = nil, kind: String? = nil) {
+                entrypoint: String? = nil, kind: String? = nil, status: String? = nil, waitingFor: String? = nil) {
         self.pid = pid
         self.sessionId = sessionId
         self.cwd = cwd
@@ -22,7 +26,11 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
         self.procStart = procStart
         self.entrypoint = entrypoint
         self.kind = kind
+        self.status = status
+        self.waitingFor = waitingFor
     }
+
+    public var waiting: SessionWaiting { SessionWaiting(status: status, waitingFor: waitingFor) }
 }
 
 /// Claude Code のセッションレジストリを pid から引く。

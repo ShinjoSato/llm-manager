@@ -22,7 +22,7 @@ extension ClaudeTerminalView {
     func sendMessage(_ text: String, attachments: [Attachment] = [], completion: @escaping (SendCompletion) -> Void) -> SendResult {
         guard !isSending else { return .busy }
         let screen = screenLines()
-        if let block = InputBlock.detect(screen: screen) { return .blocked(block) }
+        if let block = InputBlock.detect(screen: screen, waiting: sessionWaiting(fresh: true)) { return .blocked(block) }
         if mayHaveLeftover {
             // 入力欄が読めない時は残りを確かめられないが、くっつく害は小さいので送る（印は残す）。
             if let boxText = InputBox.text(screen: screen) {
@@ -42,7 +42,7 @@ extension ClaudeTerminalView {
             completion(outcome)
         }
         guard let imagePaste else {
-            if let body { pasteAndSubmit(body, finish: finish) }
+            if let body { pasteAndSubmit(body, before: InputBox.text(screen: screen), imagesPasted: false, finish: finish) }
             return .started(pastedImages: [], body: message.body)
         }
         // 画像のパスだけを先に 1 回で貼る（本文と同じ貼り付けだと TUI が本文を空白 + / や改行で割って繋ぎ直すため）。
@@ -59,7 +59,7 @@ extension ClaudeTerminalView {
             // 取り込みを確かめられなかった時は Enter が捨てられているかもしれないので、次の送信で入力欄の残りを確かめる。
             if !ingested { self.mayHaveLeftover = true }
             if let body {
-                self.pasteAndSubmit(body, finish: finish)
+                self.pasteAndSubmit(body, before: InputBox.text(screen: self.screenLines()), imagesPasted: true, finish: finish)
             } else {
                 self.send(txt: PTYInput.submitKey)
                 finish(.submitted)
@@ -68,16 +68,34 @@ extension ClaudeTerminalView {
         return .started(pastedImages: message.imagePaths, body: message.body)
     }
 
-    private func pasteAndSubmit(_ body: String, finish: @escaping (SendCompletion) -> Void) {
+    /// 本文を貼り、端末の入力欄に入ったのを確かめてから Enter を送る。`before` は貼る前の入力欄（読めなければ nil）。
+    private func pasteAndSubmit(_ body: String, before: String?, imagesPasted: Bool, finish: @escaping (SendCompletion) -> Void) {
         send(txt: body)
+        let deadline = Date().addingTimeInterval(PTYInput.submitDelay + PasteCheck.extraWait)
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.submitDelay) { [weak self] in
-            guard let self else { return finish(.ended) }
-            if let block = self.currentInputBlock() {
-                self.mayHaveLeftover = true
-                return finish(.abortedAfterBody(block))
-            }
-            self.send(txt: PTYInput.submitKey)
+            self?.submitIfPasted(before: before, imagesPasted: imagesPasted, deadline: deadline, finish: finish) ?? finish(.ended)
+        }
+    }
+
+    private func submitIfPasted(before: String?, imagesPasted: Bool, deadline: Date, finish: @escaping (SendCompletion) -> Void) {
+        if let block = currentInputBlock() {
+            mayHaveLeftover = true
+            return finish(.abortedAfterBody(block))
+        }
+        switch PasteCheck.judge(before: before, after: InputBox.text(screen: screenLines())) {
+        case .pasted, .unknown:
+            send(txt: PTYInput.submitKey)
             finish(.submitted)
+        case .missing:
+            guard Date() >= deadline else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + PasteCheck.pollInterval) { [weak self] in
+                    self?.submitIfPasted(before: before, imagesPasted: imagesPasted, deadline: deadline, finish: finish) ?? finish(.ended)
+                }
+                return
+            }
+            // 後から届いた貼り付けが入力欄に残るかもしれないので、次の送信で確かめる。
+            mayHaveLeftover = true
+            finish(.notPasted(imagesPasted: imagesPasted))
         }
     }
 
@@ -243,7 +261,7 @@ extension ClaudeTerminalView {
     func cancelUnreadableMenu(_ expected: UnreadableMenu) -> UnreadableCancelResult {
         guard !isNavigatingMenu else { return .changed }
         let screen = screenLines()
-        guard PermissionPrompt.parse(screen: screen) == nil, let current = ChoiceMenu.unreadable(screen: screen) else {
+        guard let current = ChoiceMenu.unreadable(screen: screen, waiting: sessionWaiting(fresh: true)) else {
             evaluateStatus()
             return .gone
         }

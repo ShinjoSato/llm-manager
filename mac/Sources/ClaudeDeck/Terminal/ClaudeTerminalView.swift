@@ -54,6 +54,9 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
 
     deinit { statusTimer?.invalidate() }
 
+    /// セッションファイルの返事待ちの状態と読んだ時刻（画面の判定のたびにファイルを読まないため）。
+    var sessionWaitingCache: (at: Date, value: SessionWaiting?)?
+
     /// 送信を途中で取りやめ、端末の入力欄に本文や画像を残したかもしれない。
     var mayHaveLeftover = false
 

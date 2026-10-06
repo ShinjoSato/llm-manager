@@ -74,6 +74,12 @@ public enum InputBlock: Sendable, Equatable {
         return nil
     }
 
+    /// 画面に加え、セッションファイルの返事待ちも見る。画面で読めないダイアログでも Enter はそこに取られるため。
+    public static func detect(screen: [String], waiting: SessionWaiting?) -> InputBlock? {
+        if let block = detect(screen: screen) { return block }
+        return waiting?.isDialogOpen == true ? .menu : nil
+    }
+
     /// 状態バッジ用の「入力待ち」文言（小文字・部分一致）。返答本文に出うる言い回しは入れない。送信判定には使わない。
     public static let waitingPhrases: [String] = [
         "yes, and don't ask again",
@@ -88,22 +94,71 @@ public enum InputBlock: Sendable, Equatable {
     }
 }
 
+/// `~/.claude/sessions/<pid>.json` の返事待ちの状態（status / waitingFor）。
+public struct SessionWaiting: Sendable, Equatable {
+    public var status: String?
+    public var waitingFor: String?
+
+    public init(status: String?, waitingFor: String?) {
+        self.status = status
+        self.waitingFor = waitingFor
+    }
+
+    /// ダイアログ系の waitingFor（v2.1.288 のバイナリで確認した値）。権限確認・質問は画面で読むので入れない。
+    static let dialogValues: Set<String> = ["dialog open", "sandbox request", "goal proposal"]
+
+    /// ダイアログが開いていて、入力欄への Enter がそちらに取られる状態か。
+    public var isDialogOpen: Bool {
+        status == "waiting" && waitingFor.map(Self.dialogValues.contains) == true
+    }
+}
+
 /// 端末画面に出ている選択メニュー（❯ で選ぶもの）の判定。値は TUI v2.1.286 で確認。
 public enum ChoiceMenu {
     /// 見る範囲（末尾の空行を除いた画面の下から）。メニューは常に描画済みの最下部に出る。
     static let tailLines = 30
     /// メニューの操作案内（行頭）。trust 確認のように番号の無いメニューはこれで見分ける。
     static let footerPrefixes = ["enter to confirm", "enter to select", "enter to continue", "esc to cancel", "esc to exit"]
+    /// 案内行の「·」区切りの 1 つ（`↑/↓ to navigate`・`Enter to select` 等。キーの名前は ASCII と矢印だけ）。
+    static let footerPartPattern = #"^[a-z0-9↑↓←→/+\-]{1,15} to [a-z]"#
 
     public static func isShowing(screen: [String]) -> Bool {
         var lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(tailLines)).map { $0.trimmingCharacters(in: .whitespaces) }
+        if overlayRange(lines) != nil { return true }
         // 下部に入力欄があれば、それより上は会話の履歴、欄の中は入力中の文なので見ない。
         if let start = InputBox.zoneStart(lines) {
             lines = Array(lines[start...])
         }
         let footerZone = lines.filter { !$0.isEmpty }.suffix(8)
-        if footerZone.contains(where: { line in footerPrefixes.contains { line.lowercased().hasPrefix($0) } }) { return true }
+        if footerZone.contains(where: isFooter) { return true }
         return hasNumberedChoices(lines)
+    }
+
+    /// 入力欄の上の罫線から案内行を探す範囲（空行を除いた行数）。
+    static let overlayFooterReach = 3
+
+    /// 入力欄の上に重ねて出たメニューの範囲（上の罫線〜入力欄の上の罫線の手前）。無ければ nil。
+    /// v2.1.288 の fullscreen では申し出等のダイアログが入力欄の真上に重なり、入力欄の ❯ と罫線は下に残る。
+    /// 会話の中の案内行風の文字を拾わないよう、案内行が入力欄の罫線に接している時だけとみなす。
+    static func overlayRange(_ lines: [String]) -> Range<Int>? {
+        guard let prompt = InputBox.promptIndex(lines) else { return nil }
+        let rule = prompt - 1
+        var index = rule - 1
+        var seen = 0
+        while index >= 0, seen < overlayFooterReach {
+            let line = lines[index]
+            if !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                if PermissionPrompt.isSeparator(line) { return nil }
+                if isFooter(line) {
+                    // ダイアログの上端の罫線から（見当たらなければ見る範囲の先頭から）。
+                    let top = (0..<index).last { PermissionPrompt.isSeparator(lines[$0]) } ?? 0
+                    return top..<rule
+                }
+                seen += 1
+            }
+            index -= 1
+        }
+        return nil
     }
 
     /// 「❯ n. …」の近くに n±1 の選択肢が並んでいるか。

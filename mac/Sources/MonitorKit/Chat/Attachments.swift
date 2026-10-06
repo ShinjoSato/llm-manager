@@ -310,13 +310,17 @@ public enum SendCompletion: Sendable, Equatable {
     case abortedBeforeBody(InputBlock)
     /// 本文を貼った後、Enter を押さずにやめた（本文が端末の入力欄に残る）。
     case abortedAfterBody(InputBlock)
+    /// 貼った本文が端末の入力欄に入らなかったので Enter を送らなかった。`imagesPasted` は画像の印を先に貼ったか。
+    case notPasted(imagesPasted: Bool)
     /// 待っている間に端末が無くなった。
     case ended
 
     /// 本文と添付を入力欄に戻すか（端末に本文が入っていない時だけ。戻すと二重に送ることになるため）。
     public var restoresDraft: Bool {
-        if case .abortedBeforeBody = self { return true }
-        return false
+        switch self {
+        case .abortedBeforeBody, .notPasted: return true
+        case .submitted, .abortedAfterBody, .ended: return false
+        }
     }
 
     /// 取りやめた時に出す案内。送れた・端末が無くなった時は nil。
@@ -328,6 +332,10 @@ public enum SendCompletion: Sendable, Equatable {
             return "送信の途中で\(Self.blockName(block))が出たため、本文を貼る前に取りやめました。"
                 + "端末側の入力欄には画像（[Image #N]）だけが残っています。本文と添付はこの入力欄に戻しました。"
                 + "\(Self.answerHint(block))、そのまま送り直すと画像が二重に付きます（端末側の入力欄の画像はターミナルで消せます）。"
+        case .notPasted(let imagesPasted):
+            return Self.notPastedNotice + "Enter は押さず、本文と添付はこの入力欄に戻しました。"
+                + (imagesPasted ? "端末側の入力欄には画像（[Image #N]）が残っているので、そのまま送り直すと画像が二重に付きます。" : "")
+                + "ターミナルでダイアログを閉じてから送り直してください。"
         case .abortedAfterBody(let block):
             // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
             return "送信の途中で\(Self.blockName(block))が出たため、本文を貼った後、Enter を押さずに取りやめました。"
@@ -347,8 +355,12 @@ public enum SendCompletion: Sendable, Equatable {
         case .abortedAfterBody(let block):
             return "送信の途中で\(Self.blockName(block))が出たため、本文を貼った後、Enter を押さずに取りやめました。"
                 + "端末側の入力欄に本文が残っています。\(Self.answerHint(block))送ると、残っている本文とつながって送られます。"
+        case .notPasted:
+            return Self.notPastedNotice + "Enter は押していません。"
         }
     }
+
+    static let notPastedNotice = "端末の入力欄に入りませんでした（ダイアログ等が開いている可能性があります）。"
 
     static func blockName(_ block: InputBlock) -> String {
         switch block {
@@ -359,6 +371,28 @@ public enum SendCompletion: Sendable, Equatable {
 
     private static func answerHint(_ block: InputBlock) -> String {
         block == .permission ? "権限の確認に答えた後に" : "上の選択肢に答えた後に"
+    }
+}
+
+/// 貼り付けが端末の入力欄に入ったかの判定。長文は `[Pasted text #1 …]` に畳まれるので、本文との一致ではなく変化で見る。
+public enum PasteCheck {
+    public enum Verdict: Sendable, Equatable {
+        case pasted
+        /// 入力欄が空か、貼る前から変わっていない。
+        case missing
+        /// 入力欄を読めない（確かめられないので従来どおり送る）。
+        case unknown
+    }
+
+    /// 最初の確認（`PTYInput.submitDelay` 後）で入っていない時に、描き替えを待つ時間。
+    public static let extraWait: TimeInterval = 1.0
+    public static let pollInterval: TimeInterval = 0.1
+
+    /// `before` は貼る前、`after` は今の入力欄の文字（`InputBox.text`。読めなければ nil）。
+    public static func judge(before: String?, after: String?) -> Verdict {
+        guard let after else { return .unknown }
+        if after.isEmpty || after == before { return .missing }
+        return .pasted
     }
 }
 
