@@ -157,7 +157,7 @@ public actor SitePreviewServers {
         let server = HTTPServer(options: options) { request in await SiteServerRoutes.handle(request, root: key) }
         servers[key] = server
         let task = Task { [weak self] in
-            try await Self.open(server) { Task { await self?.dropped(key, server: server) } }
+            try await Self.open(server) { [weak self] in Task { await self?.dropped(key, server: server) } }
         }
         opening[key] = task
         return try await baseURL(for: key)
