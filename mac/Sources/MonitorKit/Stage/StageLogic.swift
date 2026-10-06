@@ -67,7 +67,7 @@ public enum StageLogic {
 
     // MARK: - サブエージェント
 
-    private static let jobs: [String: StageJob] = [
+    static let jobs: [String: StageJob] = [
         "developer-plugin:code-reviewer": StageJob(label: "監査役", role: "差分を静的にレビューする", light: 0xfbbf24, dark: 0xb45309),
         "developer-plugin:swiftui-implementer": StageJob(label: "iOS職人", role: "iOS（SwiftUI）を実装する", light: 0x60a5fa, dark: 0x1d4ed8),
         "developer-plugin:go-api-implementer": StageJob(label: "サーバ職人", role: "Go の API と DB 層を実装する", light: 0x22d3ee, dark: 0x0e7490),

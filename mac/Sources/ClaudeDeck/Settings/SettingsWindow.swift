@@ -4,7 +4,7 @@ import Observation
 import SwiftUI
 
 enum SettingsTab: Hashable {
-    case projects, github, remote, transfer
+    case projects, github, remote, characters, transfer
 }
 
 /// 開いている設定画面のタブ（メニューから別のタブを指して開き直せるよう、ビューの外に持つ）。
@@ -86,6 +86,9 @@ struct SettingsView: View {
                 RemoteAccessView(controller: .shared)
                     .tabItem { Label("iPhone 連携", systemImage: "iphone") }
                     .tag(SettingsTab.remote)
+                CharacterSettingsTab()
+                    .tabItem { Label("キャラクター", systemImage: "person.2") }
+                    .tag(SettingsTab.characters)
                 TransferSettingsTab(store: store)
                     .tabItem { Label("書き出し・読み込み", systemImage: "arrow.up.arrow.down") }
                     .tag(SettingsTab.transfer)
