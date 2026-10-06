@@ -76,13 +76,17 @@ struct EditorButtons: View {
                     .frame(maxWidth: 200, alignment: .trailing)
                     .help(note.outcome.message)
             }
-            HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", name: "VS Code") { editors.openInVSCode(room) }
+            HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", name: "VS Code",
+                         detail: "VS Code で開く: \(room.cwd)") { editors.openInVSCode(room) }
             GitHubButton(editors: editors, room: room, destinations: editors.githubDestinations(for: room),
                          opening: editors.openingGitHub.contains(room.id))
             ProjectLinkButton(editors: editors, room: room, links: editors.projectLinks(for: room))
             if let xcodeProject {
-                HeaderButton(symbol: "hammer", name: "Xcode") { editors.openInXcode(room) }
-                HeaderButton(symbol: "xmark", name: "閉じる", busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true }
+                HeaderButton(symbol: "hammer", name: "Xcode",
+                             detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) }
+                HeaderButton(symbol: "xmark", name: "閉じる",
+                             detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
+                             busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true }
                     .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
                         Button("閉じる", role: .destructive) { editors.closeInXcode(room) }
                         Button("やめる", role: .cancel) {}
