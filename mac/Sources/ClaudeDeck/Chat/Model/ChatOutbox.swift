@@ -62,7 +62,7 @@ final class ChatOutbox {
                 scheduleSentImagesExpiry()
             }
             return true
-        case .leftover, .blocked:
+        case .leftover, .lateLeftover, .blocked:
             alerts.message = result?.refusal?.message
             return false
         case .busy, .empty, nil: return false
@@ -293,6 +293,9 @@ extension ClaudeTerminalView.SendResult {
         case .leftover:
             return ("leftover", "端末側の入力欄に前回の本文や画像が残っているようです。"
                 + "このままもう一度送ると、残っているものの後ろにつながって送られます。")
+        case .lateLeftover:
+            return ("leftover", "前回入らなかった本文が遅れて端末側の入力欄に入ったか、入力欄を確かめられません。"
+                + "二重に送らないよう、端末側の入力欄が空になるまで送りません（ターミナルで送るか消してください）。")
         case .blocked(.permission):
             return ("blocked_permission", "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。")
         case .blocked(.menu):

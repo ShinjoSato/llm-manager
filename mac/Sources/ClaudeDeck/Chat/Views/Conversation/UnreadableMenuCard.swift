@@ -11,10 +11,8 @@ struct UnreadableMenuCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            CardTitle(symbol: "list.bullet.circle.fill", title: "選択肢")
-            Text(menu.cancelExits
-                 ? "端末に選択肢が出ていますが、内容を読み取れませんでした。このメニューで Esc を押すと Claude Code が終了します。"
-                 : "端末に選択肢が出ていますが、内容を読み取れませんでした。閉じると Claude Code は取り消しとして扱います。")
+            CardTitle(symbol: "list.bullet.circle.fill", title: menu.isDialog ? "ダイアログ" : "選択肢")
+            Text(message)
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.secondary)
             HStack(spacing: 8) {
@@ -30,5 +28,14 @@ struct UnreadableMenuCard: View {
         }
         .cardFrame()
         .exitConfirmation(presenting: $exitMenu, onExit: onCancel)
+    }
+
+    private var message: String {
+        if menu.isDialog {
+            return "端末でダイアログが開いています（画面からは読み取れません）。開いている間は送信がダイアログに取られるので送りません。閉じると Claude Code は取り消しとして扱います。"
+        }
+        return menu.cancelExits
+            ? "端末に選択肢が出ていますが、内容を読み取れませんでした。このメニューで Esc を押すと Claude Code が終了します。"
+            : "端末に選択肢が出ていますが、内容を読み取れませんでした。閉じると Claude Code は取り消しとして扱います。"
     }
 }

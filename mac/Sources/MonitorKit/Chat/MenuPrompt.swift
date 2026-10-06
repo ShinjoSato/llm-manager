@@ -196,13 +196,16 @@ extension ChoiceMenu {
 
     /// `isShowing` を確かめ済みの画面から読み取る。
     public static func parseShowing(screen: [String], highlight: ((Int) -> [Bool]?)? = nil) -> MenuPrompt? {
-        let (lines, offset) = menuZoneWithOffset(screen)
+        let (lines, offset, overlay) = menuZoneWithOffset(screen)
         let footerRow = footerIndex(lines)
         guard let cursorRow = cursorIndex(lines, footerRow: footerRow) else { return nil }
 
         let rows: [(index: Int, option: MenuPrompt.Option)]
         if choiceNumber(lines[cursorRow], cursor: true) != nil {
             rows = numberedRows(lines, anchorRow: cursorRow)
+        } else if overlay {
+            // 重ね表示はウィザード（左右で値を変える・チェック欄）もあり、番号の無い行を選択肢と読むと押し方が違うので Esc だけにする。
+            return nil
         } else if isSubmitButton(lines[cursorRow]),
                   let anchor = (0..<cursorRow).last(where: { choiceNumber(lines[$0], cursor: false) != nil }) {
             // ❯ が複数選択の Submit 行にある時は、すぐ上の選択肢から番号の列を読む。
@@ -267,30 +270,38 @@ extension ChoiceMenu {
 
     static let submitLabels: Set<String> = ["Submit", "Next"]
 
-    /// メニューを探す範囲（画面の下部。入力欄があればその下だけ）。
+    /// メニューを探す範囲（画面の下部。入力欄の上に重なったメニューがあればそこ、無ければ入力欄の下だけ）。
     static func menuZone(_ screen: [String]) -> [String] {
         menuZoneWithOffset(screen).lines
     }
 
-    /// メニューを探す範囲と、その先頭が `screen` の何行目か。
-    static func menuZoneWithOffset(_ screen: [String]) -> (lines: [String], offset: Int) {
+    /// メニューを探す範囲と、その先頭が `screen` の何行目か、入力欄の上に重なったメニューか。
+    static func menuZoneWithOffset(_ screen: [String]) -> (lines: [String], offset: Int, overlay: Bool) {
         let trimmed = TerminalScreen.droppingTrailingBlankLines(screen)
         var offset = max(0, trimmed.count - tailLines)
         var lines = Array(trimmed[offset...])
+        if let range = overlayRange(lines) {
+            return (Array(lines[range]), offset + range.lowerBound, true)
+        }
         if let start = InputBox.zoneStart(lines) {
             lines = Array(lines[start...])
             offset += start
         }
-        return (lines, offset)
+        return (lines, offset, false)
     }
 
     static func footerIndex(_ lines: [String]) -> Int? {
         lines.lastIndex { isFooter($0) }
     }
 
+    /// 操作案内の行か。行頭が案内の文言か、「·」で区切った各部分がキーの案内で `Enter to …` と `Esc to …` を含む行。
     static func isFooter(_ line: String) -> Bool {
         let lowered = line.trimmingCharacters(in: .whitespaces).lowercased()
-        return footerPrefixes.contains { lowered.hasPrefix($0) }
+        if footerPrefixes.contains(where: { lowered.hasPrefix($0) }) { return true }
+        let parts = lowered.split(separator: "·").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count >= 2,
+              parts.allSatisfy({ $0.range(of: footerPartPattern, options: .regularExpression) != nil }) else { return false }
+        return parts.contains { $0.hasPrefix("enter to ") } && parts.contains { $0.hasPrefix("esc to ") }
     }
 
     /// 案内行が「Esc to exit」（Esc で claude が終わる）か。
@@ -320,6 +331,14 @@ extension ChoiceMenu {
         let footer = footerIndex(lines).map { lines[$0] } ?? ""
         let exits = footerExits(footer) || lines.contains { $0.lowercased().contains("trust this folder") }
         return UnreadableMenu(lines: Array(lines.suffix(12)), cancelExits: exits)
+    }
+
+    /// 画面で読めない選択メニューか、画面に出ていないがセッションファイルがダイアログを示す時の写し。
+    public static func unreadable(screen: [String], waiting: SessionWaiting?, screenChangedAt: Date?) -> UnreadableMenu? {
+        guard PermissionPrompt.parse(screen: screen) == nil else { return nil }
+        if isShowing(screen: screen) { return unreadable(screen: screen) }
+        guard let waiting, waiting.blocksSend(screen: screen, screenChangedAt: screenChangedAt) else { return nil }
+        return UnreadableMenu(lines: ["端末でダイアログが開いています（\(waiting.waitingFor ?? "")）"], cancelExits: false, isDialog: true)
     }
 
     /// 番号付きの選択肢。`anchorRow` の行から番号が 1 ずつ続く範囲だけを取る（上の本文の番号付きリストを混ぜないため）。
@@ -503,10 +522,13 @@ public struct UnreadableMenu: Sendable, Hashable {
     public var lines: [String]
     /// Esc が claude の終了になるか。
     public var cancelExits: Bool
+    /// 画面ではなくセッションファイル（waitingFor）でダイアログを知った。
+    public var isDialog: Bool
 
-    public init(lines: [String], cancelExits: Bool) {
+    public init(lines: [String], cancelExits: Bool, isDialog: Bool = false) {
         self.lines = lines
         self.cancelExits = cancelExits
+        self.isDialog = isDialog
     }
 }
 
