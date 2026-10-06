@@ -126,6 +126,7 @@ mac/
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       RelayNotes+Failure.swift    伝言の送信失敗の理由（監視の失敗種別を言葉にする。伝言そのものは DeckCore）
       SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
+      RoomRedirects.swift         引き継ぎで移った後に元のルーム宛てに届く取り込みの結果を、移し先のルームへ付け替える表
       Attachments.swift           添付: 送る形の組み立て（画像パスの貼り付け用エスケープ・本文へのパスの一覧）・ペーストボードからの拾い出し・一時保存と掃除
       AttachmentPasteTextView.swift 添付を受ける文字欄（⌘V のメニュー検証・貼り付け・ドロップ）。入力欄の SubmitTextView の土台
       PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの判定
@@ -542,7 +543,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - 入れ方: 入力欄左のクリップ（NSOpenPanel・複数選択可）、**⌘V**（クリップボードにファイル URL があればそのファイル、文字列が無く画像（PNG / JPEG / HEIC / TIFF 等）だけならその画像。
   文字列を含むコピーは従来どおり文字として貼る。⌥⇧⌘V 等の pasteAsPlainText も同じ）、入力欄へのドラッグ＆ドロップ（ファイル・画像のデータ表現。ファイルプロミスは対象外）。入力欄の上にチップ（画像はサムネイル、
   それ以外は名前とアイコン、× で外す）。下書きと同じくルームごとに保持し（`ChatOutbox.attachments`）、1 通 20 個まで。本文が空でも添付だけで送れる。
-  ルームを閉じた時・外部ルームが一覧から消えた時（監視の開始前・引き継ぎ中を除く）は、送る前の添付・サムネイル・一時ファイルを片付ける。
+  ルームを閉じた時・外部ルームが一覧から消えた時（監視の開始前・引き継ぎ中を除く）は、送る前の添付・サムネイル・一時ファイルを片付ける
+  （引き継ぎで再開したルームへは、取り込み中のものも含めて移す）。
 - ⌘V のメニュー検証: 文字専用の NSTextView（`isRichText = false`・`importsGraphics = false`）は、クリップボードに読める型
   （文字列・RTF・ファイル名等の `readablePasteboardTypes`）が無いと「ペースト」を無効にする。スクリーンショット（`public.png` / `public.tiff` だけ）
   では ⌘V のメニューごと無効になり、`paste(_:)` が呼ばれなかった。添付にできるクリップボードの時は `validateMenuItem` /
@@ -673,6 +675,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   3. 同じ cwd で `claude --resume=<sessionId>` を PTY で起動する（`launchClaude(in:resumeSessionId:)`。sessionId は UUID 形式
      （`^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$`）のものしかコマンド行に入れず、`=` でつないで別のオプションに化けさせない。API キーの除去と `unset` はそのまま。`--resume` は対話起動の引数で headless ではない）。
      再開しても sessionId は変わらないので、会話はそのまま続き、ルームは通常のホストルームに切り替わる。
+     外部ルームの書きかけと添付は新しいルームへ移す（`ChatOutbox.move`）。取り込み中だった添付もそのまま新しいルームの取り込み中として扱い、
+     後から元のルーム宛てに届く取り込みの結果は `RoomRedirects` で新しいルームへ付け替える（全部届いたら表は空になる）。
+     引き継ぎが失敗・取りやめになって新しいルームが無い時は従来どおり、外部ルームが一覧から消えた時点で片付ける。
   - 上限到達中（`LimitWatch.isLimitReached`）は引き継がない（確認ダイアログの間・終了待ちの間に到達した場合も、止める前／再開前に判定し直す）。
   - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
     安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。

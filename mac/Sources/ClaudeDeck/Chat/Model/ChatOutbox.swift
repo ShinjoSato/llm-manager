@@ -18,6 +18,8 @@ final class ChatOutbox {
     @ObservationIgnored private(set) var thumbnails: [UUID: NSImage] = [:]
     /// ルーム → 取り込み中の添付（取り込み id → 元ファイルのパス）。片付けで消えたら結果は捨てる。
     private(set) var importing: [RoomID: [UUID: String?]] = [:]
+    /// 引き継ぎで移った後に元のルーム宛てに届く取り込みの結果を、移し先へ届けるための表。
+    @ObservationIgnored private var redirects = RoomRedirects<RoomID, UUID>()
     @ObservationIgnored private let attachmentStore = AttachmentStore()
     /// 1 通に添えられる数。
     static let maxAttachments = 20
@@ -189,9 +191,13 @@ final class ChatOutbox {
         }
     }
 
-    private func finishImport(_ results: [ImportResult], in roomId: RoomID) {
+    private func finishImport(_ results: [ImportResult], in arrivalRoomId: RoomID) {
         var failures: [String] = []
+        var touched: Set<RoomID> = []
         for result in results {
+            // 待つ間に引き継ぎで移っていたら、移し先に届ける。
+            let roomId = redirects.resolve(result.id, arrivedAt: arrivalRoomId)
+            touched.insert(roomId)
             // 待つ間にルームが片付けられていたら、作った一時ファイルも消す。
             guard importing[roomId]?.removeValue(forKey: result.id) != nil else {
                 if let attachment = result.attachment { attachmentStore.discard(attachment) }
@@ -206,7 +212,7 @@ final class ChatOutbox {
                 failures.append(failure)
             }
         }
-        if importing[roomId]?.isEmpty == true { importing[roomId] = nil }
+        for roomId in touched where importing[roomId]?.isEmpty == true { importing[roomId] = nil }
         if !failures.isEmpty { alerts.message = "添付できなかったものがあります。\n" + failures.joined(separator: "\n") }
     }
 
@@ -243,10 +249,14 @@ final class ChatOutbox {
         discardPendingAttachments(of: roomId)
     }
 
-    /// 引き継ぎで外部ルームからホスト中のルームへ移った。書きかけと添付を移し先へ渡す。
+    /// 引き継ぎで外部ルームからホスト中のルームへ移った。書きかけと添付（取り込み中のものも）を移し先へ渡す。
     func move(from roomId: RoomID, to newRoomId: RoomID) {
         if let draft = drafts.removeValue(forKey: roomId) { drafts[newRoomId] = draft }
-        if let pending = attachments.removeValue(forKey: roomId) { attachments[newRoomId] = pending }
+        if let pending = attachments.removeValue(forKey: roomId) { attachments[newRoomId, default: []].append(contentsOf: pending) }
+        if let pending = importing.removeValue(forKey: roomId) {
+            importing[newRoomId, default: [:]].merge(pending) { _, moved in moved }
+            redirects.redirect(pending.keys, to: newRoomId)
+        }
     }
 
     private func forget(_ attachment: Attachment, deletingFile: Bool) {
