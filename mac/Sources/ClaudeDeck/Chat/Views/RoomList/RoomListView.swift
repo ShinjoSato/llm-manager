@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 左カラム: ルーム一覧（検索・新規・接続状態・グループ）。
+/// 左カラム: ルーム一覧（検索・新規・接続状態・状態別のグループかプロジェクトの枠）。
 struct RoomListView: View {
     @Bindable var model: ChatModel
     @State private var showingLauncher = false
@@ -18,23 +18,27 @@ struct RoomListView: View {
                     if items.isEmpty { emptyState }
                     ForEach(items) { item in
                         switch item.kind {
+                        case .phase(let phase, let count):
+                            Text("\(phase.title)  \(count)")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(ChatTheme.tertiary)
+                                .padding(.horizontal, 12)
+                                .padding(.top, 14)
+                                .padding(.bottom, 4)
                         case .header(let section, let collapsed):
                             ProjectSectionHeader(section: section, collapsed: collapsed,
                                                  onToggle: { model.toggleSection(section.id) },
                                                  onLaunch: section.project.map { project in { model.launch(project) } })
                                 .padding(.top, 10)
-                        case .row(let room, let last):
-                            Button { model.select(room.id) } label: {
-                                RoomRow(room: room, selected: model.selection == room.id)
-                                    .equatable()
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu { contextMenu(for: room) }
-                            .padding(.horizontal, 4)
-                            .padding(.top, 2)
-                            .padding(.bottom, last ? 4 : 0)
-                            .background(SectionFrame(bottom: last))
+                        case .row(let room, false, _):
+                            row(room)
+                                .padding(.top, 2)
+                        case .row(let room, true, let last):
+                            row(room)
+                                .padding(.horizontal, 4)
+                                .padding(.top, 2)
+                                .padding(.bottom, last ? 4 : 0)
+                                .background(SectionFrame(bottom: last))
                         case .empty:
                             Text("スレッドなし")
                                 .font(ChatTheme.caption)
@@ -56,7 +60,7 @@ struct RoomListView: View {
 
     private var header: some View {
         HStack {
-            Text("ルーム")
+            Text(model.listMode.title)
                 .font(ChatTheme.headline)
                 .foregroundStyle(ChatTheme.heading)
             Spacer()
@@ -111,6 +115,16 @@ struct RoomListView: View {
             }
         }
         .padding(16)
+    }
+
+    private func row(_ room: Room) -> some View {
+        Button { model.select(room.id) } label: {
+            RoomRow(room: room, selected: model.selection == room.id)
+                .equatable()
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu { contextMenu(for: room) }
     }
 
     @ViewBuilder

@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// メイン画面: ルーム一覧（左 312px）| 会話（中央）| 右パネル（任意。ステージパネルはここに差し込む）。
+/// メイン画面: 一覧の切り替えバー（左端 48px）| ルーム一覧（312px）| 会話（中央）| 右パネル（任意。ステージパネルはここに差し込む）。
 struct ChatRootView<Trailing: View>: View {
     @Bindable var model: ChatModel
     private let trailing: Trailing
@@ -13,6 +13,8 @@ struct ChatRootView<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            ListModeBar(model: model)
+            Rectangle().fill(ChatTheme.border).frame(width: 1)
             RoomListView(model: model)
                 .frame(width: 312)
             Rectangle().fill(ChatTheme.border).frame(width: 1)
@@ -30,6 +32,7 @@ struct ChatRootView<Trailing: View>: View {
         }
         .onChange(of: model.store.feed.last?.id) { model.markSelectedSeen() }
         .onChange(of: model.rooms.count) { selectFirstIfNeeded() }
+        .onChange(of: model.listMode) { selectFirstIfNeeded() }
         .alert("claude-deck", isPresented: Binding(get: { model.alerts.message != nil },
                                                    set: { if !$0 { model.alerts.message = nil } })) {
             Button("OK") { model.alerts.message = nil }

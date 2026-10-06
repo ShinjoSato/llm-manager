@@ -44,9 +44,10 @@ mac/
         EditorLauncher.swift        見出しの「VS Code」「GitHub」「リンク」「Xcode」「閉じる」と結果の短い一言
         HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
       Views/                      画面（SwiftUI）
-        ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
+        ChatRootView.swift          骨組み（切り替えバー | ルーム一覧 | 会話 | 右パネルの差し込み口）
         RoomList/                   左のルーム一覧
-          RoomListView.swift          一覧・検索・「+」のポップオーバー・右クリックメニュー
+          ListModeBar.swift           左端の切り替えバー（「ルーム」/「ディレクトリ」・要対応のバッジ）
+          RoomListView.swift          一覧（状態別か枠）・検索・「+」のポップオーバー・右クリックメニュー
           RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・頭文字アイコン（RoomAvatar）
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
@@ -437,9 +438,21 @@ Claude Code の **Channels**（research preview の permission relay）を使う
 Claude Code のセッションを**チャットアプリの操作感**で扱う。セッション 1 つ = トークルーム 1 つ。
 右側はステージパネル（`MainViewController` で `ChatRootView(model:) { StagePanel(model:) }` として差し込む）。
 
-### ルーム一覧（左 312px）
+### 一覧の切り替えバー（左端 48px）
 
-- 設定（settings.json）の **active なプロジェクトごとの枠**（設定の順）に、監視が見つけたセッション + アプリでホスト中のセッションを入れる。
+- ウィンドウの左端の細いバーに、アイコンだけのボタンを縦に並べる。「ルーム」（`bubble.left.and.bubble.right`）は状態別の一覧、
+  「ディレクトリ」（`folder`）はプロジェクトごとの枠の一覧。選んでいる方を強調し、名前は `.help` のツールチップと読み上げで出す。
+- 選択は UserDefaults（`roomList.mode`）に保存し、既定は「ルーム」。知らない保存値も「ルーム」に戻す。
+- 要対応（権限待ち・入力待ち）のルームがあれば「ルーム」アイコンに件数のバッジ（検索で隠れた分も数える。100 件以上は「99+」）。
+- 検索・「+」・監視の案内・選択中のルーム・未読は両方の一覧で共通。切り替えても選択中のルームは変えない（未選択の時だけ、切り替えた先で見えている最初の行を選ぶ）。
+- 見方の型と件数は `Sources/MonitorKit/Chat/RoomListMode.swift`（テストあり）、画面は `Sources/ClaudeDeck/Chat/Views/RoomList/ListModeBar.swift`。
+
+### ルーム一覧（312px）
+
+- 見出しは今の見方の名前（「ルーム」/「ディレクトリ」）。
+- **「ルーム」**: 監視が見つけたセッション + アプリでホスト中のセッションを **要対応（権限待ち・入力待ち）→ 稼働中 → 待機** の見出しで並べる
+  （空の段は出さない・各段は最後に動いた順・同時刻は名前順）。組み立ては DeckCore の `RoomGrouping`。
+- **「ディレクトリ」**: 設定（settings.json）の **active なプロジェクトごとの枠**（設定の順）に、監視が見つけたセッション + アプリでホスト中のセッションを入れる。
   照合は「GitHub」ボタンと同じ（status を問わず全プロジェクトで、cwd がプロジェクトの path と一致か配下・いちばん深い path。`ProjectMatcher`）で、
   当たったのが active ならその枠に入れる（外部セッションも登録済みの path の配下なら枠に入る）。セッションの無い枠は「スレッドなし」で残し、
   どの active のプロジェクトにも当たらないセッション（未登録・いちばん深い一致が paused / archived のもの。active の配下でも paused の子プロジェクトの中ならこちら）は
@@ -489,7 +502,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   （ログ更新が 15 秒以内なら「作業中」、それ以外は最終更新からの経過）。
 - **ライブフィード**: そのセッションの feed の直近 60 件を新しい順（新着が先頭に入る）。時刻・種別（ツール / 指示 / 応答 / 状態 / セッション / 随伴）・内容を mono で。
 - **開閉**: 見出しのボタンで畳む（幅 36px の帯になり、帯のボタンで開く。UserDefaults `stagePanel.open`）。
-  ウィンドウ幅が 1100px 未満なら自動で畳む。狭いまま開いた時はそれに従い（パネルは最小 240px まで縮む）、広げれば通常に戻る。
+  ウィンドウ幅が 1150px 未満なら自動で畳む（左端の切り替えバーの分を含む）。狭いまま開いた時はそれに従い（パネルは最小 240px まで縮む）、広げれば通常に戻る。
 
 ### 会話（中央）
 

@@ -167,8 +167,8 @@ public enum StageLogic {
 
     // MARK: - 開閉
 
-    /// パネルを置いても会話が最小幅を保てるウィンドウ幅（ルーム一覧 312 + 境界 + 会話 420 + 境界 + パネル 360）。
-    public static let autoCollapseWidth: CGFloat = 1100
+    /// パネルを置いても会話が最小幅を保てるウィンドウ幅（切り替えバー 48 + 境界 + ルーム一覧 312 + 境界 + 会話 420 + 境界 + パネル 360）。
+    public static let autoCollapseWidth: CGFloat = 1150
 
     /// 狭いウィンドウでは畳む。ただし狭いまま利用者が開いた時（`openedWhileNarrow`）はそれに従う。
     public static func isExpanded(preference: Bool, windowWidth: CGFloat?, openedWhileNarrow: Bool) -> Bool {

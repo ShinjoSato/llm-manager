@@ -23,11 +23,15 @@ struct Room: Identifiable {
     var activityDate: Date? { activityAt.map(Date.init(epochMillis:)) }
 }
 
-/// ルーム一覧の 1 段。id は `ProjectRoomEntry.id`（行は枠を移っても同じ）。
+/// ルーム一覧の 1 段。id は `RoomListEntry.id` か `ProjectRoomEntry.id`（行はグループや枠を移っても同じ）。
 struct RoomListItem: Identifiable {
     enum Kind {
+        /// 「ルーム」の状態別の見出し。
+        case phase(RoomPhase, count: Int)
+        /// 「ディレクトリ」の枠の見出し。
         case header(ProjectRoomSection, collapsed: Bool)
-        case row(Room, last: Bool)
+        /// `framed` は枠の中の行か、`last` は枠の最後の段か。
+        case row(Room, framed: Bool, last: Bool)
         case empty
     }
 
@@ -70,6 +74,9 @@ final class ChatModel {
         didSet { UserDefaults.standard.set(Self.savedSections(collapsedSections).sorted(), forKey: Self.collapsedKey) }
     }
     private static let collapsedKey = "roomList.collapsedSections"
+    var listMode: RoomListMode = .rooms {
+        didSet { UserDefaults.standard.set(listMode.rawValue, forKey: RoomListMode.defaultsKey) }
+    }
 
     /// ルーム一覧。feed・セッション・ホスト中のセッションが変わった時だけ作り直す（描画のたびに feed を走査しない）。
     private(set) var rooms: [Room] = []
@@ -93,6 +100,7 @@ final class ChatModel {
         transcripts = TranscriptCache(store: store) { sessionId, items in outbox.pruneSentImages(sessionId: sessionId, items: items) }
         editors = EditorLauncher()
         collapsedSections = Set(UserDefaults.standard.stringArray(forKey: Self.collapsedKey) ?? [])
+        listMode = RoomListMode(saved: UserDefaults.standard.string(forKey: RoomListMode.defaultsKey))
         // 部品から ChatModel へは弱い参照のクロージャだけで戻る（循環参照を作らない）。引き継ぎは部品同士の一方向の参照。
         outbox.hostedRoomExists = { [weak self] roomId in self?.hosted.contains { RoomID.hosted($0.id) == roomId } ?? false }
         outbox.roomIds = { [weak self] sessionId in self?.rooms.filter { $0.sessionId == sessionId }.map(\.id) ?? [] }
@@ -177,6 +185,14 @@ final class ChatModel {
             RoomKey(id: room.id.string, name: room.name, status: room.status, activityAt: room.activityAt,
                     searchText: [room.branch, room.snapshot?.title, room.line, room.cwd].compactMap { $0 }.joined(separator: " "))
         }
+        if listMode == .rooms {
+            return RoomGrouping.entries(RoomGrouping.group(keys, query: query)).compactMap { entry -> RoomListItem? in
+                switch entry {
+                case .header(let phase, let count): return RoomListItem(id: entry.id, kind: .phase(phase, count: count))
+                case .row(let key): return byKey[key].map { RoomListItem(id: entry.id, kind: .row($0, framed: false, last: false)) }
+                }
+            }
+        }
         let sections = ProjectRoomGrouping.sections(
             projects: SettingsStore.shared.projects,
             rooms: zip(keys, all).map { ProjectRoomKey(key: $0, cwd: $1.cwd) },
@@ -184,7 +200,7 @@ final class ChatModel {
         return ProjectRoomGrouping.entries(sections, collapsed: collapsedSections, query: query).compactMap { entry -> RoomListItem? in
             switch entry {
             case .header(let section, let collapsed): return RoomListItem(id: entry.id, kind: .header(section, collapsed: collapsed))
-            case .row(let key, _, let last): return byKey[key].map { RoomListItem(id: entry.id, kind: .row($0, last: last)) }
+            case .row(let key, _, let last): return byKey[key].map { RoomListItem(id: entry.id, kind: .row($0, framed: true, last: last)) }
             case .empty: return RoomListItem(id: entry.id, kind: .empty)
             }
         }
@@ -200,9 +216,12 @@ final class ChatModel {
 
     /// 一覧で見えている最初の行（畳んだ枠の中は除く）。
     var firstVisibleRoom: Room? {
-        for item in listItems { if case .row(let room, _) = item.kind { return room } }
+        for item in listItems { if case .row(let room, _, _) = item.kind { return room } }
         return nil
     }
+
+    /// 「ルーム」アイコンのバッジ。
+    var attentionCount: Int { RoomListMode.attentionCount(rooms.map(\.status)) }
 
     func toggleSection(_ id: String) {
         if collapsedSections.contains(id) { collapsedSections.remove(id) } else { collapsedSections.insert(id) }
