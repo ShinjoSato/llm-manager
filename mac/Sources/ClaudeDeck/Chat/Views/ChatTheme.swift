@@ -41,6 +41,24 @@ enum ChatTheme {
     static let feedSession = color(\.feedSession)
     static let feedAgent = color(\.feedAgent)
 
+    static let sectionSurface = color(\.sectionSurface)
+    static let cardFill = fill(\.cardFill)
+    static let cardBorder = fill(\.cardBorder)
+    static let permissionChip = fill(\.permissionChip)
+    static let menuTabCurrent = fill(\.menuTabCurrent)
+    static let toolsFill = fill(\.toolsFill)
+    static let toolsBorder = fill(\.toolsBorder)
+    static let toolsRunningFill = fill(\.toolsRunningFill)
+    static let toolsRunningBorder = fill(\.toolsRunningBorder)
+    static let externalBanner = fill(\.externalBanner)
+    static let relayFill = fill(\.relayFill)
+    static let externalTagFill = fill(\.externalTagFill)
+    static let externalTagBorder = fill(\.externalTagBorder)
+    static let quietButton = fill(\.quietButton)
+    static let quietButtonBorder = fill(\.quietButtonBorder)
+    private static let permissionBadge = fill(\.permissionBadge)
+    private static let waitingBadge = fill(\.waitingBadge)
+
     static let body = Font.system(size: 14)
     static let caption = Font.system(size: 12)
     static let headline = Font.system(size: 16, weight: .bold)
@@ -49,6 +67,11 @@ enum ChatTheme {
     /// プロジェクトの頭文字アイコンの色（名前から決定的に選ぶ）。
     static let avatarPalette: [Color] = ThemePalette.night.avatarPalette.indices.map { index in
         Color(nsColor: dynamic(night: ThemePalette.night.avatarPalette[index], light: ThemePalette.light.avatarPalette[index]))
+    }
+
+    /// プロジェクトの枠の見出しの帯（アバターと同じ色の並びから選ぶ）。
+    private static let sectionBands: [Color] = ThemePalette.night.sectionBands.indices.map { index in
+        Color(nsColor: dynamic(night: ThemePalette.night.sectionBands[index], light: ThemePalette.light.sectionBands[index]))
     }
 
     // MARK: - テーマと外観
@@ -70,9 +93,18 @@ enum ChatTheme {
         dynamic(night: ThemePalette.night[keyPath: key], light: ThemePalette.light[keyPath: key])
     }
 
+    private static func fill(_ key: KeyPath<ThemePalette, ThemeFill>) -> Color {
+        let night = ThemePalette.night[keyPath: key]
+        let light = ThemePalette.light[keyPath: key]
+        return Color(nsColor: dynamic(NSColor(hex: night.hex).withAlphaComponent(night.opacity),
+                                      NSColor(hex: light.hex).withAlphaComponent(light.opacity)))
+    }
+
     private static func dynamic(night: UInt32, light: UInt32) -> NSColor {
-        let nightColor = NSColor(hex: night)
-        let lightColor = NSColor(hex: light)
+        dynamic(NSColor(hex: night), NSColor(hex: light))
+    }
+
+    private static func dynamic(_ nightColor: NSColor, _ lightColor: NSColor) -> NSColor {
         return NSColor(name: nil) { appearance in
             // ポップオーバー等の vibrant 系も明暗で振り分ける。
             switch appearance.bestMatch(from: [.darkAqua, .vibrantDark, .aqua, .vibrantLight]) {
@@ -84,6 +116,19 @@ enum ChatTheme {
 
     static func avatarColor(for name: String) -> Color {
         avatarPalette[RoomGrouping.colorIndex(for: name, paletteSize: avatarPalette.count)]
+    }
+
+    static func sectionBand(for name: String) -> Color {
+        sectionBands[RoomGrouping.colorIndex(for: name, paletteSize: sectionBands.count)]
+    }
+
+    /// 要対応のバッジの地。要対応でない状態は塗らない。
+    static func attentionBadge(for status: SessionStatus) -> Color {
+        switch status {
+        case .permission: return permissionBadge
+        case .waiting: return waitingBadge
+        case .working, .idle, .error, .stopped, .unknown: return .clear
+        }
     }
 
     static func color(for status: SessionStatus) -> Color {

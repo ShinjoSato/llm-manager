@@ -47,7 +47,8 @@ struct ProjectSectionHeader: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(SectionFrame(top: true, bottom: collapsed))
+        .background(SectionFrame(top: true, bottom: collapsed,
+                                 fill: section.isOther ? ChatTheme.sectionSurface : ChatTheme.sectionBand(for: section.name)))
     }
 }
 
@@ -63,7 +64,7 @@ private struct SectionStatusBadge: View {
             .foregroundStyle(color)
             .padding(.horizontal, attention ? 6 : 0)
             .padding(.vertical, attention ? 1 : 0)
-            .background(Capsule().fill(color.opacity(attention ? 0.18 : 0)))
+            .background(Capsule().fill(attention ? ChatTheme.attentionBadge(for: status) : .clear))
             .fixedSize()
     }
 }
@@ -72,11 +73,12 @@ private struct SectionStatusBadge: View {
 struct SectionFrame: View {
     var top = false
     var bottom = false
+    var fill = ChatTheme.sectionSurface
 
     var body: some View {
         let radius: CGFloat = 12
         UnevenRoundedRectangle(topLeadingRadius: top ? radius : 0, bottomLeadingRadius: bottom ? radius : 0,
                                bottomTrailingRadius: bottom ? radius : 0, topTrailingRadius: top ? radius : 0)
-            .fill(ChatTheme.background)
+            .fill(fill)
     }
 }

@@ -30,6 +30,29 @@ final class DeckThemeTests: XCTestCase {
         XCTAssertEqual(DeckTheme.night.palette, .night)
     }
 
+    /// ライトのために足したトークンも、ナイトでは元の部品が使っていた色・濃さのまま。
+    func testNightAddedTokensMatchOriginalLook() {
+        let p = ThemePalette.night
+        XCTAssertEqual(p.sectionSurface, p.background)
+        XCTAssertEqual(p.sectionBands, Array(repeating: p.background, count: p.avatarPalette.count))
+        XCTAssertEqual(p.cardFill, .tint(p.permission, 0.06))
+        XCTAssertEqual(p.cardBorder, .solid(p.permission))
+        XCTAssertEqual(p.permissionChip, .tint(p.permission, 0.14))
+        XCTAssertEqual(p.menuTabCurrent, .tint(p.permission, 0.25))
+        XCTAssertEqual(p.permissionBadge, .tint(p.permission, 0.18))
+        XCTAssertEqual(p.waitingBadge, .tint(p.waiting, 0.18))
+        XCTAssertEqual(p.toolsFill, .solid(p.inputSurface))
+        XCTAssertEqual(p.toolsBorder, .solid(p.border))
+        XCTAssertEqual(p.toolsRunningFill, .tint(p.working, 0.1))
+        XCTAssertEqual(p.toolsRunningBorder, .tint(p.working, 0.4))
+        XCTAssertEqual(p.externalBanner, .tint(p.waiting, 0.07))
+        XCTAssertEqual(p.relayFill, .tint(p.permission, 0.06))
+        XCTAssertEqual(p.externalTagFill.opacity, 0)
+        XCTAssertEqual(p.externalTagBorder, .solid(p.inputBorder))
+        XCTAssertEqual(p.quietButton, .solid(p.inputSurface))
+        XCTAssertEqual(p.quietButtonBorder, .solid(p.inputBorder))
+    }
+
     func testNightStageBackdropKeepsOriginalColors() {
         let b = StageBackdrop.night
         XCTAssertEqual([b.ground, b.groundUnderHalo, b.grid, b.gridCenter, b.fog, b.stone, b.shade, b.cap],
@@ -48,23 +71,47 @@ final class DeckThemeTests: XCTestCase {
         XCTAssertEqual(ThemeContrast.blend(0x000000, over: 0xffffff, opacity: 0.5), 0x808080)
     }
 
-    /// ライトの文字は、載る面（背景・サイドバー・吹き出し・入力欄・薄い状態色の塗り）の上で読める濃さ。
+    /// ライトの面（不透明の塗りを含む）。
+    private var lightSurfaces: [UInt32] {
+        let p = ThemePalette.light
+        let fills = [p.cardFill, p.permissionChip, p.menuTabCurrent, p.permissionBadge, p.waitingBadge, p.toolsFill,
+                     p.toolsRunningFill, p.externalBanner, p.relayFill, p.externalTagFill, p.quietButton]
+        return [p.background, p.sidebar, p.sectionSurface, p.claudeBubble, p.inputSurface, p.codeSurface, p.selectedRow,
+                p.stagePanel, p.userBubble] + p.sectionBands + fills.map { $0.over(p.background) }
+    }
+
+    /// ライトの文字は、載るどの面の上でも本文 7 以上・補助 4.5 以上。
     func testLightTextIsReadable() {
         let p = ThemePalette.light
-        let surfaces = [p.background, p.sidebar, p.claudeBubble, p.inputSurface, p.codeSurface, p.selectedRow, p.stagePanel]
-        for surface in surfaces {
+        for surface in lightSurfaces {
             for (name, ink) in [("text", p.text), ("heading", p.heading), ("secondary", p.secondary)] {
                 XCTAssertGreaterThanOrEqual(ThemeContrast.ratio(ink, surface), 7, "\(name) on \(String(surface, radix: 16))")
             }
             XCTAssertGreaterThanOrEqual(ThemeContrast.ratio(p.tertiary, surface), 4.5, "tertiary on \(String(surface, radix: 16))")
-            let inks = [p.permission, p.waiting, p.working, p.idle, p.error, p.feedTool, p.feedPrompt, p.feedStatus,
-                        p.feedSession, p.feedAgent] + p.avatarPalette
+        }
+        // 状態・フィード・アバターの色の文字が載る面。
+        let inkSurfaces = [p.background, p.sidebar, p.sectionSurface, p.claudeBubble, p.inputSurface, p.codeSurface,
+                           p.selectedRow, p.stagePanel, p.cardFill.over(p.background)] + p.sectionBands
+        let inks = [p.permission, p.waiting, p.working, p.idle, p.error, p.feedTool, p.feedPrompt, p.feedStatus,
+                    p.feedSession, p.feedAgent] + p.avatarPalette
+        for surface in inkSurfaces {
             for ink in inks {
                 XCTAssertGreaterThanOrEqual(ThemeContrast.ratio(ink, surface), 4.5,
                                             "\(String(ink, radix: 16)) on \(String(surface, radix: 16))")
             }
         }
-        // 状態色を薄く塗った面（カード・バッジ・チップ）の上に同じ色の文字を載せる。
+        // バッジ・チップ・カードは、その地と載せる色の組で測る。
+        let pairs: [(String, UInt32, ThemeFill)] = [
+            ("ツール名", p.permission, p.permissionChip), ("権限待ちバッジ", p.permission, p.permissionBadge),
+            ("入力待ちバッジ", p.waiting, p.waitingBadge), ("実行中のツール", p.working, p.toolsRunningFill),
+            ("ツール", p.tertiary, p.toolsFill), ("外部タグ", p.secondary, p.externalTagFill),
+            ("伝言", p.text, p.relayFill), ("引き継ぎの案内", p.waiting, p.externalBanner),
+            ("拒否・キャンセル", p.text, p.quietButton), ("今のタブ", p.heading, p.menuTabCurrent),
+        ]
+        for (name, ink, fill) in pairs {
+            XCTAssertGreaterThanOrEqual(ThemeContrast.ratio(ink, fill.over(p.background)), 4.5, name)
+        }
+        // 状態色を薄く塗った面（見出しのバッジ等）の上に同じ色の文字を載せる。
         for ink in [p.permission, p.waiting, p.working, p.error] + p.avatarPalette {
             let tint = ThemeContrast.blend(ink, over: p.background, opacity: 0.25)
             XCTAssertGreaterThanOrEqual(ThemeContrast.ratio(ink, tint), 3.5, String(ink, radix: 16))
@@ -75,12 +122,44 @@ final class DeckThemeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(ThemeContrast.ratio(p.background, p.permission), 4.5)
     }
 
-    /// ライトの面はどれも白に近い（パステルの面と暗い文字の組み合わせになっている）。
-    func testLightSurfacesAreBright() {
+    /// ライトの面は眩しい白を避けた明るさ（L* 88〜97）で、どれも純白ではない。
+    func testLightSurfacesAreSoftNotWhite() {
         let p = ThemePalette.light
-        for surface in [p.background, p.sidebar, p.claudeBubble, p.inputSurface, p.codeSurface, p.stagePanel,
-                        p.userBubble, p.accent, p.selectedRow] {
-            XCTAssertGreaterThan(ThemeContrast.luminance(surface), 0.6, String(surface, radix: 16))
+        for surface in lightSurfaces + [p.accent] {
+            XCTAssertNotEqual(surface, 0xffffff)
+            let lightness = ThemeContrast.lightness(surface)
+            XCTAssertGreaterThanOrEqual(lightness, 86, String(surface, radix: 16))
+            XCTAssertLessThanOrEqual(lightness, 97, String(surface, radix: 16))
         }
+        // 大きな面（会話・サイドバー・ステージ）は段の差で区切る。
+        let panes = [p.background, p.sidebar, p.stagePanel]
+        for (i, a) in panes.enumerated() {
+            for b in panes[(i + 1)...] { XCTAssertNotEqual(a, b) }
+        }
+        XCTAssertGreaterThan(ThemeContrast.lightness(p.inputSurface), ThemeContrast.lightness(p.background))
+        XCTAssertGreaterThan(ThemeContrast.lightness(p.sectionSurface), ThemeContrast.lightness(p.sidebar))
+    }
+
+    /// 灰色だけにならず、面と帯にパステルの色味がある（各チャンネルの差で測る）。
+    func testLightSurfacesCarryPastelHue() {
+        let p = ThemePalette.light
+        func chroma(_ hex: UInt32) -> UInt32 {
+            let c = [(hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff]
+            return c.max()! - c.min()!
+        }
+        for surface in [p.sidebar, p.selectedRow, p.userBubble, p.claudeBubble, p.stagePanel, p.cardFill.hex, p.accent]
+            + p.sectionBands {
+            XCTAssertGreaterThanOrEqual(chroma(surface), 10, String(surface, radix: 16))
+        }
+        XCTAssertEqual(Set(p.sectionBands).count, p.sectionBands.count)
+        XCTAssertEqual(p.sectionBands.count, p.avatarPalette.count)
+    }
+
+    func testLightStageBackdropBlendsWithPanel() {
+        let b = StageBackdrop.light
+        let panel = ThemePalette.light.stagePanel
+        XCTAssertEqual(b.fog, panel)
+        XCTAssertLessThan(abs(ThemeContrast.lightness(b.groundUnderHalo) - ThemeContrast.lightness(panel)), 5)
+        XCTAssertNotEqual(b.ground, 0xffffff)
     }
 }

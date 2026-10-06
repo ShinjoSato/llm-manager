@@ -166,7 +166,7 @@ private struct MenuTabBar: View {
             .lineLimit(1)
             .padding(.horizontal, 8)
             .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 7).fill(current ? ChatTheme.permission.opacity(0.25) : ChatTheme.inputSurface))
+            .background(RoundedRectangle(cornerRadius: 7).fill(current ? ChatTheme.menuTabCurrent : ChatTheme.inputSurface))
     }
 
     private func moveButton(_ title: String, direction: MenuTabMover.Direction, enabled: Bool) -> some View {

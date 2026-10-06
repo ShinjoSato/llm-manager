@@ -40,8 +40,8 @@ struct CardButtonLabel: View {
             .foregroundStyle(ChatTheme.text)
             .padding(.horizontal, width == nil ? 12 : 0)
             .frame(width: width, height: 30)
-            .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+            .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.quietButton))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.quietButtonBorder))
     }
 }
 
@@ -57,8 +57,8 @@ extension View {
     func cardFrame() -> some View {
         padding(14)
             .frame(maxWidth: 640, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.06)))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission, lineWidth: 1.5))
+            .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.cardFill))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.cardBorder, lineWidth: 1.5))
     }
 
     /// Esc が claude の終了になるメニューで、送る前に確かめる。

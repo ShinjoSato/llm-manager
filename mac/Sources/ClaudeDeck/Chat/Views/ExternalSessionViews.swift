@@ -47,7 +47,7 @@ struct ExternalBanner: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .background(ChatTheme.waiting.opacity(0.07))
+        .background(ChatTheme.externalBanner)
         .overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
     }
 }
@@ -79,7 +79,7 @@ struct RelayBubble: View {
                 .lineSpacing(3)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(shape.fill(ChatTheme.permission.opacity(0.06)))
+                .background(shape.fill(ChatTheme.relayFill))
                 .overlay(shape.stroke(ChatTheme.permission.opacity(0.8), style: StrokeStyle(lineWidth: 1.2, dash: [5, 4])))
             statusLine
         }

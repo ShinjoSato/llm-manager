@@ -26,8 +26,8 @@ struct ToolsRow: View {
                 .foregroundStyle(running != nil ? ChatTheme.working : ChatTheme.tertiary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(running != nil ? ChatTheme.working.opacity(0.1) : ChatTheme.inputSurface))
-                .overlay(Capsule().stroke(running != nil ? ChatTheme.working.opacity(0.4) : ChatTheme.border))
+                .background(Capsule().fill(running != nil ? ChatTheme.toolsRunningFill : ChatTheme.toolsFill))
+                .overlay(Capsule().stroke(running != nil ? ChatTheme.toolsRunningBorder : ChatTheme.toolsBorder))
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
