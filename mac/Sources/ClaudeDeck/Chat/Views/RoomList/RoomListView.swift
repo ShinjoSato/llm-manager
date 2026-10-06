@@ -13,19 +13,17 @@ struct RoomListView: View {
             if !model.store.connection.isConnected { ConnectionNotice(connection: model.store.connection) }
             if let notice = HookServerNotice.text(for: model.store.serverState) { HookServerNotice(text: notice) }
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     let items = model.listItems
                     if items.isEmpty { emptyState }
                     ForEach(items) { item in
                         switch item.kind {
-                        case .header(let phase, let count):
-                            Text("\(phase.title)  \(count)")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(ChatTheme.tertiary)
-                                .padding(.horizontal, 12)
-                                .padding(.top, 14)
-                                .padding(.bottom, 4)
-                        case .row(let room):
+                        case .header(let section, let collapsed):
+                            ProjectSectionHeader(section: section, collapsed: collapsed,
+                                                 onToggle: { model.toggleSection(section.id) },
+                                                 onLaunch: section.project.map { project in { model.launch(project) } })
+                                .padding(.top, 10)
+                        case .row(let room, let last):
                             Button { model.select(room.id) } label: {
                                 RoomRow(room: room, selected: model.selection == room.id)
                                     .equatable()
@@ -33,6 +31,18 @@ struct RoomListView: View {
                             }
                             .buttonStyle(.plain)
                             .contextMenu { contextMenu(for: room) }
+                            .padding(.horizontal, 4)
+                            .padding(.top, 2)
+                            .padding(.bottom, last ? 4 : 0)
+                            .background(SectionFrame(bottom: last))
+                        case .empty:
+                            Text("スレッドなし")
+                                .font(ChatTheme.caption)
+                                .foregroundStyle(ChatTheme.tertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(SectionFrame(bottom: true))
                         }
                     }
                 }

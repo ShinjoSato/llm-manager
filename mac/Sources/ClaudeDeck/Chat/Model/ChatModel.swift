@@ -29,11 +29,12 @@ struct RoomGroup: Identifiable {
     var id: RoomPhase { phase }
 }
 
-/// ルーム一覧の 1 段。id は `RoomListEntry.id`（行はグループを移っても同じ）。
+/// ルーム一覧の 1 段。id は `ProjectRoomEntry.id`（行は枠を移っても同じ）。
 struct RoomListItem: Identifiable {
     enum Kind {
-        case header(RoomPhase, count: Int)
-        case row(Room)
+        case header(ProjectRoomSection, collapsed: Bool)
+        case row(Room, last: Bool)
+        case empty
     }
 
     let id: String
@@ -70,6 +71,11 @@ final class ChatModel {
     private(set) var hosted: [HostedSession] = []
     var selection: RoomID?
     var query = ""
+    /// 畳んだ枠の id（プロジェクトの UUID か「その他」）。
+    var collapsedSections: Set<String> = [] {
+        didSet { UserDefaults.standard.set(collapsedSections.sorted(), forKey: Self.collapsedKey) }
+    }
+    private static let collapsedKey = "roomList.collapsedSections"
 
     /// ルーム一覧。feed・セッション・ホスト中のセッションが変わった時だけ作り直す（描画のたびに feed を走査しない）。
     private(set) var rooms: [Room] = []
@@ -93,6 +99,7 @@ final class ChatModel {
         prompts = PromptResponder(store: store, alerts: alerts)
         transcripts = TranscriptCache(store: store) { sessionId, items in outbox.pruneSentImages(sessionId: sessionId, items: items) }
         editors = EditorLauncher()
+        collapsedSections = Set(UserDefaults.standard.stringArray(forKey: Self.collapsedKey) ?? [])
         // 部品から ChatModel へは弱い参照のクロージャだけで戻る（循環参照を作らない）。引き継ぎは部品同士の一方向の参照。
         outbox.hostedRoomExists = { [weak self] roomId in self?.hosted.contains { RoomID.hosted($0.id) == roomId } ?? false }
         outbox.roomIds = { [weak self] sessionId in self?.rooms.filter { $0.sessionId == sessionId }.map(\.id) ?? [] }
@@ -182,13 +189,22 @@ final class ChatModel {
         let groups = grouped.map { group in
             RoomGroup(phase: group.phase, rooms: group.ids.compactMap { byKey[$0] })
         }
-        let items = RoomGrouping.entries(grouped).compactMap { entry -> RoomListItem? in
+        let sections = ProjectRoomGrouping.sections(
+            projects: SettingsStore.shared.projects,
+            rooms: zip(keys, all).map { ProjectRoomKey(key: $0, cwd: $1.cwd) },
+            query: query)
+        let items = ProjectRoomGrouping.entries(sections, collapsed: collapsedSections, query: query).compactMap { entry -> RoomListItem? in
             switch entry {
-            case .header(let phase, let count): return RoomListItem(id: entry.id, kind: .header(phase, count: count))
-            case .row(let key): return byKey[key].map { RoomListItem(id: entry.id, kind: .row($0)) }
+            case .header(let section, let collapsed): return RoomListItem(id: entry.id, kind: .header(section, collapsed: collapsed))
+            case .row(let key, _, let last): return byKey[key].map { RoomListItem(id: entry.id, kind: .row($0, last: last)) }
+            case .empty: return RoomListItem(id: entry.id, kind: .empty)
             }
         }
         return (groups, items)
+    }
+
+    func toggleSection(_ id: String) {
+        if collapsedSections.contains(id) { collapsedSections.remove(id) } else { collapsedSections.insert(id) }
     }
 
     var selectedRoom: Room? {
