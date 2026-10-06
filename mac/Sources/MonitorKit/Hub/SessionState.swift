@@ -63,7 +63,7 @@ final class SessionState {
         self.raw = raw
     }
 
-    /// 親ログとサブエージェントのうち新しい方。無ければ 0。
+    /// 親ログとサブエージェントのうち新しい方。無ければ 0。稼働中の表示用で、待ちの「答え済み」判定には使わない。
     var lastActivity: Double { max(lastActivityAt ?? 0, lastAgentActivityAt ?? 0) }
 
     /// フックの「待ち」を解く（フックの時刻は残し、古い行で待ちを消さない判定に使い続ける）。
