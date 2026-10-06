@@ -421,11 +421,13 @@ final class SessionHubTests: XCTestCase {
         try Data("{}\n".utf8).write(to: agentLog)
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: (asked + 5_000) / 1000)],
                                               ofItemAtPath: agentLog.path)
-        try append(F.user("u1", [["type": "tool_result", "content": "ok"]], timestamp: iso(asked - 500)))
+        try append(F.user("u1", [["type": "tool_result", "content": "ok"]], timestamp: iso(asked - 500)),
+                   F.json(["type": "last-prompt", "lastPrompt": "預かる前の指示"]))
         clock.advance(TranscriptPoller.agentScanInterval)
         await hub.pollTranscripts()
 
         let s = try await required(hub)
+        XCTAssertEqual(s.lastPrompt, "預かる前の指示", "親ログの行を実際に読んだ上で判定している")
         XCTAssertEqual(s.lastActivityAt ?? 0, asked + 5_000, accuracy: 1, "サブエージェントの活動は読めている")
         XCTAssertEqual(s.agents.map(\.id), ["abc"])
         let stillPending = await hub.pendingPermissions()
