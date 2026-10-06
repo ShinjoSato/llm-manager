@@ -207,7 +207,7 @@ final class StageSceneTests: XCTestCase {
             }
             // 手前の地面はパネルの明るさに沿う（ライトで暗い床が浮かない）。
             for corner in corners {
-                if backdrop == .light { XCTAssertGreaterThan(corner, 0.75) } else { XCTAssertLessThan(corner, 0.3) }
+                if backdrop == .light { XCTAssertGreaterThan(corner, 0.9) } else { XCTAssertLessThan(corner, 0.3) }
             }
         }
         rig.show(nil)

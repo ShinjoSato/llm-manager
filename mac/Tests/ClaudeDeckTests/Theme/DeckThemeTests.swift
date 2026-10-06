@@ -56,6 +56,8 @@ final class DeckThemeTests: XCTestCase {
         let b = StageBackdrop.night
         XCTAssertEqual([b.ground, b.groundUnderHalo, b.grid, b.gridCenter, b.fog, b.stone, b.shade, b.cap],
                        [0x16243a, 0x0a1426, 0x142234, 0x1e3a5f, 0x070c14, 0xaeb9cc, 0x8b97ab, 0x0d1726])
+        // 1 以下なら照り返しの強さは既定の 1 のままで、描画が変わらない。
+        XCTAssertTrue(b.groundEmission == (0.0085, 0.0080, 0.0105))
         XCTAssertEqual(StageBackdrop.for(.night), .night)
         XCTAssertEqual(StageBackdrop.for(.light), .light)
     }
