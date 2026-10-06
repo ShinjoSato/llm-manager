@@ -93,7 +93,7 @@ final class ChatModel {
         prompts = PromptResponder(store: store, alerts: alerts)
         transcripts = TranscriptCache(store: store) { sessionId, items in outbox.pruneSentImages(sessionId: sessionId, items: items) }
         editors = EditorLauncher()
-        // 部品から ChatModel へは弱い参照のクロージャだけで戻る（循環参照を作らない）。
+        // 部品から ChatModel へは弱い参照のクロージャだけで戻る（循環参照を作らない）。引き継ぎは部品同士の一方向の参照。
         outbox.hostedRoomExists = { [weak self] roomId in self?.hosted.contains { RoomID.hosted($0.id) == roomId } ?? false }
         outbox.roomIds = { [weak self] sessionId in self?.rooms.filter { $0.sessionId == sessionId }.map(\.id) ?? [] }
         outbox.isHandingOver = { handover.inProgress.contains($0) }

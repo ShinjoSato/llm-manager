@@ -24,13 +24,13 @@ final class ChatOutbox {
     /// ルーム → 画像を添えて送り、まだ transcript に載っていない発話（載るまで送った画像を吹き出しに出す）。
     private(set) var sentImages: [RoomID: [PendingImageMessage]] = [:]
 
-    // ChatModel に尋ねること。循環参照を避けるためクロージャで受ける。
+    // ChatModel・引き継ぎに尋ねること。循環参照を避けるためクロージャで受け、設定し忘れは黙って通さない。
     /// ホスト中のルームがまだあるか（閉じた後に届いた送信の結末で下書きを戻さないため）。
-    @ObservationIgnored var hostedRoomExists: (RoomID) -> Bool = { _ in false }
+    @ObservationIgnored var hostedRoomExists: (RoomID) -> Bool = { _ in assertionFailure("hostedRoomExists 未設定"); return false }
     /// その sessionId の会話を出しているルーム。
-    @ObservationIgnored var roomIds: (_ sessionId: String) -> [RoomID] = { _ in [] }
+    @ObservationIgnored var roomIds: (_ sessionId: String) -> [RoomID] = { _ in assertionFailure("roomIds 未設定"); return [] }
     /// 引き継ぎ中の sessionId か。
-    @ObservationIgnored var isHandingOver: (_ sessionId: String) -> Bool = { _ in false }
+    @ObservationIgnored var isHandingOver: (_ sessionId: String) -> Bool = { _ in assertionFailure("isHandingOver 未設定"); return false }
 
     init(store: MonitorStore, alerts: ChatAlerts) {
         self.store = store

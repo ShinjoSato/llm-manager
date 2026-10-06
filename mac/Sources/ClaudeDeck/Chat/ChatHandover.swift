@@ -11,7 +11,7 @@ final class ChatHandover {
     /// 引き継ぎ中の sessionId（終了待ち〜再開まで）。
     private(set) var inProgress: Set<String> = []
     /// 終了を確認できた後の再開（HostedSession の起動と一覧への追加は ChatModel が持つ）。
-    @ObservationIgnored var onResume: (_ project: ManagedProject, _ sessionId: String, _ from: RoomID) -> Void = { _, _, _ in }
+    @ObservationIgnored var onResume: (_ project: ManagedProject, _ sessionId: String, _ from: RoomID) -> Void = { _, _, _ in assertionFailure("onResume 未設定") }
 
     init(alerts: ChatAlerts) {
         self.alerts = alerts
