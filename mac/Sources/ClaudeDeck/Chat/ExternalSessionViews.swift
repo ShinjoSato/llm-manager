@@ -7,9 +7,9 @@ struct ExternalBanner: View {
     let room: Room
 
     var body: some View {
-        let busy = room.sessionId.map { model.handingOver.contains($0) } ?? false
-        let disabledReason = model.handoverDisabledReason(for: room)
-        let sourceReason = model.handoverSourceReason(for: room)
+        let busy = room.sessionId.map { model.handover.inProgress.contains($0) } ?? false
+        let disabledReason = model.handover.disabledReason(for: room)
+        let sourceReason = model.handover.sourceReason(for: room)
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: room.snapshot?.entrypoint == "cli" ? "terminal" : "macwindow")
                 .font(.system(size: 14))
@@ -27,7 +27,7 @@ struct ExternalBanner: View {
                 ProgressView().controlSize(.small)
                 Text("引き継ぎ中…").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
             } else {
-                Button { model.requestHandover(room) } label: {
+                Button { model.handover.request(room) } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "arrow.down.app")
                         Text("アプリに引き継ぐ")
