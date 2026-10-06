@@ -134,7 +134,7 @@ struct ChannelsMissingCard: View {
         }
         .padding(14)
         .frame(maxWidth: 640, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.permission.opacity(0.04)))
+        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.pendingCardFill))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.permission.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     }
 }

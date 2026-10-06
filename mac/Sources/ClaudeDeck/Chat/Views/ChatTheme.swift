@@ -44,6 +44,7 @@ enum ChatTheme {
     static let sectionSurface = color(\.sectionSurface)
     static let cardFill = fill(\.cardFill)
     static let cardBorder = fill(\.cardBorder)
+    static let pendingCardFill = fill(\.pendingCardFill)
     static let permissionChip = fill(\.permissionChip)
     static let menuTabCurrent = fill(\.menuTabCurrent)
     static let toolsFill = fill(\.toolsFill)

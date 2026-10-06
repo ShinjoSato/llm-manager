@@ -71,10 +71,21 @@ final class DeckThemeTests: XCTestCase {
         XCTAssertEqual(ThemeContrast.blend(0x000000, over: 0xffffff, opacity: 0.5), 0x808080)
     }
 
+    func testLightFillsAreOpaqueSoContrastIsMeasuredOnTheirOwn() {
+        let p = ThemePalette.light
+        let fills = [p.cardFill, p.pendingCardFill, p.cardBorder, p.permissionChip, p.menuTabCurrent, p.permissionBadge,
+                     p.waitingBadge, p.toolsFill, p.toolsRunningFill, p.externalBanner, p.relayFill, p.quietButton]
+        for fill in fills { XCTAssertEqual(fill.opacity, 1, "\(fill)") }
+    }
+
+    func testNightPendingCardKeepsOriginalLook() {
+        XCTAssertEqual(ThemePalette.night.pendingCardFill, .tint(ThemePalette.night.permission, 0.04))
+    }
+
     /// ライトの面（不透明の塗りを含む）。
     private var lightSurfaces: [UInt32] {
         let p = ThemePalette.light
-        let fills = [p.cardFill, p.permissionChip, p.menuTabCurrent, p.permissionBadge, p.waitingBadge, p.toolsFill,
+        let fills = [p.cardFill, p.pendingCardFill, p.permissionChip, p.menuTabCurrent, p.permissionBadge, p.waitingBadge, p.toolsFill,
                      p.toolsRunningFill, p.externalBanner, p.relayFill, p.externalTagFill, p.quietButton]
         return [p.background, p.sidebar, p.sectionSurface, p.claudeBubble, p.inputSurface, p.codeSurface, p.selectedRow,
                 p.stagePanel, p.userBubble] + p.sectionBands + fills.map { $0.over(p.background) }

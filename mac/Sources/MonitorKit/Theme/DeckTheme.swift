@@ -83,6 +83,8 @@ public struct ThemePalette: Sendable, Equatable {
 
     public var cardFill: ThemeFill
     public var cardBorder: ThemeFill
+    /// 外部セッションの権限待ちの案内カードの地（答えられないので通常のカードより控えめ）。
+    public var pendingCardFill: ThemeFill
     /// 権限カードのツール名の地。
     public var permissionChip: ThemeFill
     /// 選択肢カードの今の問いのタブ。
@@ -113,7 +115,7 @@ public struct ThemePalette: Sendable, Equatable {
         feedTool: 0x7dd3fc, feedPrompt: 0xc4b5fd, feedStatus: 0xfcd34d, feedSession: 0x6ee7b7, feedAgent: 0xf0abfc,
         avatarPalette: [0x60a5fa, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0xf87171],
         sectionSurface: 0x0a0f1a, sectionBands: Array(repeating: 0x0a0f1a, count: 8),
-        cardFill: .tint(0xfbbf24, 0.06), cardBorder: .solid(0xfbbf24),
+        cardFill: .tint(0xfbbf24, 0.06), cardBorder: .solid(0xfbbf24), pendingCardFill: .tint(0xfbbf24, 0.04),
         permissionChip: .tint(0xfbbf24, 0.14), menuTabCurrent: .tint(0xfbbf24, 0.25),
         permissionBadge: .tint(0xfbbf24, 0.18), waitingBadge: .tint(0x7cc4ff, 0.18),
         toolsFill: .solid(0x121a29), toolsBorder: .solid(0x1c2433),
@@ -135,7 +137,7 @@ public struct ThemePalette: Sendable, Equatable {
         avatarPalette: [0x1c57cd, 0x732cec, 0xaf236f, 0xa83909, 0x8a5100, 0x0d6c4c, 0x0c6780, 0xad3327],
         sectionSurface: 0xedf1f7,
         sectionBands: [0xdce6fa, 0xe7defa, 0xf8dcea, 0xfbe3d2, 0xf8edc6, 0xd6f0e2, 0xd3eef2, 0xf8dad7],
-        cardFill: .solid(0xfbefc9), cardBorder: .solid(0xe2b84f),
+        cardFill: .solid(0xfbefc9), cardBorder: .solid(0xe2b84f), pendingCardFill: .solid(0xfbefc9),
         permissionChip: .solid(0xf6dd99), menuTabCurrent: .solid(0xf3d888),
         permissionBadge: .solid(0xf9e2a6), waitingBadge: .solid(0xd6e4fb),
         toolsFill: .solid(0xe9e3f5), toolsBorder: .solid(0xd6cdee),
