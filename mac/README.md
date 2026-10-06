@@ -50,11 +50,17 @@ mac/
     MonitorConfiguration.swift  読み取り元（CLAUDE_HOME）・使用量ファイル・受け口のポート・デバッグ出力
     MonitorStore.swift          @Observable ストア（監視の状態・受け口の状態・セッション・フィード・残量・権限確認・pid 対応付け）
     Hub/                        監視の本体
-      SessionHub.swift            在庫層・実況層・フック層を束ねる actor（状態の合成・フィード・要対応・権限の中継・伝言）
-      SessionInventory.swift      在庫層: ~/.claude/sessions/<pid>.json + kill(pid,0)
-      TranscriptTail.swift        実況層: jsonl の末尾差分（ツール・ブランチ・トークン・ai-title の遡り primeMeta）
+      SessionHub.swift            監視の窓口の actor。各層を順に回し、セッションの辞書と配信（フィード・スナップショット・状態の合成・伝言）を持つ
+      SessionState.swift          セッションごとの可変状態（書く層ごとに欄を分ける）と、層が返すフィードの 1 行
+      InventoryScanner.swift      在庫層: レジストリの走査結果を既知の State に当て、作る・終わらせる・捨てる判断を返す
+      SessionInventory.swift      在庫層: ~/.claude/sessions/<pid>.json + kill(pid,0) の読み取り
+      TranscriptPoller.swift      実況層: 末尾差分を State に映す（ツール・ブランチ・題・スキル・サブエージェント・フックの待ちを解く）
+      TranscriptTail.swift        実況層: jsonl の末尾差分の読み取り（ai-title の遡り primeMeta）
+      HookIntake.swift            フック層: payload の読み取り・待ち行列（HookInbox・取りこぼしの数え上げ）・State への反映（HookIntake）
       Attention.swift             要対応の判定・待ち始めの時刻・権限待ちの説明
+      PermissionWaiters.swift     権限の待ち合わせ: 預かり（セッションの対応付け）・待ち手の登録と期限切れ・判断・端末側で答えられた分の始末
       PermissionRegistry.swift    Channels の権限確認の保留・長ポーリングの待ち手・取り置き
+      UsagePoller.swift           使用量: ファイルを読み直して変わった時だけ返す
       TranscriptLog.swift         会話履歴の整形（発話・応答・ツール）と画像の取り出し（行の位置を覚えて読み直す）
       TranscriptStore.swift       会話履歴の取得と追記の購読（250ms）を持つ actor
       SessionMessaging.swift      受信箱ソケットへの伝言（Unix ソケット・自分の所有のソケットだけ）
@@ -111,7 +117,9 @@ mac/
 
 - **在庫層**（3 秒）: `~/.claude/sessions/<pid>.json` + `kill(pid,0)`。**実況層**（250ms）: `~/.claude/projects/<slug>/<sessionId>.jsonl`
   の末尾差分（初回は末尾 512KB・`ai-title` / `last-prompt` は初回だけ最大 32MB 遡る `primeMeta`）。サブエージェントは 2 秒ごと。
-  状態の合成・終了後 5 分の保持・要対応の時刻（`attentionSince`）・権限待ちの説明・未知の通知のフィード化は `SessionHub`。
+  状態の合成・終了後 5 分の保持・要対応の時刻（`attentionSince`）・権限待ちの説明・未知の通知のフィード化は `SessionHub` と、それが順に回す層
+  （`InventoryScanner` / `TranscriptPoller` / `HookIntake` / `PermissionWaiters` / `UsagePoller`。すべて `SessionHub` の actor の上で動き、
+  セッションの辞書と配信は `SessionHub` だけが持つ）。
   `primeMeta` と Xcode プロジェクトの走査は actor の外で行い、結果だけ戻す。初回の末尾読みのうちアプリ起動前に書かれた行は
   フィードに積まない（起動のたびに未読数が膨らまないように）
 - **会話**: `TranscriptStore`（250ms で追記を読む actor）。購読するのは直近に開いたルームだけ（`watchTranscripts`）で、

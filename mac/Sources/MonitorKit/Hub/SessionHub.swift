@@ -13,7 +13,9 @@ public struct HubFailure: Error, Sendable, Equatable, LocalizedError {
     public var errorDescription: String? { message }
 }
 
-/// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を `MonitorEvent` の流れとして受け手へ渡す。
+/// 監視の窓口。在庫層（InventoryScanner）・実況層（TranscriptPoller）・フック層（HookIntake / HookInbox）・権限の待ち合わせ（PermissionWaiters）・
+/// 使用量（UsagePoller）を 1 つの actor の上で順に回し、変化を `MonitorEvent` の流れとして受け手へ渡す。
+/// セッションの辞書と配信（フィードの番号・スナップショット）はここだけが持ち、各層は渡された `SessionState` の自分の欄を書いて結果を返す。
 public actor SessionHub {
     /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。
     static let staleBusy: Double = 10 * 60_000
