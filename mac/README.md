@@ -47,6 +47,7 @@ mac/
         HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
         SessionRestorer.swift       ホスト中のセッションの記録（hosted-sessions.json）と起動時の再開・作業中だったものへの続きの頼み
         SiteThumbnailStore.swift    「ディレクトリ」の行の LP のサムネイル（オフスクリーンの WKWebView で撮って縮小・キャッシュ・1 つずつ）
+        DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める。ルームを閉じても止めない）
       Views/                      画面（SwiftUI）
         ChatRootView.swift          骨組み（切り替えバー | 一覧 | 会話かディレクトリの詳細 | 右パネルの差し込み口）
         RoomList/                   左の一覧（ルーム / ディレクトリ）
@@ -57,7 +58,8 @@ mac/
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
         Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・GitHub・リンク・スレッド）
-          SitePreviewSection.swift    「サイト」: 見る元（書き出し / 公開 URL）・表示幅・再読み込み・ブラウザで開く・書き出しの更新時刻
+          SitePreviewSection.swift    「サイト」: 見る元（開発サーバー / 書き出し / 公開 URL）・表示幅・再読み込み・ブラウザで開く・書き出しの更新時刻
+          SitePreviewParts.swift      サイトの欄とステージパネルのプレビューで共有する部品（場所の読み込み・表示幅の切り替え・縮める枠・開発サーバーの操作と出力）
           SiteWebView.swift           プレビューの WKWebView（pageZoom で縮めて表示幅ぶんを収める・file: / javascript: へは遷移しない）
         Conversation/               中央の会話
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）
@@ -80,7 +82,8 @@ mac/
         PixelAvatar.swift           ルーム一覧と見出しのドット絵キャラ（絵は DeckCore の PixelCharacter）
         ChatTheme.swift             色・文字・時刻の書式のトークン（ダーク固定。AppKit 側の色も）
     Stage/                      右側のステージパネル（360px）
-      StagePanel.swift            見出し（開閉）・ステージ・畳んだ状態
+      StagePanel.swift            見出し（ステージ / プレビューの切り替え・開閉）・ステージ・畳んだ状態
+      StagePreviewPanel.swift     プレビュー（選択中のルームのプロジェクトの LP。開発サーバー → 書き出し → 案内）
       StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
     Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了
@@ -135,6 +138,8 @@ mac/
       SiteFiles.swift             配信のパスの解決（書き出しの外・隠しファイルは返さない・フォルダは index.html・拡張子なしは .html）と Content-Type
       SiteServer.swift            書き出しの静的配信（サイトごとに 127.0.0.1 のランダムなポート・GET / HEAD のみ。SitePreviewServers）
       SiteViewport.swift          表示幅（PC / タブレット / スマホ）と縮める率・サムネイルのキャッシュの名前・プレビューの中で開いてよい行き先
+      DevServerRules.swift        開発サーバーの起動条件（dev スクリプト）・子の環境・出力からのアドレスの読み取り・失敗の理由・出力の末尾・止める手順
+      DevServerProcess.swift      開発サーバーの子プロセス（新しいプロセスグループで起動・出力と終了の通知・グループごとの停止）
     Limit/
       LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
       LimitState.swift            上限到達の記録（limit-state.json）と、続けて止めた分をまとめた知らせの文言
@@ -159,6 +164,7 @@ mac/
       DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
                                   Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
       TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
+      ChildEnvironment.swift      子プロセス（claude・開発サーバー）の環境から API キーと Claude Code の子セッション印を除く
       SecureFile.swift            0600・置き換えで書く
       DeckPaths.swift             Application Support / Caches / Logs の claude-deck
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
@@ -494,7 +500,30 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
       配信はアプリが動いている間だけ使い回す（待ち受けが後から落ちたら外し、次に開く時に別のポートで開き直す）。実装は `Sources/MonitorKit/Sites/`（テストあり。配信はループバックに立てて実際に取得・拒否を確かめる）。
     - 表示幅: PC 1280 / タブレット 820 / スマホ 390（CSS ピクセル）で組ませ、枠に収まるよう `pageZoom` で縮めて表示する（拡大はしない。スマホは角丸の端末の枠）。選んだ幅は UserDefaults（`sitePreview.viewport`）。
     - 再読み込み（場所と更新時刻も確かめ直す）・ブラウザで開く（今開いているページ。http / https だけ）・書き出しの更新時刻（`out/index.html`）。
-      `out/` が無ければ「`npm run build` で書き出すと見られます」の案内。開発サーバーは起動しない。
+      `out/` が無ければ「`npm run build` で書き出すと見られます」の案内。
+    - **開発サーバー**（見る元の 1 つ）: ▶ を押した時だけ、サイトの場所で `npm run dev` を起動する（`package.json` に `dev` スクリプトがある時だけ。
+      無ければ理由を出してボタンを出さない）。起動は claude と同じく `/bin/zsh -lic` のログインシェルで PATH（nvm 等）を得て、
+      `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec npm run dev`。子の環境からも API キーと Claude Code の子セッション印を除き（`ChildEnvironment`。claude の起動と共通）、
+      `BROWSER=none`・`NO_COLOR=1` を足す。stdin は `/dev/null`、stdout / stderr は 1 本にまとめて読む。**新しいプロセスグループ**（`posix_spawn` の `SETPGROUP`）で起動し、
+      止める時はグループごと SIGTERM → 3 秒待って残れば SIGKILL（`DevServerStopPlan`）。先頭のプロセスはグループが止まり切るまで刈り取らず、
+      送る前に今も自分の子か（`waitid(WNOWAIT)`）を確かめる（番号の使い回しで別のプロセスに送らないため。グループの一覧を `sysctl` で取れない時は、先頭が生きていれば残っているとみなして手順を続ける）。
+      **開発サーバーはルームではなくプロジェクト（サイトのフォルダ）に付く**ので、ルームを閉じても止めない。止めるのは停止ボタン・アプリの終了
+      （`applicationWillTerminate` と SIGTERM / SIGINT の経路の両方で、片付け中のものも含めて止まり切るまで待ってから終える）・プロジェクトが設定から消えた時（設定が読めない間は止めない。止め切ってから一覧から外す）。
+      止めている間は孫まで止め切るまで「停止中」のままで、先頭が自然に終わった時も、グループに残ったものを止め切るまでは片付け中として扱う（その間は同じサイトを起動しない）。
+      自動では起動しない。同じサイト（フォルダ）は二重に起動しない（`DevServerStore`）。
+      **アプリが強制終了・クラッシュした時（SIGKILL 等で終了の処理が走らない時）は開発サーバーが残りうる**（設計上の限界。残ったら `lsof -i :<ポート>` 等で見つけて止める）。
+      - 出力の各行（色などの制御文字は落とす）から `http://localhost:NNNN` / `127.0.0.1:NNNN` を見つけてプレビューにつなぐ。Next の `- Local:` 行・Vite の `➜ Local:` 行を優先し、
+        無ければ最初の手元のアドレス（後から `Local:` 行が出ればそちらへ乗り換え、`Local:` 行で決めた後は替えない）。前後に語の文字が続くもの（`xlocalhost` 等）は拾わない。
+        `0.0.0.0` / `[::1]` は `localhost` で開き、LAN のアドレス・「使用中」のエラーの行のアドレスは使わない。プレビューで開くのは手元（localhost / 127.0.0.1）の
+        アドレスだけ。**ページそのものの遷移は開いたアドレスと同じ origin（スキーム・ホスト・ポート）に限り**、それ以外の http / https のリンクは既定のブラウザで開く
+        （`SiteNavigationPolicy.decide`。埋め込みの扱いと HMR の WebSocket は書き出しと同じ。書き出し・公開 URL の遷移の扱いは変えない）。
+      - 出力は読んだ順に、まとめてメインへ渡す（受け手が詰まっている間は 256KB までためて古い方から捨てる）。行の分け方は読む位置をずらして最後に一度だけ削り、
+        改行の来ない 16KB を超える行は UTF-8 の文字の境界で切る。画面の出力の反映は 0.2 秒に 1 回に間引く。
+      - 出力の末尾 400 行を節の中で見られる（「出力を見る」）。起動に失敗した・すぐ終わった時は理由を出す: npm / node が無い（終了コード 127 等）・
+        dev スクリプトが無い・ポートが使用中（`EADDRINUSE` / `Port N is already in use`）・それ以外は終了コード。
+      - 判定（起動条件・アドレスの読み取り・失敗の理由・止める手順）は `Sources/MonitorKit/Sites/DevServerRules.swift`、子プロセスは `DevServerProcess.swift`
+        （テストあり。sh で孫を持つ子を立て、グループごと止まる・SIGTERM を無視しても SIGKILL で止まる・すぐの終了を知らせる・先頭が終わった後も SIGTERM を無視する孫を止め切る・出力が順に届く、を確かめる）、
+        持ち手は `Sources/ClaudeDeck/Chat/Model/DevServerStore.swift`。初めて開いた時の見る元は、開発サーバーが動いていればそれ、書き出しが無く起動できるなら開発サーバー、それ以外は書き出し。
     - WKWebView は Cookie 等を残さない（`nonPersistent`）。外部のサイトへの遷移はそのまま許し、`file:`・`javascript:`・ページそのものの `data:` 等へは遷移しない
       （新しいウィンドウで開くリンクは同じ枠で開く）。
   - **一覧のサムネイル**: 「ディレクトリ」の各行の右に LP のサムネイル。書き出しのトップを画面に出さないウィンドウの WKWebView（1280×800）で撮って縮小し、
@@ -520,7 +549,11 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 文言・判定は `Sources/MonitorKit/Stage/StageLogic.swift`、ステージの組み立ては `StageBlueprint.swift`・`StageScene.swift`、
 SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
 
-- **見出し**: 「ステージ」・畳むボタン。ステージは 3D 表示だけ（以前の 2D / 3D の保存値 `stagePanel.mode` はパネル表示時に消す）。
+- **見出し**: 「ステージ / プレビュー」の切り替え（アイコンだけ・名前はホバーで出す。UserDefaults `stagePanel.view`）・畳むボタン。ステージは 3D 表示だけ（以前の 2D / 3D の保存値 `stagePanel.mode` はパネル表示時に消す）。
+- **プレビュー**: 選択中のルームの cwd から設定のプロジェクトを引き（`ProjectMatcher`）、その LP を会話の横で見る（`StagePreviewPanel.swift`）。
+  開発サーバーが動いていてアドレスが分かればそれ、無ければ書き出し（`out/`）、どちらも無ければ案内と「開発サーバーを起動」「サイトの欄を開く」のボタン。
+  開発サーバーの状態・起動 / 停止・出力、表示幅の切り替え・再読み込み・ブラウザで開くはサイトの欄と同じ部品（`SitePreviewParts.swift`）で、
+  パネルの幅（360px）と残りの高さに収まるよう縮めて出す。ルームが無い・プロジェクトに入っていない時はその旨を出す。
 - **ステージ**: セッション 1 つ分の段々のピラミッド（議事堂）を描く。寸法・色・ボクセルの厚み・カメラの画角（縦 34°・見下ろし 0.42rad）と
   収め方・跳ね・脈・光り方の数値は、three.js で描いていた頃の見た目に合わせてある。
   - 親エージェントは最上段に立つ（状態で姿勢と色が変わる: 稼働中=立ち・緑 / 権限待ち=立ち・amber / 入力待ち=立ち・青 /
