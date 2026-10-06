@@ -754,6 +754,34 @@ final class SessionHubTests: XCTestCase {
         XCTAssertEqual(s.status, .working)
     }
 
+    /// サブエージェントが動いている間も、親の待ちが続いていれば一覧は要対応を出す。
+    func testParentPermissionWinsOverRunningSubagent() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, _) = try await started()
+        let received = clock.now
+        try append(F.assistant("a1", [["type": "text", "text": "子に任せます"]], timestamp: iso(received - 500)))
+        await hub.applyHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                        notificationType: "permission_prompt"), receivedAt: received)
+        let transcript = home.transcriptURL(sessionId: sessionId, cwd: cwd)
+        let subagents = URL(fileURLWithPath: ClaudeHome.subagentDirectory(forTranscript: transcript.path))
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        let agentLog = subagents.appendingPathComponent("agent-abc.jsonl")
+        try Data("{}\n".utf8).write(to: agentLog)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: (received + 1_000) / 1000)],
+                                              ofItemAtPath: agentLog.path)
+        clock.advance(TranscriptPoller.agentScanInterval)
+        await hub.pollTranscripts()
+        var s = try await required(hub)
+        XCTAssertEqual(s.agents.map(\.id), ["abc"], "子は稼働中")
+        XCTAssertEqual(s.status, .permission, "親が権限待ちで止まっていれば、子が動いていても要対応")
+
+        try append(F.assistant("a2", [["type": "tool_use", "name": "Bash", "input": [:] as [String: Any]]],
+                               timestamp: iso(received + 2_000)))
+        await hub.pollTranscripts()
+        s = try await required(hub)
+        XCTAssertEqual(s.status, .working, "親ログが進めば稼働中に戻る")
+    }
+
     /// 後から反映したフックの受信時刻が古くても、フックの時刻を逆戻りさせない。
     func testHookTimeDoesNotGoBackwards() async throws {
         try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
