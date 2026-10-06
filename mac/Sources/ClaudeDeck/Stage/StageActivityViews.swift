@@ -1,0 +1,188 @@
+import SwiftUI
+import MonitorKit
+
+// MARK: - 節
+
+private struct SectionLabel: View {
+    let text: String
+    var trailing: String?
+
+    var body: some View {
+        HStack {
+            Text(text)
+                .font(StageTheme.label)
+                .tracking(1.2)
+                .foregroundStyle(ChatTheme.tertiary)
+            Spacer()
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(ChatTheme.tertiary)
+            }
+        }
+    }
+}
+
+/// いまの動き: スキル > 説明 > ツールの動作 と経過時間。
+struct NowSection: View {
+    let snapshot: SessionSnapshot?
+    let hasRoom: Bool
+    let now: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionLabel(text: "いまの動き")
+            if let s = snapshot {
+                let action = StageLogic.actionLine(s)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(ChatTheme.color(for: s.status))
+                        .frame(width: 7, height: 7)
+                    Text(action ?? s.statusDetail ?? ChatTheme.label(for: s.status))
+                        .font(ChatTheme.body)
+                        .foregroundStyle(action != nil ? ChatTheme.working : ChatTheme.text)
+                        .lineLimit(2)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("stage-now")
+                Text("最終活動 \(StageLogic.ago(s.lastActivityDate, now: now)) · 稼働 \(StageLogic.duration(since: s.startedDate, now: now))")
+                    .font(ChatTheme.caption.monospacedDigit())
+                    .foregroundStyle(ChatTheme.secondary)
+                if let title = s.title, !title.isEmpty {
+                    Text(title)
+                        .font(ChatTheme.caption)
+                        .foregroundStyle(ChatTheme.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            } else {
+                Text(hasRoom ? "このセッションの情報がまだありません" : "—")
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// 随伴するサブエージェント: 種別（職業名）と状態。
+struct AgentsSection: View {
+    let agents: [AgentInfo]
+    let now: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionLabel(text: "随伴するサブエージェント", trailing: agents.isEmpty ? nil : "\(agents.count)")
+            if agents.isEmpty {
+                Text("なし")
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(agents) { agent in row(agent) }
+                    }
+                }
+                .frame(maxHeight: 112)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func row(_ agent: AgentInfo) -> some View {
+        let job = StageLogic.job(for: agent.type)
+        let activity = StageLogic.activity(of: agent, now: now)
+        return HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(Color(hex: job.light))
+                .frame(width: 8, height: 8)
+            Text(job.label)
+                .font(ChatTheme.caption.weight(.semibold))
+                .foregroundStyle(ChatTheme.text)
+            Text(agent.type ?? "種別不明")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(ChatTheme.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            switch activity {
+            case .active:
+                Text("作業中")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(ChatTheme.working)
+            case .quiet:
+                Text(StageLogic.ago(Date(epochMillis: agent.lastActivityAt), now: now))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(ChatTheme.tertiary)
+            }
+        }
+        .help(job.role)
+    }
+}
+
+/// ライブフィード: そのセッションの直近（新しいものを上に）。
+struct FeedSection: View {
+    let items: [FeedItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "ライブフィード")
+                .padding(.horizontal, 14)
+            if items.isEmpty {
+                Text("まだ動きがありません")
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.secondary)
+                    .padding(.horizontal, 14)
+                Spacer(minLength: 0)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 5) {
+                        ForEach(items) { item in
+                            row(item)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
+                    .animation(.easeOut(duration: 0.2), value: items.first?.id)
+                }
+                .accessibilityIdentifier("stage-feed")
+            }
+        }
+        .padding(.top, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .top) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
+    }
+
+    private func row(_ item: FeedItem) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(ChatTime.seconds(item.date))
+                .foregroundStyle(ChatTheme.tertiary)
+            Text(StageLogic.kindLabel(item.kind))
+                .foregroundStyle(Self.color(item.kind))
+                .frame(width: 44, alignment: .leading)
+            Text(item.text)
+                .foregroundStyle(ChatTheme.text)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 11, design: .monospaced))
+    }
+
+    private static func color(_ kind: FeedKind) -> Color {
+        switch kind {
+        case .tool: return ChatTheme.feedTool
+        case .prompt: return ChatTheme.feedPrompt
+        case .message: return ChatTheme.secondary
+        case .status: return ChatTheme.feedStatus
+        case .session: return ChatTheme.feedSession
+        case .agent: return ChatTheme.feedAgent
+        case .unknown: return ChatTheme.tertiary
+        }
+    }
+}
