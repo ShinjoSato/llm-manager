@@ -41,7 +41,6 @@ enum ChatTheme {
     static let feedSession = color(\.feedSession)
     static let feedAgent = color(\.feedAgent)
 
-    static let sectionSurface = color(\.sectionSurface)
     static let cardFill = fill(\.cardFill)
     static let cardBorder = fill(\.cardBorder)
     static let pendingCardFill = fill(\.pendingCardFill)
@@ -68,11 +67,6 @@ enum ChatTheme {
     /// プロジェクトの頭文字アイコンの色（名前から決定的に選ぶ）。
     static let avatarPalette: [Color] = ThemePalette.night.avatarPalette.indices.map { index in
         Color(nsColor: dynamic(night: ThemePalette.night.avatarPalette[index], light: ThemePalette.light.avatarPalette[index]))
-    }
-
-    /// プロジェクトの枠の見出しの帯（アバターと同じ色の並びから選ぶ）。
-    private static let sectionBands: [Color] = ThemePalette.night.sectionBands.indices.map { index in
-        Color(nsColor: dynamic(night: ThemePalette.night.sectionBands[index], light: ThemePalette.light.sectionBands[index]))
     }
 
     // MARK: - テーマと外観
@@ -117,10 +111,6 @@ enum ChatTheme {
 
     static func avatarColor(for name: String) -> Color {
         avatarPalette[RoomGrouping.colorIndex(for: name, paletteSize: avatarPalette.count)]
-    }
-
-    static func sectionBand(for name: String) -> Color {
-        sectionBands[RoomGrouping.colorIndex(for: name, paletteSize: sectionBands.count)]
     }
 
     /// 要対応のバッジの地。要対応でない状態は塗らない。

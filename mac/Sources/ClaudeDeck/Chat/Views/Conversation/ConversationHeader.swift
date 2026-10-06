@@ -244,9 +244,11 @@ struct HeaderTooltip: View {
 }
 
 /// AppKit のツールチップは頻繁な再描画で待ち時間がやり直しになるため、ホバーとタイマーをここで持って自前で出す。
-private struct HeaderTooltipModifier: ViewModifier {
+struct HeaderTooltipModifier: ViewModifier {
     let name: String
     let details: [String]
+    /// nil ならボタンの下（右端そろえ）、値があればボタンの右にその距離だけ離して出す。
+    var trailingGap: CGFloat? = nil
     @State private var hovering = false
     @State private var shown = false
     /// クリックした後はカーソルが一度離れるまで出さない（開いたメニューに重ねない）。
@@ -261,15 +263,24 @@ private struct HeaderTooltipModifier: ViewModifier {
                 hovering = inside
                 if inside { schedule() } else { reset() }
             }
-            .overlay(alignment: .bottomTrailing) {
+            .overlay(alignment: trailingGap == nil ? .bottomTrailing : .leading) {
                 if shown {
-                    // overlay はボタンの幅を提案するので、幅の枠を与えて右端をそろえ左へ伸ばす。
-                    HeaderTooltip(name: name, details: details)
-                        .frame(width: HeaderTooltip.maxWidth, alignment: .trailing)
-                        .alignmentGuide(.bottom) { $0[.top] - 6 }
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                        .transition(.opacity)
+                    // overlay はボタンの幅を提案するので、幅の枠を与えてから端をそろえる。
+                    if let trailingGap {
+                        HeaderTooltip(name: name, details: details)
+                            .frame(width: HeaderTooltip.maxWidth, alignment: .leading)
+                            .alignmentGuide(.leading) { $0[.leading] - trailingGap }
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                            .transition(.opacity)
+                    } else {
+                        HeaderTooltip(name: name, details: details)
+                            .frame(width: HeaderTooltip.maxWidth, alignment: .trailing)
+                            .alignmentGuide(.bottom) { $0[.top] - 6 }
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                            .transition(.opacity)
+                    }
                 }
             }
             .onDisappear { reset() }

@@ -17,6 +17,9 @@ struct ProjectSectionHeader: View {
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(ChatTheme.tertiary)
                         .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    Circle()
+                        .fill(section.isOther ? ChatTheme.tertiary : ChatTheme.avatarColor(for: section.name))
+                        .frame(width: 7, height: 7)
                     Text(section.name)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(section.isOther ? ChatTheme.secondary : ChatTheme.heading)
@@ -46,9 +49,8 @@ struct ProjectSectionHeader: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(SectionFrame(top: true, bottom: collapsed,
-                                 fill: section.isOther ? ChatTheme.sectionSurface : ChatTheme.sectionBand(for: section.name)))
+        .padding(.vertical, 6)
+        .overlay(alignment: .top) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
     }
 }
 
@@ -69,16 +71,3 @@ private struct SectionStatusBadge: View {
     }
 }
 
-/// 枠の地。見出しと行を別々の段で描くので、上下の端だけ角を丸めて 1 つの枠に見せる。
-struct SectionFrame: View {
-    var top = false
-    var bottom = false
-    var fill = ChatTheme.sectionSurface
-
-    var body: some View {
-        let radius: CGFloat = 12
-        UnevenRoundedRectangle(topLeadingRadius: top ? radius : 0, bottomLeadingRadius: bottom ? radius : 0,
-                               bottomTrailingRadius: bottom ? radius : 0, topTrailingRadius: top ? radius : 0)
-            .fill(fill)
-    }
-}

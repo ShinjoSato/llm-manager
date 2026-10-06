@@ -29,24 +29,21 @@ struct RoomListView: View {
                             ProjectSectionHeader(section: section, collapsed: collapsed,
                                                  onToggle: { model.toggleSection(section.id) },
                                                  onLaunch: section.project.map { project in { model.launch(project) } })
-                                .padding(.top, 10)
+                                .padding(.top, 6)
                         case .row(let room, false, _):
                             row(room)
-                                .padding(.top, 2)
-                        case .row(let room, true, let last):
+                                .padding(.vertical, 1)
+                        case .row(let room, true, _):
                             row(room)
-                                .padding(.horizontal, 4)
-                                .padding(.top, 2)
-                                .padding(.bottom, last ? 4 : 0)
-                                .background(SectionFrame(bottom: last))
+                                .padding(.leading, 12)
+                                .padding(.vertical, 1)
                         case .empty:
                             Text("スレッドなし")
                                 .font(ChatTheme.caption)
                                 .foregroundStyle(ChatTheme.tertiary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(SectionFrame(bottom: true))
+                                .padding(.leading, 34)
+                                .padding(.vertical, 6)
                         }
                     }
                 }

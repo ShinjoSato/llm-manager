@@ -35,7 +35,7 @@ struct ListModeBar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(mode.title)
+        .modifier(HeaderTooltipModifier(name: mode.title, details: [], trailingGap: 42))
         .accessibilityLabel(badge > 0 ? "\(mode.title)（要対応 \(badge) 件）" : mode.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }

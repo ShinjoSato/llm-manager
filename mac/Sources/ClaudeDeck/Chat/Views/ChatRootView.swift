@@ -13,7 +13,8 @@ struct ChatRootView<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ListModeBar(model: model)
+            // 吹き出しを右の一覧の上に重ねるため手前に置く。
+            ListModeBar(model: model).zIndex(1)
             Rectangle().fill(ChatTheme.border).frame(width: 1)
             RoomListView(model: model)
                 .frame(width: 312)
@@ -32,7 +33,7 @@ struct ChatRootView<Trailing: View>: View {
         }
         .onChange(of: model.store.feed.last?.id) { model.markSelectedSeen() }
         .onChange(of: model.rooms.count) { selectFirstIfNeeded() }
-        .onChange(of: model.listMode) { selectFirstIfNeeded() }
+        .onChange(of: model.firstVisibleRoom?.id) { selectFirstIfNeeded() }
         .alert("claude-deck", isPresented: Binding(get: { model.alerts.message != nil },
                                                    set: { if !$0 { model.alerts.message = nil } })) {
             Button("OK") { model.alerts.message = nil }
