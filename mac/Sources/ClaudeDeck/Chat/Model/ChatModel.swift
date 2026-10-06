@@ -73,7 +73,11 @@ final class ChatModel {
     /// ディレクトリを選んでいる間も `selection` は最後のルームのまま残す（ステージパネルと戻った時の続きのため）。
     private(set) var center: ChatCenter = .room
     var listMode: RoomListMode = .rooms {
-        didSet { UserDefaults.standard.set(listMode.rawValue, forKey: RoomListMode.defaultsKey) }
+        didSet {
+            UserDefaults.standard.set(listMode.rawValue, forKey: RoomListMode.defaultsKey)
+            // 2 つの見方は検索の対象（ルームとディレクトリ）が違うので、持ち越すと片方が空になる。
+            if listMode != oldValue { query = "" }
+        }
     }
 
     /// ルーム一覧。feed・セッション・ホスト中のセッションが変わった時だけ作り直す（描画のたびに feed を走査しない）。

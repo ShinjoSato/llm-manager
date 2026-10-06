@@ -266,8 +266,8 @@ struct HeaderTooltip: View {
 struct HeaderTooltipModifier: ViewModifier {
     let name: String
     let details: [String]
-    /// nil ならボタンの下（右端そろえ）、値があればボタンの右にその距離だけ離して出す。
-    var trailingGap: CGFloat? = nil
+    /// nil ならボタンの下（右端そろえ）、値があればボタンの左端からその距離だけ右に出す。
+    var leadingOffset: CGFloat? = nil
     @State private var hovering = false
     @State private var shown = false
     /// クリックした後はカーソルが一度離れるまで出さない（開いたメニューに重ねない）。
@@ -282,13 +282,13 @@ struct HeaderTooltipModifier: ViewModifier {
                 hovering = inside
                 if inside { schedule() } else { reset() }
             }
-            .overlay(alignment: trailingGap == nil ? .bottomTrailing : .leading) {
+            .overlay(alignment: leadingOffset == nil ? .bottomTrailing : .leading) {
                 if shown {
                     // overlay はボタンの幅を提案するので、幅の枠を与えてから端をそろえる。
-                    if let trailingGap {
+                    if let leadingOffset {
                         HeaderTooltip(name: name, details: details)
                             .frame(width: HeaderTooltip.maxWidth, alignment: .leading)
-                            .alignmentGuide(.leading) { $0[.leading] - trailingGap }
+                            .alignmentGuide(.leading) { $0[.leading] - leadingOffset }
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                             .transition(.opacity)
