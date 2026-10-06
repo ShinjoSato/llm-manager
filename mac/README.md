@@ -72,7 +72,8 @@ mac/
                                   RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces
     Channel/                    チャネル（claude-deck-channel）の中身。実行ファイルからはこれを呼ぶだけ
     Settings/                   設定（settings.json）の型・読み書き（0600・原子的・読めないファイルは上書きしない）・検証・
-                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）
+                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）・
+                                ルームとプロジェクトの対応と GitHub の URL（GitHubLinks）
       ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
       ChannelServer.swift         stdin を行で読み、中継して判断を stdout に返す（ログは stderr）
@@ -82,7 +83,7 @@ mac/
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
                                 SceneKit のノードへの起こし（StageSceneRig）
     LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
-    EditorActions.swift         見出しの「VS Code / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
+    EditorActions.swift         見出しの「VS Code / GitHub / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       RelayNotes+Failure.swift    伝言の送信失敗の理由（監視の失敗種別を言葉にする。伝言そのものは DeckCore）
       SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
@@ -435,12 +436,16 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「Xcode」「閉じる」。表示の切替は無く、どのルームも常にチャット。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「Xcode」「閉じる」。表示の切替は無く、どのルームも常にチャット。
   「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層）。「閉じる」は確認ダイアログの後、
   AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
   （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。ホスト中のルームでも使える。
   結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。
   初回は macOS が「claude-deck が Xcode を操作する」許可（オートメーション）を求める。拒否するとエラー（-1743）になる。
+  「GitHub」は、ルームの cwd が設定のプロジェクトの path と一致するか配下にあり（いちばん深いものを採る。`/a/b` は `/a/bc` に当たらない）、
+  そのプロジェクトに GitHub の紐づけがある時だけ出す。Project 番号とリポジトリの両方があればメニューで選び、片方ならそのまま既定のブラウザで開く。
+  ボードは owner の種類を `https://api.github.com/users/<owner>` の `type` で引いて `users/` か `orgs/` の URL にする
+  （認証なし・3 秒で諦める・owner ごとにアプリが動いている間だけ覚える・取れなければ `users/`）。判定と URL は `Settings/GitHubLinks.swift`。
   ルームを移っても各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
 - 端末ビュー（`ClaudeTerminalView`）は画面に載せない。PTY の受信は main キューで端末バッファに流れ、状態・権限プロンプト・選択待ち・上限表示は
   0.3 秒ごとのタイマーと受信時にバッファ末尾の `rows` 行を読むので、ビュー階層に無くても動く。桁数は作成時の 960×640pt のまま固定。

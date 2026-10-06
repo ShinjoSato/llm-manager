@@ -94,12 +94,15 @@ final class ChatModel {
     /// 選択肢カードに数秒だけ出す結果（"menu:<ルーム>" → 文言）。複数選択でチェックを切り替えた時など。
     private(set) var menuNotices: [String: String] = [:]
     var alertMessage: String?
-    /// ルーム → 見出しの「VS Code / Xcode / 閉じる」の結果。数秒で消す。
+    /// ルーム → 見出しの「VS Code / GitHub / Xcode / 閉じる」の結果。数秒で消す。
     private(set) var editorNotes: [RoomID: EditorNote] = [:]
     /// Xcode に閉じるよう頼んでいる最中のルーム。二度押しさせない。
     private(set) var closingXcode: Set<RoomID> = []
 
     @ObservationIgnored private var xcodeProjects: [String: URL?] = [:]
+    @ObservationIgnored private let githubOwners = GitHubOwnerKindResolver()
+    /// owner の種類を問い合わせている最中のルーム。見出しに出し、二度押しで同じ先を二度開かない。
+    private(set) var openingGitHub: Set<RoomID> = []
 
     init(store: MonitorStore) {
         self.store = store
@@ -856,6 +859,41 @@ final class ChatModel {
             self.closingXcode.remove(roomId)
             self.showEditorNote(outcome, for: roomId)
         }
+    }
+
+    /// 設定の変化を見出しへすぐ映すため、描画の中で毎回引く（SettingsStore は Observable）。
+    func githubDestinations(for room: Room) -> [GitHubDestination] {
+        guard let link = ProjectMatcher.project(for: room.cwd, in: SettingsStore.shared.projects)?.github else { return [] }
+        return GitHubDestination.all(for: link)
+    }
+
+    func openOnGitHub(_ destination: GitHubDestination, for room: Room) {
+        let roomId = room.id
+        guard !openingGitHub.contains(roomId) else { return }
+        guard case .board = destination else {
+            openGitHubURL(destination.url(ownerKind: nil), unknownKind: false, for: roomId)
+            return
+        }
+        openingGitHub.insert(roomId)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let kind = await self.githubOwners.kind(of: destination.owner)
+            self.openingGitHub.remove(roomId)
+            self.openGitHubURL(destination.url(ownerKind: kind), unknownKind: kind == nil, for: roomId)
+        }
+    }
+
+    private func openGitHubURL(_ url: URL?, unknownKind: Bool, for roomId: RoomID) {
+        guard let url else {
+            showEditorNote(.failed("GitHub の URL を組み立てられません（設定の owner / リポジトリを確かめてください）"), for: roomId)
+            return
+        }
+        guard NSWorkspace.shared.open(url) else {
+            showEditorNote(.failed("ブラウザで開けませんでした: \(url.absoluteString)"), for: roomId)
+            return
+        }
+        // 組織の owner だと個人の形の URL は 404 になるので、推測で開いたことを伝える。
+        showEditorNote(unknownKind ? .openedWithNote("owner の種類を確かめられなかったため、個人の Project として開きました") : .opened, for: roomId)
     }
 
     private func open(_ url: URL, with app: URL, for roomId: RoomID) {

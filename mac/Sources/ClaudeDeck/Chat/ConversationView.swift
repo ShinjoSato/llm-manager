@@ -74,7 +74,7 @@ struct StatusBadge: View {
     }
 }
 
-/// 見出しの「VS Code」「Xcode」「閉じる」と、押した結果の短い一言。
+/// 見出しの「VS Code」「GitHub」「Xcode」「閉じる」と、押した結果の短い一言。
 struct EditorButtons: View {
     let model: ChatModel
     let room: Room
@@ -95,6 +95,8 @@ struct EditorButtons: View {
             }
             HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", title: "VS Code",
                          help: "VS Code で開く: \(room.cwd)") { model.openInVSCode(room) }
+            GitHubButton(model: model, room: room, destinations: model.githubDestinations(for: room),
+                         opening: model.openingGitHub.contains(room.id))
             if let xcodeProject {
                 HeaderButton(symbol: "hammer", title: "Xcode",
                              help: "Xcode で開く: \(xcodeProject.path)") { model.openInXcode(room) }
@@ -113,6 +115,61 @@ struct EditorButtons: View {
     }
 }
 
+/// 開く先が 1 つならそのまま開き、ボードとリポジトリの両方ならメニューで選ぶ。
+struct GitHubButton: View {
+    let model: ChatModel
+    let room: Room
+    let destinations: [GitHubDestination]
+    let opening: Bool
+    @State private var hovering = false
+
+    private static let symbol = "rectangle.3.group"
+
+    var body: some View {
+        if destinations.count == 1, let only = destinations.first {
+            HeaderButton(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", help: only.help, disabled: opening) { model.openOnGitHub(only, for: room) }
+        } else if destinations.count > 1 {
+            Menu {
+                ForEach(Array(destinations.enumerated()), id: \.offset) { _, destination in
+                    Button(destination.menuTitle) { model.openOnGitHub(destination, for: room) }
+                }
+            } label: {
+                HeaderButtonLabel(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", disabled: opening, hovering: hovering, showsMenu: true)
+            }
+            .disabled(opening)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(destinations.map(\.help).joined(separator: "\n"))
+            .onHover { hovering = $0 }
+        }
+    }
+}
+
+struct HeaderButtonLabel: View {
+    let symbol: String
+    let title: String
+    let disabled: Bool
+    let hovering: Bool
+    var showsMenu = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.system(size: 11, weight: .medium))
+            Text(title)
+            if showsMenu { Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)) }
+        }
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(disabled ? ChatTheme.tertiary : ChatTheme.text)
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+        .contentShape(Rectangle())
+    }
+}
+
 struct HeaderButton: View {
     let symbol: String
     let title: String
@@ -123,17 +180,7 @@ struct HeaderButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: symbol).font(.system(size: 11, weight: .medium))
-                Text(title)
-            }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(disabled ? ChatTheme.tertiary : ChatTheme.text)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
-            .contentShape(Rectangle())
+            HeaderButtonLabel(symbol: symbol, title: title, disabled: disabled, hovering: hovering)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
