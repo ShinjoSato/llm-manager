@@ -10,7 +10,7 @@ SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Termina
 - **料金事故ゼロ**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路が存在しないため、Max 枠の上限に達しても「待つ」だけで課金は発生しない。さらにログインシェル側でも `unset` してから `exec claude` する二重防御。
 - **headless 不採用**: `claude -p` / Agent SDK の起動口は一切設けない（別枠課金や非対話実行を避ける）。
 - **上限到達で強制終了**: 次のどちらかで上限到達とみなし、アプリでホストしている全セッションを `terminate()` で強制終了して警告ダイアログを出す。判定は `Sources/MonitorKit/Limit/LimitGuard.swift`（テストあり）、残量の購読は `Sources/ClaudeDeck/App/LimitWatch.swift`。
-  1. **公式の残量（主）**: statusLine の `rate_limits`（`mac/scripts/statusline.sh` が `~/Library/Application Support/claude-deck/usage.json` に書く）をアプリ内の監視が読んだ `MonitorStore.usage` で、5 時間 / 7 日間のどちらかが 100% 以上、かつ取得から 10 分以内。古い値・未取得では落とさない（statusLine 未設定なら この経路は働かない。設定は下の「Claude Code 側の設定」）。一度到達したらそのウィンドウのリセット時刻まで覚えておき、その間に起動したセッションも起動直後に止める（新しい値で 100% 未満になれば解除）。
+  1. **公式の残量（主）**: statusLine の `rate_limits`（`mac/scripts/statusline.sh` が `~/Library/Application Support/claude-deck/usage.json` に書く）をアプリ内の監視が読んだ `MonitorStore.usage` で、5 時間 / 7 日間のどちらかが 100% 以上、かつ取得から 10 分以内。古い値・未取得では落とさない（statusLine 未設定なら この経路は働かない。設定は下の「Claude Code 側の設定」）。一度到達したらそのウィンドウのリセット時刻まで覚えておき、その間に起動したセッションも起動直後に止める（新しい値で 100% 未満になれば解除）。到達の解ける時刻は `limit-state.json` に残し、次の起動でも usage.json が古い間はそれを優先する（下の「終了と次の起動」）。
   2. **画面の上限表示（補助）**: 生の出力ではなく端末の実画面の末尾だけを見る。入力欄より下（フッター）、入力欄直上の最後の `⎿` 行（API エラー表示）、上限到達時に自動で開くメニューの「Stop and wait for limit to reset」。会話本文に同じ文言が出ても落ちない。文言は Claude Code v2.1.286 のバイナリ内で上限判定に使われている書き出し（`You've hit your` / `You've reached your` / `You're out of usage credits` / `You're now using usage credits` 等の課金枠切替 / `Usage limit reached`）に絞っている。
   - 起動直後（対話 zsh が `claude` に exec する前）は SIGTERM が効かないので、1.5 秒後に残っていれば SIGKILL する。
 
@@ -23,7 +23,9 @@ mac/
   Sources/ClaudeDeck/
     App/                        起動・ウィンドウ・アプリ全体で 1 つのもの
       main.swift                  NSApplication 起動
-      AppDelegate.swift           ウィンドウ + メニュー
+      AppDelegate.swift           ウィンドウ + メニュー + 終了の確認（applicationShouldTerminate・ウィンドウを閉じる時）
+      QuitCoordinator.swift       終了の確認ダイアログと「作業が終わったら終了」の待ち（.terminateLater）
+      LaunchSettings.swift        起動時の再開の設定（UserDefaults・既定はオン）
       MainViewController.swift    メインウィンドウ = チャット画面（SwiftUI を NSHostingView で載せる）
       MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
       LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
@@ -43,6 +45,7 @@ mac/
         TranscriptCache.swift       開いたルームの会話の取得と追記の購読（直近 4 ルームだけ持つ）・吹き出しの画像の読み込み
         EditorLauncher.swift        見出し・詳細の「VS Code」「Finder」「GitHub」「リンク」「Xcode」「閉じる」と結果の短い一言（押した先ごと）
         HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
+        SessionRestorer.swift       ホスト中のセッションの記録（hosted-sessions.json）と起動時の再開・作業中だったものへの続きの頼み
       Views/                      画面（SwiftUI）
         ChatRootView.swift          骨組み（切り替えバー | 一覧 | 会話かディレクトリの詳細 | 右パネルの差し込み口）
         RoomList/                   左の一覧（ルーム / ディレクトリ）
@@ -50,7 +53,7 @@ mac/
           RoomListView.swift          一覧（状態別のルームか登録ディレクトリ）・検索・「+」のポップオーバー・右クリックメニュー
           DirectoryRow.swift          ディレクトリ 1 行（色の点・名前・パスの末尾・件数といちばん急ぐ状態）
           RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・頭文字アイコン（RoomAvatar）
-          RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態）
+          RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
         Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・GitHub・リンク・スレッド）
         Conversation/               中央の会話
@@ -77,7 +80,7 @@ mac/
       StagePanel.swift            見出し（開閉）・ステージ・畳んだ状態
       StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・書き出し / 読み込み
+    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了
     Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
     Notify/                     要対応を iCloud（CloudKit）に書いて解消したら消す AttentionNotifier と、設定画面に出す通知の設定・状態
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
@@ -126,10 +129,14 @@ mac/
       EditorActions.swift         見出しの「VS Code / GitHub / リンク / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
     Limit/
       LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
+      LimitState.swift            上限到達の記録（limit-state.json）と、続けて止めた分をまとめた知らせの文言
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       RelayNotes+Failure.swift    伝言の送信失敗の理由（監視の失敗種別を言葉にする。伝言そのものは DeckCore）
       SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
       RoomRedirects.swift         引き継ぎで移った後に元のルーム宛てに届く取り込みの結果を、移し先のルームへ付け替える表
+      SessionRestore.swift        前回のセッションの記録の読み書き（HostedSessionsFile・HostedSessionsLock）・再開するかの判定・
+                                  再開の直後に落ちたかの判定・続きを頼む時機（ResumeNudgeGate）・
+                                  終了の確認の要否と文言（QuitConfirmation）・「作業が終わったら終了」の待ち（QuitWait）
       Attachments.swift           添付: 送る形の組み立て（画像パスの貼り付け用エスケープ・本文へのパスの一覧）・ペーストボードからの拾い出し・一時保存と掃除
       AttachmentPasteTextView.swift 添付を受ける文字欄（⌘V のメニュー検証・貼り付け・ドロップ）。入力欄の SubmitTextView の土台
       PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの判定
@@ -707,6 +714,50 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   - 上限到達中（`LimitWatch.isLimitReached`）は引き継がない（確認ダイアログの間・終了待ちの間に到達した場合も、止める前／再開前に判定し直す）。
   - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
     安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。
+
+### 終了と次の起動（前回のセッションの再開）
+
+アプリを終了するとホスト中の claude は PTY ごと閉じて止まる。次の起動で同じ会話を自動で続けられるよう、記録して再開する。
+判定と記録の読み書きは `Sources/MonitorKit/Chat/SessionRestore.swift`・上限の記録は `Sources/MonitorKit/Limit/LimitState.swift`（どちらもテストあり）、
+つなぎは `Chat/Model/SessionRestorer.swift`・`App/QuitCoordinator.swift`・`App/LimitWatch.swift`。
+
+- **記録**: 動いているホスト中のセッション（名前・cwd・sessionId・最後の状態・書きかけ）を `ChatModel.hosted` そのものから組み立て
+  （一覧 `rooms` は次の周回まで古いので使わない）、見送り中の分と合わせて
+  `~/Library/Application Support/claude-deck/hosted-sessions.json`（`CLAUDE_DECK_HOSTED_SESSIONS` で差し替え）に 0600・置き換えで書く。
+  ルームの起動・閉じる時・アプリの終了時（SIGTERM / SIGINT を含む）と 3 秒ごと（中身が変わった時だけ）に書くので、強制終了・クラッシュでも直前の分が残る。
+  `/exit` で終了した claude とまだ sessionId の分からないルームは記録しない。壊れた・知らない版のファイルは空とみなして書き直す。
+- **二重起動**: 記録の隣の `hosted-sessions.json.lock` を起動中ずっと flock で持つ（exec で閉じるので子の claude には残らない）。
+  取れない時（別の claude-deck が動いている）は再開も記録の書き込みもせず、その旨を帯に出す。
+- **起動時の再開**（設定「起動と終了」の「起動時に前回のセッションを再開する」。既定はオン・UserDefaults）: 監視が始まって残量を読むまで待ってから（最大 10 秒）、
+  記録したものを同じ cwd で `claude --resume=<sessionId>` で起動する（「アプリに引き継ぐ」と同じ `launchClaude(in:resumeSessionId:)`。UUID 形式のみ・API キー除去は維持）。
+  - 同じ sessionId が別の claude で動いていれば起動せず（`SessionHandover.liveDuplicate`。前回の claude がまだ終了の途中のこともある）、記録は見送りに残す。
+    sessionId の形が想定外・フォルダが無い・同じ会話を既にホストしている時は起動しない。
+  - 上限到達中（`LimitWatch.isLimitReached`）は起動せず見送りに残す。
+  - **再開の直後に落ちた時**: 自動で再開した時刻を記録に `restoredAt` として持ち、正常に終わる時（`applicationWillTerminate`）に外す。
+    次の起動で印が残っていて 2 分以内なら、再開が原因で落ちた疑いがあるので自動では再開せず見送りに回す。
+  - 見送った分は一覧の上の帯に「再開を見送ったセッション N 件（上限 / 再開の直後に落ちた / 同じ会話が動いている）［再開する］［破棄］」で出し、記録にも残し続ける
+    （次の起動でもう一度判定する）。［再開する］はまだ上限中なら何もしない。
+  - 再開した件数（続きを頼んだ件数・見送り）を一覧の上の帯に出す（× で閉じる）。選択は未選択の時だけ移す。書きかけは入力欄に戻す。
+- **上限の記録**: `LimitWatch` は起動時から残量を見張り、到達の解ける時刻（と理由）を `limit-state.json`（`CLAUDE_DECK_LIMIT_STATE` で差し替え・0600・置き換え）に書き、
+  解けたら消す。起動時はこれを読んで到達を持ち越すので、usage.json が古い（セッションが止まっていて statusLine が書いていない）間も、リセット時刻までは再開しない。
+  新しい残量が 100% 未満を示せば解除する。再開後に上限で止められたセッションの記録は見送りの一覧へ移し、続けて止まった分の知らせは 1 回の確認にまとめる。
+- **続きを頼む**（「作業中だったものに続きを頼む」。既定はオン）: 記録した状態が稼働中だったものだけ、再開後に
+  「前回はアプリの終了で作業の途中で止まりました。続きを進めてください。」を通常の送信（`HostedSession.send`）で送る。
+  起動直後は trust 確認・メニュー・入力欄の準備があるので、「動いている・選択待ちでない・送信中でない・端末の入力欄が空で見えている」が 2 秒続いてから送る。
+  選択待ち等で送れなければまた落ち着くのを待ち、2 分経っても送れなければ入力欄の下書きに入れる（本文を貼る前にやめた時も下書きに戻す）。
+  利用者がそのルームから送った時（入力欄・iPhone）と、端末が稼働中になった時（伝言などで動き出した）は頼むのをやめる。
+  終了の確認ダイアログの表示中・終了の保留中は送らない。
+  権限待ち・入力待ち・待機だったものは起動だけ。頼む前にアプリが止まったら、次の起動でも頼めるよう稼働中として記録する。
+- **終了時の確認**: ⌘Q・メインウィンドウを閉じる（最後のウィンドウを閉じると終了するため、閉じる前に同じ確認を通す。取り消したらウィンドウは残す）時に、
+  稼働中・権限待ちのホスト中ルームがあれば「稼働中 N 件（名前…）・権限待ち M 件（名前…）。終了すると中断し、次の起動時に再開します」と
+  「作業が終わったら終了」の扱い（権限待ち・入力待ちは待たずに中断する）を出し、［キャンセル］（既定・Return）［作業が終わったら終了］［終了する］を選ばせる。
+  待機・入力待ち（応答の後の idle_prompt）と終了済みだけなら確認しない。
+  「作業が終わったら終了」は `.terminateLater` で保留し、稼働中のルームが無い状態が 3 秒続いたら終了する（ツールの合間の一瞬では終えない）。
+  待っている間は一覧の上に帯（［取り消す］）を出す。待っている間にもう一度 ⌘Q を押すとすぐ終える。ウィンドウの閉じるボタンでは終えず、待ちを続けたままウィンドウを隠す（Dock から出し直せる）。
+  保留中は run loop がモーダルの mode で回るので、記録と待ちのタイマーは common の mode に載せている。
+- **SIGTERM / SIGINT での終了**（`MonitorBridge` のハンドラ → `QuitCoordinator.terminateBySignal`）は確認を出さず、記録だけ書き切って必ず終える
+  （保留中なら `NSApp.reply(toApplicationShouldTerminate: true)`、確認ダイアログの表示中なら `NSApp.abortModal()` してから終了へ進める）。
+- **ログアウト・再起動・シャットダウン**（quit の Apple Event に `kAEQuitReason` が付く）でも確認を出さず、記録だけ書き切って終える。
 
 ### 設定（settings.json）
 

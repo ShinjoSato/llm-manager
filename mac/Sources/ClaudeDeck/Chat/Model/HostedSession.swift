@@ -94,10 +94,16 @@ final class HostedSession: Identifiable {
         release()
     }
 
-    func send(_ text: String, attachments: [Attachment] = [],
+    /// 利用者が送り始めた回数（入力欄・iPhone）。再開後の続きの頼みを、先に頼まれていたらやめるため。
+    @ObservationIgnored private(set) var userSendCount = 0
+
+    /// `byUser` が false なのはアプリが自分で送る頼み（利用者の送信として数えない）。
+    func send(_ text: String, attachments: [Attachment] = [], byUser: Bool = true,
               completion: @escaping (SendCompletion) -> Void) -> ClaudeTerminalView.SendResult? {
         guard isRunning else { return nil }
-        return terminal.sendMessage(text, attachments: attachments, completion: completion)
+        let result = terminal.sendMessage(text, attachments: attachments, completion: completion)
+        if byUser, case .started = result { userSendCount += 1 }
+        return result
     }
 
     func answerPermission(_ expected: PermissionPrompt, allow: Bool) -> ClaudeTerminalView.AnswerResult {

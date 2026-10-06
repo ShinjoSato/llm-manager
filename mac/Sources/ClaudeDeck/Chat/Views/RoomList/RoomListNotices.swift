@@ -53,3 +53,64 @@ struct HookServerNotice: View {
         .accessibilityIdentifier("hook-server-notice")
     }
 }
+
+/// 起動時に前回のセッションを再開した結果と、見送った分の再開。
+struct RestoreNotice: View {
+    let restorer: SessionRestorer
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let notice = restorer.notice {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "arrow.clockwise.circle")
+                    Text(notice).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button { restorer.dismissNotice() } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain)
+                        .help("閉じる")
+                }
+                .foregroundStyle(ChatTheme.working)
+            }
+            if let summary = restorer.deferredSummary {
+                HStack(spacing: 8) {
+                    Text(summary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(ChatTheme.permission)
+                    Spacer(minLength: 0)
+                    Button("再開する") { restorer.resumeDeferred() }
+                    Button("破棄") { restorer.discardDeferred() }
+                }
+                .controlSize(.small)
+            }
+        }
+        .font(ChatTheme.caption)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
+        .accessibilityIdentifier("restore-notice")
+    }
+}
+
+/// 「作業が終わったら終了」で待っている間の帯。
+struct QuitWaitNotice: View {
+    let coordinator: QuitCoordinator
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "power.circle")
+            Text(coordinator.waitingBusyCount > 0
+                 ? "作業が終わったら終了します（稼働中 \(coordinator.waitingBusyCount) 件）"
+                 : "まもなく終了します")
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button("取り消す") { coordinator.cancelWaiting() }
+                .controlSize(.small)
+        }
+        .font(ChatTheme.caption)
+        .foregroundStyle(ChatTheme.permission)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
+        .accessibilityIdentifier("quit-wait-notice")
+    }
+}

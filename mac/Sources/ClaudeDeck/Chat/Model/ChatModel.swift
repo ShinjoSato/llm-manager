@@ -66,6 +66,8 @@ final class ChatModel {
     let transcripts: TranscriptCache
     /// 見出しの VS Code / GitHub / Xcode。
     let editors: EditorLauncher
+    /// ホスト中のセッションの記録と、起動時の再開。
+    let restorer = SessionRestorer()
 
     private(set) var hosted: [HostedSession] = []
     var selection: RoomID?
@@ -90,6 +92,8 @@ final class ChatModel {
     /// sessionId → 最後に開いた時刻（epoch ミリ秒）。未読数の起点。
     private var lastSeen: [String: Double] = [:]
     @ObservationIgnored private let launchedAt = Date().timeIntervalSince1970 * 1000
+    @ObservationIgnored private var pendingLimitNames: [String] = []
+    @ObservationIgnored private var limitAlertScheduled = false
 
     init(store: MonitorStore) {
         self.store = store
@@ -110,6 +114,8 @@ final class ChatModel {
         outbox.isHandingOver = { handover.inProgress.contains($0) }
         handover.onResume = { [weak self] project, sessionId, roomId in self?.resume(project: project, sessionId: sessionId, from: roomId) }
         refreshRooms()
+        restorer.model = self
+        restorer.start()
     }
 
     // MARK: - ルーム
@@ -145,18 +151,7 @@ final class ChatModel {
         var result: [Room] = hosted.map { session in
             let sessionId = session.resolveSessionId(store)
             let snapshot = sessionId.flatMap { store.session(id: $0) }
-            let status: SessionStatus
-            if session.end != nil {
-                status = .stopped
-            } else if session.permissionPrompt != nil {
-                status = .permission
-            } else if session.inputBlock != nil {
-                status = .waiting
-            } else if connected, let snapshot {
-                status = snapshot.status
-            } else {
-                status = Self.status(from: session.localStatus)
-            }
+            let status = session.end != nil ? .stopped : liveStatus(of: session, snapshot: snapshot, connected: connected)
             let line: String
             switch session.end {
             case .limitReached: line = "上限に達したため終了しました"
@@ -182,6 +177,19 @@ final class ChatModel {
                                cwd: snapshot.cwd, hosted: nil, snapshot: snapshot, unread: unread[snapshot.sessionId] ?? 0))
         }
         return result
+    }
+
+    /// 動いているホスト中のセッションの状態（端末の確認・選択待ちを先に見て、監視があればその状態）。
+    func liveStatus(of session: HostedSession) -> SessionStatus {
+        let snapshot = session.resolveSessionId(store).flatMap { store.session(id: $0) }
+        return liveStatus(of: session, snapshot: snapshot, connected: store.connection.isConnected)
+    }
+
+    private func liveStatus(of session: HostedSession, snapshot: SessionSnapshot?, connected: Bool) -> SessionStatus {
+        if session.permissionPrompt != nil { return .permission }
+        if session.inputBlock != nil { return .waiting }
+        if connected, let snapshot { return snapshot.status }
+        return Self.status(from: session.localStatus)
     }
 
     private static func keys(_ all: [Room]) -> [RoomKey] {
@@ -273,10 +281,11 @@ final class ChatModel {
             return
         }
         let session = HostedSession(project: project)
-        session.onLimitReached = { [weak self] session in self?.showLimitAlert(for: session) }
+        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
         hosted.append(session)
         session.start()
         select(.hosted(session.id))
+        saveHostedSoon()
     }
 
     func close(_ session: HostedSession) {
@@ -284,24 +293,73 @@ final class ChatModel {
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         outbox.forgetRoom(.hosted(session.id))
+        saveHostedSoon()
     }
 
     /// 引き継ぎで外部の claude を止められた。同じ会話を `--resume` で起動し、外部ルームの書きかけと添付を引き取る。
     private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
         let session = HostedSession(project: project, resumeSessionId: sessionId)
-        session.onLimitReached = { [weak self] session in self?.showLimitAlert(for: session) }
+        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
         hosted.append(session)
         session.start()
         outbox.move(from: roomId, to: .hosted(session.id))
         select(.hosted(session.id))
+        saveHostedSoon()
     }
 
-    private func showLimitAlert(for session: HostedSession) {
+    /// 前回アプリが止まった時に動いていたセッションを同じ cwd で `--resume` する。書きかけも戻す。選択は未選択の時だけ移す。
+    func resumeRestored(_ record: HostedSessionRecord) -> HostedSession {
+        let project = SettingsStore.shared.projects.first(where: { $0.path == record.cwd })
+            ?? ManagedProject(name: record.name, path: record.cwd)
+        let session = HostedSession(project: project, resumeSessionId: record.sessionId)
+        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
+        hosted.append(session)
+        session.start()
+        if let draft = record.draft { outbox.drafts[.hosted(session.id)] = draft }
+        if selection == nil { select(.hosted(session.id)) }
+        return session
+    }
+
+    private func saveHostedSoon() {
+        restorer.saveNow()
+    }
+
+    /// 終了の確認に使う、動いているホスト中のルーム。
+    var runningHostedRooms: [QuitConfirmation.Room] {
+        hosted.compactMap { session in
+            guard session.end == nil else { return nil }
+            return QuitConfirmation.Room(name: session.project.name, status: liveStatus(of: session))
+        }
+    }
+
+    /// 上限で止めたセッション。記録は見送りに移し、続けて止まった分は 1 回の知らせにまとめる。
+    private func limitReached(_ session: HostedSession) {
+        restorer.deferLimited(session)
+        pendingLimitNames.append(session.project.name)
+        guard !limitAlertScheduled else { return }
+        limitAlertScheduled = true
+        // 全端末を止める通知は 1 つずつ届くので、少し待って集めてから出す。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.showLimitAlert() }
+    }
+
+    private func showLimitAlert() {
+        let names = pendingLimitNames
+        pendingLimitNames = []
+        guard !names.isEmpty else {
+            limitAlertScheduled = false
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Max 枠の上限に達しました"
-        alert.informativeText = "「\(session.project.name)」のセッションを強制終了しました。枠がリセットされるまでお待ちください。（API 課金は発生しません）"
+        alert.informativeText = LimitAlertText.message(names: names)
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
+        limitAlertScheduled = false
+        // 表示中に止まった分は、閉じた後に 1 回だけまとめて出す。
+        if !pendingLimitNames.isEmpty {
+            limitAlertScheduled = true
+            DispatchQueue.main.async { [weak self] in self?.showLimitAlert() }
+        }
     }
 }

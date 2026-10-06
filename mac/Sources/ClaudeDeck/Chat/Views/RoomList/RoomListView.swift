@@ -12,6 +12,8 @@ struct RoomListView: View {
             search
             if !model.store.connection.isConnected { ConnectionNotice(connection: model.store.connection) }
             if let notice = HookServerNotice.text(for: model.store.serverState) { HookServerNotice(text: notice) }
+            if QuitCoordinator.shared.isWaiting { QuitWaitNotice(coordinator: .shared) }
+            if model.restorer.notice != nil || !model.restorer.deferred.isEmpty { RestoreNotice(restorer: model.restorer) }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     switch model.listMode {
