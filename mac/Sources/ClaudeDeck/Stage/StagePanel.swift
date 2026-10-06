@@ -13,14 +13,20 @@ struct StagePanel: View {
 
     @AppStorage("stagePanel.open") private var preferOpen = true
     @AppStorage(StagePanelView.defaultsKey) private var viewRaw = StagePanelView.stage.rawValue
+    @Environment(ListPaneLayout.self) private var listPane: ListPaneLayout?
     @State private var windowWidth: CGFloat?
     @State private var openedWhileNarrow = false
 
     private var store: MonitorStore { model.store }
+    /// 一覧の境界をつかんでいる間はつかんだ時の幅で判定し、開閉を往復させない。
+    private var listWidth: CGFloat { CGFloat(listPane?.stageWidth ?? ListPaneWidth.standard) }
     private var expanded: Bool {
-        StageLogic.isExpanded(preference: preferOpen, windowWidth: windowWidth, openedWhileNarrow: openedWhileNarrow)
+        StageLogic.isExpanded(preference: preferOpen, windowWidth: windowWidth,
+                              listWidth: listWidth, openedWhileNarrow: openedWhileNarrow)
     }
-    private var isNarrow: Bool { (windowWidth ?? .infinity) < StageLogic.autoCollapseWidth }
+    private var isNarrow: Bool {
+        (windowWidth ?? .infinity) < StageLogic.autoCollapseWidth(listWidth: listWidth)
+    }
     private var view: StagePanelView { StagePanelView(rawValue: viewRaw) ?? .stage }
 
     var body: some View {
