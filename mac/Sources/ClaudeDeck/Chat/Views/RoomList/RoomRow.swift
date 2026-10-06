@@ -79,7 +79,8 @@ struct ExternalTag: View {
             .foregroundStyle(ChatTheme.secondary)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
-            .background(RoundedRectangle(cornerRadius: 4).stroke(ChatTheme.inputBorder))
+            .background(RoundedRectangle(cornerRadius: 4).fill(ChatTheme.externalTagFill))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(ChatTheme.externalTagBorder))
             .help("アプリの外（VS Code・別ターミナル等）で動いているセッション")
     }
 }

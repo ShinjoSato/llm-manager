@@ -18,7 +18,7 @@ struct PermissionCard: View {
                     .foregroundStyle(ChatTheme.permission)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(ChatTheme.permission.opacity(0.14)))
+                    .background(RoundedRectangle(cornerRadius: 5).fill(ChatTheme.permissionChip))
             }
             if !description.isEmpty, description != toolName {
                 Text(description).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)

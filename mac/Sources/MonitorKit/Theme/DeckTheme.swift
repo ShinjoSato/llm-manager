@@ -21,7 +21,7 @@ public enum DeckTheme: String, CaseIterable, Sendable, Identifiable {
     public var summary: String {
         switch self {
         case .night: return "暗い背景の配色です。"
-        case .light: return "白い背景に、パステルの赤・青・緑・黄を添えた配色です。"
+        case .light: return "生成りと淡い青の明るい面に、パステルの赤・青・緑・黄を添えた配色です。"
         }
     }
 
@@ -76,6 +76,35 @@ public struct ThemePalette: Sendable, Equatable {
 
     public var avatarPalette: [UInt32]
 
+    /// ルーム一覧の枠の地。
+    public var sectionSurface: UInt32
+    /// 枠の見出しの帯（アバター色と同じ並び）。
+    public var sectionBands: [UInt32]
+
+    public var cardFill: ThemeFill
+    public var cardBorder: ThemeFill
+    /// 外部セッションの権限待ちの案内カードの地（答えられないので通常のカードより控えめ）。
+    public var pendingCardFill: ThemeFill
+    /// 権限カードのツール名の地。
+    public var permissionChip: ThemeFill
+    /// 選択肢カードの今の問いのタブ。
+    public var menuTabCurrent: ThemeFill
+    /// 枠の見出しの要対応バッジ（権限待ち・入力待ち）。
+    public var permissionBadge: ThemeFill
+    public var waitingBadge: ThemeFill
+    /// 「ツール N件」の地と縁（実行中は稼働の色）。
+    public var toolsFill: ThemeFill
+    public var toolsBorder: ThemeFill
+    public var toolsRunningFill: ThemeFill
+    public var toolsRunningBorder: ThemeFill
+    public var externalBanner: ThemeFill
+    public var relayFill: ThemeFill
+    public var externalTagFill: ThemeFill
+    public var externalTagBorder: ThemeFill
+    /// 拒否・キャンセルなど控えめなボタン。
+    public var quietButton: ThemeFill
+    public var quietButtonBorder: ThemeFill
+
     public static let night = ThemePalette(
         background: 0x0a0f1a, sidebar: 0x0d1320, border: 0x1c2433, inputSurface: 0x121a29, inputBorder: 0x26324a,
         selectedRow: 0x1a2335,
@@ -84,20 +113,59 @@ public struct ThemePalette: Sendable, Equatable {
         userBubble: 0x2563eb, userBubbleText: 0xffffff, claudeBubble: 0x172033, claudeBubbleBorder: 0x222d42,
         accent: 0x34d399, onAccent: 0x053321, onPermission: 0x053321, codeSurface: 0x0d1320, stagePanel: 0x0b111d,
         feedTool: 0x7dd3fc, feedPrompt: 0xc4b5fd, feedStatus: 0xfcd34d, feedSession: 0x6ee7b7, feedAgent: 0xf0abfc,
-        avatarPalette: [0x60a5fa, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0xf87171]
+        avatarPalette: [0x60a5fa, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0xf87171],
+        sectionSurface: 0x0a0f1a, sectionBands: Array(repeating: 0x0a0f1a, count: 8),
+        cardFill: .tint(0xfbbf24, 0.06), cardBorder: .solid(0xfbbf24), pendingCardFill: .tint(0xfbbf24, 0.04),
+        permissionChip: .tint(0xfbbf24, 0.14), menuTabCurrent: .tint(0xfbbf24, 0.25),
+        permissionBadge: .tint(0xfbbf24, 0.18), waitingBadge: .tint(0x7cc4ff, 0.18),
+        toolsFill: .solid(0x121a29), toolsBorder: .solid(0x1c2433),
+        toolsRunningFill: .tint(0x34d399, 0.1), toolsRunningBorder: .tint(0x34d399, 0.4),
+        externalBanner: .tint(0x7cc4ff, 0.07), relayFill: .tint(0xfbbf24, 0.06),
+        externalTagFill: .clear, externalTagBorder: .solid(0x26324a),
+        quietButton: .solid(0x121a29), quietButtonBorder: .solid(0x26324a)
     )
 
-    // 文字にも使う状態色は白の上で読める濃さにし、薄く重ねた塗りでパステルに見せる。面の色（吹き出し・アクセント）はパステルに濃い文字を載せる。
+    // 面は純白を避けて L* 90〜96 の色味のあるトーンにし、段の差で区切る。文字に使う色はその上で読める濃さに沈める。
     public static let light = ThemePalette(
-        background: 0xffffff, sidebar: 0xf6f7fb, border: 0xe3e7ef, inputSurface: 0xf3f5f9, inputBorder: 0xd3dae6,
-        selectedRow: 0xe4eefd,
-        text: 0x1f2937, secondary: 0x434b58, tertiary: 0x5f6775, heading: 0x111827,
-        permission: 0x945700, waiting: 0x1d64c8, working: 0x0f7a55, idle: 0x5b6472, error: 0xc0392b,
-        userBubble: 0xd3e5ff, userBubbleText: 0x15315c, claudeBubble: 0xf5f7fb, claudeBubbleBorder: 0xe0e5ee,
-        accent: 0xa6e9c4, onAccent: 0x0b4a2c, onPermission: 0xffffff, codeSurface: 0xf3f5f9, stagePanel: 0xf4f7fb,
-        feedTool: 0x0e6aa8, feedPrompt: 0x6b3fc4, feedStatus: 0x945700, feedSession: 0x0f7a55, feedAgent: 0xa0329a,
-        avatarPalette: [0x1d5bd6, 0x7c3aed, 0xc0267a, 0xb23c0a, 0x945700, 0x0f7a55, 0x0e7490, 0xc0392b]
+        background: 0xf1eee7, sidebar: 0xe4eaf3, border: 0xd3d6dd, inputSurface: 0xf6f3ec, inputBorder: 0xc8cfdb,
+        selectedRow: 0xd2e1f7,
+        text: 0x1f2937, secondary: 0x3b424e, tertiary: 0x58606d, heading: 0x111827,
+        permission: 0x8a5100, waiting: 0x1b5dbb, working: 0x0d6c4c, idle: 0x58606e, error: 0xad3327,
+        userBubble: 0xd4e3fa, userBubbleText: 0x15315c, claudeBubble: 0xfaf1d9, claudeBubbleBorder: 0xeadcb4,
+        accent: 0xa6e9c4, onAccent: 0x0b4a2c, onPermission: 0xffffff, codeSurface: 0xebe7de, stagePanel: 0xebe7f2,
+        feedTool: 0x0d639c, feedPrompt: 0x6b3fc4, feedStatus: 0x8a5100, feedSession: 0x0d6c4c, feedAgent: 0x9c3196,
+        avatarPalette: [0x1c57cd, 0x732cec, 0xaf236f, 0xa83909, 0x8a5100, 0x0d6c4c, 0x0c6780, 0xad3327],
+        sectionSurface: 0xedf1f7,
+        sectionBands: [0xdce6fa, 0xe7defa, 0xf8dcea, 0xfbe3d2, 0xf8edc6, 0xd6f0e2, 0xd3eef2, 0xf8dad7],
+        cardFill: .solid(0xfbefc9), cardBorder: .solid(0xe2b84f), pendingCardFill: .solid(0xfbefc9),
+        permissionChip: .solid(0xf6dd99), menuTabCurrent: .solid(0xf3d888),
+        permissionBadge: .solid(0xf9e2a6), waitingBadge: .solid(0xd6e4fb),
+        toolsFill: .solid(0xe9e3f5), toolsBorder: .solid(0xd6cdee),
+        toolsRunningFill: .solid(0xd5f0e1), toolsRunningBorder: .solid(0x9fd8b8),
+        externalBanner: .solid(0xdde9f8), relayFill: .solid(0xfbefc9),
+        externalTagFill: .solid(0xe6defa), externalTagBorder: .solid(0xc9b9ef),
+        quietButton: .solid(0xf7dfdc), quietButtonBorder: .solid(0xe6bcb6)
     )
+}
+
+/// 不透明度つきの塗り。ナイトは状態色を薄く重ね、ライトはパステルの面を不透明で塗る。
+public struct ThemeFill: Sendable, Equatable {
+    public var hex: UInt32
+    public var opacity: Double
+
+    public init(hex: UInt32, opacity: Double) {
+        self.hex = hex
+        self.opacity = opacity
+    }
+
+    public static func solid(_ hex: UInt32) -> ThemeFill { ThemeFill(hex: hex, opacity: 1) }
+    public static func tint(_ hex: UInt32, _ opacity: Double) -> ThemeFill { ThemeFill(hex: hex, opacity: opacity) }
+    public static let clear = ThemeFill(hex: 0, opacity: 0)
+
+    /// 下の面に重ねた見た目の色。
+    public func over(_ background: UInt32) -> UInt32 {
+        ThemeContrast.blend(hex, over: background, opacity: opacity)
+    }
 }
 
 /// WCAG の相対輝度とコントラスト比（文字の読みやすさを数値で確かめるため）。
@@ -108,6 +176,12 @@ public enum ThemeContrast {
             return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
         }
         return 0.2126 * channel(hex >> 16) + 0.7152 * channel(hex >> 8) + 0.0722 * channel(hex)
+    }
+
+    /// CIE L*（0〜100）。面の明るさをそろえるために測る。
+    public static func lightness(_ hex: UInt32) -> Double {
+        let y = luminance(hex)
+        return y > 216.0 / 24389.0 ? 116 * cbrt(y) - 16 : y * 24389.0 / 27.0
     }
 
     public static func ratio(_ a: UInt32, _ b: UInt32) -> Double {
