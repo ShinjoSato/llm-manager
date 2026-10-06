@@ -13,17 +13,6 @@ public struct HubFailure: Error, Sendable, Equatable, LocalizedError {
     public var errorDescription: String? { message }
 }
 
-/// 長ポーリングの待ち手の番号。登録（actor 上）と取り消し（任意のスレッド）の間で受け渡す。
-final class WaiterTicket: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Int?
-
-    var id: Int? {
-        get { lock.withLock { value } }
-        set { lock.withLock { value = newValue } }
-    }
-}
-
 /// 在庫層・実況層・フック層を 1 つの状態に束ね、変化を `MonitorEvent` の流れとして受け手へ渡す。
 public actor SessionHub {
     /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。
@@ -43,7 +32,7 @@ public actor SessionHub {
     private var sessions: [String: SessionState] = [:]
     private var scanner: InventoryScanner
     private var poller: TranscriptPoller
-    private var permissions = PermissionRegistry()
+    private let waiters = PermissionWaiters()
     private var feedSeq = 0
     private var usagePoller: UsagePoller
     private var tasks: [Task<Void, Never>] = []
@@ -176,8 +165,7 @@ public actor SessionHub {
         }
         for (sessionId, line) in outcome.feed { push(sessionId, line) }
 
-        // チャネルが取りに来なくなった保留（セッション終了・取りこぼし）を捨てる。
-        if !permissions.sweep(now: now).isEmpty { emitPermissions() }
+        if waiters.sweep(now: now) { emitPermissions() }
 
         if outcome.changed {
             emitUpdate()
@@ -236,11 +224,9 @@ public actor SessionHub {
             if outcome.changed { changed = true }
 
             // 預かった後に書かれたログ行があれば、その確認は端末側で答えられている。
-            if outcome.readLines && permissions.count > 0 {
-                let dropped = permissions.dropResolved(sessionId: id, lastActivityAt: state.lastActivityAt ?? 0)
-                for pending in dropped {
-                    push(id, .status, "権限の確認は端末側で答えられたようです: \(pending.toolName)", local: true)
-                }
+            if outcome.readLines && waiters.count > 0 {
+                let dropped = waiters.dropResolved(sessionId: id, lastActivityAt: state.lastActivityAt ?? 0)
+                for line in dropped { push(id, line) }
                 if !dropped.isEmpty { emitPermissions() }
             }
         }
@@ -294,7 +280,7 @@ public actor SessionHub {
     }
 
     private func emitPermissions() {
-        sink?(.permissions(permissions.list()))
+        sink?(.permissions(waiters.list()))
     }
 
     // MARK: - 権限確認の中継
@@ -302,30 +288,17 @@ public actor SessionHub {
     /// チャネルから届いた確認を預かり、判断が出るまで待つ。timeout ならチャネルが取り直す。
     public func awaitPermission(_ input: PermissionRequestInput, waitMillis: Double = PermissionRelay.waitMillis) async -> PermissionOutcome {
         let key = input.key
-        let now = now()
-        // 取り直しの谷間に押された判断は取り置きにある。先に渡さないと確認が出直す。
-        if let settled = permissions.takeDecision(key, toolName: input.toolName, inputPreview: input.inputPreview, now: now) {
-            return PermissionOutcome(settled)
-        }
-        let sessionId = PermissionRelay.matchSession(pid: input.pid, sessions: sessions.values.map(\.raw))
-        let state = sessionId.flatMap { sessions[$0] }
-        // セッションを引けなくても、どのリポジトリの確認かは申請元の cwd から出す。
-        let cwd = state?.raw.cwd ?? input.cwd
-        let reg = permissions.register(input, sessionId: sessionId, project: cwd.map(HubText.basename), now: now)
-        if reg.linked, let sessionId {
-            push(sessionId, .status, "権限の確認が届きました: \(reg.pending.toolName)", local: true)
-        }
-        for gone in reg.evicted {
-            if let sid = gone.sessionId { push(sid, .status, "保留が多すぎるので捨てました: \(gone.toolName)", local: true) }
-        }
-        if reg.created || reg.changed { emitPermissions() }
+        let admission = waiters.admit(input, sessions: sessions.values.map(\.raw), now: now())
+        if let settled = admission.settled { return settled }
+        for (sessionId, line) in admission.feed { push(sessionId, line) }
+        if admission.listChanged { emitPermissions() }
 
         let ticket = WaiterTicket()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 // 切断済みの申請に待ち手を残すと、判断が取り置かれずに捨てられる。
                 guard !Task.isCancelled,
-                      let waiterId = permissions.addWaiter(key, { continuation.resume(returning: $0) }) else {
+                      let waiterId = waiters.addWaiter(key, { continuation.resume(returning: $0) }) else {
                     continuation.resume(returning: Task.isCancelled ? .timeout : .dropped)
                     return
                 }
@@ -342,31 +315,29 @@ public actor SessionHub {
     }
 
     private func expireWaiter(_ key: String, id: Int) {
-        permissions.expireWaiter(key, id: id)
+        waiters.expireWaiter(key, id: id)
     }
 
     private func expireWaiter(_ key: String, ticket: WaiterTicket) {
-        if let id = ticket.id { permissions.expireWaiter(key, id: id) }
+        waiters.expireWaiter(key, ticket: ticket)
     }
 
     /// 試験用: その申請に残っている待ち手の数。
     func waiterCount(_ key: String) -> Int {
-        permissions.waiterCount(key)
+        waiters.waiterCount(key)
     }
 
     /// 画面からの判断。知らない鍵なら nil。
     @discardableResult
     public func decidePermission(key: String, decision: PermissionDecision) -> PendingPermission? {
-        guard let pending = permissions.decide(key, decision, now: now()) else { return nil }
-        if let sid = pending.sessionId {
-            push(sid, .status, "\(decision == .allow ? "許可" : "拒否")しました: \(pending.toolName)", local: true)
-        }
+        guard let decided = waiters.decide(key, decision, now: now()) else { return nil }
+        if let (sessionId, line) = decided.feed { push(sessionId, line) }
         emitPermissions()
-        return pending
+        return decided.pending
     }
 
     public func pendingPermissions() -> [PendingPermission] {
-        permissions.list()
+        waiters.list()
     }
 
     // MARK: - 状態の合成
