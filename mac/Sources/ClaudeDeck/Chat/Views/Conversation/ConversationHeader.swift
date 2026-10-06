@@ -84,7 +84,7 @@ struct EditorButtons: View {
             if let xcodeProject {
                 HeaderButton(symbol: "hammer", name: "Xcode",
                              detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) }
-                HeaderButton(symbol: "xmark", name: "閉じる",
+                HeaderButton(symbol: "xmark.rectangle", name: "閉じる",
                              detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
                              busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true }
                     .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
@@ -179,7 +179,7 @@ struct HeaderButtonLabel: View {
         HStack(spacing: 2) {
             ZStack {
                 if busy {
-                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                    ProgressView().controlSize(.mini)
                 } else {
                     Image(systemName: symbol).font(.system(size: 12, weight: .medium))
                 }
