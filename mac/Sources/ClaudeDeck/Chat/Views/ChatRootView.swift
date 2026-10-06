@@ -21,7 +21,7 @@ struct ChatRootView<Trailing: View>: View {
             trailing
         }
         .background(ChatTheme.background)
-        .environment(\.colorScheme, .dark)
+        .environment(\.colorScheme, ChatTheme.colorScheme(for: AppearanceSettings.shared.theme))
         .onAppear { selectFirstIfNeeded() }
         .onChange(of: model.store.connectionEpoch) { model.transcripts.reconnected(selected: model.selectedRoom?.sessionId) }
         .onChange(of: model.selectedRoom?.sessionId, initial: true) { _, sessionId in

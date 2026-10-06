@@ -184,17 +184,28 @@ final class StageSceneTests: XCTestCase {
             ("idle", session(.idle)),
             ("stopped", session(.stopped)),
         ]
+        let lightBackground = NSColor(srgbRed: 0xf4 / 255.0, green: 0xf7 / 255.0, blue: 0xfb / 255.0, alpha: 1)
         let out = ProcessInfo.processInfo.environment["STAGE_SNAPSHOT_DIR"].map { URL(fileURLWithPath: $0) }
-        for (name, s) in cases {
-            rig.show(StageSceneModel(session: s))
-            let image = try XCTUnwrap(rig.snapshot(size: size, time: 0, background: background), name)
-            let bitmap = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil).map(NSBitmapImageRep.init))
-            // 段の正面（石の灰色）が画面の中ほどに描かれている。
-            let center = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh * 292 / 460))
-            XCTAssertGreaterThan(center.brightnessComponent, 0.5, name)
-            if let out {
-                try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-                try bitmap.representation(using: .png, properties: [:])?.write(to: out.appendingPathComponent("\(name).png"))
+        for (backdrop, panel, suffix) in [(StageBackdrop.night, background, ""), (.light, lightBackground, "-light")] {
+            rig.setBackdrop(backdrop)
+            var corners: [CGFloat] = []
+            for (name, s) in cases {
+                rig.show(StageSceneModel(session: s))
+                let image = try XCTUnwrap(rig.snapshot(size: size, time: 0, background: panel), name)
+                let bitmap = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil).map(NSBitmapImageRep.init))
+                // 段の正面（石の灰色）が画面の中ほどに描かれている。
+                let center = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh * 292 / 460))
+                XCTAssertGreaterThan(center.brightnessComponent, 0.5, name + suffix)
+                corners.append(try XCTUnwrap(bitmap.colorAt(x: 4, y: bitmap.pixelsHigh - 4)).brightnessComponent)
+                if let out {
+                    try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+                    try bitmap.representation(using: .png, properties: [:])?
+                        .write(to: out.appendingPathComponent("\(name)\(suffix).png"))
+                }
+            }
+            // 手前の地面はパネルの明るさに沿う（ライトで暗い床が浮かない）。
+            for corner in corners {
+                if backdrop == .light { XCTAssertGreaterThan(corner, 0.75) } else { XCTAssertLessThan(corner, 0.3) }
             }
         }
         rig.show(nil)
