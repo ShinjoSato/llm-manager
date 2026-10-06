@@ -26,7 +26,13 @@ mac/
     MainViewController.swift    メインウィンドウ = チャット画面（SwiftUI を NSHostingView で載せる）
     Chat/                       チャット画面（ルーム一覧・会話・入力欄・権限カード・選択肢カード）
       ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
-      ChatModel.swift             ルーム（監視のセッション + ホスト中のセッション）・会話履歴・権限確認の状態
+      ChatModel.swift             ルーム一覧（監視のセッション + ホスト中のセッション）・選択・claude の起動と終了。下の部品を束ねる
+      ChatOutbox.swift            下書き・添付・ホスト中のセッションへの送信・送った画像の仮の吹き出し（ルームごと）
+      ChatRelay.swift             外部セッションへの伝言と、手元で持つ点線の吹き出し
+      ChatHandover.swift          外部セッションの claude を止めてアプリで再開する（引き継ぎ）
+      PromptResponder.swift       権限確認（Channels・端末）と選択肢メニューへの回答（画面のカードと iPhone が同じ経路）
+      TranscriptCache.swift       開いたルームの会話の取得と追記の購読（直近 4 ルームだけ持つ）・吹き出しの画像の読み込み
+      EditorLauncher.swift        見出しの「VS Code」「GitHub」「Xcode」「閉じる」と結果の短い一言
       HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
       RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・監視 / フックの受け口の状態
       ConversationView.swift      見出し・吹き出し・ツール行・権限カード・選択肢カード
@@ -42,7 +48,7 @@ mac/
     LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
     MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
     Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・書き出し / 読み込み
-    Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の既存の処理へ繋ぐ ChatModel+Remote）
+    Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
     DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
                                 Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
@@ -488,7 +494,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 - 入れ方: 入力欄左のクリップ（NSOpenPanel・複数選択可）、**⌘V**（クリップボードにファイル URL があればそのファイル、文字列が無く画像（PNG / JPEG / HEIC / TIFF 等）だけならその画像。
   文字列を含むコピーは従来どおり文字として貼る。⌥⇧⌘V 等の pasteAsPlainText も同じ）、入力欄へのドラッグ＆ドロップ（ファイル・画像のデータ表現。ファイルプロミスは対象外）。入力欄の上にチップ（画像はサムネイル、
-  それ以外は名前とアイコン、× で外す）。下書きと同じくルームごとに保持し（`ChatModel.attachments`）、1 通 20 個まで。本文が空でも添付だけで送れる。
+  それ以外は名前とアイコン、× で外す）。下書きと同じくルームごとに保持し（`ChatOutbox.attachments`）、1 通 20 個まで。本文が空でも添付だけで送れる。
   ルームを閉じた時・外部ルームが一覧から消えた時（監視の開始前・引き継ぎ中を除く）は、送る前の添付・サムネイル・一時ファイルを片付ける。
 - ⌘V のメニュー検証: 文字専用の NSTextView（`isRichText = false`・`importsGraphics = false`）は、クリップボードに読める型
   （文字列・RTF・ファイル名等の `readablePasteboardTypes`）が無いと「ペースト」を無効にする。スクリーンショット（`public.png` / `public.tiff` だけ）
@@ -518,7 +524,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   クリックで拡大表示（シート・Esc で閉じる）。画像は表示された時にだけ `GET /api/sessions/:id/transcript/:itemId/images/:n` で取り、
   縮小（長辺 480px）してから `NSCache`（300 枚・128MB）に持つ。同じ画像の同時の読み込みは 1 回にまとめる。VS Code 等から送った画像付きの発話も同じく出る。
   アプリから画像を添えて送った発話は、transcript に載るまでの間も端末へ画像として貼った分（手元の一時ファイル）を薄い吹き出しで出す
-  （`ChatModel.sentImages`）。パスとして本文に回った画像（貼り付けモードでない端末・貼れない形のパス）だけなら記録に画像が付かないので出さない。
+  （`ChatOutbox.sentImages`）。パスとして本文に回った画像（貼り付けモードでない端末・貼れない形のパス）だけなら記録に画像が付かないので出さない。
   送信後の本人の発話で、画像の枚数と本文（`[Image #N]`・`[画像]` の印と空白を除いたもの）が一致するものが transcript に載ったら消す
   （1 件の発話は 1 通にだけ対応・時計のずれ 5 秒まで許す。ターミナルから直接送った別の画像付き発話では消さない）。
   Enter まで届かなかった送信は出さず、3 分経っても載らなければ（キューの取り下げ・捨てられた Enter 等）下げる。

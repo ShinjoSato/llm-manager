@@ -23,18 +23,18 @@ struct ChatRootView<Trailing: View>: View {
         .background(ChatTheme.background)
         .environment(\.colorScheme, .dark)
         .onAppear { selectFirstIfNeeded() }
-        .onChange(of: model.store.connectionEpoch) { model.reconnected() }
+        .onChange(of: model.store.connectionEpoch) { model.transcripts.reconnected(selected: model.selectedRoom?.sessionId) }
         .onChange(of: model.selectedRoom?.sessionId, initial: true) { _, sessionId in
-            model.ensureTranscript(for: sessionId)
+            model.transcripts.ensure(for: sessionId)
             model.markSelectedSeen()
         }
         .onChange(of: model.store.feed.last?.id) { model.markSelectedSeen() }
         .onChange(of: model.rooms.count) { selectFirstIfNeeded() }
-        .alert("claude-deck", isPresented: Binding(get: { model.alertMessage != nil },
-                                                   set: { if !$0 { model.alertMessage = nil } })) {
-            Button("OK") { model.alertMessage = nil }
+        .alert("claude-deck", isPresented: Binding(get: { model.alerts.message != nil },
+                                                   set: { if !$0 { model.alerts.message = nil } })) {
+            Button("OK") { model.alerts.message = nil }
         } message: {
-            Text(model.alertMessage ?? "")
+            Text(model.alerts.message ?? "")
         }
     }
 

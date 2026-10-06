@@ -93,7 +93,7 @@ final class AttentionNotifier {
                                                      project: room.snapshot?.project, cwd: room.cwd),
                 status: room.status, ended: room.hosted?.end != nil, hookToolName: room.snapshot?.permissionTool,
                 statusDetail: room.snapshot?.statusDetail,
-                permissionToolNames: model.monitorPermissions(for: room).map(\.toolName))
+                permissionToolNames: model.prompts.monitorPermissions(for: room).map(\.toolName))
         }
     }
 

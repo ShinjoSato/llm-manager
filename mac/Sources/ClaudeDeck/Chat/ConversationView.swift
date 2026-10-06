@@ -81,10 +81,11 @@ struct EditorButtons: View {
     @State private var confirmingClose = false
 
     var body: some View {
-        let xcodeProject = model.xcodeProject(for: room)
-        let closing = model.closingXcode.contains(room.id)
+        let editors = model.editors
+        let xcodeProject = editors.xcodeProject(for: room)
+        let closing = editors.closingXcode.contains(room.id)
         HStack(spacing: 6) {
-            if let note = model.editorNotes[room.id] {
+            if let note = editors.notes[room.id] {
                 Text(note.outcome.message)
                     .font(ChatTheme.caption)
                     .foregroundStyle(note.outcome.isFailure ? ChatTheme.error : ChatTheme.working)
@@ -94,17 +95,17 @@ struct EditorButtons: View {
                     .help(note.outcome.message)
             }
             HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", title: "VS Code",
-                         help: "VS Code で開く: \(room.cwd)") { model.openInVSCode(room) }
-            GitHubButton(model: model, room: room, destinations: model.githubDestinations(for: room),
-                         opening: model.openingGitHub.contains(room.id))
+                         help: "VS Code で開く: \(room.cwd)") { editors.openInVSCode(room) }
+            GitHubButton(editors: editors, room: room, destinations: editors.githubDestinations(for: room),
+                         opening: editors.openingGitHub.contains(room.id))
             if let xcodeProject {
                 HeaderButton(symbol: "hammer", title: "Xcode",
-                             help: "Xcode で開く: \(xcodeProject.path)") { model.openInXcode(room) }
+                             help: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) }
                 HeaderButton(symbol: "xmark", title: closing ? "閉じています…" : "閉じる",
                              help: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
                              disabled: closing) { confirmingClose = true }
                     .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
-                        Button("閉じる", role: .destructive) { model.closeInXcode(room) }
+                        Button("閉じる", role: .destructive) { editors.closeInXcode(room) }
                         Button("やめる", role: .cancel) {}
                     } message: {
                         Text("\(xcodeProject.lastPathComponent) を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
@@ -117,7 +118,7 @@ struct EditorButtons: View {
 
 /// 開く先が 1 つならそのまま開き、ボードとリポジトリの両方ならメニューで選ぶ。
 struct GitHubButton: View {
-    let model: ChatModel
+    let editors: EditorLauncher
     let room: Room
     let destinations: [GitHubDestination]
     let opening: Bool
@@ -127,11 +128,11 @@ struct GitHubButton: View {
 
     var body: some View {
         if destinations.count == 1, let only = destinations.first {
-            HeaderButton(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", help: only.help, disabled: opening) { model.openOnGitHub(only, for: room) }
+            HeaderButton(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", help: only.help, disabled: opening) { editors.openOnGitHub(only, for: room) }
         } else if destinations.count > 1 {
             Menu {
                 ForEach(Array(destinations.enumerated()), id: \.offset) { _, destination in
-                    Button(destination.menuTitle) { model.openOnGitHub(destination, for: room) }
+                    Button(destination.menuTitle) { editors.openOnGitHub(destination, for: room) }
                 }
             } label: {
                 HeaderButtonLabel(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", disabled: opening, hovering: hovering, showsMenu: true)
@@ -196,19 +197,20 @@ struct ChatPane: View {
     let room: Room
 
     var body: some View {
-        let items = model.transcript(for: room.sessionId)
+        let items = model.transcripts.items(for: room.sessionId)
+        let outbox = model.outbox
         VStack(spacing: 0) {
             MessageList(model: model, room: room, items: items)
-            Composer(text: Binding(get: { model.drafts[room.id] ?? "" }, set: { model.drafts[room.id] = $0 }),
-                     disabledReason: model.inputDisabledReason(for: room),
-                     sendBlockedReason: model.sendBlockedReason(for: room),
+            Composer(text: Binding(get: { outbox.drafts[room.id] ?? "" }, set: { outbox.drafts[room.id] = $0 }),
+                     disabledReason: outbox.inputDisabledReason(for: room),
+                     sendBlockedReason: outbox.sendBlockedReason(for: room),
                      relay: room.isExternal,
-                     attachments: model.pendingAttachments(for: room.id),
-                     importingCount: model.importingCount(for: room.id),
-                     thumbnail: { model.thumbnails[$0.id] },
-                     onAttach: { model.attach($0, to: room.id) },
-                     onRemoveAttachment: { model.removeAttachment($0, from: room.id) }) { text in
-                room.isExternal ? model.sendRelay(text, to: room) : model.send(text, to: room)
+                     attachments: outbox.pendingAttachments(for: room.id),
+                     importingCount: outbox.importingCount(for: room.id),
+                     thumbnail: { outbox.thumbnails[$0.id] },
+                     onAttach: { outbox.attach($0, to: room.id) },
+                     onRemoveAttachment: { outbox.removeAttachment($0, from: room.id) }) { text in
+                room.isExternal ? model.relay.send(text, to: room) : outbox.send(text, to: room)
             }
         }
         .background(ChatTheme.background)
@@ -222,11 +224,12 @@ struct MessageList: View {
     @State private var pinnedToBottom = true
 
     var body: some View {
-        let entries = ChatTimeline.entries(from: items, notes: model.notes(for: room.sessionId),
-                                           pending: model.pendingImages(for: room.id))
-        let imageSource = ChatImageSource(loader: model.imageLoader, sessionId: room.sessionId)
+        let entries = ChatTimeline.entries(from: items, notes: model.relay.notes(for: room.sessionId),
+                                           pending: model.outbox.pendingImages(for: room.id))
+        let imageSource = ChatImageSource(loader: model.transcripts.imageLoader, sessionId: room.sessionId)
         let runningId = ChatTimeline.runningToolId(items: items, status: room.status)
-        let permissions = model.monitorPermissions(for: room)
+        let prompts = model.prompts
+        let permissions = prompts.monitorPermissions(for: room)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
@@ -238,8 +241,8 @@ struct MessageList: View {
                         PermissionCard(toolName: permission.toolName,
                                        description: permission.description,
                                        lines: permission.inputPreview.isEmpty ? [] : [permission.inputPreview],
-                                       busy: model.busyPermissionKeys.contains(permission.key)) { allow in
-                            model.decide(permission, allow ? .allow : .deny)
+                                       busy: prompts.busyKeys.contains(permission.key)) { allow in
+                            prompts.decide(permission, allow ? .allow : .deny)
                         }
                     }
                     if permissions.isEmpty, room.isExternal, room.status == .permission {
@@ -249,22 +252,22 @@ struct MessageList: View {
                         PermissionCard(toolName: room.snapshot?.currentTool ?? prompt.title,
                                        description: prompt.title,
                                        lines: prompt.lines,
-                                       busy: model.busyPermissionKeys.contains(ChatModel.ptyPermissionKey(session))) { allow in
-                            model.answerOnTerminal(session, prompt: prompt, allow: allow)
+                                       busy: prompts.busyKeys.contains(PromptResponder.ptyPermissionKey(session))) { allow in
+                            prompts.answerOnTerminal(session, prompt: prompt, allow: allow)
                         }
                     }
                     if permissions.isEmpty, let session = room.hosted, session.permissionPrompt == nil, session.inputBlock == .menu {
-                        let key = ChatModel.ptyMenuKey(session)
-                        let busy = model.busyPermissionKeys.contains(key)
+                        let key = PromptResponder.ptyMenuKey(session)
+                        let busy = prompts.busyKeys.contains(key)
                         if let menu = session.menuPrompt {
-                            MenuCard(menu: menu, busy: busy, notice: model.menuNotices[key]) { shown, choice in
-                                model.answerMenu(session, menu: shown, choice: choice)
+                            MenuCard(menu: menu, busy: busy, notice: prompts.menuNotices[key]) { shown, choice in
+                                prompts.answerMenu(session, menu: shown, choice: choice)
                             } onMoveTab: { shown, direction in
-                                model.moveMenuTab(session, menu: shown, direction: direction)
+                                prompts.moveMenuTab(session, menu: shown, direction: direction)
                             }
                             .id(menu.identity)
                         } else if let unreadable = session.unreadableMenu {
-                            UnreadableMenuCard(menu: unreadable, busy: busy) { shown in model.cancelUnreadableMenu(session, menu: shown) }
+                            UnreadableMenuCard(menu: unreadable, busy: busy) { shown in prompts.cancelUnreadableMenu(session, menu: shown) }
                                 .id(unreadable)
                         }
                     }
@@ -319,7 +322,7 @@ struct MessageList: View {
             if room.hosted?.end != nil { return ("stop.circle", "会話を取得する前に claude が終了しました。") }
             return ("hourglass", "セッションの開始を待っています…")
         }
-        if model.loadingTranscripts.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…") }
+        if model.transcripts.loading.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…") }
         return ("bubble.left.and.bubble.right", room.hosted != nil ? "下の入力欄から指示を送れます。" : "まだ会話がありません。下の入力欄から伝言を送れます。")
     }
 }
