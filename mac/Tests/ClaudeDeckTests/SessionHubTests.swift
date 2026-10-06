@@ -288,7 +288,7 @@ final class SessionHubTests: XCTestCase {
         await hub.scanInventory()
         s = try await required(hub)
         XCTAssertEqual(s.status, .stopped)
-        clock.advance(SessionHub.stoppedRetention + 1)
+        clock.advance(InventoryScanner.stoppedRetention + 1)
         await hub.scanInventory()
         let gone = await snap(hub)
         XCTAssertNil(gone)
@@ -782,6 +782,110 @@ final class SessionHubTests: XCTestCase {
         XCTAssertEqual(early, .timeout, "取り消し済みなら待ち手を登録しない")
         let left = await hub.waiterCount(input.key)
         XCTAssertEqual(left, 0)
+    }
+
+    /// 層ごとに分けても、同じ入力に対する配信の順と内容・最後のスナップショットが変わらないことを固定する。
+    func testGoldenEventSequenceAndSnapshot() async throws {
+        let usageURL = home.root.appendingPathComponent("claude-usage.json")
+        try Data(#"{"fetchedAt":1,"fiveHour":{"usedPercentage":40}}"#.utf8).write(to: usageURL)
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd, extra: ["entrypoint": "cli", "version": "2.1.286"])
+        try append(F.json(["type": "ai-title", "aiTitle": "移植"]),
+                   F.user("u1", "やって", extra: ["gitBranch": "feature/111"]),
+                   F.assistant("a1", [["type": "tool_use", "name": "Bash", "input": ["description": "テストを実行"]]],
+                               extra: ["message": ["role": "assistant", "content": [["type": "tool_use", "name": "Bash", "input": ["description": "テストを実行"]]],
+                                                   "usage": ["input_tokens": 10, "output_tokens": 20]]]))
+        let base = clock.now
+        let (hub, events) = try await started(usageFile: usageURL)
+        await hub.pollUsage()
+
+        // 起動後の応答 → 権限待ちのフック → それより新しいツール行で解ける → 応答完了のフック。
+        clock.set(base + 1_000)
+        try append(F.assistant("a2", [["type": "text", "text": "確認します"]], timestamp: iso(base + 500)))
+        await hub.pollTranscripts()
+        clock.set(base + 5_000)
+        await hub.applyHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                        notificationType: "permission_prompt"))
+        clock.set(base + 7_000)
+        try append(F.assistant("a3", [["type": "tool_use", "name": "Edit", "input": [:] as [String: Any]]], timestamp: iso(base + 6_000)))
+        await hub.pollTranscripts()
+        clock.set(base + 8_000)
+        await hub.applyHook(HookPayload(sessionId: sessionId, hookEventName: "Stop"))
+
+        // 2 つ目のセッションが現れ、権限の確認がチャネルから届き、画面で許可する。
+        let other = "99999999-2222-3333-4444-555555555555"
+        let otherPid: Int32 = 4343
+        alive.mutate { $0.insert(otherPid) }
+        try home.writeSession(pid: otherPid, sessionId: other, cwd: "/tmp/proj-b")
+        clock.set(base + 9_000)
+        await hub.scanInventory()
+        await hub.pollTranscripts()
+        let input = PermissionRequestInput(requestId: "abcde", toolName: "Write", description: "w", inputPreview: "x",
+                                           pid: otherPid, cwd: "/tmp/proj-b")
+        let waiting = Task { await hub.awaitPermission(input, waitMillis: 5_000) }
+        try await waitUntil { await !hub.pendingPermissions().isEmpty }
+        clock.set(base + 10_000)
+        await hub.decidePermission(key: input.key, decision: .allow)
+        let outcome = await waiting.value
+        XCTAssertEqual(outcome, .allow)
+
+        // 1 つ目が終了し、使用量は変わらないので配らない。
+        alive.mutate { $0.remove(pid) }
+        clock.set(base + 11_000)
+        await hub.scanInventory()
+        await hub.pollUsage()
+
+        let encoded = events.value.map { event -> String in
+            switch event {
+            case .sessions(let list):
+                return "sessions:" + list.map { "\($0.project) \($0.status.rawValue)/\($0.statusSource.rawValue) \($0.statusDetail ?? "-") \($0.currentTool ?? "-")" }.joined(separator: " | ")
+            case .feed(let f):
+                return "feed:\(f.id) \(f.kind.rawValue) \(f.text) tool=\(f.tool ?? "-") local=\(f.local == true) at=\(f.at - base)"
+            case .usage(let u):
+                return "usage:\(u?.fiveHour?.usedPercentage ?? -1)"
+            case .permissions(let list):
+                return "permissions:" + list.map { "\($0.toolName)@\($0.sessionId ?? "-")" }.joined(separator: ",")
+            case .transcript:
+                return "transcript"
+            }
+        }
+        XCTAssertEqual(encoded, [
+            "feed:1 session セッション検出: proj-a tool=- local=false at=0.0",
+            "sessions:proj-a idle/transcript - -",
+            "sessions:proj-a idle/transcript - -",
+            "sessions:proj-a working/transcript - Bash",
+            "usage:40.0",
+            "feed:2 message 確認します tool=- local=false at=1000.0",
+            "sessions:proj-a idle/transcript - -",
+            "feed:3 status 権限の確認待ち: Bash tool=- local=false at=5000.0",
+            "sessions:proj-a permission/hook Bash -",
+            "feed:4 tool Edit tool=Edit local=false at=7000.0",
+            "sessions:proj-a working/transcript - Edit",
+            "feed:5 status 応答完了 tool=- local=false at=8000.0",
+            "sessions:proj-a idle/hook - -",
+            "feed:6 session セッション検出: proj-b tool=- local=false at=9000.0",
+            "sessions:proj-a idle/hook - - | proj-b idle/transcript - -",
+            "sessions:proj-a idle/hook - - | proj-b idle/transcript - -",
+            "feed:7 status 権限の確認が届きました: Write tool=- local=true at=9000.0",
+            "permissions:Write@99999999-2222-3333-4444-555555555555",
+            "feed:8 status 許可しました: Write tool=- local=true at=10000.0",
+            "permissions:",
+            "feed:9 session セッション終了 tool=- local=false at=11000.0",
+            "sessions:proj-b idle/transcript - - | proj-a stopped/inventory - -",
+        ])
+
+        let snapshot = await hub.snapshot()
+        XCTAssertEqual(snapshot, [
+            SessionSnapshot(sessionId: other, pid: otherPid, alive: true, name: "proj-b", project: "proj-b", cwd: "/tmp/proj-b",
+                            branch: nil, title: nil, lastPrompt: nil, status: .idle, statusSource: .transcript, statusDetail: nil,
+                            entrypoint: nil, version: nil, startedAt: 1_000, lastActivityAt: nil,
+                            currentTool: nil, currentSkill: nil, currentAction: nil, tokens: nil, agents: [], canReceive: false,
+                            xcodeProject: nil),
+            SessionSnapshot(sessionId: sessionId, pid: pid, alive: false, name: "proj-a", project: "proj-a", cwd: cwd,
+                            branch: "feature/111", title: "移植", lastPrompt: nil, status: .stopped, statusSource: .inventory,
+                            statusDetail: nil, entrypoint: "cli", version: "2.1.286", startedAt: 1_000, lastActivityAt: base + 6_000,
+                            currentTool: nil, currentSkill: nil, currentAction: nil, tokens: TokenUsage(input: 10, output: 20, cacheRead: 0),
+                            agents: [], canReceive: false, xcodeProject: nil),
+        ])
     }
 
     func testSendMessageFailuresAndDelivery() async throws {
