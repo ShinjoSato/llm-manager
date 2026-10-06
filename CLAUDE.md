@@ -129,8 +129,9 @@ SwiftUI・iOS 17 以上・iPhone のみ。バンドル ID `$(DECK_BUNDLE_PREFIX)
 - 未着手。着手時に方針をここに追記する。
 
 ## メモ
-- GitHub リポジトリは `ShinjoSato/llm-manager`（ベースブランチは develop）。`.gitignore` で `secrets/*`・`node_modules/`・ビルド成果物・削除済みの `monitor/` の残骸を除外。
-- 秘密情報は `secrets/`（いまは置くもの無し）。中身は git 追跡外（README のみ追跡）。
+- GitHub リポジトリは `ShinjoSato/llm-manager`（ベースブランチは develop）。`.gitignore` で `node_modules/`・ビルド成果物・削除済みの `monitor/` の残骸を除外。
+- **手元だけで持つもの（git で追跡しない）**: `config/Local.xcconfig`（署名・識別子）、`.claude/github-project.json`（開発フローの設定）、
+  `~/Library/Application Support/claude-deck/`（settings.json・iPhone 連携の証明書と端末トークン・usage.json）。リポジトリに秘密情報の置き場は無い。
 - 開発フロー（developer-plugin）の設定 `.claude/github-project.json` は **git で追跡せず手元で持つ**（GitHub の owner・リポジトリ・Project の各 ID を含むため）。
   新しい clone では `.claude/github-project.example.json` をコピーして値を入れるか、developer-plugin の `project-init` で作る。無いと Issue〜PR の skill は動かない。
   - スクリプトはカレントから上へ探すので、`.claude/worktrees/` の中からでも本体のファイルを読む。
