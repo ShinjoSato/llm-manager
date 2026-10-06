@@ -135,7 +135,8 @@ struct StagePanel: View {
                                          sessionKnown: snapshot != nil)
         switch (content, snapshot) {
         case (.stage, let snapshot?):
-            StageSceneView(model: StageSceneModel(session: snapshot))
+            StageSceneView(model: StageSceneModel(session: snapshot),
+                           backdrop: StageBackdrop.for(AppearanceSettings.shared.theme))
         case (.stage, nil):
             EmptyView()
         case (.placeholder(let text), _):

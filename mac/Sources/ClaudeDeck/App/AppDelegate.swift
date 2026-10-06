@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        AppearanceSettings.shared.apply()
         MonitorBridge.start()
         // チャット欄の変換中に設定の保存を止めないよう、設定画面がキーの時だけ見る。
         SettingsStore.shared.isComposing = {
@@ -22,7 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "claude-deck"
-        window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = ChatTheme.nsBackground
         window.titlebarAppearsTransparent = true
         window.contentViewController = main
