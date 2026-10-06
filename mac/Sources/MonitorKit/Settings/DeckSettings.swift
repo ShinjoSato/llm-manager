@@ -56,6 +56,8 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
     public var links: [ProjectLink]
     /// LP の場所（無ければ自動で探す）。
     public var site: ProjectSite?
+    /// 形が読めずに捨てた `site`（警告に出すだけで、保存・比較には含めない）。
+    public var ignoredSite = IgnoredField()
 
     private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links, site }
 
@@ -80,7 +82,13 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         github = try c.decodeIfPresent(GitHubLink.self, forKey: .github)
         links = try c.decodeIfPresent([ProjectLink].self, forKey: .links) ?? []
-        site = try c.decodeIfPresent(ProjectSite.self, forKey: .site)
+        // 手で書いた `site` の形が違っても、設定全体を読めなくしない。
+        if c.contains(.site), (try? c.decodeNil(forKey: .site)) != true {
+            site = try? c.decode(ProjectSite.self, forKey: .site)
+            ignoredSite.isSet = site == nil
+        } else {
+            site = nil
+        }
     }
 
     /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。
@@ -142,6 +150,17 @@ public struct ProjectLink: Codable, Equatable, Sendable {
         self.name = name
         self.url = url
     }
+}
+
+/// 読み込み時の印。設定の中身ではないので、比較では常に等しい。
+public struct IgnoredField: Equatable, Sendable {
+    public var isSet = false
+
+    public init(isSet: Bool = false) {
+        self.isSet = isSet
+    }
+
+    public static func == (a: IgnoredField, b: IgnoredField) -> Bool { true }
 }
 
 /// LP（静的書き出しのあるサイト）の場所。`path` はプロジェクトからの相対パス（`.` はプロジェクト直下）。

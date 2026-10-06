@@ -76,6 +76,10 @@ struct SitePreviewSection: View {
                              detail: (SiteNavigationPolicy.browserURL(preview.currentURL) ?? targetURL)?.absoluteString) {
                     openInBrowser()
                 }
+            } else if source == .export, hasExport, serverProblem != nil {
+                HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの配信を開き直す") {
+                    reloadToken += 1
+                }
             }
         }
         .zIndex(1)
@@ -190,6 +194,12 @@ struct SitePreviewSection: View {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
         } else if let url = targetURL {
             previewFrame(url)
+        } else if source == .export, hasExport {
+            if serverProblem != nil {
+                hint("書き出しはありますが、配信を開けませんでした。「再読み込み」で開き直せます。")
+            } else {
+                ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
+            }
         } else if source == .export, let location {
             hint("まだ書き出していません。\(location.relativePath == "." ? "プロジェクト直下" : location.relativePath) で `npm run build` で書き出すと見られます。")
         } else {
@@ -267,8 +277,11 @@ struct SitePreviewSection: View {
             return
         }
         do {
-            exportURL = try await SitePreviewServers.shared.baseURL(for: location.exportDir)
+            let url = try await SitePreviewServers.shared.baseURL(for: location.exportDir)
+            guard !Task.isCancelled else { return }
+            exportURL = url
         } catch {
+            guard !Task.isCancelled else { return }
             exportURL = nil
             if case SitePreviewServers.Failure.failed(let reason) = error {
                 serverProblem = "書き出しを配信できませんでした: \(reason)"
@@ -277,7 +290,7 @@ struct SitePreviewSection: View {
             }
         }
         // 書き出しが新しくなっていればサムネイルも撮り直させる。
-        SiteThumbnailStore.shared.request(project)
+        SiteThumbnailStore.shared.request(project, force: reloadToken > 0)
     }
 
     /// 選んでいた見る元が無くなったら、使えるものに替える。

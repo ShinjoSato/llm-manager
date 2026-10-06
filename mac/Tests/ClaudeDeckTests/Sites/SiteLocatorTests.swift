@@ -130,13 +130,40 @@ final class SiteLocatorTests: XCTestCase {
         XCTAssertEqual(SettingsValidation.blockingProblems(settings), [])
     }
 
-    func testBrokenSiteShapeIsUnreadable() {
+    func testBrokenSiteShapeIsIgnoredWithWarning() throws {
         let head = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active","site":"#
-        for site in [#""site""#, "{}", #"{"path":1}"#] {
-            guard case .unreadable = SettingsFile.decode(Data((head + site + "}]}").utf8)) else { return XCTFail(site) }
+        for site in [#""site""#, "{}", #"{"path":1}"#, "[]", "1"] {
+            guard case .loaded(let settings) = SettingsFile.decode(Data((head + site + "}]}").utf8)) else { return XCTFail(site) }
+            XCTAssertNil(settings.projects[0].site, site)
+            XCTAssertEqual(SettingsValidation.warnings(settings).count, 1, site)
+            XCTAssertEqual(settings, DeckSettings(projects: [ManagedProject(id: settings.projects[0].id, name: "a", path: "/a")]),
+                           "読めなかった印は比較に含めない")
+            let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: settings.encoded()) as? [String: Any])
+            XCTAssertNil((saved["projects"] as? [[String: Any]])?.first?["site"], "読めなかった site は書かない")
         }
         guard case .loaded(let settings) = SettingsFile.decode(Data((head + "null}]}").utf8)) else { return XCTFail() }
         XCTAssertNil(settings.projects[0].site)
+        XCTAssertEqual(SettingsValidation.warnings(settings), [])
+    }
+
+    func testExportOutsideSiteIsNotUsed() throws {
+        try touch("site/next.config.js")
+        let elsewhere = dir.appendingPathComponent("elsewhere").path
+        try touch("index.html", in: elsewhere)
+        try FileManager.default.createSymbolicLink(atPath: (project as NSString).appendingPathComponent("site/out"), withDestinationPath: elsewhere)
+        let location = try XCTUnwrap(SiteLocator.lookup(projectPath: project, configured: "site").location)
+        XCTAssertFalse(SiteLocator.isExportInside(exportDir: location.exportDir))
+        XCTAssertNil(SiteLocator.exportModified(location))
+        XCTAssertEqual(SiteFiles.resolve(urlPath: "/", root: location.exportDir), .notFound)
+        XCTAssertEqual(SiteFiles.resolve(urlPath: "/index.html", root: location.exportDir), .notFound)
+        // サイトの中の別のフォルダを指すのは使える。
+        try FileManager.default.removeItem(atPath: (project as NSString).appendingPathComponent("site/out"))
+        try touch("site/dist/index.html")
+        try FileManager.default.createSymbolicLink(atPath: (project as NSString).appendingPathComponent("site/out"),
+                                                   withDestinationPath: (project as NSString).appendingPathComponent("site/dist"))
+        XCTAssertTrue(SiteLocator.isExportInside(exportDir: location.exportDir))
+        XCTAssertNotNil(SiteLocator.exportModified(location))
+        guard case .file = SiteFiles.resolve(urlPath: "/", root: location.exportDir) else { return XCTFail() }
     }
 
     func testImportFillsSiteOnlyWhenMissing() throws {
