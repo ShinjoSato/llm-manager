@@ -90,14 +90,10 @@ final class HookDropCounter: @unchecked Sendable {
 public actor SessionHub {
     /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。
     static let staleBusy: Double = 10 * 60_000
-    /// サブエージェントのログがこの時間内に更新されていれば、そのエージェントは動いているとみなす。
-    static let agentWindow: Double = 3 * 60_000
     public static let inventoryInterval: Duration = .seconds(3)
     public static let transcriptInterval: Duration = .milliseconds(250)
     /// 経過時間だけで状態が変わる分（稼働中 → 待機など）も配るための間隔。
     public static let snapshotInterval: Duration = .seconds(1)
-    /// サブエージェント数の走査は syscall が多いので実況ポーリングより粗くする。
-    static let agentScanInterval: Double = 2_000
 
     public let home: ClaudeHome
     private let now: @Sendable () -> Double
@@ -108,19 +104,16 @@ public actor SessionHub {
     /// セッションの辞書。出し入れはこの actor の中だけで行い、各層には State を渡して書かせる。
     private var sessions: [String: SessionState] = [:]
     private var scanner: InventoryScanner
+    private var poller: TranscriptPoller
     private var permissions = PermissionRegistry()
     private var feedSeq = 0
-    private var agentTypes: [String: String] = [:]
     private var usagePoller: UsagePoller
-    private var locator: TranscriptLocator
     private var tasks: [Task<Void, Never>] = []
     /// `start` の途中（初回走査の await 中）に再び呼ばれても二重に回さないため。
     private var starting = false
     /// 最後に呼ばれたのが start か stop か。初回走査の後にループを立てるかはこれで決める。
     private var wantsRunning = false
     private var sink: (@Sendable (MonitorEvent) -> Void)?
-    /// これより前のログ行はフィードに積まない（起動前の履歴を「新着」として数えないため）。
-    private let startedAt: Double
 
     private enum HookMessage: Sendable {
         /// `receivedAt` は受け口に届いた時刻。反映が遅れてもログ行との前後はこれで比べる。
@@ -147,8 +140,7 @@ public actor SessionHub {
         self.now = now
         scanner = InventoryScanner(directory: home.sessionsDirectory, isAlive: isAlive)
         self.metaLoader = metaLoader
-        locator = TranscriptLocator(home: home)
-        startedAt = now()
+        poller = TranscriptPoller(home: home, startedAt: now())
         let (stream, inbox) = AsyncStream<HookMessage>.makeStream(bufferingPolicy: .bufferingNewest(max(1, hookBufferLimit)))
         hookInbox = inbox
         let dropped = droppedHooks
@@ -257,14 +249,11 @@ public actor SessionHub {
         let now = now()
         let outcome = scanner.scan(known: sessions, now: now)
         for state in outcome.created {
-            attachTranscript(state)
+            poller.attach(state)
             sessions[state.raw.sessionId] = state
         }
         for state in outcome.expired {
-            if let path = state.transcriptPath {
-                let dir = ClaudeHome.subagentDirectory(forTranscript: path)
-                for key in agentTypes.keys where key.hasPrefix(dir) { agentTypes[key] = nil }
-            }
+            poller.forget(state)
             sessions[state.raw.sessionId] = nil
         }
         for (sessionId, line) in outcome.feed { push(sessionId, line) }
@@ -280,13 +269,6 @@ public actor SessionHub {
         let created = outcome.created.map(\.raw.sessionId)
         let task = Task<Void, Never> { [weak self] in await self?.loadMeta(created) }
         if waitForMeta { await task.value }
-    }
-
-    /// 重い読み（ログの遡り・Xcode の走査）は `loadMeta` に回し、ここでは軽いものだけ埋める。
-    private func attachTranscript(_ state: SessionState) {
-        state.transcriptPath = locator.resolve(sessionId: state.raw.sessionId, cwd: state.raw.cwd)
-        if let path = state.transcriptPath { state.reader = TranscriptReader(path: path) }
-        state.metaRequestedFor = state.transcriptPath
     }
 
     /// 新しく見つけたセッションのメタ情報と Xcode プロジェクトを actor の外で調べ、結果だけ戻す（その間もフック等を受けられるように）。
@@ -305,7 +287,7 @@ public actor SessionHub {
         for (id, path, meta, xcode) in results {
             guard let state = sessions[id] else { continue }
             state.xcodeProject = xcode
-            if let meta, path == state.transcriptPath { applyMeta(meta, to: state) }
+            if let meta, path == state.transcriptPath { poller.absorbMeta(meta, into: state) }
         }
         emitUpdate()
     }
@@ -320,16 +302,7 @@ public actor SessionHub {
 
     private func receiveTranscriptMeta(_ id: String, path: String, meta: (title: String?, lastPrompt: String?)) {
         guard let state = sessions[id], state.transcriptPath == path else { return }
-        if applyMeta(meta, to: state) { emitUpdate() }
-    }
-
-    /// 末尾読みで既に新しい値を拾っていればそちらを残す。
-    @discardableResult
-    private func applyMeta(_ meta: (title: String?, lastPrompt: String?), to state: SessionState) -> Bool {
-        let before = (state.title, state.lastPrompt)
-        state.title = state.title ?? meta.title
-        state.lastPrompt = state.lastPrompt ?? meta.lastPrompt
-        return before != (state.title, state.lastPrompt)
+        if poller.absorbMeta(meta, into: state) { emitUpdate() }
     }
 
     // MARK: - 実況層
@@ -339,140 +312,22 @@ public actor SessionHub {
         var changed = false
 
         for (id, state) in sessions {
-            if state.reader == nil {
-                // 起動直後はログがまだ無いことがあるので都度あきらめずに探す。
-                guard let path = locator.resolve(sessionId: state.raw.sessionId, cwd: state.raw.cwd) else { continue }
-                state.transcriptPath = path
-                state.reader = TranscriptReader(path: path)
-            }
-            guard let reader = state.reader else { continue }
-            if let path = state.transcriptPath, state.metaRequestedFor != path {
-                state.metaRequestedFor = path
-                loadTranscriptMeta(id, path: path)
-            }
-
-            // 初回は末尾を遡って読むので、起動前に書かれた行を新着としてフィードに積まない。
-            let initial = !reader.primed
-            let events = reader.read()
-            if !events.isEmpty { changed = true }
-            let quietFlags = initial ? initialQuietFlags(events, knownAtStart: state.knownAtStart) : nil
-
-            for (index, ev) in events.enumerated() {
-                let quiet = quietFlags?[index] ?? false
-                func push(_ sessionId: String, _ kind: FeedKind, _ text: String, tool: String? = nil) {
-                    if !quiet { self.push(sessionId, kind, text, tool: tool) }
-                }
-                if let branch = ev.branch { state.branch = branch }
-                if let title = ev.title, title != state.title {
-                    state.title = title
-                    push(id, .message, "作業内容: \(title)")
-                }
-                if let prompt = ev.lastPrompt, prompt != state.lastPrompt {
-                    state.lastPrompt = prompt
-                    push(id, .prompt, HubText.truncate(prompt, 160))
-                }
-                if let at = ev.at { state.lastActivityAt = max(state.lastActivityAt ?? 0, at) }
-                if let usage = ev.usage { state.tokens = usage }
-
-                // thinking だけの assistant 行では判定を変えない（応答が終わったとは限らない）。
-                if ev.type == "assistant" {
-                    if ev.tools?.isEmpty == false { state.turnState = .busy } else if ev.text != nil { state.turnState = .settled }
-                } else if ev.type == "user" {
-                    state.turnState = .busy // プロンプト送信か tool_result。どちらも次はモデルの番
-                }
-
-                if let tools = ev.tools, !tools.isEmpty {
-                    state.currentTool = tools.last
-                    // 配下のツールには skill が無い。nil で塗り潰さず、新しいスキルが来た時だけ差し替える。
-                    if let skill = ev.toolDetail?.skill { state.currentSkill = skill }
-                    state.currentAction = ev.toolDetail?.description
-                    for tool in tools { push(id, .tool, tool, tool: tool) }
-                    // フックより新しい行を読んだ時だけ「待ち」を解く。古い行で権限待ちを消さない。
-                    if (ev.at ?? .infinity) > state.hookAt { state.clearHookWait() }
-                } else if ev.type == "user" {
-                    // tool_result が返った = ツールは終わっている
-                    state.currentTool = nil
-                    state.currentAction = nil
-                    // スキルは配下のツールが動く間ずっと続く。次の指示が来るまで保持する。
-                    if ev.userKind == .prompt { state.currentSkill = nil }
-                } else if ev.type == "assistant", let text = ev.text {
-                    // スキルは途中で一言述べても続いている。解除は次のユーザー指示だけに任せる。
-                    state.currentTool = nil
-                    state.currentAction = nil
-                    push(id, .message, HubText.truncate(text, 160))
-                }
-            }
+            let outcome = poller.poll(state, now: now)
+            if let path = outcome.metaRequest { loadTranscriptMeta(id, path: path) }
+            for line in outcome.feed { push(id, line) }
+            if outcome.changed { changed = true }
 
             // 預かった後に書かれたログ行があれば、その確認は端末側で答えられている。
-            if !events.isEmpty && permissions.count > 0 {
+            if outcome.readLines && permissions.count > 0 {
                 let dropped = permissions.dropResolved(sessionId: id, lastActivityAt: state.lastActivityAt ?? 0)
                 for pending in dropped {
                     push(id, .status, "権限の確認は端末側で答えられたようです: \(pending.toolName)", local: true)
                 }
                 if !dropped.isEmpty { emitPermissions() }
             }
-
-            if now - state.agentsCheckedAt >= Self.agentScanInterval {
-                state.agentsCheckedAt = now
-                let (agents, newest) = scanAgents(state, now: now)
-                if newest > 0 { state.lastAgentActivityAt = max(state.lastAgentActivityAt ?? 0, newest) }
-                func key(_ list: [AgentInfo]) -> String { list.map { "\($0.id):\($0.type ?? "")" }.sorted().joined(separator: ",") }
-                if key(agents) != key(state.agents) { changed = true }
-                state.agents = agents
-            }
         }
 
         if changed { emitUpdate() }
-    }
-
-    /// 初回読みの各行を起動前の分（フィードに積まない）とみなすか。時刻の無い行は近くの時刻のある行に倣う
-    /// （--resume で書き直された古いメタ情報を新着にしないため）。時刻のある行が無ければ、起動前から動いていたセッションの分だけ古いとみなす。
-    private func initialQuietFlags(_ events: [ParsedEvent], knownAtStart: Bool) -> [Bool] {
-        var flags = [Bool](repeating: knownAtStart, count: events.count)
-        var previous: Double?
-        for (index, ev) in events.enumerated() {
-            if let at = ev.at { previous = at }
-            if let reference = previous { flags[index] = reference < startedAt }
-        }
-        // 先頭側の時刻の無い行は、後に続く時刻のある行が起動前ならそれより前に書かれている。
-        if let firstTimed = events.firstIndex(where: { $0.at != nil }), let at = events[firstTimed].at, at < startedAt {
-            for index in 0..<firstTimed { flags[index] = true }
-        }
-        return flags
-    }
-
-    /// 稼働中のサブエージェント一覧と、サブエージェント側の最終更新時刻を返す。
-    private func scanAgents(_ state: SessionState, now: Double) -> ([AgentInfo], Double) {
-        guard let path = state.transcriptPath else { return ([], 0) }
-        let dir = ClaudeHome.subagentDirectory(forTranscript: path)
-        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return ([], 0) }
-        var agents: [AgentInfo] = []
-        var newest: Double = 0
-        for file in files where file.hasSuffix(".jsonl") {
-            let full = "\(dir)/\(file)"
-            var st = stat()
-            guard stat(full, &st) == 0 else { continue }
-            let mtime = Double(st.st_mtimespec.tv_sec) * 1000 + Double(st.st_mtimespec.tv_nsec) / 1_000_000
-            newest = max(newest, mtime)
-            if now - mtime >= Self.agentWindow { continue }
-            var id = String(file.dropLast(".jsonl".count))
-            if id.hasPrefix("agent-") { id = String(id.dropFirst("agent-".count)) }
-            agents.append(AgentInfo(id: id, type: agentType(full), lastActivityAt: mtime))
-        }
-        agents.sort { $0.lastActivityAt > $1.lastActivityAt }
-        return (agents, newest)
-    }
-
-    /// サブエージェントの種別。ログと同時に書かれる meta.json に入っている。
-    private func agentType(_ path: String) -> String? {
-        let metaPath = String(path.dropLast(".jsonl".count)) + ".meta.json"
-        if let cached = agentTypes[metaPath] { return cached.isEmpty ? nil : cached }
-        guard let data = FileManager.default.contents(atPath: metaPath),
-              let o = JSONLoose.dict(JSONLoose.object(data)) else { return nil }
-        let type = JSONLoose.string(o["agentType"])
-        // 見つからない場合も覚える。空文字は「読んだが無かった」の意味。
-        agentTypes[metaPath] = type ?? ""
-        return type
     }
 
     // MARK: - 使用量
