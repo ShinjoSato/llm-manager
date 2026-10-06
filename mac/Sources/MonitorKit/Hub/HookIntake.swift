@@ -169,10 +169,11 @@ enum HookIntake {
             break
         }
 
-        // 届いた後のログ活動を先に読んでいれば、その待ちには既に答えが出ている（状態に出さない待ちをフィードにも告げない）。
-        if let candidate = status, Attention.needsAttention(candidate), state.lastActivity > now { return nil }
+        // 届いた後の親ログの活動を先に読んでいれば、その待ちには既に答えが出ている（親が止まっていても書き続けるサブエージェントの活動は数えず、状態に出さない待ちはフィードにも告げない）。
+        let parentActivity = state.lastActivityAt ?? 0
+        if let candidate = status, Attention.needsAttention(candidate), parentActivity > now { return nil }
         if let status {
-            let prev = Attention.heldStatus(state.hookStatus, hookAt: state.hookAt, lastActivityAt: state.lastActivity)
+            let prev = Attention.heldStatus(state.hookStatus, hookAt: state.hookAt, lastActivityAt: parentActivity)
             state.attentionSince = Attention.nextAttentionSince(prevStatus: prev, prevSince: state.attentionSince,
                                                                 nextStatus: status, now: now)
             state.hookStatus = status

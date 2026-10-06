@@ -7,7 +7,7 @@ public enum Attention {
         status == .permission || status == .waiting || status == .error
     }
 
-    /// 前のフックの待ちがまだ続いているか。フックより新しいログ活動があれば、その待ちには答えが出ている。
+    /// 前のフックの待ちがまだ続いているか。フックより新しい親ログの活動があれば、その待ちには答えが出ている（サブエージェントの活動は渡さない）。
     public static func heldStatus(_ hookStatus: SessionStatus?, hookAt: Double, lastActivityAt: Double) -> SessionStatus? {
         lastActivityAt > hookAt ? nil : hookStatus
     }

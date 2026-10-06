@@ -138,10 +138,14 @@ final class HookIntakeTests: XCTestCase {
             XCTAssertNil(answered.attentionSince)
             XCTAssertEqual(answered.hookAt, 0, "答え済みの待ちはフックの時刻も進めない")
         }
-        // サブエージェント側の活動も「届いた後のログ活動」に数える。
-        let viaAgent = state(lastActivityAt: nil, lastAgentActivityAt: now + 1)
-        XCTAssertNil(HookIntake.apply(permission, to: viaAgent, now: now))
-        XCTAssertNil(viaAgent.hookStatus)
+        // サブエージェント側の活動は「届いた後のログ活動」に数えない（親が確認で止まっている間も子は書き続ける）。
+        let viaAgent = state(lastActivityAt: now - 1, lastAgentActivityAt: now + 1)
+        XCTAssertEqual(HookIntake.apply(permission, to: viaAgent, now: now), FeedLine(kind: .status, text: "権限の確認待ち: Bash"))
+        XCTAssertEqual(viaAgent.hookStatus, .permission)
+        XCTAssertEqual(viaAgent.attentionSince, now)
+        let viaAgentOnly = state(lastActivityAt: nil, lastAgentActivityAt: now + 1)
+        XCTAssertNotNil(HookIntake.apply(waiting, to: viaAgentOnly, now: now), "親ログの時刻が無くても子の活動では捨てない")
+        XCTAssertEqual(viaAgentOnly.hookStatus, .waiting)
 
         // 届く前の活動しか読んでいなければ、これまでどおり待ちを出す。
         let open = state(lastActivityAt: now - 1)
@@ -712,6 +716,42 @@ final class SessionHubTests: XCTestCase {
         XCTAssertEqual(s.status, .idle, "落ち着いた後に答え済みの権限待ちを戻さない")
         XCTAssertNil(s.attentionSince)
         XCTAssertTrue(feedTexts(events).contains("終わりました"))
+    }
+
+    /// 届いた後に進んだのがサブエージェントのログだけなら、遅れて反映した権限待ちは答え済みにしない（状態にもフィードにも出す）。
+    func testLateHookAfterSubagentActivityStaysPending() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, events) = try await started()
+        let received = clock.now
+        // 親ログは届く前の行まで。サブエージェントのログだけが届いた後に動いている。
+        try append(F.assistant("a1", [["type": "text", "text": "子に任せます"]], timestamp: iso(received - 500)))
+        let transcript = home.transcriptURL(sessionId: sessionId, cwd: cwd)
+        let subagents = URL(fileURLWithPath: ClaudeHome.subagentDirectory(forTranscript: transcript.path))
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        let agentLog = subagents.appendingPathComponent("agent-abc.jsonl")
+        try Data("{}\n".utf8).write(to: agentLog)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: (received + 1_000) / 1000)],
+                                              ofItemAtPath: agentLog.path)
+        // 子が終わって一覧から外れた後でも、子の活動の時刻は残る。
+        clock.advance(TranscriptPoller.agentWindow + 5_000)
+        await hub.pollTranscripts()
+        var s = try await required(hub)
+        XCTAssertEqual(s.lastActivityAt ?? 0, received + 1_000, accuracy: 1, "サブエージェントの活動は読めている")
+        XCTAssertTrue(s.agents.isEmpty)
+
+        await hub.applyHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",
+                                        notificationType: "permission_prompt"), receivedAt: received)
+        s = try await required(hub)
+        XCTAssertEqual(s.status, .permission, "親ログは届く前の行までなので待ちは開いたまま")
+        XCTAssertEqual(s.attentionSince, received)
+        XCTAssertTrue(feedTexts(events).contains("権限の確認待ち: Bash"))
+
+        // 親ログがフックより後に進めば、これまでどおり待ちを解く。
+        try append(F.assistant("a2", [["type": "tool_use", "name": "Bash", "input": [:] as [String: Any]]],
+                               timestamp: iso(received + 2_000)))
+        await hub.pollTranscripts()
+        s = try await required(hub)
+        XCTAssertEqual(s.status, .working)
     }
 
     /// 後から反映したフックの受信時刻が古くても、フックの時刻を逆戻りさせない。
