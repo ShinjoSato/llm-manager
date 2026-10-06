@@ -9,7 +9,7 @@ SwiftTerm（VT100/Xterm エミュレータ + PTY ホスト）を使い、Termina
 
 - **料金事故ゼロ**: 子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を必ず除去して `claude` を起動する。API 課金経路が存在しないため、Max 枠の上限に達しても「待つ」だけで課金は発生しない。さらにログインシェル側でも `unset` してから `exec claude` する二重防御。
 - **headless 不採用**: `claude -p` / Agent SDK の起動口は一切設けない（別枠課金や非対話実行を避ける）。
-- **上限到達で強制終了**: 次のどちらかで上限到達とみなし、アプリでホストしている全セッションを `terminate()` で強制終了して警告ダイアログを出す。判定は `Sources/MonitorKit/LimitGuard.swift`（テストあり）、残量の購読は `Sources/ClaudeDeck/LimitWatch.swift`。
+- **上限到達で強制終了**: 次のどちらかで上限到達とみなし、アプリでホストしている全セッションを `terminate()` で強制終了して警告ダイアログを出す。判定は `Sources/MonitorKit/Limit/LimitGuard.swift`（テストあり）、残量の購読は `Sources/ClaudeDeck/App/LimitWatch.swift`。
   1. **公式の残量（主）**: statusLine の `rate_limits`（`mac/scripts/statusline.sh` が `~/Library/Application Support/claude-deck/usage.json` に書く）をアプリ内の監視が読んだ `MonitorStore.usage` で、5 時間 / 7 日間のどちらかが 100% 以上、かつ取得から 10 分以内。古い値・未取得では落とさない（statusLine 未設定なら この経路は働かない。設定は下の「Claude Code 側の設定」）。一度到達したらそのウィンドウのリセット時刻まで覚えておき、その間に起動したセッションも起動直後に止める（新しい値で 100% 未満になれば解除）。
   2. **画面の上限表示（補助）**: 生の出力ではなく端末の実画面の末尾だけを見る。入力欄より下（フッター）、入力欄直上の最後の `⎿` 行（API エラー表示）、上限到達時に自動で開くメニューの「Stop and wait for limit to reset」。会話本文に同じ文言が出ても落ちない。文言は Claude Code v2.1.286 のバイナリ内で上限判定に使われている書き出し（`You've hit your` / `You've reached your` / `You're out of usage credits` / `You're now using usage credits` 等の課金枠切替 / `Usage limit reached`）に絞っている。
   - 起動直後（対話 zsh が `claude` に exec する前）は SIGTERM が効かないので、1.5 秒後に残っていれば SIGKILL する。
@@ -21,45 +21,51 @@ mac/
   Package.swift                 SPM。SwiftTerm を依存に持つ実行ファイル "claude-deck"（SwiftTerm はリビジョン固定。更新時は Package.swift の revision を書き換える）
                                 と、チャネルの実行ファイル "claude-deck-channel"
   Sources/ClaudeDeck/
-    main.swift                  NSApplication 起動
-    AppDelegate.swift           ウィンドウ + メニュー
-    MainViewController.swift    メインウィンドウ = チャット画面（SwiftUI を NSHostingView で載せる）
+    App/                        起動・ウィンドウ・アプリ全体で 1 つのもの
+      main.swift                  NSApplication 起動
+      AppDelegate.swift           ウィンドウ + メニュー
+      MainViewController.swift    メインウィンドウ = チャット画面（SwiftUI を NSHostingView で載せる）
+      MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
+      LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
+    Terminal/
+      ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面の読み取り（ScreenState）+ 画面末尾の上限表示の監視
     Chat/                       チャット画面（ルーム一覧・会話・入力欄・権限カード・選択肢カード）
-      ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
-      ChatModel.swift             ルーム一覧（監視のセッション + ホスト中のセッション）・選択・claude の起動と終了。下の部品を束ねる
-      ChatOutbox.swift            下書き・添付・ホスト中のセッションへの送信・送った画像の仮の吹き出し（ルームごと）
-      ChatRelay.swift             外部セッションへの伝言と、手元で持つ点線の吹き出し
-      ChatHandover.swift          外部セッションの claude を止めてアプリで再開する（引き継ぎ）
-      PromptResponder.swift       権限確認（Channels・端末）と選択肢メニューへの回答（画面のカードと iPhone が同じ経路）
-      TranscriptCache.swift       開いたルームの会話の取得と追記の購読（直近 4 ルームだけ持つ）・吹き出しの画像の読み込み
-      EditorLauncher.swift        見出しの「VS Code」「GitHub」「Xcode」「閉じる」と結果の短い一言
-      HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
-      RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・監視 / フックの受け口の状態
-      ConversationView.swift      見出し・吹き出し・ツール行・権限カード・選択肢カード
-      Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード・添付（ボタン / ⌘V / ドロップ）とチップ）
-      ChatImageViews.swift        吹き出しの画像（サムネイルの格子・拡大表示のシート・表示時に読み込んで NSCache に持つ ChatImageLoader）
-      MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）
-      ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
-      ChatTheme.swift             色・文字・時刻の書式のトークン（ダーク固定。AppKit 側の色も）
+      Model/                      ChatModel と、それが束ねる部品（@Observable・画面に依らない）
+        ChatModel.swift             ルーム一覧（監視のセッション + ホスト中のセッション）・選択・claude の起動と終了。下の部品を束ねる
+        ChatOutbox.swift            下書き・添付・ホスト中のセッションへの送信・送った画像の仮の吹き出し（ルームごと）
+        ChatRelay.swift             外部セッションへの伝言と、手元で持つ点線の吹き出し
+        ChatHandover.swift          外部セッションの claude を止めてアプリで再開する（引き継ぎ）
+        PromptResponder.swift       権限確認（Channels・端末）と選択肢メニューへの回答（画面のカードと iPhone が同じ経路）
+        TranscriptCache.swift       開いたルームの会話の取得と追記の購読（直近 4 ルームだけ持つ）・吹き出しの画像の読み込み
+        EditorLauncher.swift        見出しの「VS Code」「GitHub」「Xcode」「閉じる」と結果の短い一言
+        HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
+      Views/                      画面（SwiftUI）
+        ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
+        RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・監視 / フックの受け口の状態
+        ConversationView.swift      見出し・吹き出し・ツール行・権限カード・選択肢カード
+        Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード・添付（ボタン / ⌘V / ドロップ）とチップ）
+        ChatImageViews.swift        吹き出しの画像（サムネイルの格子・拡大表示のシート・表示時に読み込んで NSCache に持つ ChatImageLoader）
+        MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）
+        ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
+        PixelAvatar.swift           ルーム一覧と見出しのドット絵キャラ（絵は DeckCore の PixelCharacter）
+        ChatTheme.swift             色・文字・時刻の書式のトークン（ダーク固定。AppKit 側の色も）
     Stage/                      右側のステージパネル（360px）
       StagePanel.swift            見出し（開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面の読み取り（ScreenState）+ 画面末尾の上限表示の監視
-    LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
-    MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
     Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・書き出し / 読み込み
     Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
+    Notify/                     要対応を iCloud（CloudKit）に書いて解消したら消す AttentionNotifier と、設定画面に出す通知の設定・状態
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
-    DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
-                                Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
-    MonitorEvent.swift          監視からストアへ流れる変化（sessions / feed / usage / permissions / transcript）
-    MonitorConfiguration.swift  読み取り元（CLAUDE_HOME）・使用量ファイル・受け口のポート・デバッグ出力
-    MonitorStore.swift          @Observable ストア（監視の状態・受け口の状態・セッション・フィード・残量・権限確認・pid 対応付け）
+    Store/                      アプリ向けの窓口と設定
+      MonitorStore.swift          @Observable ストア（監視の状態・受け口の状態・セッション・フィード・残量・権限確認・pid 対応付け）
+      MonitorConfiguration.swift  読み取り元（CLAUDE_HOME）・使用量ファイル・受け口のポート・デバッグ出力
     Hub/                        監視の本体
       SessionHub.swift            監視の窓口の actor。各層を順に回し、セッションの辞書と配信（フィード・スナップショット・状態の合成・伝言）を持つ
       SessionState.swift          セッションごとの可変状態（書く層ごとに欄を分ける）と、層が返すフィードの 1 行
+      MonitorEvent.swift          監視からストアへ流れる変化（sessions / feed / usage / permissions / transcript）
       InventoryScanner.swift      在庫層: レジストリの走査結果を既知の State に当て、作る・終わらせる・捨てる判断を返す
       SessionInventory.swift      在庫層: ~/.claude/sessions/<pid>.json + kill(pid,0) の読み取り
+      ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
       TranscriptPoller.swift      実況層: 末尾差分を State に映す（ツール・ブランチ・題・スキル・サブエージェント・フックの待ちを解く）
       TranscriptTail.swift        実況層: jsonl の末尾差分の読み取り（ai-title の遡り primeMeta）
       HookIntake.swift            フック層: payload の読み取り・待ち行列（HookInbox・取りこぼしの数え上げ）・State への反映（HookIntake）
@@ -73,6 +79,7 @@ mac/
       UsageReader.swift           使用量ファイル（statusline.sh が書く）の読み取り
       XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探し（会話の見出しの「Xcode」「閉じる」と iPhone の API が使う）
       ClaudeHome.swift            ~/.claude のパス・スラッグ・transcript の場所
+      JSONLoose.swift             JSON の値を typeof の厳しさで読む（NSNumber の 1 を true と取り違えない）・行の絞り込みのバイト列検索
     Server/                     フック等を受けるアプリ内の HTTP サーバー
       HTTPServer.swift            最小の HTTP/1.1（Network.framework・外部ライブラリなし）。既定は 127.0.0.1・平文。
                                   `HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限を変えられ、chunked で流し続ける応答（SSE）も出せる
@@ -83,19 +90,16 @@ mac/
                                   RemoteAuthThrottle・RemoteRoutes（/v1 の振り分け）・RemoteEventHub（SSE）・RemoteControl（アプリへ頼む操作と照合）・
                                   RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces
     Channel/                    チャネル（claude-deck-channel）の中身。実行ファイルからはこれを呼ぶだけ
-    Settings/                   設定（settings.json）の型・読み書き（0600・原子的・読めないファイルは上書きしない）・検証・
-                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）・
-                                ルームとプロジェクトの対応と GitHub の URL（GitHubLinks）
       ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
       ChannelServer.swift         stdin を行で読み、中継して判断を stdout に返す（ログは stderr）
-    Support/                    SecureFile（0600・置き換えで書く）・DeckPaths（Application Support / Caches / Logs の claude-deck）
-    TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
-    ClaudeSessionRegistry.swift ~/.claude/sessions/<pid>.json から sessionId を引く
-    Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
-                                SceneKit のノードへの起こし（StageSceneRig）
-    LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
-    EditorActions.swift         見出しの「VS Code / GitHub / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
+    Settings/                   設定（settings.json）の型・読み書き（0600・原子的・読めないファイルは上書きしない）・検証・
+                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）
+    Projects/                   ルームとプロジェクトの照合と、見出しのボタンの先
+      GitHubLinks.swift           ルームの cwd と設定のプロジェクトの対応（ProjectMatcher）と GitHub の URL（ボード / リポジトリ）
+      EditorActions.swift         見出しの「VS Code / GitHub / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
+    Limit/
+      LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       RelayNotes+Failure.swift    伝言の送信失敗の理由（監視の失敗種別を言葉にする。伝言そのものは DeckCore）
       SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
@@ -105,10 +109,19 @@ mac/
       MenuPrompt.swift            選択メニューの中身の読み取り（ChoiceMenu.parse）と、矢印で選択肢まで動かして Enter する手順（MenuNavigator）・問いのタブを移る手順（MenuTabMover）
       MenuScreenLog.swift         選択肢カードを出した・読めなかった画面の写しを直近数件残す
       ScreenPane.swift            画面の右に縦線で区切って出る別の欄（差分パネル）を除いて左だけにする
-    Stage/
-      StageLogic.swift            ステージパネルの文言（いまの動き・職業名・フィード）・プレースホルダー・開閉の判定
+      ComposerSync.swift          入力欄とモデルの下書きの同期判定（変換中は本当の外部変更の時だけ書き戻す）
+    Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
+                                SceneKit のノードへの起こし（StageSceneRig）
+    Notify/                     通知にする要対応の組み立て（AttentionNoticeSource）と iCloud を使えるかの確認・失敗の文言（CloudKitNoticeStore）
+    Support/                    共通の下回り
+      DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
+                                  Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
+      TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
+      SecureFile.swift            0600・置き換えで書く
+      DeckPaths.swift             Application Support / Caches / Logs の claude-deck
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
-  Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test。共通の補助は TestSupport.swift・FakeClaudeHome.swift）
+  Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
+                                Server / Remote / Settings / Notify / Stage / Terminal / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
   scripts/bundle.sh             claude-deck.app を組み立てて署名する（プロファイルがあれば Apple Development + iCloud、無ければ ad-hoc。チャネルの実行ファイルも同梱）
@@ -459,7 +472,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   「GitHub」は、ルームの cwd が設定のプロジェクトの path と一致するか配下にあり（いちばん深いものを採る。`/a/b` は `/a/bc` に当たらない）、
   そのプロジェクトに GitHub の紐づけがある時だけ出す。Project 番号とリポジトリの両方があればメニューで選び、片方ならそのまま既定のブラウザで開く。
   ボードは owner の種類を `https://api.github.com/users/<owner>` の `type` で引いて `users/` か `orgs/` の URL にする
-  （認証なし・3 秒で諦める・owner ごとにアプリが動いている間だけ覚える・取れなければ `users/`）。判定と URL は `Settings/GitHubLinks.swift`。
+  （認証なし・3 秒で諦める・owner ごとにアプリが動いている間だけ覚える・取れなければ `users/`）。判定と URL は `Sources/MonitorKit/Projects/GitHubLinks.swift`。
   ルームを移っても各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
 - 端末ビュー（`ClaudeTerminalView`）は画面に載せない。PTY の受信は main キューで端末バッファに流れ、状態・権限プロンプト・選択待ち・上限表示は
   0.3 秒ごとのタイマーと受信時にバッファ末尾の `rows` 行を読むので、ビュー階層に無くても動く。桁数は作成時の 960×640pt のまま固定。

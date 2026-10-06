@@ -4,7 +4,7 @@ import XCTest
 /// `mac/scripts/statusline.sh` を偽の入力で動かす。保存先は一時ディレクトリに差し替え、実データには書かない。
 final class StatusLineScriptTests: XCTestCase {
     private var macRoot: URL {
-        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     }
 
     private var script: URL { macRoot.appendingPathComponent("scripts/statusline.sh") }
