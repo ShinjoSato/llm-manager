@@ -92,8 +92,6 @@ public actor SessionHub {
     static let staleBusy: Double = 10 * 60_000
     /// サブエージェントのログがこの時間内に更新されていれば、そのエージェントは動いているとみなす。
     static let agentWindow: Double = 3 * 60_000
-    /// 終了したセッションを一覧に残す時間。消えた理由を追えるようにする。
-    static let stoppedRetention: Double = 5 * 60_000
     public static let inventoryInterval: Duration = .seconds(3)
     public static let transcriptInterval: Duration = .milliseconds(250)
     /// 経過時間だけで状態が変わる分（稼働中 → 待機など）も配るための間隔。
@@ -103,12 +101,13 @@ public actor SessionHub {
 
     public let home: ClaudeHome
     private let now: @Sendable () -> Double
-    private let isAlive: @Sendable (Int32) -> Bool
     private let transcripts: TranscriptStore?
     public typealias MetaResult = (meta: (title: String?, lastPrompt: String?)?, xcodeProject: String?)
     private let metaLoader: @Sendable (_ cwd: String, _ transcriptPath: String?) -> MetaResult
 
+    /// セッションの辞書。出し入れはこの actor の中だけで行い、各層には State を渡して書かせる。
     private var sessions: [String: SessionState] = [:]
+    private var scanner: InventoryScanner
     private var permissions = PermissionRegistry()
     private var feedSeq = 0
     private var agentTypes: [String: String] = [:]
@@ -119,8 +118,6 @@ public actor SessionHub {
     private var starting = false
     /// 最後に呼ばれたのが start か stop か。初回走査の後にループを立てるかはこれで決める。
     private var wantsRunning = false
-    /// 一度でも在庫を走査したか。
-    private var inventoryScanned = false
     private var sink: (@Sendable (MonitorEvent) -> Void)?
     /// これより前のログ行はフィードに積まない（起動前の履歴を「新着」として数えないため）。
     private let startedAt: Double
@@ -148,7 +145,7 @@ public actor SessionHub {
         usagePoller = UsagePoller(file: usageFile)
         self.transcripts = transcripts
         self.now = now
-        self.isAlive = isAlive
+        scanner = InventoryScanner(directory: home.sessionsDirectory, isAlive: isAlive)
         self.metaLoader = metaLoader
         locator = TranscriptLocator(home: home)
         startedAt = now()
@@ -257,71 +254,39 @@ public actor SessionHub {
 
     /// `waitForMeta` が false なら、新しいセッションのメタ情報は後から埋める（フックの反映を待たせないため）。
     func scanInventory(waitForMeta: Bool = true) async {
-        var seen = Set<String>()
         let now = now()
-        var changed = false
-        var created: [String] = []
-
-        for raw in SessionInventory.scan(directory: home.sessionsDirectory, isAlive: isAlive) {
-            seen.insert(raw.sessionId)
-            guard let existing = sessions[raw.sessionId] else {
-                let state = createState(raw)
-                state.knownAtStart = !inventoryScanned
-                sessions[raw.sessionId] = state
-                created.append(raw.sessionId)
-                changed = true
-                push(raw.sessionId, .session, "セッション検出: \(HubText.basename(raw.cwd))")
-                continue
-            }
-            if existing.raw.alive != raw.alive {
-                changed = true
-                if !raw.alive { push(raw.sessionId, .session, "セッション終了") }
-            }
-            existing.raw = raw
-            existing.endedAt = raw.alive ? nil : (existing.endedAt ?? now)
-            existing.socketPath = socketFor(raw)
+        let outcome = scanner.scan(known: sessions, now: now)
+        for state in outcome.created {
+            attachTranscript(state)
+            sessions[state.raw.sessionId] = state
         }
-
-        // レジストリから消えたセッションは終了済み。しばらく墓標として残してから捨てる。
-        for (id, state) in sessions where !seen.contains(id) {
-            if state.endedAt == nil {
-                state.endedAt = now
-                state.raw.alive = false
-                push(id, .session, "セッション終了")
-                changed = true
-            } else if let ended = state.endedAt, now - ended > Self.stoppedRetention {
-                if let path = state.transcriptPath {
-                    let dir = ClaudeHome.subagentDirectory(forTranscript: path)
-                    for key in agentTypes.keys where key.hasPrefix(dir) { agentTypes[key] = nil }
-                }
-                sessions[id] = nil
-                changed = true
+        for state in outcome.expired {
+            if let path = state.transcriptPath {
+                let dir = ClaudeHome.subagentDirectory(forTranscript: path)
+                for key in agentTypes.keys where key.hasPrefix(dir) { agentTypes[key] = nil }
             }
+            sessions[state.raw.sessionId] = nil
         }
-
-        inventoryScanned = true
+        for (sessionId, line) in outcome.feed { push(sessionId, line) }
 
         // チャネルが取りに来なくなった保留（セッション終了・取りこぼし）を捨てる。
         if !permissions.sweep(now: now).isEmpty { emitPermissions() }
 
-        if changed {
+        if outcome.changed {
             emitUpdate()
             await transcripts?.setKnown(sessions.values.map { TranscriptStore.Known(sessionId: $0.raw.sessionId, cwd: $0.raw.cwd) })
         }
-        guard !created.isEmpty else { return }
+        guard !outcome.created.isEmpty else { return }
+        let created = outcome.created.map(\.raw.sessionId)
         let task = Task<Void, Never> { [weak self] in await self?.loadMeta(created) }
         if waitForMeta { await task.value }
     }
 
     /// 重い読み（ログの遡り・Xcode の走査）は `loadMeta` に回し、ここでは軽いものだけ埋める。
-    private func createState(_ raw: RawSession) -> SessionState {
-        let state = SessionState(raw: raw)
-        state.transcriptPath = locator.resolve(sessionId: raw.sessionId, cwd: raw.cwd)
+    private func attachTranscript(_ state: SessionState) {
+        state.transcriptPath = locator.resolve(sessionId: state.raw.sessionId, cwd: state.raw.cwd)
         if let path = state.transcriptPath { state.reader = TranscriptReader(path: path) }
         state.metaRequestedFor = state.transcriptPath
-        state.socketPath = socketFor(raw)
-        state.endedAt = raw.alive ? nil : now()
-        return state
     }
 
     /// 新しく見つけたセッションのメタ情報と Xcode プロジェクトを actor の外で調べ、結果だけ戻す（その間もフック等を受けられるように）。
@@ -602,10 +567,14 @@ public actor SessionHub {
     // MARK: - 配信
 
     private func push(_ sessionId: String, _ kind: FeedKind, _ text: String, tool: String? = nil, local: Bool = false) {
+        push(sessionId, FeedLine(kind: kind, text: text, tool: tool, local: local))
+    }
+
+    private func push(_ sessionId: String, _ line: FeedLine) {
         feedSeq += 1
         let item = FeedItem(id: feedSeq, sessionId: sessionId,
                             project: sessions[sessionId].map { HubText.basename($0.raw.cwd) } ?? "?",
-                            at: now(), kind: kind, text: text, tool: tool, local: local ? true : nil)
+                            at: now(), kind: line.kind, text: line.text, tool: line.tool, local: line.local ? true : nil)
         sink?(.feed(item))
     }
 
@@ -766,20 +735,11 @@ public actor SessionHub {
 
     // MARK: - 伝言・エディタ
 
-    /// 受信箱ソケットの位置。レジストリの値を優先し、無ければ既定の場所を探す。
-    private func socketFor(_ raw: RawSession) -> String? {
-        if let declared = raw.messagingSocketPath {
-            let path = SessionMessaging.expandHome(declared)
-            if SessionMessaging.isOwnSocket(path) { return path }
-        }
-        return SessionMessaging.defaultSocketPath(pid: raw.pid)
-    }
-
     /// 指定セッションへ 1 通送る。届いたテキストは「別セッションからのメッセージ」として扱われる。
     public func sendMessage(sessionId: String, text: String) async throws {
         guard let state = sessions[sessionId] else { throw HubFailure(code: "not_found", message: "セッションが見つかりません") }
         guard state.raw.alive else { throw HubFailure(code: "not_alive", message: "セッションは終了しています") }
-        guard let socket = state.socketPath ?? socketFor(state.raw) else {
+        guard let socket = state.socketPath ?? InventoryScanner.socketFor(state.raw) else {
             throw HubFailure(code: "no_socket", message: "受信箱ソケットが見つかりません")
         }
         let error = await SessionMessaging.send(socketPath: socket, text: text)

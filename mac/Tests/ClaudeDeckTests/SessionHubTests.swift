@@ -288,7 +288,7 @@ final class SessionHubTests: XCTestCase {
         await hub.scanInventory()
         s = try await required(hub)
         XCTAssertEqual(s.status, .stopped)
-        clock.advance(SessionHub.stoppedRetention + 1)
+        clock.advance(InventoryScanner.stoppedRetention + 1)
         await hub.scanInventory()
         let gone = await snap(hub)
         XCTAssertNil(gone)
