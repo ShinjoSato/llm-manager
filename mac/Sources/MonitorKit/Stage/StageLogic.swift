@@ -167,10 +167,10 @@ public enum StageLogic {
 
     // MARK: - 開閉
 
-    /// 一覧を除いた分（切り替えバー 48 + 境界 3 本 + 会話 420 + パネル 360 と少しの余裕）。
-    public static let chromeWidth: CGFloat = 838
+    /// 一覧を除いた分（切り替えバー 48 + 境界 3 本 + 会話 420 + パネル 360）。一覧を広げられる上限と揃えるため余裕は足さない。
+    public static let chromeWidth: CGFloat = 48 + 3 + CGFloat(ListPaneWidth.centerMinimum) + 360
 
-    /// パネルを置いても会話が最小幅を保てるウィンドウ幅。一覧が既定の 312px なら 1150。
+    /// パネルを置いても会話が最小幅を保てるウィンドウ幅。一覧が既定の 312px なら 1143。
     public static func autoCollapseWidth(listWidth: CGFloat) -> CGFloat {
         chromeWidth + listWidth
     }

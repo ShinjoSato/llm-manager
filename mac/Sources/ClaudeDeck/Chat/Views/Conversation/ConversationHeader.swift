@@ -158,7 +158,7 @@ struct GitHubButton: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .headerButtonHelp(name: Self.name, detail: destinations.map(\.help).joined(separator: "\n"), busyStatus: busyStatus)
-            .onHover { hovering = $0 }
+            .trackHover($hovering)
         }
     }
 }
@@ -189,7 +189,7 @@ struct ProjectLinkButton: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .headerButtonHelp(name: Self.name, detail: links.map(ProjectLinks.help(for:)).joined(separator: "\n"), busyStatus: nil)
-            .onHover { hovering = $0 }
+            .trackHover($hovering)
         }
     }
 }
@@ -226,6 +226,12 @@ struct HeaderButtonLabel: View {
 }
 
 extension View {
+    /// ホバーを持ち、画面から外れたら落とす（ViewThatFits の外れた候補は状態が残り、強調が付いたまま戻るため）。
+    func trackHover(_ hovering: Binding<Bool>) -> some View {
+        onHover { hovering.wrappedValue = $0 }
+            .onDisappear { hovering.wrappedValue = false }
+    }
+
     /// 名前と開く先（処理中は状態）を自前のツールチップで出し、VoiceOver には名前と状態を渡す。
     func headerButtonHelp(name: String, detail: String?, busyStatus: String?) -> some View {
         let details = HeaderTooltip.details(detail: detail, busyStatus: busyStatus)
@@ -310,7 +316,11 @@ struct HeaderTooltipModifier: ViewModifier {
                     }
                 }
             }
-            .onDisappear { reset() }
+            .onDisappear {
+                // ViewThatFits の外れた候補は状態が残るため、ホバー中のまま戻ってきて次の入りを取りこぼさないよう落とす。
+                hovering = false
+                reset()
+            }
     }
 
     private func schedule() {
@@ -365,6 +375,6 @@ struct HeaderButton: View {
         .buttonStyle(.plain)
         .disabled(busy)
         .headerButtonHelp(name: name, detail: detail, busyStatus: busyStatus)
-        .onHover { hovering = $0 }
+        .trackHover($hovering)
     }
 }

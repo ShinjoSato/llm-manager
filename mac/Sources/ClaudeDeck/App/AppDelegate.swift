@@ -29,7 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.backgroundColor = ChatTheme.nsBackground
         window.titlebarAppearsTransparent = true
         window.contentViewController = main
-        window.contentMinSize = NSSize(width: 860, height: 520)
+        // 幅は一覧の幅に応じて画面側（`ListPaneWindowSync`）が掛け直す。
+        window.contentMinSize = NSSize(width: ListPaneWidth.minimumWindowWidth(listWidth: ListPaneWidth.standard), height: 520)
         window.setFrameAutosaveName("ClaudeDeckChatWindow")
         window.center()
         // 終了を取り消した時に出し直せるよう、閉じても解放しない。

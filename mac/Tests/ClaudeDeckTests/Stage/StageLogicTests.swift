@@ -105,9 +105,9 @@ final class StageLogicTests: XCTestCase {
     }
 
     func testAutoCollapseWidthFollowsListWidth() {
-        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 312), 1150)
-        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 240), 1078)
-        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 480), 1318)
+        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 312), 1143)
+        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 240), 1071)
+        XCTAssertEqual(StageLogic.autoCollapseWidth(listWidth: 480), 1311)
         // 一覧を広げると、同じウィンドウ幅でもパネルを畳む。
         XCTAssertTrue(StageLogic.isExpanded(preference: true, windowWidth: 1200, listWidth: 312, openedWhileNarrow: false))
         XCTAssertFalse(StageLogic.isExpanded(preference: true, windowWidth: 1200, listWidth: 400, openedWhileNarrow: false))

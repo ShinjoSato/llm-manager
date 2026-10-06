@@ -129,6 +129,6 @@ private struct HeaderOverflowMenu: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .headerButtonHelp(name: "ほかの操作", detail: actions.map(\.name).joined(separator: "\n"), busyStatus: nil)
-        .onHover { hovering = $0 }
+        .trackHover($hovering)
     }
 }
