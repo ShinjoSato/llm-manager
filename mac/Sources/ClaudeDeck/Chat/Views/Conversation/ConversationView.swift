@@ -8,7 +8,8 @@ struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ConversationHeader(model: model, room: room)
+            // ボタンの吹き出しを下の会話の上に重ねるため、見出しを前に出す。
+            ConversationHeader(model: model, room: room).zIndex(1)
             if room.isExternal { ExternalBanner(model: model, room: room) }
             ChatPane(model: model, room: room)
         }
