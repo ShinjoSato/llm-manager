@@ -1,7 +1,3 @@
-# 秘密情報はここに集約。README 以外は追跡しない。
-secrets/*
-!secrets/README.md
-
 # ビルド成果物
 node_modules/
 mac/dist/
