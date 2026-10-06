@@ -4,6 +4,9 @@ import Foundation
 public struct CharacterJobSample: Sendable, Equatable, Identifiable {
     public var type: String?
     public var job: StageJob
+    /// 同じ見た目にまとめた種別すべて（代表を含む）と、その役割（重複なし）。
+    public var types: [String] = []
+    public var roles: [String] = []
     public var id: String { type ?? "-" }
 }
 
@@ -21,16 +24,17 @@ public enum CharacterGallery {
 
     /// 見た目の違う職業ごとに 1 つ。種別名の順で、同じ名前と配色は先のものだけ残し、従者を最後に足す。
     public static let jobs: [CharacterJobSample] = {
-        var seen: [StageJob] = []
         var out: [CharacterJobSample] = []
         for type in StageLogic.jobs.keys.sorted() {
-            guard let job = StageLogic.jobs[type],
-                  !seen.contains(where: { $0.label == job.label && $0.light == job.light && $0.dark == job.dark })
-            else { continue }
-            seen.append(job)
-            out.append(CharacterJobSample(type: type, job: job))
+            guard let job = StageLogic.jobs[type] else { continue }
+            if let i = out.firstIndex(where: { $0.job.label == job.label && $0.job.light == job.light && $0.job.dark == job.dark }) {
+                out[i].types.append(type)
+                if !out[i].roles.contains(job.role) { out[i].roles.append(job.role) }
+            } else {
+                out.append(CharacterJobSample(type: type, job: job, types: [type], roles: [job.role]))
+            }
         }
-        out.append(CharacterJobSample(type: nil, job: StageLogic.unknownJob))
+        out.append(CharacterJobSample(type: nil, job: StageLogic.unknownJob, roles: [StageLogic.unknownJob.role]))
         return out
     }()
 

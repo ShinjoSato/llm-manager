@@ -74,8 +74,8 @@ struct CharacterSettingsTab: View {
                 .frame(maxWidth: 200)
             }
             StageSceneView(model: CharacterGallery.model(status: stageStatus, jobs: shownJobs, tool: tool))
-                .frame(maxWidth: 460)
                 .aspectRatio(332.0 / 230.0, contentMode: .fit)
+                .frame(maxWidth: 460)
                 .background(RoundedRectangle(cornerRadius: 10).fill(ChatTheme.stagePanel))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .accessibilityLabel("ステージの見本（\(ChatTheme.label(for: stageStatus))）")
@@ -100,10 +100,11 @@ struct CharacterSettingsTab: View {
                     }
                     .accessibilityHidden(true)
                     Text(sample.job.label).font(.callout.weight(shown ? .semibold : .regular)).frame(width: 84, alignment: .leading)
-                    Text(sample.job.role).font(.caption).foregroundStyle(.secondary)
+                    Text(sample.roles.joined(separator: "／")).font(.caption).foregroundStyle(.secondary)
                     Spacer(minLength: 8)
-                    Text(sample.type ?? "（種別不明）").font(.caption.monospaced()).foregroundStyle(.tertiary)
+                    Text(sample.types.isEmpty ? "（種別不明）" : sample.types.joined(separator: ", ")).font(.caption.monospaced()).foregroundStyle(.tertiary)
                         .lineLimit(1).truncationMode(.middle)
+                        .help(sample.types.joined(separator: "\n"))
                 }
                 .opacity(shown || shownJobs.isEmpty ? 1 : 0.55)
                 .accessibilityElement(children: .combine)

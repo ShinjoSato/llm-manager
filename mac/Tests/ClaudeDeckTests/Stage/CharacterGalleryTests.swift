@@ -24,6 +24,14 @@ final class CharacterGalleryTests: XCTestCase {
         XCTAssertEqual(samples.last?.job, StageLogic.unknownJob)
     }
 
+    func testJobsListEveryTypeAndRoleOfMergedLooks() {
+        let samples = CharacterGallery.jobs
+        XCTAssertEqual(Set(samples.flatMap(\.types)), Set(StageLogic.jobs.keys))
+        for (type, job) in StageLogic.jobs {
+            XCTAssertTrue(samples.contains { $0.types.contains(type) && $0.roles.contains(job.role) }, type)
+        }
+    }
+
     func testJobPagesSplitByStageCapacity() {
         let pages = CharacterGallery.jobPages()
         XCTAssertEqual(pages.flatMap { $0 }, CharacterGallery.jobs)
