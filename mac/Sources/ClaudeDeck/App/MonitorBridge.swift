@@ -26,7 +26,11 @@ enum MonitorBridge {
         TerminationSignals.installNoopHandlers(for: [SIGTERM, SIGINT])
         for sig in [SIGTERM, SIGINT] {
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-            source.setEventHandler { QuitCoordinator.shared.terminateBySignal() }
+            source.setEventHandler {
+                // 終了の確認や保留で applicationWillTerminate まで届かなくても、開発サーバーは先に止める。
+                DevServerStore.shared.stopAllBlocking()
+                QuitCoordinator.shared.terminateBySignal()
+            }
             source.resume()
             signalSources.append(source)
         }

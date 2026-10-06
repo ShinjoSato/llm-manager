@@ -2,37 +2,37 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// ディレクトリの詳細の「サイト」: LP を書き出し（アプリ内の静的配信）か公開 URL で、幅を切り替えて見る。
+/// ディレクトリの詳細の「サイト」: LP を開発サーバー・書き出し（アプリ内の静的配信）・公開 URL で、幅を切り替えて見る。
 struct SitePreviewSection: View {
     let project: ManagedProject
 
-    /// 見る元。書き出しか、設定のリンク（http / https）のどれか。
+    /// 見る元。開発サーバーか、書き出しか、設定のリンク（http / https）のどれか。
     private enum Source: Hashable {
+        case devServer
         case export
         case link(String)
     }
 
-    @State private var lookup: SiteLookup?
-    @State private var exportModified: Date?
-    @State private var exportURL: URL?
-    @State private var serverProblem: String?
+    @State private var snapshot: SiteSnapshot?
     @State private var source: Source = .export
+    @State private var choseInitialSource = false
     @State private var reloadToken = 0
-    @State private var availableWidth: Double = 0
     @State private var preview = SitePreviewState()
-    @AppStorage("sitePreview.viewport") private var viewportRaw = SiteViewport.desktop.rawValue
+    @AppStorage(SitePreviewDefaults.viewportKey) private var viewportRaw = SiteViewport.desktop.rawValue
 
     private static let maxPreviewHeight = 620.0
 
     private var viewport: SiteViewport { SiteViewport(rawValue: viewportRaw) ?? .desktop }
     private var links: [ProjectLink] { ProjectLinks.openable(project.links) }
-    private var location: SiteLocation? { lookup?.location }
-    private var hasExport: Bool { exportModified != nil }
+    private var location: SiteLocation? { snapshot?.location }
+    private var hasExport: Bool { snapshot?.exportModified != nil }
+    private var devServer: DevServer? { location.flatMap { DevServerStore.shared.server(for: $0.root) } }
 
     /// 今の見る元で開く URL（開けない時は nil）。
     private var targetURL: URL? {
         switch source {
-        case .export: return hasExport ? exportURL : nil
+        case .devServer: return devServer?.url
+        case .export: return hasExport ? snapshot?.exportURL : nil
         case .link(let url): return ProjectLinks.url(from: url)
         }
     }
@@ -68,7 +68,7 @@ struct SitePreviewSection: View {
             }
             Spacer(minLength: 8)
             if targetURL != nil {
-                viewportPicker
+                SiteViewportPicker(raw: $viewportRaw)
                 HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの場所と更新時刻も確かめ直す") {
                     reloadToken += 1
                 }
@@ -84,6 +84,7 @@ struct SitePreviewSection: View {
     private var sourcePicker: some View {
         Menu {
             if location != nil {
+                Button { source = .devServer } label: { sourceLabel(.devServer) }
                 Button { source = .export } label: { sourceLabel(.export) }
             }
             ForEach(Array(links.enumerated()), id: \.offset) { _, link in
@@ -115,6 +116,7 @@ struct SitePreviewSection: View {
 
     private func sourceTitle(_ value: Source) -> String {
         switch value {
+        case .devServer: return devServer?.url != nil ? "開発サーバー（動作中）" : "開発サーバー"
         case .export: return "書き出し（\(location.map { "\($0.relativePath == "." ? "" : $0.relativePath + "/")\(SiteLocator.exportDirName)/" } ?? "out/")）"
         case .link(let url):
             let name = links.first { $0.url == url }?.name ?? url
@@ -122,43 +124,27 @@ struct SitePreviewSection: View {
         }
     }
 
-    private var viewportPicker: some View {
-        HStack(spacing: 2) {
-            ForEach(SiteViewport.allCases) { option in
-                ViewportButton(option: option, selected: option == viewport) { viewportRaw = option.rawValue }
-            }
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
-    }
-
     // MARK: - 場所と更新時刻
 
     @ViewBuilder
     private var info: some View {
         switch source {
+        case .devServer:
+            if let location {
+                pathRow(location.root, note: nil)
+                DevServerControls(server: devServer, readiness: snapshot?.readiness,
+                                  onStart: { DevServerStore.shared.start(project: project, location: location) },
+                                  onStop: { DevServerStore.shared.stop(root: location.root) })
+            }
         case .export:
             if let location {
-                HStack(spacing: 6) {
-                    Text(location.exportDir)
-                        .font(ChatTheme.mono)
-                        .foregroundStyle(ChatTheme.secondary)
+                pathRow(location.exportDir,
+                        note: snapshot?.exportModified.map { "更新 \($0.formatted(date: .numeric, time: .shortened))" })
+                if location.source == .detected, (snapshot?.lookup.candidates.count ?? 0) > 1 {
+                    Text("ほかにも候補あり（設定で指定できます）")
+                        .font(ChatTheme.caption)
+                        .foregroundStyle(ChatTheme.tertiary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                    if let exportModified {
-                        Text("更新 \(exportModified.formatted(date: .numeric, time: .shortened))")
-                            .font(ChatTheme.caption)
-                            .foregroundStyle(ChatTheme.tertiary)
-                            .fixedSize()
-                    }
-                    if location.source == .detected, (lookup?.candidates.count ?? 0) > 1 {
-                        Text("ほかにも候補あり（設定で指定できます）")
-                            .font(ChatTheme.caption)
-                            .foregroundStyle(ChatTheme.tertiary)
-                            .lineLimit(1)
-                    }
                 }
             }
         case .link(let url):
@@ -169,12 +155,12 @@ struct SitePreviewSection: View {
                 .truncationMode(.middle)
                 .textSelection(.enabled)
         }
-        if let problem = lookup?.problem {
+        if let problem = snapshot?.lookup.problem {
             Text("設定のサイトの場所が使えません: \(problem)")
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.error)
         }
-        if let failure = serverProblem ?? preview.failure {
+        if let failure = (source == .export ? snapshot?.serverProblem : nil) ?? preview.failure {
             Text(failure)
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.error)
@@ -182,59 +168,43 @@ struct SitePreviewSection: View {
         }
     }
 
+    private func pathRow(_ path: String, note: String?) -> some View {
+        HStack(spacing: 6) {
+            Text(path)
+                .font(ChatTheme.mono)
+                .foregroundStyle(ChatTheme.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            if let note {
+                Text(note)
+                    .font(ChatTheme.caption)
+                    .foregroundStyle(ChatTheme.tertiary)
+                    .fixedSize()
+            }
+        }
+    }
+
     // MARK: - プレビュー
 
     @ViewBuilder
     private var content: some View {
-        if lookup == nil {
+        if snapshot == nil {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
         } else if let url = targetURL {
-            previewFrame(url)
+            SitePreviewFrame(url: url, viewport: viewport, reloadToken: reloadToken, state: preview,
+                             maxHeight: Self.maxPreviewHeight)
+        } else if source == .devServer, location != nil {
+            if devServer?.isActive == true {
+                hint("開発サーバーがアドレス（http://localhost:…）を出すとここに映ります。")
+            } else if snapshot?.readiness?.problem == nil {
+                hint("▶ で `npm run dev` を起動すると、変更がここにすぐ映ります（起動は押した時だけ・アプリの終了で止まります）。")
+            }
         } else if source == .export, let location {
-            hint("まだ書き出していません。\(location.relativePath == "." ? "プロジェクト直下" : location.relativePath) で `npm run build` で書き出すと見られます。")
+            hint("まだ書き出していません。\(location.relativePath == "." ? "プロジェクト直下" : location.relativePath) で `npm run build` で書き出すと見られます。見る元を「開発サーバー」にすると書き出さずに見られます。")
         } else {
             hint("LP が見つかりません。設定のプロジェクトタブの「サイト」で場所を指定するか、「リンク」に公開 URL を足すと見られます。")
         }
-    }
-
-    private func previewFrame(_ url: URL) -> some View {
-        let layout = viewport.layout(available: max(availableWidth, 1), maxHeight: Self.maxPreviewHeight)
-        let bezel = viewport.bezel
-        return ZStack {
-            SiteWebView(url: url, zoom: layout.scale, reloadToken: reloadToken, state: preview)
-                .frame(width: layout.frameWidth, height: layout.frameHeight)
-                .clipShape(RoundedRectangle(cornerRadius: viewport == .phone ? 28 * layout.scale + 6 : 4))
-                .padding(bezel)
-                .background {
-                    if viewport == .phone {
-                        RoundedRectangle(cornerRadius: 28 * layout.scale + 6 + bezel)
-                            .fill(ChatTheme.codeSurface)
-                            .overlay(RoundedRectangle(cornerRadius: 28 * layout.scale + 6 + bezel).stroke(ChatTheme.inputBorder, lineWidth: 1.5))
-                    }
-                }
-                .overlay {
-                    if viewport != .phone {
-                        RoundedRectangle(cornerRadius: 4).stroke(ChatTheme.border)
-                    }
-                }
-            if preview.loading {
-                ProgressView().controlSize(.small)
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.claudeBubble))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(bezel + 6)
-                    .allowsHitTesting(false)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { availableWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, width in availableWidth = width }
-            }
-        }
-        .accessibilityLabel("サイトのプレビュー（\(viewport.label)）")
     }
 
     private func hint(_ text: String) -> some View {
@@ -252,38 +222,24 @@ struct SitePreviewSection: View {
 
     /// 場所・更新時刻を確かめ直し、書き出しがあれば配信を立てる。
     private func refresh() async {
-        let project = project
-        let (found, modified) = await Task.detached(priority: .userInitiated) { () -> (SiteLookup, Date?) in
-            let lookup = SiteLocator.lookup(project: project)
-            return (lookup, lookup.location.flatMap { SiteLocator.exportModified($0) })
-        }.value
+        let loaded = await SiteSnapshot.load(project)
         guard !Task.isCancelled else { return }
-        lookup = found
-        exportModified = modified
+        snapshot = loaded
         normalizeSource()
-        serverProblem = nil
-        guard let location = found.location, modified != nil else {
-            exportURL = nil
-            return
-        }
-        do {
-            exportURL = try await SitePreviewServers.shared.baseURL(for: location.exportDir)
-        } catch {
-            exportURL = nil
-            if case SitePreviewServers.Failure.failed(let reason) = error {
-                serverProblem = "書き出しを配信できませんでした: \(reason)"
-            } else {
-                serverProblem = "書き出しを配信できませんでした"
-            }
-        }
         // 書き出しが新しくなっていればサムネイルも撮り直させる。
-        SiteThumbnailStore.shared.request(project)
+        if loaded.exportURL != nil { SiteThumbnailStore.shared.request(project) }
     }
 
-    /// 選んでいた見る元が無くなったら、使えるものに替える。
+    /// 選んでいた見る元が無くなったら、使えるものに替える。初めは動いている開発サーバー、無ければ書き出しを選ぶ。
     private func normalizeSource() {
+        if !choseInitialSource {
+            choseInitialSource = true
+            if location != nil {
+                source = devServer?.isActive == true || !hasExport && snapshot?.readiness?.problem == nil ? .devServer : .export
+            }
+        }
         switch source {
-        case .export:
+        case .devServer, .export:
             if location == nil, let first = links.first { source = .link(first.url) }
         case .link(let url):
             if !links.contains(where: { $0.url == url }) {
@@ -295,28 +251,5 @@ struct SitePreviewSection: View {
     private func openInBrowser() {
         guard let url = SiteNavigationPolicy.browserURL(preview.currentURL) ?? targetURL else { return }
         NSWorkspace.shared.open(url)
-    }
-}
-
-/// 表示幅の切り替えボタン（PC / タブレット / スマホ）。
-private struct ViewportButton: View {
-    let option: SiteViewport
-    let selected: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: option.symbol)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(selected ? ChatTheme.onAccent : ChatTheme.text)
-                .frame(width: 30, height: 24)
-                .background(RoundedRectangle(cornerRadius: 7).fill(selected ? ChatTheme.accent : (hovering ? ChatTheme.selectedRow : .clear)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .headerButtonHelp(name: option.label, detail: "幅 \(Int(option.width))px で表示", busyStatus: nil)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .onHover { hovering = $0 }
     }
 }

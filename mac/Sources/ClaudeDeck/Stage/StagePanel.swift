@@ -7,11 +7,12 @@ enum StageTheme {
     static let width: CGFloat = 360
 }
 
-/// 右側のステージパネル: ステージ（3D）・いまの動き・随伴するサブエージェント・ライブフィード。
+/// 右側のステージパネル: ステージ（3D）・いまの動き・随伴するサブエージェント・ライブフィード。見出しでサイトのプレビューに切り替える。
 struct StagePanel: View {
     let model: ChatModel
 
     @AppStorage("stagePanel.open") private var preferOpen = true
+    @AppStorage(StagePanelView.defaultsKey) private var viewRaw = StagePanelView.stage.rawValue
     @State private var windowWidth: CGFloat?
     @State private var openedWhileNarrow = false
 
@@ -20,6 +21,7 @@ struct StagePanel: View {
         StageLogic.isExpanded(preference: preferOpen, windowWidth: windowWidth, openedWhileNarrow: openedWhileNarrow)
     }
     private var isNarrow: Bool { (windowWidth ?? .infinity) < StageLogic.autoCollapseWidth }
+    private var view: StagePanelView { StagePanelView(rawValue: viewRaw) ?? .stage }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -67,7 +69,7 @@ struct StagePanel: View {
             .buttonStyle(.plain)
             .help("ステージパネルを開く")
             .accessibilityLabel("ステージパネルを開く")
-            Text("ステージ")
+            Text(view.label)
                 .font(StageTheme.label)
                 .tracking(1.2)
                 .foregroundStyle(ChatTheme.tertiary)
@@ -82,7 +84,19 @@ struct StagePanel: View {
 
     // MARK: - 開いた状態
 
+    @ViewBuilder
     private var panel: some View {
+        switch view {
+        case .stage: stagePanel
+        case .preview:
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                StagePreviewPanel(model: model)
+            }
+        }
+    }
+
+    private var stagePanel: some View {
         let room = model.selectedRoom
         let sessionId = room?.sessionId
         let snapshot = sessionId.flatMap { store.session(id: $0) }
@@ -107,7 +121,16 @@ struct StagePanel: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("ステージ")
+            HStack(spacing: 2) {
+                ForEach(StagePanelView.allCases) { option in
+                    SegmentButton(symbol: option.symbol, name: option.label, detail: option.detail,
+                                  selected: option == view) { viewRaw = option.rawValue }
+                }
+            }
+            .padding(2)
+            .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+            Text(view.label)
                 .font(StageTheme.label)
                 .tracking(1.2)
                 .foregroundStyle(ChatTheme.tertiary)
@@ -125,6 +148,7 @@ struct StagePanel: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 52)
+        .zIndex(1)
     }
 
     @ViewBuilder
