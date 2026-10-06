@@ -20,11 +20,11 @@ public struct StageBackdrop: Sendable, Equatable {
         stone: 0xaeb9cc, shade: 0x8b97ab, cap: 0x0d1726
     )
 
-    // トーンマッピングで沈む分を照り返しで持ち上げ、白い面の上で浮かない明るさにする。
+    // パネルの淡い藤色に床と霧を寄せ、照り返しでトーンマッピングに沈む分を持ち上げる。
     public static let light = StageBackdrop(
-        ground: 0xeef2f9, groundEmission: (0.30, 0.33, 0.40), groundUnderHalo: 0xe5e8eb,
-        grid: 0xd3dbe7, gridCenter: 0xa9c4e6, fog: 0xf4f7fb,
-        stone: 0xc9d2e0, shade: 0xa9b4c6, cap: 0x5b6b82
+        ground: 0xeee0fa, groundEmission: (0.44, 0.33, 0.56), groundUnderHalo: 0xe3dde8,
+        grid: 0xd5cde6, gridCenter: 0xb4a5dc, fog: 0xebe7f2,
+        stone: 0xd3cde3, shade: 0xaea6c6, cap: 0x6a5f8c
     )
 
     public static func `for`(_ theme: DeckTheme) -> StageBackdrop {
