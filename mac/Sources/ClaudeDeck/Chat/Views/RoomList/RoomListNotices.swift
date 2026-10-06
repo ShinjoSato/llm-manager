@@ -54,7 +54,7 @@ struct HookServerNotice: View {
     }
 }
 
-/// 起動時に前回のセッションを再開した結果と、上限で見送った分の再開。
+/// 起動時に前回のセッションを再開した結果と、見送った分の再開。
 struct RestoreNotice: View {
     let restorer: SessionRestorer
 
@@ -71,9 +71,10 @@ struct RestoreNotice: View {
                 }
                 .foregroundStyle(ChatTheme.working)
             }
-            if !restorer.deferred.isEmpty {
+            if let summary = restorer.deferredSummary {
                 HStack(spacing: 8) {
-                    Text("上限で見送ったセッション \(restorer.deferred.count) 件")
+                    Text(summary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .foregroundStyle(ChatTheme.permission)
                     Spacer(minLength: 0)
                     Button("再開する") { restorer.resumeDeferred() }
@@ -98,7 +99,7 @@ struct QuitWaitNotice: View {
         HStack(spacing: 8) {
             Image(systemName: "power.circle")
             Text(coordinator.waitingBusyCount > 0
-                 ? "作業が終わったら終了します（作業中 \(coordinator.waitingBusyCount) 件）"
+                 ? "作業が終わったら終了します（稼働中 \(coordinator.waitingBusyCount) 件）"
                  : "まもなく終了します")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)

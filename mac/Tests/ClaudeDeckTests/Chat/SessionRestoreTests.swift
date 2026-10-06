@@ -45,6 +45,29 @@ final class HostedSessionsFileTests: XCTestCase {
         XCTAssertEqual(HostedSessionsFile(url: url).load().first?.status, .unknown)
     }
 
+    func testRestoreMarkRoundTripsAndOldFilesHaveNone() throws {
+        let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
+        let mark = Date(timeIntervalSince1970: 1_800_000_000)
+        try file.save([], restoredAt: mark)
+        XCTAssertEqual(file.loadSnapshot()?.restoredDate, mark)
+        try file.save([])
+        XCTAssertNil(file.loadSnapshot()?.restoredAt)
+        try Data(#"{"version":1,"savedAt":0,"sessions":[]}"#.utf8).write(to: file.url)
+        XCTAssertNotNil(file.loadSnapshot())
+        XCTAssertNil(file.loadSnapshot()?.restoredAt)
+    }
+
+    func testLockIsExclusiveUntilReleased() throws {
+        let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
+        let first = try XCTUnwrap(HostedSessionsLock.acquire(for: file))
+        // 別のアプリ（別に開いたロック）は取れない。
+        XCTAssertNil(HostedSessionsLock.acquire(for: file))
+        let attributes = try FileManager.default.attributesOfItem(atPath: first.url.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        first.release()
+        XCTAssertNotNil(HostedSessionsLock.acquire(for: file))
+    }
+
     func testEnvironmentOverridesDefaultLocation() {
         XCTAssertEqual(HostedSessionsFile.defaultURL(environment: [HostedSessionsFile.environmentKey: "/tmp/x/hosted.json"]).path,
                        "/tmp/x/hosted.json")
@@ -102,11 +125,28 @@ final class SessionRestorePlanTests: XCTestCase {
         XCTAssertEqual(plan([record(a, .working), record(a, .idle)]), [.launch(nudge: true)])
     }
 
+    func testCrashLoopOnlyWithinWindowAfterAutomaticRestore() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertFalse(SessionRestore.isCrashLoop(restoredAt: nil, now: now))
+        XCTAssertTrue(SessionRestore.isCrashLoop(restoredAt: now - 30, now: now))
+        XCTAssertTrue(SessionRestore.isCrashLoop(restoredAt: now - SessionRestore.crashLoopWindow + 1, now: now))
+        XCTAssertFalse(SessionRestore.isCrashLoop(restoredAt: now - SessionRestore.crashLoopWindow, now: now))
+        // 時計が大きく戻った時は落ちた扱いにしない。
+        XCTAssertFalse(SessionRestore.isCrashLoop(restoredAt: now + 3600, now: now))
+    }
+
+    func testDeferredSummaryCountsEachReason() {
+        XCTAssertNil(SessionRestore.deferredSummary([]))
+        XCTAssertEqual(SessionRestore.deferredSummary([.limit, .runningElsewhere, .limit]),
+                       "再開を見送ったセッション 3 件（上限 2 件・同じ会話が動いている 1 件）")
+        XCTAssertEqual(SessionRestore.deferredSummary([.crashLoop]), "再開を見送ったセッション 1 件（再開の直後に落ちた 1 件）")
+    }
+
     func testSummary() {
         XCTAssertEqual(SessionRestore.summary(launched: 2, nudged: 1, deferred: 0, elsewhere: 0, skipped: 0),
                        "前回のセッションを 2 件再開しました（うち 1 件に続きを頼みます）")
         XCTAssertEqual(SessionRestore.summary(launched: 0, nudged: 0, deferred: 3, elsewhere: 1, skipped: 0),
-                       "Max 枠の上限に達しているため 3 件は再開していません。1 件は別の claude で動いているため再開していません")
+                       "Max 枠の上限に達しているため 3 件は再開していません。1 件は同じ会話の claude がまだ動いているため見送りました")
         XCTAssertNil(SessionRestore.summary(launched: 0, nudged: 0, deferred: 0, elsewhere: 0, skipped: 0))
     }
 }
@@ -141,6 +181,27 @@ final class ResumeNudgeGateTests: XCTestCase {
         XCTAssertEqual(gate.step(ready: true, now: start + 5.5), .send)
     }
 
+    func testUserSendOrWorkingCancelsWithoutDraft() {
+        var gate = ResumeNudgeGate(startedAt: start)
+        XCTAssertEqual(gate.step(.init(ready: true), now: start), .wait)
+        XCTAssertEqual(gate.step(.init(ready: true, userSent: true), now: start + 5), .cancel)
+        var other = ResumeNudgeGate(startedAt: start)
+        XCTAssertEqual(other.step(.init(ready: false, working: true), now: start + ResumeNudgeGate.timeout + 1), .cancel)
+    }
+
+    func testHoldingForQuitNeverSends() {
+        var gate = ResumeNudgeGate(startedAt: start)
+        XCTAssertEqual(gate.step(.init(ready: true), now: start), .wait)
+        XCTAssertEqual(gate.step(.init(ready: true, holding: true), now: start + 3), .wait)
+        XCTAssertEqual(gate.step(.init(ready: true, holding: true), now: start + ResumeNudgeGate.timeout + 1), .wait)
+        // 終了を取り消したら落ち着くのを待ち直す。
+        XCTAssertEqual(gate.step(.init(ready: true), now: start + 200), .giveUp)
+        var fresh = ResumeNudgeGate(startedAt: start)
+        XCTAssertEqual(fresh.step(.init(ready: true, holding: true), now: start + 1), .wait)
+        XCTAssertEqual(fresh.step(.init(ready: true), now: start + 2), .wait)
+        XCTAssertEqual(fresh.step(.init(ready: true), now: start + 4), .send)
+    }
+
     func testGivesUpAfterTimeout() {
         var gate = ResumeNudgeGate(startedAt: start)
         XCTAssertEqual(gate.step(ready: false, now: start + ResumeNudgeGate.timeout - 1), .wait)
@@ -153,32 +214,48 @@ final class QuitConfirmationTests: XCTestCase {
         QuitConfirmation.Room(name: name, status: status)
     }
 
-    func testIdleOnlyNeedsNoConfirmation() {
-        let rooms = [room("a", .idle), room("b", .stopped), room("c", .error)]
+    func testIdleAndWaitingNeedNoConfirmation() {
+        // 応答の後の入力待ち（idle_prompt）は待機と同じ。
+        let rooms = [room("a", .idle), room("b", .stopped), room("c", .error), room("d", .waiting)]
         XCTAssertEqual(QuitConfirmation.busy(rooms), [])
         XCTAssertTrue(QuitConfirmation.isSettled(rooms))
         XCTAssertTrue(QuitConfirmation.isSettled([]))
     }
 
-    func testWorkingAndAttentionNeedConfirmation() {
+    func testWorkingAndPermissionNeedConfirmation() {
         let rooms = [room("a", .working), room("b", .idle), room("c", .permission), room("d", .waiting)]
-        XCTAssertEqual(QuitConfirmation.busy(rooms).map(\.name), ["a", "c", "d"])
+        XCTAssertEqual(QuitConfirmation.busy(rooms).map(\.name), ["a", "c"])
         XCTAssertFalse(QuitConfirmation.isSettled(rooms))
     }
 
-    func testMessageListsUpToThreeNames() {
-        let rooms = ["a", "b", "c", "d", "e"].map { room($0, .working) }
+    func testWaitIsSettledWhenNoneWorkingEvenWithPermission() {
+        XCTAssertTrue(QuitConfirmation.isSettled([room("a", .permission), room("b", .waiting), room("c", .idle)]))
+        XCTAssertEqual(QuitConfirmation.working([room("a", .permission), room("b", .working)]).map(\.name), ["b"])
+    }
+
+    func testMessageSplitsWorkingAndPermissionAndExplainsWait() {
+        let rooms = ["a", "b", "c", "d", "e"].map { room($0, .working) } + [room("x", .permission)]
         XCTAssertEqual(QuitConfirmation.message(busy: rooms, resumesOnLaunch: true),
-                       "作業中 5 件（a、b、c ほか 2 件）。終了すると中断し、次の起動時に再開します。")
-        XCTAssertEqual(QuitConfirmation.message(busy: [room("x", .permission)], resumesOnLaunch: false),
-                       "作業中 1 件（x）。終了すると中断します。")
+                       "稼働中 5 件（a、b、c ほか 2 件）・権限待ち 1 件（x）。終了すると中断し、次の起動時に再開します。"
+                       + "「作業が終わったら終了」は稼働中の作業が終わるのを待ちます（権限待ち・入力待ちのルームは待たずに中断します）。")
+        XCTAssertTrue(QuitConfirmation.message(busy: [room("x", .permission)], resumesOnLaunch: false)
+            .hasPrefix("権限待ち 1 件（x）。終了すると中断します。"))
+    }
+
+    func testSystemQuitReasons() {
+        XCTAssertFalse(QuitConfirmation.isSystemQuit(reason: nil))
+        for code in ["logo", "rlgo", "rrst", "rsdn", "rest", "shut"] {
+            XCTAssertTrue(QuitConfirmation.isSystemQuit(reason: QuitConfirmation.fourCharCode(code)), code)
+        }
+        XCTAssertFalse(QuitConfirmation.isSystemQuit(reason: QuitConfirmation.fourCharCode("quit")))
+        XCTAssertEqual(QuitConfirmation.fourCharCode("logo"), 0x6C6F_676F)
     }
 
     func testQuitWaitNeedsSettledForAWhile() {
         let start = Date(timeIntervalSince1970: 0)
         var wait = QuitWait()
         XCTAssertFalse(wait.step([room("a", .working)], now: start))
-        XCTAssertFalse(wait.step([room("a", .idle)], now: start + 1))
+        XCTAssertFalse(wait.step([room("a", .permission)], now: start + 1))
         // ツールの合間に稼働中へ戻ったら数え直す。
         XCTAssertFalse(wait.step([room("a", .working)], now: start + 2))
         XCTAssertFalse(wait.step([room("a", .idle)], now: start + 3))

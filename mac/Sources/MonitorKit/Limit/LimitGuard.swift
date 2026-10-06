@@ -167,6 +167,10 @@ public struct UsageLimitLatch: Sendable, Equatable {
 
     public init() {}
 
+    mutating func restore(until date: Date) {
+        until = date
+    }
+
     /// 新しい残量を反映し、今が到達中かを返す。新しい値で 100% 未満になったら（前倒しのリセット等）解除する。
     public mutating func update(with usage: UsageSnapshot?, now: Date = Date()) -> Bool {
         if let usage, LimitGuard.isFresh(usage, now: now) {

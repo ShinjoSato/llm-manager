@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         buildMenu()
         AppearanceSettings.shared.apply()
         MonitorBridge.start()
+        LimitWatch.shared.start()
         // チャット欄の変換中に設定の保存を止めないよう、設定画面がキーの時だけ見る。
         SettingsStore.shared.isComposing = {
             guard let window = NSApp.keyWindow, SettingsWindow.owns(window) else { return false }
@@ -50,14 +51,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         let others = NSApp.windows.contains { $0 !== sender && $0.isVisible && $0.canBecomeMain }
         guard sender === window, !others else { return true }
+        // 終了の保留中に閉じても待ちは続ける（確認なしで中断しない）。Dock から出し直せる。
+        if QuitCoordinator.shared.isWaiting {
+            sender.orderOut(nil)
+            return false
+        }
         NSApp.terminate(nil)
         return false
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { window?.makeKeyAndOrderFront(nil) }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
-            // ホスト中の claude は終了で PTY ごと閉じるので、その前の状態を書き切る。
-            main?.model.restorer.saveNow()
+            // ホスト中の claude は終了で PTY ごと閉じるので、その前の状態を書き切る（正常な終了なので再開中の印は外す）。
+            main?.model.restorer.saveOnTermination()
             SettingsStore.shared.flushPending(force: true)
             SettingsStore.shared.stopWatching()
         }

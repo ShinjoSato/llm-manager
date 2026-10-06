@@ -26,10 +26,7 @@ enum MonitorBridge {
         TerminationSignals.installNoopHandlers(for: [SIGTERM, SIGINT])
         for sig in [SIGTERM, SIGINT] {
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-            source.setEventHandler {
-                QuitCoordinator.shared.terminatingBySignal = true
-                NSApp.terminate(nil)
-            }
+            source.setEventHandler { QuitCoordinator.shared.terminateBySignal() }
             source.resume()
             signalSources.append(source)
         }
