@@ -115,6 +115,47 @@ final class SessionInventoryTests: XCTestCase {
     }
 }
 
+/// フック層。
+final class HookIntakeTests: XCTestCase {
+    private func state(lastActivityAt: Double?, lastAgentActivityAt: Double? = nil) -> SessionState {
+        let s = SessionState(raw: RawSession(pid: 1, sessionId: "s", cwd: "/tmp/proj", startedAt: 0, alive: true))
+        s.lastActivityAt = lastActivityAt
+        s.lastAgentActivityAt = lastAgentActivityAt
+        return s
+    }
+
+    /// 届いた後のログ活動を先に読んでいる要対応は、状態にもフィードにも出さない。
+    func testAnsweredAttentionHooksLeaveNoFeedLine() {
+        let now: Double = 10_000
+        let permission = HookPayload(sessionId: "s", hookEventName: "Notification", toolName: "Bash", notificationType: "permission_prompt")
+        let waiting = HookPayload(sessionId: "s", hookEventName: "Notification", notificationType: "idle_prompt")
+        let failure = HookPayload(sessionId: "s", hookEventName: "StopFailure", errorType: "rate_limit")
+
+        for payload in [permission, waiting, failure] {
+            let answered = state(lastActivityAt: now + 1)
+            XCTAssertNil(HookIntake.apply(payload, to: answered, now: now), "\(payload.hookEventName ?? "")")
+            XCTAssertNil(answered.hookStatus)
+            XCTAssertNil(answered.attentionSince)
+            XCTAssertEqual(answered.hookAt, 0, "答え済みの待ちはフックの時刻も進めない")
+        }
+        // サブエージェント側の活動も「届いた後のログ活動」に数える。
+        let viaAgent = state(lastActivityAt: nil, lastAgentActivityAt: now + 1)
+        XCTAssertNil(HookIntake.apply(permission, to: viaAgent, now: now))
+        XCTAssertNil(viaAgent.hookStatus)
+
+        // 届く前の活動しか読んでいなければ、これまでどおり待ちを出す。
+        let open = state(lastActivityAt: now - 1)
+        XCTAssertEqual(HookIntake.apply(permission, to: open, now: now), FeedLine(kind: .status, text: "権限の確認待ち: Bash"))
+        XCTAssertEqual(open.hookStatus, .permission)
+        XCTAssertEqual(open.attentionSince, now)
+        // 要対応でないフックは新しいログ活動があっても流す。
+        let stop = state(lastActivityAt: now + 1)
+        XCTAssertEqual(HookIntake.apply(HookPayload(sessionId: "s", hookEventName: "Stop"), to: stop, now: now),
+                       FeedLine(kind: .status, text: "応答完了"))
+        XCTAssertEqual(stop.hookStatus, .idle)
+    }
+}
+
 /// 状態の合成・フック・要対応・権限の中継。
 final class SessionHubTests: XCTestCase {
     typealias F = FakeClaudeHome
@@ -360,6 +401,40 @@ final class SessionHubTests: XCTestCase {
         let afterLog = await hub.pendingPermissions()
         XCTAssertTrue(afterLog.isEmpty)
         XCTAssertTrue(feedTexts(events).contains("権限の確認は端末側で答えられたようです: Bash"))
+    }
+
+    /// 親が確認で止まっている間のサブエージェントの活動では、預かった確認を落とさない（落とすのは親ログが進んだ時だけ）。
+    func testSubagentActivityDoesNotDropPendingPermission() async throws {
+        try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
+        let (hub, events) = try await started()
+        let input = PermissionRequestInput(requestId: "abcde", toolName: "Bash", description: "ls", inputPreview: "ls",
+                                           pid: pid, cwd: cwd)
+        let waiting = Task { await hub.awaitPermission(input, waitMillis: 5_000) }
+        try await waitUntil { await !hub.pendingPermissions().isEmpty }
+        let asked = clock.now
+
+        // サブエージェントのログは預かった後に進み、親ログには預かる前の行しか増えない。
+        let transcript = home.transcriptURL(sessionId: sessionId, cwd: cwd)
+        let subagents = URL(fileURLWithPath: ClaudeHome.subagentDirectory(forTranscript: transcript.path))
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        let agentLog = subagents.appendingPathComponent("agent-abc.jsonl")
+        try Data("{}\n".utf8).write(to: agentLog)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: (asked + 5_000) / 1000)],
+                                              ofItemAtPath: agentLog.path)
+        try append(F.user("u1", [["type": "tool_result", "content": "ok"]], timestamp: iso(asked - 500)))
+        clock.advance(TranscriptPoller.agentScanInterval)
+        await hub.pollTranscripts()
+
+        let s = try await required(hub)
+        XCTAssertEqual(s.lastActivityAt ?? 0, asked + 5_000, accuracy: 1, "サブエージェントの活動は読めている")
+        XCTAssertEqual(s.agents.map(\.id), ["abc"])
+        let stillPending = await hub.pendingPermissions()
+        XCTAssertEqual(stillPending.map(\.requestId), ["abcde"], "親ログは預かる前の行までなので保留のまま")
+        XCTAssertFalse(feedTexts(events).contains { $0.hasPrefix("権限の確認は端末側で答えられた") })
+
+        await hub.decidePermission(key: input.key, decision: .deny)
+        let outcome = await waiting.value
+        XCTAssertEqual(outcome, .deny)
     }
 
     /// 起動後に書かれた行は、初回の末尾読みでもフィードに積む（ログの時刻で見分ける）。
@@ -627,6 +702,7 @@ final class SessionHubTests: XCTestCase {
                                         notificationType: "permission_prompt"), receivedAt: received)
         var s = try await required(hub)
         XCTAssertEqual(s.status, .working)
+        XCTAssertFalse(feedTexts(events).contains { $0.hasPrefix("権限の確認待ち") }, "状態に出さない待ちはフィードにも告げない")
 
         try append(F.assistant("a2", [["type": "text", "text": "終わりました"]], timestamp: iso(received + 2_000)))
         await hub.pollTranscripts()
@@ -658,7 +734,7 @@ final class SessionHubTests: XCTestCase {
         try home.writeSession(pid: pid, sessionId: sessionId, cwd: cwd)
         let gating = Box(false)
         let calls = Box(0)
-        let firstInside = DispatchSemaphore(value: 0)
+        let firstInside = Box(false)
         let secondCalled = DispatchSemaphore(value: 0)
         let clock = clock!
         let alive = alive!
@@ -668,7 +744,7 @@ final class SessionHubTests: XCTestCase {
             let value = clock.now + Double(index)
             guard gating.value else { return value }
             gating.mutate { $0 = false }
-            firstInside.signal()
+            firstInside.mutate { $0 = true }
             // 2 つ目が時刻を取りに来られるなら、それが積み終わるまで 1 つ目の積み込みを遅らせる。
             if secondCalled.wait(timeout: .now() + 0.3) == .success { Thread.sleep(forTimeInterval: 0.1) }
             return value
@@ -683,7 +759,7 @@ final class SessionHubTests: XCTestCase {
             hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Stop"))
         }
         first.start()
-        firstInside.wait()
+        try await waitUntil { firstInside.value }
         let second = Thread {
             secondCalled.signal()
             hub.enqueueHook(HookPayload(sessionId: sessionId, hookEventName: "Notification", toolName: "Bash",

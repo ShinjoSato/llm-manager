@@ -226,6 +226,7 @@ public actor SessionHub {
             if outcome.changed { changed = true }
 
             // 預かった後に書かれたログ行があれば、その確認は端末側で答えられている。
+            // 親ログだけを見る: 親が確認で止まっている間もサブエージェントは書き続けるので、その活動で保留を落とすと答える口が消える。
             if outcome.readLines && waiters.count > 0 {
                 let dropped = waiters.dropResolved(sessionId: id, lastActivityAt: state.lastActivityAt ?? 0)
                 for line in dropped { push(id, line) }

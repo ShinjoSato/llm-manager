@@ -183,8 +183,8 @@ public struct RemoteRoomCards: Sendable, Equatable {
     }
 }
 
-/// 照合の失敗を `Result` で返すため。
-extension RemoteActionResult: Error {}
+/// 照合の失敗を `Result` で返すため（DeckCore 側は API の型に留め、Error にはしない）。
+extension RemoteActionResult: @retroactive Error {}
 
 enum RemoteDigest {
     /// 区切りを挟んだ SHA-256 の先頭 16 バイト（識別にだけ使う）。
