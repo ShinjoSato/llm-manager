@@ -163,11 +163,18 @@ public final class GitHubOwnerKindResolver {
                                  _ operation: @escaping @Sendable () async -> GitHubOwnerKind?) async -> GitHubOwnerKind? {
         await withCheckedContinuation { continuation in
             let once = ResumeOnce(continuation)
-            let work = Task { once.resume(await operation()) }
-            Task {
+            let timer = Task {
                 try? await Task.sleep(for: timeout)
-                work.cancel()
                 once.resume(nil)
+            }
+            let work = Task {
+                once.resume(await operation())
+                timer.cancel()
+            }
+            // 時間切れの後も取得を走らせ続けない。
+            Task {
+                _ = await timer.result
+                work.cancel()
             }
         }
     }

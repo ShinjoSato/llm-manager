@@ -95,7 +95,8 @@ struct EditorButtons: View {
             }
             HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", title: "VS Code",
                          help: "VS Code で開く: \(room.cwd)") { model.openInVSCode(room) }
-            GitHubButton(model: model, room: room, destinations: model.githubDestinations(for: room))
+            GitHubButton(model: model, room: room, destinations: model.githubDestinations(for: room),
+                         opening: model.openingGitHub.contains(room.id))
             if let xcodeProject {
                 HeaderButton(symbol: "hammer", title: "Xcode",
                              help: "Xcode で開く: \(xcodeProject.path)") { model.openInXcode(room) }
@@ -119,21 +120,23 @@ struct GitHubButton: View {
     let model: ChatModel
     let room: Room
     let destinations: [GitHubDestination]
+    let opening: Bool
     @State private var hovering = false
 
     private static let symbol = "rectangle.3.group"
 
     var body: some View {
         if destinations.count == 1, let only = destinations.first {
-            HeaderButton(symbol: Self.symbol, title: "GitHub", help: only.help) { model.openOnGitHub(only, for: room) }
+            HeaderButton(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", help: only.help, disabled: opening) { model.openOnGitHub(only, for: room) }
         } else if destinations.count > 1 {
             Menu {
                 ForEach(Array(destinations.enumerated()), id: \.offset) { _, destination in
                     Button(destination.menuTitle) { model.openOnGitHub(destination, for: room) }
                 }
             } label: {
-                HeaderButtonLabel(symbol: Self.symbol, title: "GitHub", disabled: false, hovering: hovering, showsMenu: true)
+                HeaderButtonLabel(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", disabled: opening, hovering: hovering, showsMenu: true)
             }
+            .disabled(opening)
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)

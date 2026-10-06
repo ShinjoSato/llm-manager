@@ -137,6 +137,20 @@ final class GitHubOwnerKindResolverTests: XCTestCase {
         XCTAssertEqual(calls.all.map(\.absoluteString), ["https://api.github.com/users/MyOrg"])
     }
 
+    func testConcurrentLookupsShareOneRequest() async {
+        let calls = Calls()
+        let resolver = GitHubOwnerKindResolver { url in
+            _ = calls.add(url)
+            try await Task.sleep(for: .milliseconds(100))
+            return (200, Data(#"{"type":"User"}"#.utf8))
+        }
+        async let first = resolver.kind(of: "me")
+        async let second = resolver.kind(of: "ME")
+        let kinds = await [first, second]
+        XCTAssertEqual(kinds, [.user, .user])
+        XCTAssertEqual(calls.all.count, 1)
+    }
+
     func testFailureIsNotCached() async {
         let calls = Calls()
         let resolver = GitHubOwnerKindResolver { url in

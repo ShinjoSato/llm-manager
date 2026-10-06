@@ -8,6 +8,8 @@ public enum EditorOutcome: Sendable, Equatable {
     case notOpen
     case notRunning
     case failed(String)
+    /// 開けたが、利用者に知らせておくことがある。
+    case openedWithNote(String)
 
     public var message: String {
         switch self {
@@ -16,6 +18,7 @@ public enum EditorOutcome: Sendable, Equatable {
         case .notOpen: return "Xcode では開いていません"
         case .notRunning: return "Xcode は起動していません"
         case .failed(let reason): return reason
+        case .openedWithNote(let note): return note
         }
     }
 

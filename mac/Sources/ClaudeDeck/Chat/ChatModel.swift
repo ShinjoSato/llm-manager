@@ -101,8 +101,8 @@ final class ChatModel {
 
     @ObservationIgnored private var xcodeProjects: [String: URL?] = [:]
     @ObservationIgnored private let githubOwners = GitHubOwnerKindResolver()
-    /// owner の種類を問い合わせている最中のルーム。二度押しで同じ先を二度開かない。
-    @ObservationIgnored private var openingGitHub: Set<RoomID> = []
+    /// owner の種類を問い合わせている最中のルーム。見出しに出し、二度押しで同じ先を二度開かない。
+    private(set) var openingGitHub: Set<RoomID> = []
 
     init(store: MonitorStore) {
         self.store = store
@@ -870,19 +870,30 @@ final class ChatModel {
     func openOnGitHub(_ destination: GitHubDestination, for room: Room) {
         let roomId = room.id
         guard !openingGitHub.contains(roomId) else { return }
+        guard case .board = destination else {
+            openGitHubURL(destination.url(ownerKind: nil), unknownKind: false, for: roomId)
+            return
+        }
         openingGitHub.insert(roomId)
         Task { @MainActor [weak self] in
             guard let self else { return }
-            var kind: GitHubOwnerKind?
-            if case .board = destination { kind = await self.githubOwners.kind(of: destination.owner) }
+            let kind = await self.githubOwners.kind(of: destination.owner)
             self.openingGitHub.remove(roomId)
-            guard let url = destination.url(ownerKind: kind) else {
-                self.showEditorNote(.failed("GitHub の URL を組み立てられません（設定の owner / リポジトリを確かめてください）"), for: roomId)
-                return
-            }
-            let opened = NSWorkspace.shared.open(url)
-            self.showEditorNote(opened ? .opened : .failed("ブラウザで開けませんでした: \(url.absoluteString)"), for: roomId)
+            self.openGitHubURL(destination.url(ownerKind: kind), unknownKind: kind == nil, for: roomId)
         }
+    }
+
+    private func openGitHubURL(_ url: URL?, unknownKind: Bool, for roomId: RoomID) {
+        guard let url else {
+            showEditorNote(.failed("GitHub の URL を組み立てられません（設定の owner / リポジトリを確かめてください）"), for: roomId)
+            return
+        }
+        guard NSWorkspace.shared.open(url) else {
+            showEditorNote(.failed("ブラウザで開けませんでした: \(url.absoluteString)"), for: roomId)
+            return
+        }
+        // 組織の owner だと個人の形の URL は 404 になるので、推測で開いたことを伝える。
+        showEditorNote(unknownKind ? .openedWithNote("owner の種類を確かめられなかったため、個人の Project として開きました") : .opened, for: roomId)
     }
 
     private func open(_ url: URL, with app: URL, for roomId: RoomID) {
