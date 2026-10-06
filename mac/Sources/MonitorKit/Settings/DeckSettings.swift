@@ -54,11 +54,15 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
     public var github: GitHubLink?
     /// LP やデザインなど、ルームの見出しから開くリンク（並びは配列の順）。
     public var links: [ProjectLink]
+    /// LP の場所（無ければ自動で探す）。
+    public var site: ProjectSite?
+    /// 形が読めずに捨てた `site`（警告に出すだけで、保存・比較には含めない）。
+    public var ignoredSite = IgnoredField()
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links }
+    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links, site }
 
     public init(id: UUID = UUID(), name: String, path: String, status: ProjectStatus = .active, note: String = "",
-                github: GitHubLink? = nil, links: [ProjectLink] = []) {
+                github: GitHubLink? = nil, links: [ProjectLink] = [], site: ProjectSite? = nil) {
         self.id = id
         self.name = name
         self.path = path
@@ -66,6 +70,7 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         self.note = note
         self.github = github
         self.links = links
+        self.site = site
     }
 
     public init(from decoder: Decoder) throws {
@@ -77,6 +82,13 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         github = try c.decodeIfPresent(GitHubLink.self, forKey: .github)
         links = try c.decodeIfPresent([ProjectLink].self, forKey: .links) ?? []
+        // 手で書いた `site` の形が違っても、設定全体を読めなくしない。
+        if c.contains(.site), (try? c.decodeNil(forKey: .site)) != true {
+            site = try? c.decode(ProjectSite.self, forKey: .site)
+            ignoredSite.isSet = site == nil
+        } else {
+            site = nil
+        }
     }
 
     /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。
@@ -89,6 +101,7 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         try c.encode(note, forKey: .note)
         try c.encodeIfPresent(github, forKey: .github)
         if !links.isEmpty { try c.encode(links, forKey: .links) }
+        try c.encodeIfPresent(site, forKey: .site)
     }
 
     /// フォルダから作る（表示名はフォルダ名）。
@@ -136,6 +149,26 @@ public struct ProjectLink: Codable, Equatable, Sendable {
     public init(name: String, url: String) {
         self.name = name
         self.url = url
+    }
+}
+
+/// 読み込み時の印。設定の中身ではないので、比較では常に等しい。
+public struct IgnoredField: Equatable, Sendable {
+    public var isSet = false
+
+    public init(isSet: Bool = false) {
+        self.isSet = isSet
+    }
+
+    public static func == (a: IgnoredField, b: IgnoredField) -> Bool { true }
+}
+
+/// LP（静的書き出しのあるサイト）の場所。`path` はプロジェクトからの相対パス（`.` はプロジェクト直下）。
+public struct ProjectSite: Codable, Equatable, Sendable {
+    public var path: String
+
+    public init(path: String) {
+        self.path = path
     }
 }
 

@@ -44,6 +44,10 @@ public struct HTTPResponse: Sendable, Equatable {
     public var body: Data
     /// あれば `body` の代わりに chunked で流す。
     public var stream: HTTPBodyStream?
+    /// HEAD への応答: 本文は送らない。
+    public var omitsBody = false
+    /// `omitsBody` の時に Content-Length に出す長さ（本文を読まずに答えるため）。無ければ本文の長さ。
+    public var declaredLength: Int?
 
     public init(status: Int, headers: [(String, String)] = [], body: Data = Data(), stream: HTTPBodyStream? = nil) {
         self.status = status
@@ -61,13 +65,15 @@ public struct HTTPResponse: Sendable, Equatable {
 
     public static func == (a: HTTPResponse, b: HTTPResponse) -> Bool {
         a.status == b.status && a.body == b.body && a.headers.map { "\($0.0):\($0.1)" } == b.headers.map { "\($0.0):\($0.1)" }
-            && a.stream === b.stream
+            && a.stream === b.stream && a.omitsBody == b.omitsBody && a.declaredLength == b.declaredLength
     }
 
     static func reason(_ status: Int) -> String {
         switch status {
         case 100: return "Continue"
         case 200: return "OK"
+        case 206: return "Partial Content"
+        case 308: return "Permanent Redirect"
         case 400: return "Bad Request"
         case 401: return "Unauthorized"
         case 403: return "Forbidden"
@@ -78,6 +84,7 @@ public struct HTTPResponse: Sendable, Equatable {
         case 411: return "Length Required"
         case 413: return "Payload Too Large"
         case 415: return "Unsupported Media Type"
+        case 416: return "Range Not Satisfiable"
         case 429: return "Too Many Requests"
         case 431: return "Request Header Fields Too Large"
         case 500: return "Internal Server Error"
@@ -94,9 +101,10 @@ public struct HTTPResponse: Sendable, Equatable {
             head += "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
             return Data(head.utf8)
         }
-        head += "Content-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+        let length = omitsBody ? (declaredLength ?? body.count) : body.count
+        head += "Content-Length: \(length)\r\nConnection: close\r\n\r\n"
         var data = Data(head.utf8)
-        data.append(body)
+        if !omitsBody { data.append(body) }
         return data
     }
 

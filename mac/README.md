@@ -46,16 +46,19 @@ mac/
         EditorLauncher.swift        見出し・詳細の「VS Code」「Finder」「GitHub」「リンク」「Xcode」「閉じる」と結果の短い一言（押した先ごと）
         HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
         SessionRestorer.swift       ホスト中のセッションの記録（hosted-sessions.json）と起動時の再開・作業中だったものへの続きの頼み
+        SiteThumbnailStore.swift    「ディレクトリ」の行の LP のサムネイル（オフスクリーンの WKWebView で撮って縮小・キャッシュ・1 つずつ）
       Views/                      画面（SwiftUI）
         ChatRootView.swift          骨組み（切り替えバー | 一覧 | 会話かディレクトリの詳細 | 右パネルの差し込み口）
         RoomList/                   左の一覧（ルーム / ディレクトリ）
           ListModeBar.swift           左端の切り替えバー（「ルーム」/「ディレクトリ」・要対応のバッジ）
           RoomListView.swift          一覧（状態別のルームか登録ディレクトリ）・検索・「+」のポップオーバー・右クリックメニュー
-          DirectoryRow.swift          ディレクトリ 1 行（色の点・名前・パスの末尾・件数といちばん急ぐ状態）
+          DirectoryRow.swift          ディレクトリ 1 行（色の点・名前・パスの末尾・件数といちばん急ぐ状態・LP のサムネイル）
           RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・頭文字アイコン（RoomAvatar）
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
-        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・GitHub・リンク・スレッド）
+        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・GitHub・リンク・スレッド）
+          SitePreviewSection.swift    「サイト」: 見る元（書き出し / 公開 URL）・表示幅・再読み込み・ブラウザで開く・書き出しの更新時刻
+          SiteWebView.swift           プレビューの WKWebView（pageZoom で縮めて表示幅ぶんを収める・file: / javascript: へは遷移しない）
         Conversation/               中央の会話
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）
           ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」のボタン
@@ -127,6 +130,11 @@ mac/
       GitHubLinks.swift           ルームの cwd と設定のプロジェクトの対応（ProjectMatcher）と GitHub の URL（ボード / リポジトリ）
       ProjectLinks.swift          設定のリンク（LP 等）の URL の検証（http / https で host のあるものだけ）と、見出しの「リンク」に出すもの
       EditorActions.swift         見出しの「VS Code / GitHub / リンク / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
+    Sites/                      ディレクトリの詳細の「サイト」（LP のプレビュー）
+      SiteLocator.swift           LP の場所の自動検出と、設定の `site`（相対パス）の検証・解決（プロジェクトの外を指さない）
+      SiteFiles.swift             配信のパスの解決（書き出しの外・隠しファイルは返さない・フォルダは index.html・拡張子なしは .html）と Content-Type
+      SiteServer.swift            書き出しの静的配信（サイトごとに 127.0.0.1 のランダムなポート・GET / HEAD のみ。SitePreviewServers）
+      SiteViewport.swift          表示幅（PC / タブレット / スマホ）と縮める率・サムネイルのキャッシュの名前・プレビューの中で開いてよい行き先
     Limit/
       LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
       LimitState.swift            上限到達の記録（limit-state.json）と、続けて止めた分をまとめた知らせの文言
@@ -155,7 +163,7 @@ mac/
       DeckPaths.swift             Application Support / Caches / Logs の claude-deck
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
-                                Server / Remote / Settings / Notify / Stage / Terminal / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
+                                Server / Remote / Settings / Sites / Notify / Stage / Terminal / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
   scripts/bundle.sh             claude-deck.app を組み立てて署名する（プロファイルがあれば Apple Development + iCloud、無ければ ad-hoc。チャネルの実行ファイルも同梱）
@@ -473,6 +481,26 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
     本文は概要（フルパス・状態・メモ）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンクの一覧（押すとブラウザで開く。開けない形・名前が重なるものは出さず件数だけ）、
     そのプロジェクトのスレッド（ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）。
+  - **サイト**（概要の下）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
+    - 場所: 設定の `site`（下記「設定（settings.json）」）があればそれ、無ければプロジェクト直下と 2 階層までのサブフォルダから探す
+      （`next.config.{js,mjs,ts,cjs}` があるか、`package.json` と `out/index.html` がある所。`node_modules`・`.next`・`out`・隠しフォルダ等の中は見ず、
+      見つけたサイトの中も探さない。シンボリックリンクのフォルダは辿らない）。複数あれば書き出し済み → 浅い → 名前の順で先頭を使い、候補がある旨を出す。
+    - 見る元: 「書き出し」（`<サイト>/out/`）と、設定のリンクのうち http / https のもの（「公開: 名前」）。書き出しは `/_next/...` の絶対パスで参照し合うので
+      file:// では崩れる。アプリの中の小さな静的配信で出す: サイトごとに **127.0.0.1 の OS が選ぶポート**（:8766 / :8767 とは別のサーバー）で、
+      **GET / HEAD のみ**・**`out/` の配下だけ**（`..`・パーセントエンコードした `..`・シンボリックリンクで外へ出るものは拒否、`.` で始まる隠しファイルは返さず、リンクを解いた先が隠しファイルでも返さない。`out` 自体がリンクなら実体がサイトのフォルダの中にある時だけ使う）・
+      Host は `127.0.0.1` / `localhost` の自分のポートだけ（DNS リバインディング対策）・接続元はループバックだけ。フォルダは `index.html`、末尾の `/` が無ければ 308 で補い、
+      拡張子の無いパスは `.html` を補う（Next の export の両方の形。`blog.html` と index.html の無い `blog/` が並ぶ時は `/blog` に `blog.html` を返す）。無いものは `out/404.html` があればそれを 404 で返す。Content-Type は拡張子から（`nosniff`）。
+      転送のクエリに制御文字があれば 400。大きさは属性から取り（HEAD では読まない）、`Range: bytes=` の単一範囲に 206 で答える（不正・範囲外・複数範囲は 416）。
+      配信はアプリが動いている間だけ使い回す（待ち受けが後から落ちたら外し、次に開く時に別のポートで開き直す）。実装は `Sources/MonitorKit/Sites/`（テストあり。配信はループバックに立てて実際に取得・拒否を確かめる）。
+    - 表示幅: PC 1280 / タブレット 820 / スマホ 390（CSS ピクセル）で組ませ、枠に収まるよう `pageZoom` で縮めて表示する（拡大はしない。スマホは角丸の端末の枠）。選んだ幅は UserDefaults（`sitePreview.viewport`）。
+    - 再読み込み（場所と更新時刻も確かめ直す）・ブラウザで開く（今開いているページ。http / https だけ）・書き出しの更新時刻（`out/index.html`）。
+      `out/` が無ければ「`npm run build` で書き出すと見られます」の案内。開発サーバーは起動しない。
+    - WKWebView は Cookie 等を残さない（`nonPersistent`）。外部のサイトへの遷移はそのまま許し、`file:`・`javascript:`・ページそのものの `data:` 等へは遷移しない
+      （新しいウィンドウで開くリンクは同じ枠で開く）。
+  - **一覧のサムネイル**: 「ディレクトリ」の各行の右に LP のサムネイル。書き出しのトップを画面に出さないウィンドウの WKWebView（1280×800）で撮って縮小し、
+    `~/Library/Caches/claude-deck/site-thumbs/`（0700 / 0600。名前はサイトと `out/index.html` の更新時刻から）に置く。更新時刻が変わった時だけ撮り直し、
+    同じサイトの古いものは消す。撮るのは 1 つずつ。書き出しが無ければ出さない。撮れなかった書き出しは（更新時刻ごとに）撮り直さず、詳細の「再読み込み」からは間引き（30 秒）と
+    その記録を飛ばして撮り直す。設定からプロジェクトを消すと、そのサムネイル（画面の分と保存した画像）を片付ける。
   - 中央の出し分けは `ChatModel.center`（ルームを選べば会話、ディレクトリを選べば詳細）。詳細を出している間も選択中のルームは残し、
     ステージパネルはそのルーム（無ければ空のプレースホルダー）のまま。会話を出していない間は既読にしない。設定から外されたプロジェクトの詳細は案内に替える。
 - 各行: ドット絵キャラのアイコン・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
@@ -769,7 +797,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   "projects": [ { "id": "<UUID>", "name": "mirio", "path": "/abs/path", "status": "active", "note": "…",
                   "github": { "owner": "ShinjoSato", "repo": "ailovei", "projectNumber": 4 },
                   "links": [ { "name": "LP", "url": "https://example.com/lp" },
-                             { "name": "Figma", "url": "https://www.figma.com/file/…" } ] } ],
+                             { "name": "Figma", "url": "https://www.figma.com/file/…" } ],
+                  "site": { "path": "site" } } ],
   "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
 ```
 
@@ -778,6 +807,10 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   `url` は http / https で host のあるものだけ（それ以外や `user:pass@` 付きは警告として読み込み、ボタンには出さない）。`name` は同じプロジェクトの中で重ねない（重なれば先のものだけボタンに出す）。
   `links` の形が崩れている（配列でない・要素に `name` か `url` の文字列が無い）ファイルは読めない扱いになる。
   **リンクを使い始めたら、`links` を知らない前のビルドで設定を保存しない**（`links` を落として書くため）。
+  `site` はディレクトリの詳細の「サイト」でプレビューする LP の場所で、省略できる（省略なら自動で探す。空ならアプリも書かない）。
+  `path` はプロジェクトからの相対パス（`.` はプロジェクト直下。静的書き出しはその下の `out/`）。絶対パス・`~`・`..` を含むものは警告として読み込み、使わない
+  （シンボリックリンクでプロジェクトの外を指すものも使わない）。`site` の形が崩れている（オブジェクトでない・`path` の文字列が無い）時は、その `site` だけを無視して警告を出す（ファイル全体は読める。次に保存すると `site` は書かれない）。
+  **サイトを指定したら、`site` を知らない前のビルドで設定を保存しない**（`site` を落として書くため）。
   `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
 - 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600。ディレクトリを 0700 に締めるのは既定の場所（`~/Library/Application Support/claude-deck/`）の時だけで、
   `CLAUDE_DECK_SETTINGS` で向けた先のディレクトリの権限は変えない。
@@ -813,6 +846,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   「リンク」の節で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
   全行が正しい間だけ保存し、途中の行がある間はファイルは前の内容のまま（行ごとに理由を赤で出す）。名前と URL が両方空の行は画面に残すだけで保存しない。
   開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
+  「サイト」の節で LP の場所を指定（相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
+  正しい相対パスの間だけ保存し、検出の結果（指定 / 自動で検出・書き出しの有無）を出す。
 - **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号と、リポジトリに紐づかないボードの追加・編集・削除。
   owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
 - **iPhone 連携**: 下記「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）。
@@ -822,7 +857,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
     repo 付きは同じ名前のプロジェクトがあり、まだ紐づけが無ければその `github` に入れる。同じ名前のプロジェクトが無い行は取り込まず
     （ボードにすると repo が落ちるため）、件数と「先に registry.tsv を読み込んでください」を出す。
   - 書き出した settings.json: プロジェクトはパス・ボードは owner + 番号で重複を除く。同じパスのプロジェクトに紐づけが無ければ紐づけだけ足し、
-    リンクは同じ名前（前後の空白は除く）の無いものだけ末尾に足す（同じ名前は手元を残す。ファイルの中で重なる名前も 1 つだけ）。
+    `site` は手元に無い時だけ入れる。リンクは同じ名前（前後の空白は除く）の無いものだけ末尾に足す（同じ名前は手元を残す。ファイルの中で重なる名前も 1 つだけ）。
     名前が空・URL が http / https でないリンクは足さず、件数を「不正 N 件は除外」と出す。
 
 型・読み書き・検証・移行・取り込みは `Sources/MonitorKit/Settings/`（テストあり）、画面は `Sources/ClaudeDeck/Settings/`。

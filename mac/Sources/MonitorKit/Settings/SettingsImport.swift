@@ -108,6 +108,10 @@ public enum SettingsImport {
                         summary.linkedGitHub += 1
                         filled = true
                     }
+                    if merged.projects[index].site == nil, let site = project.site {
+                        merged.projects[index].site = site
+                        filled = true
+                    }
                     let added = addLinks(project.links, to: &merged.projects[index].links, summary: &summary)
                     if added > 0 {
                         summary.addedLinks += added

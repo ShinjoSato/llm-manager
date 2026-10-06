@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（概要・操作・GitHub の紐づけ・リンク・スレッド）。
+/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（概要・操作・サイト・GitHub の紐づけ・リンク・スレッド）。
 struct DirectoryDetailView: View {
     let model: ChatModel
     let directory: ProjectDirectory
@@ -14,6 +14,8 @@ struct DirectoryDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     overview
+                    // 別のプロジェクトへ移ったら見る元と表示中のページを持ち越さない。
+                    SitePreviewSection(project: project).id(project.id)
                     github
                     links
                     threads

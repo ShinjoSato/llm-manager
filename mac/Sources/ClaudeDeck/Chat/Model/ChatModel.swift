@@ -134,6 +134,10 @@ final class ChatModel {
         listItems = items
         directories = dirs
         discardVanishedExternalRooms(all)
+        // 読めない間の設定は古いままなので、消えたとはみなさない。
+        if SettingsStore.shared.problem == nil {
+            SiteThumbnailStore.shared.prune(keeping: Set(SettingsStore.shared.projects.map(\.path)))
+        }
     }
 
     /// 一覧から消えた外部ルームの添付を片付ける。未接続の間は一覧が古いので触らない。

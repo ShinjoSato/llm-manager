@@ -2,7 +2,7 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・リンク。
+/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・リンク・サイト。
 struct ProjectSettingsTab: View {
     let store: SettingsStore
     let navigation: SettingsNavigation
@@ -148,6 +148,7 @@ private struct ProjectDetailForm: View {
                     }
             }
             ProjectLinksEditor(store: store, project: project)
+            ProjectSiteEditor(store: store, project: project)
             Section {
                 LabeledContent("並び順") {
                     HStack {
