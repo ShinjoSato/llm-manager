@@ -352,6 +352,8 @@ public actor SessionHub {
         let since = last == 0 ? Double.infinity : now() - last
         // 親が応答を終えていても、裏でサブエージェントが動いていれば作業は進んでいる。
         let busy = !state.agents.isEmpty || (state.turnState == .busy && since < Self.staleBusy)
+        // 親の待ちがまだ答えられていなければ、子が動いていても親は止まっている。
+        if let hook = state.hookStatus, Attention.needsAttention(hook), (state.lastActivityAt ?? 0) <= state.hookAt { return (hook, .hook) }
         // ログ側の活動がフックより新しければ、実際には動いている。
         if busy && last > state.hookAt { return (.working, .transcript) }
         if let hook = state.hookStatus { return (hook, .hook) }
