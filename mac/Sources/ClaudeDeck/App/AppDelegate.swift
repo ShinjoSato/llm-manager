@@ -1,8 +1,9 @@
 import AppKit
 import MonitorKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow!
+    private var main: MainViewController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -16,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsStore.shared.startWatching()
 
         let main = MainViewController()
+        self.main = main
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1240, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -29,15 +31,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentMinSize = NSSize(width: 860, height: 520)
         window.setFrameAutosaveName("ClaudeDeckChatWindow")
         window.center()
+        // 終了を取り消した時に出し直せるよう、閉じても解放しない。
+        window.isReleasedWhenClosed = false
+        window.delegate = self
         window.makeKeyAndOrderFront(nil)
+        QuitCoordinator.shared.showMainWindow = { [weak self] in self?.window.makeKeyAndOrderFront(nil) }
         // 画面のモデルを渡した後に開く（操作の受け手が揃ってから）。既定は無効。
         RemoteAccessController.shared.startIfEnabled()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated { QuitCoordinator.shared.shouldTerminate() }
+    }
+
+    /// 最後のウィンドウを閉じると終了するので、閉じる前に終了の確認を通す（取り消したらウィンドウを残す）。
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        let others = NSApp.windows.contains { $0 !== sender && $0.isVisible && $0.canBecomeMain }
+        guard sender === window, !others else { return true }
+        NSApp.terminate(nil)
+        return false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
+            // ホスト中の claude は終了で PTY ごと閉じるので、その前の状態を書き切る。
+            main?.model.restorer.saveNow()
             SettingsStore.shared.flushPending(force: true)
             SettingsStore.shared.stopWatching()
         }

@@ -66,6 +66,8 @@ final class ChatModel {
     let transcripts: TranscriptCache
     /// 見出しの VS Code / GitHub / Xcode。
     let editors: EditorLauncher
+    /// ホスト中のセッションの記録と、起動時の再開。
+    let restorer = SessionRestorer()
 
     private(set) var hosted: [HostedSession] = []
     var selection: RoomID?
@@ -110,6 +112,8 @@ final class ChatModel {
         outbox.isHandingOver = { handover.inProgress.contains($0) }
         handover.onResume = { [weak self] project, sessionId, roomId in self?.resume(project: project, sessionId: sessionId, from: roomId) }
         refreshRooms()
+        restorer.model = self
+        restorer.start()
     }
 
     // MARK: - ルーム
@@ -277,6 +281,7 @@ final class ChatModel {
         hosted.append(session)
         session.start()
         select(.hosted(session.id))
+        saveHostedSoon()
     }
 
     func close(_ session: HostedSession) {
@@ -284,6 +289,7 @@ final class ChatModel {
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         outbox.forgetRoom(.hosted(session.id))
+        saveHostedSoon()
     }
 
     /// 引き継ぎで外部の claude を止められた。同じ会話を `--resume` で起動し、外部ルームの書きかけと添付を引き取る。
@@ -294,6 +300,33 @@ final class ChatModel {
         session.start()
         outbox.move(from: roomId, to: .hosted(session.id))
         select(.hosted(session.id))
+        saveHostedSoon()
+    }
+
+    /// 前回アプリが止まった時に動いていたセッションを同じ cwd で `--resume` する。書きかけも戻す。選択は未選択の時だけ移す。
+    func resumeRestored(_ record: HostedSessionRecord) -> HostedSession {
+        let project = SettingsStore.shared.projects.first(where: { $0.path == record.cwd })
+            ?? ManagedProject(name: record.name, path: record.cwd)
+        let session = HostedSession(project: project, resumeSessionId: record.sessionId)
+        session.onLimitReached = { [weak self] session in self?.showLimitAlert(for: session) }
+        hosted.append(session)
+        session.start()
+        if let draft = record.draft { outbox.drafts[.hosted(session.id)] = draft }
+        if selection == nil { select(.hosted(session.id)) }
+        return session
+    }
+
+    /// 一覧の作り直し（次の周回）を待ってから記録する。
+    private func saveHostedSoon() {
+        Task { @MainActor [weak self] in self?.restorer.saveNow() }
+    }
+
+    /// 終了の確認に使う、動いているホスト中のルーム。
+    var runningHostedRooms: [QuitConfirmation.Room] {
+        rooms.compactMap { room in
+            guard let session = room.hosted, session.end == nil else { return nil }
+            return QuitConfirmation.Room(name: room.name, status: room.status)
+        }
     }
 
     private func showLimitAlert(for session: HostedSession) {

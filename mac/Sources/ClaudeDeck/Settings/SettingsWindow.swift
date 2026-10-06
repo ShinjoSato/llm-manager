@@ -4,7 +4,7 @@ import Observation
 import SwiftUI
 
 enum SettingsTab: Hashable {
-    case projects, github, remote, characters, transfer, appearance
+    case projects, github, remote, characters, transfer, appearance, launch
 }
 
 /// 開いている設定画面のタブ（メニューから別のタブを指して開き直せるよう、ビューの外に持つ）。
@@ -98,6 +98,9 @@ struct SettingsView: View {
                 AppearanceSettingsTab(appearance: .shared)
                     .tabItem { Label("外観", systemImage: "paintpalette") }
                     .tag(SettingsTab.appearance)
+                LaunchSettingsTab(settings: .shared)
+                    .tabItem { Label("起動と終了", systemImage: "power") }
+                    .tag(SettingsTab.launch)
             }
             .padding(12)
         }
