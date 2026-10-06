@@ -37,8 +37,10 @@ extension ClaudeTerminalView {
         let quiet = Date().timeIntervalSince(lastDataTime)
         // 権限プロンプト・選択メニュー表示中も点滅表示で出力が流れ続けるので、活動量より先に見る。
         let prompt = PermissionPrompt.parse(screen: screen)
+        let waiting = sessionWaiting()
         // InputBlock.detect と同じ判定を、読み取り済みの権限プロンプトを使い回して行う。
-        let block: InputBlock? = prompt != nil ? .permission : (ChoiceMenu.isShowing(screen: screen) ? .menu : nil)
+        let showing = prompt == nil && ChoiceMenu.isShowing(screen: screen)
+        let block: InputBlock? = prompt != nil ? .permission : (showing || waiting?.blocksSend(screen: screen, screenChangedAt: lastDataTime) == true ? .menu : nil)
         let status: ClaudeStatus
         if block != nil {
             status = .waitingInput
@@ -50,9 +52,9 @@ extension ClaudeTerminalView {
         } else {
             status = .idle
         }
-        let menu = block == .menu ? ChoiceMenu.parseShowing(screen: screen, highlight: highlightReader()) : nil
+        let menu = showing ? ChoiceMenu.parseShowing(screen: screen, highlight: highlightReader()) : nil
         releasePendingArrowHoldIfDone(cursor: menu?.cursor)
-        let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen) : nil
+        let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen, waiting: waiting, screenChangedAt: lastDataTime) : nil
         logMenuScreen(menu: menu, unreadable: unreadable, screen: screen)
         let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable)
         guard next != screenState else { return }
@@ -123,9 +125,19 @@ extension ClaudeTerminalView {
         MenuScreenLog.record(kind: menu != nil ? .menu : .unreadable, columns: getTerminal().cols, screen: screen)
     }
 
-    /// 送信を止めるべき状態か。タイマーを待たず今の画面で判定する。
+    /// 送信を止めるべき状態か。タイマーを待たず今の画面とセッションファイルで判定する。
     func currentInputBlock() -> InputBlock? {
-        InputBlock.detect(screen: screenLines())
+        InputBlock.detect(screen: screenLines(), waiting: sessionWaiting(fresh: true), screenChangedAt: lastDataTime)
+    }
+
+    /// セッションファイルの返事待ちの状態。`fresh` でなければ 1 秒以内に読んだ値を使い回す。
+    func sessionWaiting(fresh: Bool = false) -> SessionWaiting? {
+        guard let pid = claudePid else { return nil }
+        let now = Date()
+        if !fresh, let cache = sessionWaitingCache, now.timeIntervalSince(cache.at) < 1 { return cache.value }
+        let value = ClaudeSessionRegistry().record(forPid: pid)?.waiting
+        sessionWaitingCache = (now, value)
+        return value
     }
 
     /// 今の画面の選択メニュー（権限プロンプトが出ていれば nil）。

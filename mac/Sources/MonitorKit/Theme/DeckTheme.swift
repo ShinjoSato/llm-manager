@@ -21,7 +21,7 @@ public enum DeckTheme: String, CaseIterable, Sendable, Identifiable {
     public var summary: String {
         switch self {
         case .night: return "暗い背景の配色です。"
-        case .light: return "生成りと淡い青の明るい面に、パステルの赤・青・緑・黄を添えた配色です。"
+        case .light: return "白の面に、パステルの赤・青・緑・黄を要所にだけ添えた配色です。"
         }
     }
 
@@ -46,6 +46,10 @@ public struct ThemePalette: Sendable, Equatable {
     public var inputSurface: UInt32
     public var inputBorder: UInt32
     public var selectedRow: UInt32
+    /// 切り替えバーで選んでいる見方のアイコン。
+    public var selectionInk: UInt32
+    /// リンクの印。
+    public var link: UInt32
 
     public var text: UInt32
     public var secondary: UInt32
@@ -103,7 +107,7 @@ public struct ThemePalette: Sendable, Equatable {
 
     public static let night = ThemePalette(
         background: 0x0a0f1a, sidebar: 0x0d1320, border: 0x1c2433, inputSurface: 0x121a29, inputBorder: 0x26324a,
-        selectedRow: 0x1a2335,
+        selectedRow: 0x1a2335, selectionInk: 0x34d399, link: 0x34d399,
         text: 0xe6ebf2, secondary: 0x97a3b6, tertiary: 0x7c889b, heading: 0xf1f5f9,
         permission: 0xfbbf24, waiting: 0x7cc4ff, working: 0x34d399, idle: 0x97a3b6, error: 0xf87171,
         userBubble: 0x2563eb, userBubbleText: 0xffffff, claudeBubble: 0x172033, claudeBubbleBorder: 0x222d42,
@@ -120,24 +124,24 @@ public struct ThemePalette: Sendable, Equatable {
         quietButton: .solid(0x121a29), quietButtonBorder: .solid(0x26324a)
     )
 
-    // 面は純白を避けて L* 90〜96 の色味のあるトーンにし、段の差で区切る。文字に使う色はその上で読める濃さに沈める。
+    // 面は白で、段差はごく薄いグレーだけ。色はパステルの赤・青・緑・黄の 4 色を役割で使い分け、文字はその濃い版で読める濃さにする。
     public static let light = ThemePalette(
-        background: 0xf1eee7, sidebar: 0xe4eaf3, border: 0xd3d6dd, inputSurface: 0xf6f3ec, inputBorder: 0xc8cfdb,
-        selectedRow: 0xd2e1f7,
+        background: 0xffffff, sidebar: 0xf7f8fa, border: 0xe4e7ec, inputSurface: 0xf7f8fa, inputBorder: 0xd8dce3,
+        selectedRow: 0xe3edfc, selectionInk: 0x1d5dbd, link: 0x1d5dbd,
         text: 0x1f2937, secondary: 0x3b424e, tertiary: 0x58606d, heading: 0x111827,
-        permission: 0x8a5100, waiting: 0x1b5dbb, working: 0x0d6c4c, idle: 0x58606e, error: 0xad3327,
-        userBubble: 0xd4e3fa, userBubbleText: 0x15315c, claudeBubble: 0xfaf1d9, claudeBubbleBorder: 0xeadcb4,
-        accent: 0xa6e9c4, onAccent: 0x0b4a2c, onPermission: 0xffffff, codeSurface: 0xebe7de, stagePanel: 0xebe7f2,
-        feedTool: 0x0d639c, feedPrompt: 0x6b3fc4, feedStatus: 0x8a5100, feedSession: 0x0d6c4c, feedAgent: 0x9c3196,
-        avatarPalette: [0x1c57cd, 0x732cec, 0xaf236f, 0xa83909, 0x8a5100, 0x0d6c4c, 0x0c6780, 0xad3327],
-        cardFill: .solid(0xfbefc9), cardBorder: .solid(0xe2b84f), pendingCardFill: .solid(0xfbefc9),
-        permissionChip: .solid(0xf6dd99), menuTabCurrent: .solid(0xf3d888),
-        permissionBadge: .solid(0xf9e2a6), waitingBadge: .solid(0xd6e4fb),
-        toolsFill: .solid(0xe9e3f5), toolsBorder: .solid(0xd6cdee),
-        toolsRunningFill: .solid(0xd5f0e1), toolsRunningBorder: .solid(0x9fd8b8),
-        externalBanner: .solid(0xdde9f8), relayFill: .solid(0xfbefc9),
-        externalTagFill: .solid(0xe6defa), externalTagBorder: .solid(0xc9b9ef),
-        quietButton: .solid(0xf7dfdc), quietButtonBorder: .solid(0xe6bcb6)
+        permission: 0x7a5600, waiting: 0x1d5dbd, working: 0x1b6b3a, idle: 0x5b6370, error: 0xb02a22,
+        userBubble: 0xdde9fc, userBubbleText: 0x15315c, claudeBubble: 0xffffff, claudeBubbleBorder: 0xe1e4ea,
+        accent: 0xb4e6c6, onAccent: 0x0b4a2c, onPermission: 0xffffff, codeSurface: 0xf3f4f6, stagePanel: 0xffffff,
+        feedTool: 0x7a5600, feedPrompt: 0x1d5dbd, feedStatus: 0xb02a22, feedSession: 0x1b6b3a, feedAgent: 0x2a4a8c,
+        avatarPalette: [0x1d5dbd, 0x2a4a8c, 0x8c3a33, 0x6e5418, 0x7a5600, 0x1b6b3a, 0x3a6b4a, 0xb02a22],
+        cardFill: .solid(0xfff5d4), cardBorder: .solid(0xecd07a), pendingCardFill: .solid(0xfff9e6),
+        permissionChip: .solid(0xfbe7a6), menuTabCurrent: .solid(0xf8e08f),
+        permissionBadge: .solid(0xfdedb3), waitingBadge: .solid(0xdde9fc),
+        toolsFill: .solid(0xfff9e8), toolsBorder: .solid(0xf1e3b3),
+        toolsRunningFill: .solid(0xdcf2e3), toolsRunningBorder: .solid(0xa8dbb8),
+        externalBanner: .solid(0xe6effd), relayFill: .solid(0xfff5d4),
+        externalTagFill: .solid(0xe6effd), externalTagBorder: .solid(0xbcd1f3),
+        quietButton: .solid(0xfde3e0), quietButtonBorder: .solid(0xf1bdb6)
     )
 }
 

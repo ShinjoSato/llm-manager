@@ -26,7 +26,7 @@ struct ListModeBar: View {
         return Button { model.listMode = mode } label: {
             Image(systemName: mode.symbol)
                 .font(.system(size: 16, weight: selected ? .semibold : .regular))
-                .foregroundStyle(selected ? ChatTheme.accent : ChatTheme.tertiary)
+                .foregroundStyle(selected ? ChatTheme.selectionInk : ChatTheme.tertiary)
                 .frame(width: 36, height: 36)
                 .background(RoundedRectangle(cornerRadius: 8).fill(selected ? ChatTheme.selectedRow : Color.clear))
                 .overlay(alignment: .topTrailing) {

@@ -54,8 +54,11 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
 
     deinit { statusTimer?.invalidate() }
 
-    /// 送信を途中で取りやめ、端末の入力欄に本文や画像を残したかもしれない。
-    var mayHaveLeftover = false
+    /// セッションファイルの返事待ちの状態と読んだ時刻（画面の判定のたびにファイルを読まないため）。
+    var sessionWaitingCache: (at: Date, value: SessionWaiting?)?
+
+    /// 送信を途中で取りやめ、端末の入力欄に本文や画像を残したかもしれない時の、次の送信の扱い。
+    var leftoverCheck: LeftoverCheck = .none
 
     /// 送信の途中（画像の取り込み待ち〜Enter）。終わるまで次の送信を受けない。
     var isSending = false {

@@ -12,9 +12,16 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
     public var entrypoint: String?
     /// `interactive` など。
     public var kind: String?
+    /// `busy` / `idle` / `waiting`。
+    public var status: String?
+    /// 返事待ちの中身（`dialog open` 等）。
+    public var waitingFor: String?
+    /// status を書いた時刻（Unix ミリ秒）。
+    public var statusUpdatedAt: Double?
 
     public init(pid: Int32, sessionId: String, cwd: String? = nil, startedAt: Double? = nil, procStart: String? = nil,
-                entrypoint: String? = nil, kind: String? = nil) {
+                entrypoint: String? = nil, kind: String? = nil, status: String? = nil, waitingFor: String? = nil,
+                statusUpdatedAt: Double? = nil) {
         self.pid = pid
         self.sessionId = sessionId
         self.cwd = cwd
@@ -22,6 +29,28 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
         self.procStart = procStart
         self.entrypoint = entrypoint
         self.kind = kind
+        self.status = status
+        self.waitingFor = waitingFor
+        self.statusUpdatedAt = statusUpdatedAt
+    }
+
+    // 返事待ちの欄は送信の判定にしか使わないので、型が変わってもレコード（引き継ぎ等で使う）ごと落とさない。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pid = try c.decode(Int32.self, forKey: .pid)
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        startedAt = try c.decodeIfPresent(Double.self, forKey: .startedAt)
+        procStart = try c.decodeIfPresent(String.self, forKey: .procStart)
+        entrypoint = try c.decodeIfPresent(String.self, forKey: .entrypoint)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil
+        waitingFor = (try? c.decodeIfPresent(String.self, forKey: .waitingFor)) ?? nil
+        statusUpdatedAt = (try? c.decodeIfPresent(Double.self, forKey: .statusUpdatedAt)) ?? nil
+    }
+
+    public var waiting: SessionWaiting {
+        SessionWaiting(status: status, waitingFor: waitingFor, statusUpdatedAt: statusUpdatedAt)
     }
 }
 

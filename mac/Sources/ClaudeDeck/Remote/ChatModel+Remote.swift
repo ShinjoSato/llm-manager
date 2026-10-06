@@ -139,7 +139,7 @@ extension ChatModel: RemoteControl {
         switch completion {
         case .submitted: return .success("submitted")
         case .ended: return .failure("ended", completion.remoteNotice ?? "")
-        case .abortedBeforeBody, .abortedAfterBody: return .failure("aborted", completion.remoteNotice ?? "")
+        case .abortedBeforeBody, .abortedAfterBody, .notPasted: return .failure("aborted", completion.remoteNotice ?? "")
         }
     }
 
