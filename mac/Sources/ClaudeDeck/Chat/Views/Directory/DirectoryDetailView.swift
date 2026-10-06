@@ -26,7 +26,8 @@ struct DirectoryDetailView: View {
                     threads.frame(maxWidth: Self.readableWidth, alignment: .leading)
                 }
                 .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // 中身が広くてもスクロール欄の幅に収め、はみ出して中央寄せにさせない。
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.automatic)
             .background {

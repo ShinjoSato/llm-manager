@@ -138,14 +138,9 @@ struct SitePreviewFrame: View {
                     .allowsHitTesting(false)
             }
         }
-        .frame(maxWidth: .infinity)
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { availableWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, width in availableWidth = width }
-            }
-        }
+        // minWidth を付けないと中身の幅に引きずられ、測った幅がそのまま次の幅になって欄が縮んでも戻らない。
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .onGeometryChange(for: Double.self) { $0.size.width } action: { availableWidth = $0 }
         .accessibilityLabel("サイトのプレビュー（\(viewport.label)）")
     }
 }
