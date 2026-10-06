@@ -252,7 +252,7 @@ final class ChatOutbox {
     /// 引き継ぎで外部ルームからホスト中のルームへ移った。書きかけと添付（取り込み中のものも）を移し先へ渡す。
     func move(from roomId: RoomID, to newRoomId: RoomID) {
         if let draft = drafts.removeValue(forKey: roomId) { drafts[newRoomId] = draft }
-        if let pending = attachments.removeValue(forKey: roomId) { attachments[newRoomId] = pending }
+        if let pending = attachments.removeValue(forKey: roomId) { attachments[newRoomId, default: []].append(contentsOf: pending) }
         if let pending = importing.removeValue(forKey: roomId) {
             importing[newRoomId, default: [:]].merge(pending) { _, moved in moved }
             redirects.redirect(pending.keys, to: newRoomId)
