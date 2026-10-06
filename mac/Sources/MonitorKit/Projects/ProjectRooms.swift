@@ -46,14 +46,15 @@ public enum ProjectRoomEntry: Sendable, Equatable, Identifiable {
 }
 
 public enum ProjectRoomGrouping {
-    /// active のプロジェクトごとに設定の順で枠を作り、どれにも当たらないルームは最後の「その他」へ（空なら出さない）。
+    /// active のプロジェクトごとに設定の順で枠を作り、どの active のプロジェクトにも当たらないルームは最後の「その他」へ（空なら出さない）。
     /// 検索中は一致するルームのある枠だけを返す。
     public static func sections(projects: [ManagedProject], rooms: [ProjectRoomKey], query: String = "") -> [ProjectRoomSection] {
         let active = projects.filter { $0.status == .active }
         var members: [UUID: [RoomKey]] = [:]
         var others: [RoomKey] = []
         for room in rooms where RoomGrouping.matches(room.key, query: query) {
-            if let project = ProjectMatcher.project(for: room.cwd, in: active) {
+            // 全プロジェクトで照合するのは「GitHub」ボタンと同じプロジェクトを指すため（いちばん深い一致が paused なら親の枠に入れない）。
+            if let project = ProjectMatcher.project(for: room.cwd, in: projects), project.status == .active {
                 members[project.id, default: []].append(room.key)
             } else {
                 others.append(room.key)

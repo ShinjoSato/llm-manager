@@ -58,7 +58,7 @@ struct ChatRootView<Trailing: View>: View {
 
     /// 何も選んでいない時だけ先頭を選ぶ。選択中のルームが一覧から消えても別のルームへ移さない（戻ってきた時に書きかけごと続けられるように）。
     private func selectFirstIfNeeded() {
-        if model.selection == nil, let first = model.groupedRooms.first?.rooms.first {
+        if model.selection == nil, let first = model.firstVisibleRoom {
             model.select(first.id)
         }
     }

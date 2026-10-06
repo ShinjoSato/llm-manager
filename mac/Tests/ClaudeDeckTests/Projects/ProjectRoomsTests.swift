@@ -39,6 +39,15 @@ final class ProjectRoomsTests: XCTestCase {
         XCTAssertEqual(sections.map(\.name), ["その他"])
     }
 
+    func testRoomUnderInactiveProjectNestedInActiveGoesToOther() {
+        let projects = [project("root", "/p"), project("app", "/p/app", .paused)]
+        let rooms = [room("x", "/p/app"), room("y", "/p/app/ios"), room("z", "/p/docs")]
+        let sections = ProjectRoomGrouping.sections(projects: projects, rooms: rooms)
+        XCTAssertEqual(sections.map(\.name), ["root", "その他"])
+        XCTAssertEqual(sections.map(\.ids), [["z"], ["x", "y"]])
+        XCTAssertEqual(ProjectMatcher.project(for: "/p/app/ios", in: projects)?.name, "app")
+    }
+
     func testOrderInsideSectionIsAttentionActiveIdleThenRecent() {
         let rooms = [room("idle", "/p/a", .idle, at: 9), room("work", "/p/a", .working, at: 1),
                      room("perm", "/p/a", .permission, at: 0), room("work2", "/p/a", .working, at: 5)]

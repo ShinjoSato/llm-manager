@@ -23,12 +23,6 @@ struct Room: Identifiable {
     var activityDate: Date? { activityAt.map(Date.init(epochMillis:)) }
 }
 
-struct RoomGroup: Identifiable {
-    let phase: RoomPhase
-    let rooms: [Room]
-    var id: RoomPhase { phase }
-}
-
 /// ルーム一覧の 1 段。id は `ProjectRoomEntry.id`（行は枠を移っても同じ）。
 struct RoomListItem: Identifiable {
     enum Kind {
@@ -73,13 +67,12 @@ final class ChatModel {
     var query = ""
     /// 畳んだ枠の id（プロジェクトの UUID か「その他」）。
     var collapsedSections: Set<String> = [] {
-        didSet { UserDefaults.standard.set(collapsedSections.sorted(), forKey: Self.collapsedKey) }
+        didSet { UserDefaults.standard.set(Self.savedSections(collapsedSections).sorted(), forKey: Self.collapsedKey) }
     }
     private static let collapsedKey = "roomList.collapsedSections"
 
     /// ルーム一覧。feed・セッション・ホスト中のセッションが変わった時だけ作り直す（描画のたびに feed を走査しない）。
     private(set) var rooms: [Room] = []
-    private(set) var groupedRooms: [RoomGroup] = []
     /// 一覧に描く順の見出しと行。
     private(set) var listItems: [RoomListItem] = []
 
@@ -112,16 +105,15 @@ final class ChatModel {
 
     /// 一覧を作り直し、読んだ値（feed・sessions・ホスト中のセッション・検索語・既読）が変わったら次の周回でもう一度作る。
     private func refreshRooms() {
-        let (all, grouped) = withObservationTracking {
+        let (all, items) = withObservationTracking {
             let all = buildRooms()
-            return (all, group(all))
+            return (all, listItems(all))
         } onChange: { [weak self] in
             // onChange は値が書き換わる前に呼ばれるので、書き換え後に作り直す。
             Task { @MainActor [weak self] in self?.refreshRooms() }
         }
         rooms = all
-        groupedRooms = grouped.groups
-        listItems = grouped.items
+        listItems = items
         discardVanishedExternalRooms(all)
     }
 
@@ -179,28 +171,37 @@ final class ChatModel {
         return result
     }
 
-    private func group(_ all: [Room]) -> (groups: [RoomGroup], items: [RoomListItem]) {
+    private func listItems(_ all: [Room]) -> [RoomListItem] {
         let byKey = Dictionary(all.map { ($0.id.string, $0) }, uniquingKeysWith: { a, _ in a })
         let keys = all.map { room in
             RoomKey(id: room.id.string, name: room.name, status: room.status, activityAt: room.activityAt,
                     searchText: [room.branch, room.snapshot?.title, room.line, room.cwd].compactMap { $0 }.joined(separator: " "))
         }
-        let grouped = RoomGrouping.group(keys, query: query)
-        let groups = grouped.map { group in
-            RoomGroup(phase: group.phase, rooms: group.ids.compactMap { byKey[$0] })
-        }
         let sections = ProjectRoomGrouping.sections(
             projects: SettingsStore.shared.projects,
             rooms: zip(keys, all).map { ProjectRoomKey(key: $0, cwd: $1.cwd) },
             query: query)
-        let items = ProjectRoomGrouping.entries(sections, collapsed: collapsedSections, query: query).compactMap { entry -> RoomListItem? in
+        return ProjectRoomGrouping.entries(sections, collapsed: collapsedSections, query: query).compactMap { entry -> RoomListItem? in
             switch entry {
             case .header(let section, let collapsed): return RoomListItem(id: entry.id, kind: .header(section, collapsed: collapsed))
             case .row(let key, _, let last): return byKey[key].map { RoomListItem(id: entry.id, kind: .row($0, last: last)) }
             case .empty: return RoomListItem(id: entry.id, kind: .empty)
             }
         }
-        return (groups, items)
+    }
+
+    /// 保存する開閉は今ある枠の分だけ（消えたプロジェクトの id を溜めないため）。設定が読めない間は一覧が当てにならないので落とさない。
+    private static func savedSections(_ collapsed: Set<String>) -> Set<String> {
+        let settings = SettingsStore.shared
+        guard settings.problem == nil else { return collapsed }
+        let live = Set(settings.projects.filter { $0.status == .active }.map(\.id.uuidString) + [ProjectRoomSection.otherId])
+        return collapsed.intersection(live)
+    }
+
+    /// 一覧で見えている最初の行（畳んだ枠の中は除く）。
+    var firstVisibleRoom: Room? {
+        for item in listItems { if case .row(let room, _) = item.kind { return room } }
+        return nil
     }
 
     func toggleSection(_ id: String) {
