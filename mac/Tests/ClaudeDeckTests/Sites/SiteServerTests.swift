@@ -20,12 +20,18 @@ final class SiteServerTests: XCTestCase {
         try write("img/logo.svg", "<svg/>")
         try write(".env", "SECRET=1")
         try write("noindex/readme.txt", "x")
+        // Next.js の既定（trailingSlash: false）の形。
+        try write("blog.html", "<h1>blog</h1>")
+        try write("blog/first.html", "<h1>first</h1>")
+        try write(".git/config", "SECRET-GIT")
         // 書き出しの外（読ませてはいけないもの）。
         try write("../secret.txt", "secret")
         try write("../../outside.txt", "outside")
         try FileManager.default.createSymbolicLink(atPath: root + "/leak.txt", withDestinationPath: dir.appendingPathComponent("outside.txt").path)
         try FileManager.default.createSymbolicLink(atPath: root + "/up", withDestinationPath: dir.path)
         try FileManager.default.createSymbolicLink(atPath: root + "/inner.js", withDestinationPath: root + "/_next/static/app.js")
+        try FileManager.default.createSymbolicLink(atPath: root + "/env.txt", withDestinationPath: root + "/.env")
+        try FileManager.default.createSymbolicLink(atPath: root + "/repo", withDestinationPath: root + "/.git")
         servers = SitePreviewServers()
         base = try await servers.baseURL(for: root)
     }
@@ -94,6 +100,64 @@ final class SiteServerTests: XCTestCase {
         XCTAssertEqual(body, "<h1>missing</h1>")
     }
 
+    func testFlatHTMLBesideFolderWithoutIndex() async throws {
+        var (status, body, _) = try await get("/blog")
+        XCTAssertEqual(status, 200, "blog.html と blog/ が並ぶ時は転送せずに blog.html")
+        XCTAssertEqual(body, "<h1>blog</h1>")
+        (status, body, _) = try await get("/blog/first")
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(body, "<h1>first</h1>")
+        (status, body, _) = try await get("/blog/")
+        XCTAssertEqual(status, 404)
+        XCTAssertEqual(body, "<h1>missing</h1>")
+    }
+
+    func testRangeRequests() async throws {
+        func fetch(_ range: String, method: String = "GET") async throws -> (Int, String, HTTPURLResponse) {
+            var request = URLRequest(url: URL(string: "/", relativeTo: base)!)
+            request.httpMethod = method
+            request.setValue(range, forHTTPHeaderField: "Range")
+            let (data, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+            let http = response as! HTTPURLResponse
+            return (http.statusCode, String(decoding: data, as: UTF8.self), http)
+        }
+        // index.html は "<h1>top</h1>"（12 バイト）。
+        var (status, body, response) = try await fetch("bytes=4-6")
+        XCTAssertEqual(status, 206)
+        XCTAssertEqual(body, "top")
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Range"), "bytes 4-6/12")
+        (status, body, _) = try await fetch("bytes=-4")
+        XCTAssertEqual(body, "/h1>")
+        (status, body, response) = try await fetch("bytes=8-100")
+        XCTAssertEqual(status, 206)
+        XCTAssertEqual(body, "/h1>")
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Range"), "bytes 8-11/12")
+        for bad in ["bytes=12-", "bytes=5-2", "bytes=0-1,4-5", "bytes=abc", "bytes=-0", "bytes=+1-2"] {
+            (status, _, response) = try await fetch(bad)
+            XCTAssertEqual(status, 416, bad)
+            XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Range"), "bytes */12", bad)
+        }
+        (status, body, response) = try await fetch("items=0-1")
+        XCTAssertEqual(status, 200, "bytes 以外の単位は無視して全体を返す")
+        XCTAssertEqual(body, "<h1>top</h1>")
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Accept-Ranges"), "bytes")
+        (status, body, response) = try await fetch("bytes=0-3", method: "HEAD")
+        XCTAssertEqual(status, 206)
+        XCTAssertEqual(body, "")
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Content-Length"), "4")
+    }
+
+    func testRedirectQueryWithControlCharactersIsRejected() async throws {
+        for query in ["x\r\nSet-Cookie: a=1", "a\nb", "a\u{7F}"] {
+            let response = await SiteServerRoutes.handle(HTTPRequest(method: "GET", path: "/ja", query: query), root: root)
+            XCTAssertEqual(response.status, 400, query)
+            XCTAssertFalse(response.headers.contains { $0.0 == "Location" }, query)
+        }
+        let ok = await SiteServerRoutes.handle(HTTPRequest(method: "GET", path: "/ja", query: "a=%0d%0a"), root: root)
+        XCTAssertEqual(ok.status, 308)
+        XCTAssertTrue(ok.headers.contains { $0.0 == "Location" && $0.1 == "/ja/?a=%0d%0a" })
+    }
+
     func testNotFoundUsesExported404() async throws {
         let (status, body, response) = try await get("/nope/page")
         XCTAssertEqual(status, 404)
@@ -103,7 +167,8 @@ final class SiteServerTests: XCTestCase {
 
     func testRefusesOutsideAndHiddenFiles() async throws {
         for path in ["/../secret.txt", "/%2e%2e/secret.txt", "/ja/%2E%2E/%2E%2E/secret.txt", "/..%2fsecret.txt",
-                     "/leak.txt", "/up/secret.txt", "/up/outside.txt", "/.env", "/%2eenv", "/ja/..%5c..%5csecret.txt"] {
+                     "/leak.txt", "/up/secret.txt", "/up/outside.txt", "/.env", "/%2eenv", "/ja/..%5c..%5csecret.txt",
+                     "/env.txt", "/repo/config", "/.git/config"] {
             let (status, body, _) = try await get(path)
             XCTAssertTrue([403, 404].contains(status), "\(path): \(status)")
             XCTAssertFalse(body.contains("secret") || body.contains("outside") || body.contains("SECRET"), path)
@@ -189,6 +254,17 @@ final class SiteFilesTests: XCTestCase {
     func testRedirectLocationCannotBecomeProtocolRelative() {
         XCTAssertEqual(SiteFiles.location(["evil.example"]), "/evil.example")
         XCTAssertEqual(SiteFiles.location(["a b", "c?d"]), "/a%20b/c%3Fd")
+    }
+
+    func testByteRangeParsing() {
+        XCTAssertEqual(SiteServerRoutes.byteRange("bytes=0-0", size: 10), .range(0..<1))
+        XCTAssertEqual(SiteServerRoutes.byteRange("bytes=3-", size: 10), .range(3..<10))
+        XCTAssertEqual(SiteServerRoutes.byteRange("bytes=-20", size: 10), .range(0..<10))
+        XCTAssertEqual(SiteServerRoutes.byteRange(" Bytes=2-4 ", size: 10), .range(2..<5))
+        XCTAssertEqual(SiteServerRoutes.byteRange("bytes=0-", size: 0), .unsatisfiable)
+        XCTAssertEqual(SiteServerRoutes.byteRange("bytes=-", size: 10), .unsatisfiable)
+        XCTAssertEqual(SiteServerRoutes.byteRange("bytes=99999999999999999999-", size: 10), .unsatisfiable)
+        XCTAssertEqual(SiteServerRoutes.byteRange("none", size: 10), .ignored)
     }
 
     func testRejectsMalformedPaths() {

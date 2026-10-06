@@ -139,6 +139,10 @@ private struct StageSitePreview: View {
                              detail: (SiteNavigationPolicy.browserURL(preview.currentURL) ?? target?.url)?.absoluteString) {
                     if let url = SiteNavigationPolicy.browserURL(preview.currentURL) ?? target?.url { NSWorkspace.shared.open(url) }
                 }
+            } else if snapshot?.exportModified != nil, snapshot?.serverProblem != nil {
+                HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの配信を開き直す") {
+                    reloadToken += 1
+                }
             }
         }
         .zIndex(1)
@@ -198,6 +202,10 @@ private struct StageSitePreview: View {
         if let problem = snapshot?.lookup.problem { return "設定のサイトの場所が使えません: \(problem)" }
         guard location != nil else { return "このプロジェクトに LP が見つかりません。設定のプロジェクトタブの「サイト」で場所を指定できます。" }
         if devServer?.isActive == true { return "開発サーバーがアドレス（http://localhost:…）を出すとここに映ります。" }
+        if snapshot?.exportModified != nil {
+            let reason = snapshot?.serverProblem.map { "（\($0)）" } ?? ""
+            return "書き出しはありますが、配信を開けませんでした\(reason)。「再読み込み」で開き直せます。"
+        }
         if let problem = snapshot?.readiness?.problem { return "開発サーバーを起動できず、書き出し（out/）もありません。\(problem)" }
         return "開発サーバーが動いておらず、書き出し（out/）もありません。開発サーバーを起動すると、変更がここにすぐ映ります。"
     }

@@ -161,8 +161,16 @@ public enum SiteLocator {
         return String(cString: resolved)
     }
 
-    /// 書き出しのトップの更新時刻（無ければ nil）。
+    /// 書き出しのトップの更新時刻（無い・書き出しがサイトの外を指すなら nil）。
     public static func exportModified(_ location: SiteLocation, fileManager: FileManager = .default) -> Date? {
-        (try? fileManager.attributesOfItem(atPath: location.exportIndex))?[.modificationDate] as? Date
+        guard isExportInside(exportDir: location.exportDir) else { return nil }
+        return (try? fileManager.attributesOfItem(atPath: location.exportIndex))?[.modificationDate] as? Date
+    }
+
+    /// 書き出しのフォルダ（`out` がリンクでも）の実体がサイトのフォルダの実体の中にあるか。
+    public static func isExportInside(exportDir: String) -> Bool {
+        let siteRoot = (exportDir as NSString).deletingLastPathComponent
+        guard let realSite = realPath(siteRoot), let realExport = realPath(exportDir) else { return false }
+        return realExport.hasPrefix(realSite + "/")
     }
 }

@@ -3,7 +3,7 @@ import Network
 
 /// 静的書き出しの配信の口（GET / HEAD だけ）。書き出しのフォルダの外・隠しファイルは返さない。
 public enum SiteServerRoutes {
-    /// これより大きいファイルは返さない（メモリに読み込んで返すため）。
+    /// 1 回の応答で読む上限（メモリに読み込んで返すため。これより大きいファイルは範囲指定でだけ返す）。
     public static let maxFileBytes = 64 * 1024 * 1024
 
     /// Host は 127.0.0.1 / localhost の自分のポートだけ（DNS リバインディングで別のサイトから読ませない）。接続元もループバックだけ。
@@ -29,15 +29,20 @@ public enum SiteServerRoutes {
         var response: HTTPResponse
         switch SiteFiles.resolve(urlPath: request.path, root: root) {
         case .file(let path):
-            response = file(path, status: 200)
+            response = file(path, status: 200, range: request.header("range"), head: head)
         case .redirect(let location):
-            let target = request.query.map { "\(location)?\($0)" } ?? location
-            response = HTTPResponse(status: 308, headers: [("Location", target), ("Cache-Control", "no-store")])
+            if let query = request.query, query.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) {
+                // 転送先の見出しに改行等を混ぜて別の見出しを差し込ませない。
+                response = text(400, "bad request")
+            } else {
+                let target = request.query.map { "\(location)?\($0)" } ?? location
+                response = HTTPResponse(status: 308, headers: [("Location", target), ("Cache-Control", "no-store")])
+            }
         case .forbidden:
             response = text(403, "forbidden")
         case .notFound:
             if let page = SiteFiles.notFoundPage(root: root) {
-                response = file(page, status: 404)
+                response = file(page, status: 404, head: head)
             } else {
                 response = text(404, FileManager.default.fileExists(atPath: root) ? "not found" : "書き出し（out/）がありません")
             }
@@ -46,15 +51,71 @@ public enum SiteServerRoutes {
         return response
     }
 
-    static func file(_ path: String, status: Int) -> HTTPResponse {
-        let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int ?? 0
-        guard size <= maxFileBytes else { return text(413, "file too large") }
-        guard let data = FileManager.default.contents(atPath: path) else { return text(404, "not found") }
+    /// `Range` の読み取り結果。
+    enum ByteRange: Equatable {
+        /// bytes 以外の単位（無視して全体を返す）。
+        case ignored
+        case unsatisfiable
+        case range(Range<Int>)
+    }
+
+    /// 単一範囲（`bytes=a-b` / `bytes=a-` / `bytes=-n`）だけを受ける。
+    static func byteRange(_ header: String, size: Int) -> ByteRange {
+        let value = header.trimmingCharacters(in: .whitespaces)
+        guard value.lowercased().hasPrefix("bytes=") else { return .ignored }
+        let spec = value.dropFirst(6).trimmingCharacters(in: .whitespaces)
+        guard let dash = spec.firstIndex(of: "-") else { return .unsatisfiable }
+        let first = String(spec[..<dash]), last = String(spec[spec.index(after: dash)...])
+        let digits = { (s: String) in s.unicodeScalars.allSatisfy { ("0"..."9").contains($0) } }
+        guard digits(first), digits(last), !(first.isEmpty && last.isEmpty) else { return .unsatisfiable }
+        if first.isEmpty {
+            guard let suffix = Int(last), suffix > 0, size > 0 else { return .unsatisfiable }
+            return .range(max(0, size - suffix)..<size)
+        }
+        guard let start = Int(first), start < size else { return .unsatisfiable }
+        if last.isEmpty { return .range(start..<size) }
+        guard let end = Int(last), end >= start else { return .unsatisfiable }
+        return .range(start..<min(end, size - 1) + 1)
+    }
+
+    static func file(_ path: String, status: Int, range: String? = nil, head: Bool = false) -> HTTPResponse {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int else { return text(404, "not found") }
         // 書き出しは作り直されるので、毎回取り直させる。
-        return HTTPResponse(status: status,
-                            headers: [("Content-Type", SiteFiles.contentType(for: path)), ("Cache-Control", "no-cache"),
-                                      ("X-Content-Type-Options", "nosniff")],
-                            body: data)
+        var headers = [("Content-Type", SiteFiles.contentType(for: path)), ("Cache-Control", "no-cache"),
+                       ("X-Content-Type-Options", "nosniff")]
+        var status = status
+        var span = 0..<size
+        if status == 200 {
+            headers.append(("Accept-Ranges", "bytes"))
+            switch range.map({ byteRange($0, size: size) }) ?? .ignored {
+            case .ignored:
+                guard size <= maxFileBytes else { return text(413, "file too large") }
+            case .unsatisfiable:
+                var response = text(416, "range not satisfiable")
+                response.headers.append(("Content-Range", "bytes */\(size)"))
+                return response
+            case .range(let requested):
+                // 動画等の大きいファイルも範囲ごとなら返せるよう、1 回分だけを上限に収める。
+                span = requested.lowerBound..<min(requested.upperBound, requested.lowerBound + maxFileBytes)
+                status = 206
+                headers.append(("Content-Range", "bytes \(span.lowerBound)-\(span.upperBound - 1)/\(size)"))
+            }
+        } else if size > maxFileBytes {
+            return text(413, "file too large")
+        }
+        if head {
+            var response = HTTPResponse(status: status, headers: headers)
+            response.omitsBody = true
+            response.declaredLength = span.count
+            return response
+        }
+        guard let handle = FileHandle(forReadingAtPath: path) else { return text(404, "not found") }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: UInt64(span.lowerBound))) != nil,
+              let data = try? handle.read(upToCount: span.count) ?? Data(), data.count == span.count else {
+            return text(404, "not found")
+        }
+        return HTTPResponse(status: status, headers: headers, body: data)
     }
 
     static func text(_ status: Int, _ message: String) -> HTTPResponse {
@@ -95,12 +156,21 @@ public actor SitePreviewServers {
                                         rejection: { SiteServerRoutes.rejection($0, port: $1) })
         let server = HTTPServer(options: options) { request in await SiteServerRoutes.handle(request, root: key) }
         servers[key] = server
-        let task = Task { try await Self.open(server) }
+        let task = Task { [weak self] in
+            try await Self.open(server) { Task { await self?.dropped(key, server: server) } }
+        }
         opening[key] = task
         return try await baseURL(for: key)
     }
 
-    private static func open(_ server: HTTPServer) async throws -> Int {
+    /// 待ち受けが後から落ちたら外し、次に頼まれた時に開き直す。
+    private func dropped(_ key: String, server: HTTPServer) {
+        guard servers[key] === server else { return }
+        servers[key] = nil
+        opening[key] = nil
+    }
+
+    private static func open(_ server: HTTPServer, onLost: @escaping @Sendable () -> Void) async throws -> Int {
         try await withCheckedThrowingContinuation { continuation in
             let once = OnceFlag()
             server.start(port: 0) { state in
@@ -108,9 +178,9 @@ public actor SitePreviewServers {
                 case .listening(let port):
                     if once.claim() { continuation.resume(returning: port) }
                 case .failed(let reason):
-                    if once.claim() { continuation.resume(throwing: Failure.failed(reason)) }
+                    if once.claim() { continuation.resume(throwing: Failure.failed(reason)) } else { onLost() }
                 case .portInUse:
-                    if once.claim() { continuation.resume(throwing: Failure.failed("ポートを取れませんでした")) }
+                    if once.claim() { continuation.resume(throwing: Failure.failed("ポートを取れませんでした")) } else { onLost() }
                 default:
                     break
                 }

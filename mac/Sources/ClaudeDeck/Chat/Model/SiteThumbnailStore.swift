@@ -23,13 +23,23 @@ final class SiteThumbnailStore {
     @ObservationIgnored private var queue: [Job] = []
     @ObservationIgnored private var capturing = false
     @ObservationIgnored private let capturer = SiteSnapshotter()
+    /// 行ごとの最新の問い合わせの番号（遅れて返った古い結果で上書きしないため）。
+    @ObservationIgnored private var generations: [String: Int] = [:]
+    /// 行ごとに今出すべきサムネイルのファイル（古い撮影の結果を捨てるため）。
+    @ObservationIgnored private var wanted: [String: URL] = [:]
+    /// 行ごとの書き出しのフォルダ（プロジェクトを消した時に画像を片付けるため）。
+    @ObservationIgnored private var exportDirs: [String: String] = [:]
+    /// 撮れなかった書き出し（ファイル名＝サイトと更新時刻）。同じ書き出しは撮り直さない。
+    @ObservationIgnored private var failed: Set<String> = []
 
-    /// 必要なら読み込む・撮る。設定の `site` が変わった時はすぐ見直す。
-    func request(_ project: ManagedProject) {
+    /// 必要なら読み込む・撮る。設定の `site` が変わった時はすぐ見直す。`force` は間引きと撮れなかった記録を飛ばす（再読み込み）。
+    func request(_ project: ManagedProject, force: Bool = false) {
         let key = project.path
         let signature = project.site?.path ?? ""
-        if let last = checked[key], last.signature == signature, Date().timeIntervalSince(last.at) < Self.recheckInterval { return }
+        if !force, let last = checked[key], last.signature == signature, Date().timeIntervalSince(last.at) < Self.recheckInterval { return }
         checked[key] = (signature, Date())
+        let generation = (generations[key] ?? 0) + 1
+        generations[key] = generation
         Task {
             let found = await Task.detached(priority: .utility) { () -> (String, URL, Bool)? in
                 guard let location = SiteLocator.lookup(project: project).location,
@@ -38,16 +48,39 @@ final class SiteThumbnailStore {
                     SiteThumbnails.fileName(exportDir: location.exportDir, modified: modified))
                 return (location.exportDir, file, FileManager.default.fileExists(atPath: file.path))
             }.value
+            guard generations[key] == generation else { return }
             guard let (exportDir, file, cached) = found else {
+                wanted[key] = nil
                 images[key] = nil
                 return
             }
+            wanted[key] = file
+            exportDirs[key] = exportDir
             if cached, let image = NSImage(contentsOf: file) {
                 images[key] = image
                 return
             }
+            if force { failed.remove(file.lastPathComponent) }
+            guard !failed.contains(file.lastPathComponent) else { return }
             enqueue(Job(key: key, exportDir: exportDir, file: file))
         }
+    }
+
+    /// 設定から消えたプロジェクトのサムネイル（画面の分と保存した画像）を片付ける。
+    func prune(keeping paths: Set<String>) {
+        let gone = Set(checked.keys).union(images.keys).union(exportDirs.keys).subtracting(paths)
+        guard !gone.isEmpty else { return }
+        var dirs: [String] = []
+        for key in gone {
+            images[key] = nil
+            checked[key] = nil
+            generations[key] = nil
+            wanted[key] = nil
+            if let dir = exportDirs.removeValue(forKey: key), !exportDirs.values.contains(dir) { dirs.append(dir) }
+        }
+        queue.removeAll { gone.contains($0.key) }
+        guard !dirs.isEmpty else { return }
+        Task.detached(priority: .utility) { Self.remove(exportDirs: dirs) }
     }
 
     private func enqueue(_ job: Job) {
@@ -66,9 +99,23 @@ final class SiteThumbnailStore {
                 runNext()
             }
             guard let base = try? await SitePreviewServers.shared.baseURL(for: job.exportDir),
-                  let image = await capturer.capture(base) else { return }
-            images[job.key] = image
+                  let image = await capturer.capture(base) else {
+                failed.insert(job.file.lastPathComponent)
+                return
+            }
+            if wanted[job.key] == job.file { images[job.key] = image }
             await Task.detached(priority: .utility) { Self.store(image, at: job.file, exportDir: job.exportDir) }.value
+        }
+    }
+
+    nonisolated private static func remove(exportDirs: [String]) {
+        let fm = FileManager.default
+        let dir = SiteThumbnails.directory
+        let names = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+        for exportDir in exportDirs {
+            for name in SiteThumbnails.stale(in: names, exportDir: exportDir, keep: "") {
+                try? fm.removeItem(at: dir.appendingPathComponent(name))
+            }
         }
     }
 
@@ -108,6 +155,9 @@ private final class SiteSnapshotter: NSObject, WKNavigationDelegate {
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.ignoresMouseEvents = true
+        // ウィンドウメニュー・⌘` の巡回・Mission Control に出さない。
+        window.isExcludedFromWindowsMenu = true
+        window.collectionBehavior = [.transient, .ignoresCycle]
         window.contentView = webView
         window.orderBack(nil)
         self.window = window
@@ -121,14 +171,17 @@ private final class SiteSnapshotter: NSObject, WKNavigationDelegate {
             self.webView = nil
         }
 
+        var deadline: Task<Void, Never>?
         let loaded = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             finished = continuation
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
-            Task { [weak self] in
-                try? await Task.sleep(for: Self.timeout)
+            // 締め切りは撮影ごとに取り消す（前の撮影の締め切りで次の撮影を打ち切らないため）。
+            deadline = Task { [weak self] in
+                guard (try? await Task.sleep(for: Self.timeout)) != nil else { return }
                 self?.resume(false)
             }
         }
+        deadline?.cancel()
         guard loaded else { return nil }
         try? await Task.sleep(for: Self.settle)
         let config2 = WKSnapshotConfiguration()

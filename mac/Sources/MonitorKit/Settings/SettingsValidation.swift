@@ -119,6 +119,7 @@ public enum SettingsValidation {
                 for p in problems { result.append("「\(project.name)」のリンク「\(link.name)」: \(p)") }
             }
             if let site = project.site, let p = sitePathProblem(site.path) { result.append("「\(project.name)」のサイト: \(p)") }
+            if project.ignoredSite.isSet { result.append("「\(project.name)」のサイト: 形が正しくないため無視しました（{\"path\": \"相対パス\"} の形で書いてください）") }
         }
         for (index, board) in settings.boards.enumerated() {
             for p in boardProblems(board) { result.append("ボード「\(board.name)」: \(p)") }
