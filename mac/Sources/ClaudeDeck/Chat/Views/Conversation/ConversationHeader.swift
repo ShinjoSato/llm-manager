@@ -201,9 +201,11 @@ struct HeaderButtonLabel: View {
 extension View {
     /// 名前と開く先（処理中は状態）を自前のツールチップで出し、VoiceOver には名前と状態を渡す。
     func headerButtonHelp(name: String, detail: String?, busyStatus: String?) -> some View {
-        modifier(HeaderTooltipModifier(name: name, details: HeaderTooltip.details(detail: detail, busyStatus: busyStatus)))
+        let details = HeaderTooltip.details(detail: detail, busyStatus: busyStatus)
+        return modifier(HeaderTooltipModifier(name: name, details: details))
             .accessibilityLabel(name)
             .accessibilityValue(busyStatus ?? "")
+            .accessibilityHint(busyStatus == nil ? details.joined(separator: "\n") : "")
     }
 }
 
@@ -213,7 +215,7 @@ struct HeaderTooltip: View {
     let details: [String]
 
     static let delay: Duration = .milliseconds(400)
-    private static let maxWidth: CGFloat = 340
+    static let maxWidth: CGFloat = 340
 
     /// 処理中は状態、そうでなければ開く先を、空行を除いて 1 行ずつ。
     static func details(detail: String?, busyStatus: String?) -> [String] {
@@ -235,7 +237,6 @@ struct HeaderTooltip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .frame(maxWidth: Self.maxWidth, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.claudeBubble))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.claudeBubbleBorder))
@@ -262,8 +263,9 @@ private struct HeaderTooltipModifier: ViewModifier {
             }
             .overlay(alignment: .bottomTrailing) {
                 if shown {
+                    // overlay はボタンの幅を提案するので、幅の枠を与えて右端をそろえ左へ伸ばす。
                     HeaderTooltip(name: name, details: details)
-                        // 右端をボタンにそろえて左へ伸ばし、ウィンドウの右端で切れないようにする。
+                        .frame(width: HeaderTooltip.maxWidth, alignment: .trailing)
                         .alignmentGuide(.bottom) { $0[.top] - 6 }
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
