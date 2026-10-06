@@ -335,7 +335,7 @@ public enum SendCompletion: Sendable, Equatable {
         case .notPasted(let imagesPasted):
             return Self.notPastedNotice + "Enter は押さず、本文と添付はこの入力欄に戻しました。"
                 + (imagesPasted ? "端末側の入力欄には画像（[Image #N]）が残っているので、そのまま送り直すと画像が二重に付きます。" : "")
-                + "ターミナルでダイアログを閉じてから送り直してください。"
+                + "ターミナルでダイアログを閉じてから送り直してください。" + Self.lateNotice
         case .abortedAfterBody(let block):
             // 入力欄に入った本文を安全に消すキーが無い（Esc はメニューの取り消しになる）ので、下書きには戻さず二重送信を避ける。
             return "送信の途中で\(Self.blockName(block))が出たため、本文を貼った後、Enter を押さずに取りやめました。"
@@ -356,11 +356,12 @@ public enum SendCompletion: Sendable, Equatable {
             return "送信の途中で\(Self.blockName(block))が出たため、本文を貼った後、Enter を押さずに取りやめました。"
                 + "端末側の入力欄に本文が残っています。\(Self.answerHint(block))送ると、残っている本文とつながって送られます。"
         case .notPasted:
-            return Self.notPastedNotice + "Enter は押していません。"
+            return Self.notPastedNotice + "Enter は押していません。" + Self.lateNotice
         }
     }
 
     static let notPastedNotice = "端末の入力欄に入りませんでした（ダイアログ等が開いている可能性があります）。"
+    static let lateNotice = "遅れて端末に入った場合は、次の送信の前に残りとして知らせます。"
 
     static func blockName(_ block: InputBlock) -> String {
         switch block {
@@ -384,15 +385,56 @@ public enum PasteCheck {
         case unknown
     }
 
-    /// 最初の確認（`PTYInput.submitDelay` 後）で入っていない時に、描き替えを待つ時間。
-    public static let extraWait: TimeInterval = 1.0
     public static let pollInterval: TimeInterval = 0.1
 
-    /// `before` は貼る前、`after` は今の入力欄の文字（`InputBox.text`。読めなければ nil）。
-    public static func judge(before: String?, after: String?) -> Verdict {
+    /// 最初の確認（`PTYInput.submitDelay` 後）で入っていない時に、描き替えを待つ時間。長文ほど取り込みが遅いので延ばす。
+    public static func extraWait(bodyLength: Int) -> TimeInterval {
+        min(1.0 + Double(bodyLength) / 2000, 4.0)
+    }
+
+    /// `before` は貼る前、`after` は今の入力欄の文字（`InputBox.text`。読めなければ nil）、`body` は貼った本文。
+    public static func judge(before: String?, after: String?, body: String) -> Verdict {
         guard let after else { return .unknown }
+        // 例文と同じ形の本文は入っても空欄と見分けられないので、確かめずに送る。
+        let text = plainText(body)
+        if !text.contains("\n"), InputBox.isPlaceholder(text) { return .unknown }
         if after.isEmpty || after == before { return .missing }
         return .pasted
+    }
+
+    static func plainText(_ body: String) -> String {
+        body.replacingOccurrences(of: "\u{1b}[200~", with: "").replacingOccurrences(of: "\u{1b}[201~", with: "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// 取りやめた送信の残りが端末の入力欄にあるかもしれない時の、次の送信の扱い。
+public enum LeftoverCheck: Sendable, Equatable {
+    case none
+    /// 残りがあれば 1 回だけ知らせる（未知の薄字表示を本文と誤認しても、もう一度送れば送れる）。
+    case warnOnce
+    /// 貼り付けが入らなかった送信の後。遅れて入った本文と戻した本文が二重にならないよう、入力欄が貼る前（`baseline`）か空と確かめるまで送らない。
+    case untilClear(baseline: String)
+
+    public enum Decision: Sendable, Equatable {
+        case send
+        /// `strict` は確かめられるまで何度でも止める側。
+        case refuse(strict: Bool)
+    }
+
+    /// 今の入力欄（読めなければ nil）から、送るかと次の状態を決める。
+    public func decide(box: String?) -> (Decision, next: LeftoverCheck) {
+        switch self {
+        case .none:
+            return (.send, .none)
+        case .warnOnce:
+            // 入力欄が読めない時は残りを確かめられないが、くっつく害は小さいので送る（印は残す）。
+            guard let box else { return (.send, .warnOnce) }
+            return (box.isEmpty ? .send : .refuse(strict: false), .none)
+        case .untilClear(let baseline):
+            guard let box, box.isEmpty || box == baseline else { return (.refuse(strict: true), self) }
+            return (.send, .none)
+        }
     }
 }
 

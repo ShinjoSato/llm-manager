@@ -15,6 +15,8 @@ extension ClaudeTerminalView {
         case blocked(InputBlock)
         /// 取りやめた送信の本文が端末の入力欄に残っている。続けて貼ると前回の本文とくっつくので送らない。
         case leftover
+        /// 入らなかった貼り付けが遅れて入ったか、入力欄を確かめられない。戻した本文と二重にならないよう空になるまで送らない。
+        case lateLeftover
     }
 
     /// 本文を入力欄に貼り付けてから Enter で送る（作業中でも Claude Code がキューに積む）。止める時は何も貼らない。
@@ -22,15 +24,12 @@ extension ClaudeTerminalView {
     func sendMessage(_ text: String, attachments: [Attachment] = [], completion: @escaping (SendCompletion) -> Void) -> SendResult {
         guard !isSending else { return .busy }
         let screen = screenLines()
-        if let block = InputBlock.detect(screen: screen, waiting: sessionWaiting(fresh: true)) { return .blocked(block) }
-        if mayHaveLeftover {
-            // 入力欄が読めない時は残りを確かめられないが、くっつく害は小さいので送る（印は残す）。
-            if let boxText = InputBox.text(screen: screen) {
-                mayHaveLeftover = false
-                // 警告は 1 回だけ。未知の薄字表示を本文と誤認しても、もう一度送れば送れるようにする。
-                guard boxText.isEmpty else { return .leftover }
-            }
+        if let block = InputBlock.detect(screen: screen, waiting: sessionWaiting(fresh: true), screenChangedAt: lastDataTime) {
+            return .blocked(block)
         }
+        let (decision, next) = leftoverCheck.decide(box: InputBox.text(screen: screen))
+        leftoverCheck = next
+        if case .refuse(let strict) = decision { return strict ? .lateLeftover : .leftover }
         let bracketed = getTerminal().bracketedPasteMode
         let message = AttachmentFormat.outgoing(text: text, attachments: attachments, pasteImages: bracketed)
         let body = PTYInput.messageBody(message.body, bracketedPaste: bracketed)
@@ -53,11 +52,11 @@ extension ClaudeTerminalView {
             guard let self else { return finish(.ended) }
             if let block = self.currentInputBlock() {
                 // 本文は貼っていないが、入力欄には画像の印が残る。
-                self.mayHaveLeftover = true
+                self.leftoverCheck = .warnOnce
                 return finish(.abortedBeforeBody(block))
             }
             // 取り込みを確かめられなかった時は Enter が捨てられているかもしれないので、次の送信で入力欄の残りを確かめる。
-            if !ingested { self.mayHaveLeftover = true }
+            if !ingested { self.leftoverCheck = .warnOnce }
             if let body {
                 self.pasteAndSubmit(body, before: InputBox.text(screen: self.screenLines()), imagesPasted: true, finish: finish)
             } else {
@@ -71,30 +70,31 @@ extension ClaudeTerminalView {
     /// 本文を貼り、端末の入力欄に入ったのを確かめてから Enter を送る。`before` は貼る前の入力欄（読めなければ nil）。
     private func pasteAndSubmit(_ body: String, before: String?, imagesPasted: Bool, finish: @escaping (SendCompletion) -> Void) {
         send(txt: body)
-        let deadline = Date().addingTimeInterval(PTYInput.submitDelay + PasteCheck.extraWait)
+        let deadline = Date().addingTimeInterval(PTYInput.submitDelay + PasteCheck.extraWait(bodyLength: body.count))
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.submitDelay) { [weak self] in
-            self?.submitIfPasted(before: before, imagesPasted: imagesPasted, deadline: deadline, finish: finish) ?? finish(.ended)
+            self?.submitIfPasted(body, before: before, imagesPasted: imagesPasted, deadline: deadline, finish: finish) ?? finish(.ended)
         }
     }
 
-    private func submitIfPasted(before: String?, imagesPasted: Bool, deadline: Date, finish: @escaping (SendCompletion) -> Void) {
+    private func submitIfPasted(_ body: String, before: String?, imagesPasted: Bool, deadline: Date,
+                                finish: @escaping (SendCompletion) -> Void) {
         if let block = currentInputBlock() {
-            mayHaveLeftover = true
+            leftoverCheck = .warnOnce
             return finish(.abortedAfterBody(block))
         }
-        switch PasteCheck.judge(before: before, after: InputBox.text(screen: screenLines())) {
+        switch PasteCheck.judge(before: before, after: InputBox.text(screen: screenLines()), body: body) {
         case .pasted, .unknown:
             send(txt: PTYInput.submitKey)
             finish(.submitted)
         case .missing:
             guard Date() >= deadline else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + PasteCheck.pollInterval) { [weak self] in
-                    self?.submitIfPasted(before: before, imagesPasted: imagesPasted, deadline: deadline, finish: finish) ?? finish(.ended)
+                    self?.submitIfPasted(body, before: before, imagesPasted: imagesPasted, deadline: deadline, finish: finish) ?? finish(.ended)
                 }
                 return
             }
             // 後から届いた貼り付けが入力欄に残るかもしれないので、次の送信で確かめる。
-            mayHaveLeftover = true
+            leftoverCheck = .untilClear(baseline: before ?? "")
             finish(.notPasted(imagesPasted: imagesPasted))
         }
     }
@@ -261,7 +261,7 @@ extension ClaudeTerminalView {
     func cancelUnreadableMenu(_ expected: UnreadableMenu) -> UnreadableCancelResult {
         guard !isNavigatingMenu else { return .changed }
         let screen = screenLines()
-        guard let current = ChoiceMenu.unreadable(screen: screen, waiting: sessionWaiting(fresh: true)) else {
+        guard let current = ChoiceMenu.unreadable(screen: screen, waiting: sessionWaiting(fresh: true), screenChangedAt: lastDataTime) else {
             evaluateStatus()
             return .gone
         }

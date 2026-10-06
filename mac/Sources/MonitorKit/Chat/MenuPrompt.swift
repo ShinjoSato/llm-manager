@@ -334,10 +334,10 @@ extension ChoiceMenu {
     }
 
     /// 画面で読めない選択メニューか、画面に出ていないがセッションファイルがダイアログを示す時の写し。
-    public static func unreadable(screen: [String], waiting: SessionWaiting?) -> UnreadableMenu? {
+    public static func unreadable(screen: [String], waiting: SessionWaiting?, screenChangedAt: Date?) -> UnreadableMenu? {
         guard PermissionPrompt.parse(screen: screen) == nil else { return nil }
         if isShowing(screen: screen) { return unreadable(screen: screen) }
-        guard let waiting, waiting.isDialogOpen else { return nil }
+        guard let waiting, waiting.blocksSend(screen: screen, screenChangedAt: screenChangedAt) else { return nil }
         return UnreadableMenu(lines: ["端末でダイアログが開いています（\(waiting.waitingFor ?? "")）"], cancelExits: false, isDialog: true)
     }
 

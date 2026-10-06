@@ -40,7 +40,7 @@ extension ClaudeTerminalView {
         let waiting = sessionWaiting()
         // InputBlock.detect と同じ判定を、読み取り済みの権限プロンプトを使い回して行う。
         let showing = prompt == nil && ChoiceMenu.isShowing(screen: screen)
-        let block: InputBlock? = prompt != nil ? .permission : (showing || waiting?.isDialogOpen == true ? .menu : nil)
+        let block: InputBlock? = prompt != nil ? .permission : (showing || waiting?.blocksSend(screen: screen, screenChangedAt: lastDataTime) == true ? .menu : nil)
         let status: ClaudeStatus
         if block != nil {
             status = .waitingInput
@@ -54,7 +54,7 @@ extension ClaudeTerminalView {
         }
         let menu = showing ? ChoiceMenu.parseShowing(screen: screen, highlight: highlightReader()) : nil
         releasePendingArrowHoldIfDone(cursor: menu?.cursor)
-        let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen, waiting: waiting) : nil
+        let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen, waiting: waiting, screenChangedAt: lastDataTime) : nil
         logMenuScreen(menu: menu, unreadable: unreadable, screen: screen)
         let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable)
         guard next != screenState else { return }
@@ -127,7 +127,7 @@ extension ClaudeTerminalView {
 
     /// 送信を止めるべき状態か。タイマーを待たず今の画面とセッションファイルで判定する。
     func currentInputBlock() -> InputBlock? {
-        InputBlock.detect(screen: screenLines(), waiting: sessionWaiting(fresh: true))
+        InputBlock.detect(screen: screenLines(), waiting: sessionWaiting(fresh: true), screenChangedAt: lastDataTime)
     }
 
     /// セッションファイルの返事待ちの状態。`fresh` でなければ 1 秒以内に読んだ値を使い回す。

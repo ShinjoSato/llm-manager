@@ -12,8 +12,6 @@ public struct RawSession: Sendable, Equatable {
     public var kind: String?
     /// 受信箱ソケット。ここへ投稿すると、そのセッションにメッセージが届く。
     public var messagingSocketPath: String?
-    /// 返事待ちの状態（`status` / `waitingFor`）。
-    public var waiting: SessionWaiting?
     public var alive: Bool
 }
 
@@ -48,17 +46,9 @@ public enum SessionInventory {
                 entrypoint: JSONLoose.string(raw["entrypoint"]),
                 kind: JSONLoose.string(raw["kind"]),
                 messagingSocketPath: JSONLoose.string(raw["messagingSocketPath"]),
-                waiting: Self.waiting(raw),
                 alive: isAlive(pid)
             ))
         }
         return out
-    }
-
-    static func waiting(_ raw: [String: Any]) -> SessionWaiting? {
-        let status = JSONLoose.string(raw["status"])
-        let waitingFor = JSONLoose.string(raw["waitingFor"])
-        guard status != nil || waitingFor != nil else { return nil }
-        return SessionWaiting(status: status, waitingFor: waitingFor)
     }
 }

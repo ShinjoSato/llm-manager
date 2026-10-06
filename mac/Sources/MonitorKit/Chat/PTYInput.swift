@@ -75,9 +75,10 @@ public enum InputBlock: Sendable, Equatable {
     }
 
     /// 画面に加え、セッションファイルの返事待ちも見る。画面で読めないダイアログでも Enter はそこに取られるため。
-    public static func detect(screen: [String], waiting: SessionWaiting?) -> InputBlock? {
+    /// `screenChangedAt` は端末の出力が最後に届いた時刻。
+    public static func detect(screen: [String], waiting: SessionWaiting?, screenChangedAt: Date?) -> InputBlock? {
         if let block = detect(screen: screen) { return block }
-        return waiting?.isDialogOpen == true ? .menu : nil
+        return waiting?.blocksSend(screen: screen, screenChangedAt: screenChangedAt) == true ? .menu : nil
     }
 
     /// 状態バッジ用の「入力待ち」文言（小文字・部分一致）。返答本文に出うる言い回しは入れない。送信判定には使わない。
@@ -98,10 +99,13 @@ public enum InputBlock: Sendable, Equatable {
 public struct SessionWaiting: Sendable, Equatable {
     public var status: String?
     public var waitingFor: String?
+    /// status を書いた時刻（Unix ミリ秒）。
+    public var statusUpdatedAt: Double?
 
-    public init(status: String?, waitingFor: String?) {
+    public init(status: String?, waitingFor: String?, statusUpdatedAt: Double? = nil) {
         self.status = status
         self.waitingFor = waitingFor
+        self.statusUpdatedAt = statusUpdatedAt
     }
 
     /// ダイアログ系の waitingFor（v2.1.288 のバイナリで確認した値）。権限確認・質問は画面で読むので入れない。
@@ -110,6 +114,18 @@ public struct SessionWaiting: Sendable, Equatable {
     /// ダイアログが開いていて、入力欄への Enter がそちらに取られる状態か。
     public var isDialogOpen: Bool {
         status == "waiting" && waitingFor.map(Self.dialogValues.contains) == true
+    }
+
+    /// ダイアログの描画と status の書き込みのずれとして許す幅。
+    static let freshMargin: TimeInterval = 1.0
+
+    /// 画面で読めないダイアログとして送信を止めるか。
+    /// waitingFor は閉じた後も古いまま残りうるので、通常の空の入力欄が見えている時は、画面の最後の変化より後に書かれた時だけ信じる。
+    public func blocksSend(screen: [String], screenChangedAt: Date?) -> Bool {
+        guard isDialogOpen else { return false }
+        if !InputBox.isPlainEmpty(screen: screen) { return true }
+        guard let statusUpdatedAt, let screenChangedAt else { return false }
+        return Date(timeIntervalSince1970: statusUpdatedAt / 1000) >= screenChangedAt.addingTimeInterval(-Self.freshMargin)
     }
 }
 
@@ -150,8 +166,9 @@ public enum ChoiceMenu {
             if !line.trimmingCharacters(in: .whitespaces).isEmpty {
                 if PermissionPrompt.isSeparator(line) { return nil }
                 if isFooter(line) {
-                    // ダイアログの上端の罫線から（見当たらなければ見る範囲の先頭から）。
-                    let top = (0..<index).last { PermissionPrompt.isSeparator(lines[$0]) } ?? 0
+                    // ダイアログは上端を罫線で閉じ、中に会話・ステータス行を挟まない（返答の中の案内行風の文を拾わないため）。
+                    guard let top = (0..<index).last(where: { PermissionPrompt.isSeparator(lines[$0]) }),
+                          !lines[top..<rule].contains(where: isConversationLine) else { return nil }
                     return top..<rule
                 }
                 seen += 1
@@ -159,6 +176,12 @@ public enum ChoiceMenu {
             index -= 1
         }
         return nil
+    }
+
+    /// 会話（⏺）かステータス（✻）の行か。
+    static func isConversationLine(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        return t.hasPrefix("⏺") || t.hasPrefix("✻")
     }
 
     /// 「❯ n. …」の近くに n±1 の選択肢が並んでいるか。
@@ -242,6 +265,15 @@ public enum InputBox {
         let text = parts.joined(separator: "\n")
         if parts.count == 1, isPlaceholder(text) { return "" }
         return text
+    }
+
+    /// 通常の空の入力欄だけが見えているか。入力欄が空で、最後の会話・ステータス行との間に罫線（重ね表示の上端）が無い。
+    public static func isPlainEmpty(screen: [String]) -> Bool {
+        let lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(ChoiceMenu.tailLines))
+        guard let prompt = promptIndex(lines), text(screen: lines) == "" else { return false }
+        let above = lines[..<(prompt - 1)]
+        guard let separator = above.lastIndex(where: PermissionPrompt.isSeparator) else { return true }
+        return above.lastIndex(where: ChoiceMenu.isConversationLine).map { $0 > separator } ?? false
     }
 
     /// 空欄の時に出る例文（v2.1.286: `Try "fix lint errors"`）。

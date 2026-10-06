@@ -139,6 +139,26 @@ final class OverlayMenuTests: XCTestCase {
         XCTAssertNil(ChoiceMenu.overlayRange(ruled))
     }
 
+    func testFooterInConversationAboveInputBoxDoesNotBlock() {
+        let quoted = [
+            "⏺ 案内行は次の形です:",
+            "  ↑/↓ to navigate · Enter to select · Esc to cancel",
+            "",
+            "✻ Crunched for 3s",
+        ] + inputBox
+        XCTAssertNil(ChoiceMenu.overlayRange(quoted))
+        XCTAssertNil(InputBlock.detect(screen: quoted))
+        // 上に罫線（前の表示の名残）があっても、間に会話・ステータス行があれば重ね表示ではない。
+        XCTAssertNil(InputBlock.detect(screen: [rule] + quoted))
+
+        for wrapped in ["  Esc to cancel を押せば取りやめられます。", "  Enter to confirm で確定します。"] {
+            let screen = ["⏺ 選択メニューでは、やめたい時に", wrapped] + inputBox
+            XCTAssertNil(InputBlock.detect(screen: screen), wrapped)
+            XCTAssertNil(InputBlock.detect(screen: [rule] + screen), wrapped)
+            XCTAssertNil(ChoiceMenu.unreadable(screen: screen), wrapped)
+        }
+    }
+
     func testTypingFooterTextInInputBoxDoesNotBlock() {
         let screen = ["⏺ done", rule, "❯ Enter to select · Esc to cancel", rule, "  ⏵⏵ auto mode on"]
         XCTAssertNil(InputBlock.detect(screen: screen))
@@ -157,28 +177,61 @@ final class OverlayMenuTests: XCTestCase {
     }
 
     func testDialogOpenBlocksSendWithEscCard() throws {
-        let idle = ["⏺ done"] + inputBox
-        XCTAssertEqual(InputBlock.detect(screen: idle, waiting: dialog), .menu)
-        XCTAssertNil(InputBlock.detect(screen: idle, waiting: SessionWaiting(status: "idle", waitingFor: nil)))
-        XCTAssertNil(InputBlock.detect(screen: idle, waiting: nil))
+        // 入力欄が見えない（ダイアログが画面を占めている）時は waitingFor だけで止める。
+        let hidden = ["⏺ done", "", " Some dialog we cannot read"]
+        XCTAssertEqual(InputBlock.detect(screen: hidden, waiting: dialog, screenChangedAt: nil), .menu)
+        XCTAssertNil(InputBlock.detect(screen: hidden, waiting: SessionWaiting(status: "idle", waitingFor: nil), screenChangedAt: nil))
+        XCTAssertNil(InputBlock.detect(screen: hidden, waiting: nil, screenChangedAt: nil))
 
-        let card = try XCTUnwrap(ChoiceMenu.unreadable(screen: idle, waiting: dialog))
+        let card = try XCTUnwrap(ChoiceMenu.unreadable(screen: hidden, waiting: dialog, screenChangedAt: nil))
         XCTAssertTrue(card.isDialog)
         XCTAssertFalse(card.cancelExits)
-        XCTAssertNil(ChoiceMenu.unreadable(screen: idle, waiting: nil))
+        XCTAssertNil(ChoiceMenu.unreadable(screen: hidden, waiting: nil, screenChangedAt: nil))
+    }
+
+    func testStaleDialogOpenWithPlainInputBoxDoesNotBlock() {
+        let idle = ["⏺ done", "", "✻ Crunched for 3s"] + inputBox
+        XCTAssertTrue(InputBox.isPlainEmpty(screen: idle))
+        let openedAt = Date(timeIntervalSince1970: 1_000)
+        let stale = SessionWaiting(status: "waiting", waitingFor: "dialog open", statusUpdatedAt: 1_000_000)
+
+        // 閉じた後に画面が描き替わったのに waitingFor が残っている。
+        XCTAssertNil(InputBlock.detect(screen: idle, waiting: stale, screenChangedAt: openedAt.addingTimeInterval(5)))
+        XCTAssertNil(ChoiceMenu.unreadable(screen: idle, waiting: stale, screenChangedAt: openedAt.addingTimeInterval(5)))
+        // 時刻が分からなければ通常の入力欄を信じる。
+        XCTAssertNil(InputBlock.detect(screen: idle, waiting: dialog, screenChangedAt: nil))
+        // 画面の最後の変化と同じ頃か後に書かれた waitingFor は信じる。
+        XCTAssertEqual(InputBlock.detect(screen: idle, waiting: stale, screenChangedAt: openedAt.addingTimeInterval(0.3)), .menu)
+        XCTAssertEqual(InputBlock.detect(screen: idle, waiting: stale, screenChangedAt: openedAt.addingTimeInterval(-2)), .menu)
+
+        // 入力欄に書きかけがあれば通常の空の入力欄ではない。例文だけなら空。
+        XCTAssertFalse(InputBox.isPlainEmpty(screen: ["⏺ done", rule, "❯ hello", rule]))
+        XCTAssertTrue(InputBox.isPlainEmpty(screen: ["⏺ done", rule, "❯ Try \"fix lint errors\"", rule]))
+    }
+
+    func testWizardWithStaleTimeStillBlocks() throws {
+        let stale = SessionWaiting(status: "waiting", waitingFor: "dialog open", statusUpdatedAt: 1_000_000)
+        let later = Date(timeIntervalSince1970: 1_060)
+        for screen in [wizard(continueLine: " Continue") + inputBox,
+                       // 案内行が読めない形に変わっても、入力欄の上に罫線で閉じた塊があれば通常の入力欄ではない。
+                       Array(wizard(continueLine: " Continue").dropLast()) + ["", " (unknown hint)"] + inputBox] {
+            XCTAssertFalse(InputBox.isPlainEmpty(screen: screen))
+            XCTAssertEqual(InputBlock.detect(screen: screen, waiting: stale, screenChangedAt: later), .menu)
+            XCTAssertNotNil(ChoiceMenu.unreadable(screen: screen, waiting: stale, screenChangedAt: later))
+        }
     }
 
     func testScreenTakesPrecedenceOverSessionFile() throws {
         let readable = offer(footer: footers[0]) + inputBox
-        XCTAssertEqual(InputBlock.detect(screen: readable, waiting: dialog), .menu)
-        XCTAssertNil(ChoiceMenu.unreadable(screen: readable, waiting: dialog))
+        XCTAssertEqual(InputBlock.detect(screen: readable, waiting: dialog, screenChangedAt: nil), .menu)
+        XCTAssertNil(ChoiceMenu.unreadable(screen: readable, waiting: dialog, screenChangedAt: nil))
 
         let wizardScreen = wizard(continueLine: " Continue") + inputBox
-        XCTAssertFalse(try XCTUnwrap(ChoiceMenu.unreadable(screen: wizardScreen, waiting: dialog)).isDialog)
+        XCTAssertFalse(try XCTUnwrap(ChoiceMenu.unreadable(screen: wizardScreen, waiting: dialog, screenChangedAt: nil)).isDialog)
 
         let permission = [rule, " Bash command", "   ls", " Do you want to proceed?", " ❯ 1. Yes", "   2. No"]
-        XCTAssertEqual(InputBlock.detect(screen: permission, waiting: dialog), .permission)
-        XCTAssertNil(ChoiceMenu.unreadable(screen: permission, waiting: dialog))
+        XCTAssertEqual(InputBlock.detect(screen: permission, waiting: dialog, screenChangedAt: nil), .permission)
+        XCTAssertNil(ChoiceMenu.unreadable(screen: permission, waiting: dialog, screenChangedAt: nil))
     }
 
     func testSessionFileFieldsAreRead() throws {
@@ -190,27 +243,85 @@ final class OverlayMenuTests: XCTestCase {
 
         let record = try XCTUnwrap(ClaudeSessionRegistry(directory: directory).record(forPid: 4242))
         XCTAssertTrue(record.waiting.isDialogOpen)
-        let raw = try XCTUnwrap(SessionInventory.scan(directory: directory, isAlive: { _ in true }).first)
-        XCTAssertEqual(raw.waiting, dialog)
+        XCTAssertNil(record.statusUpdatedAt)
+    }
+
+    func testMistypedWaitingFieldsKeepRecord() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("overlay-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let samples = [
+            #"{"pid":4243,"sessionId":"s2","cwd":"/a","status":3,"waitingFor":{"kind":"dialog"},"statusUpdatedAt":"x"}"#,
+            #"{"pid":4243,"sessionId":"s2","cwd":"/a","status":null,"waitingFor":["dialog open"],"statusUpdatedAt":{}}"#,
+        ]
+        for json in samples {
+            try Data(json.utf8).write(to: directory.appendingPathComponent("4243.json"))
+            let record = try XCTUnwrap(ClaudeSessionRegistry(directory: directory).record(forPid: 4243), json)
+            XCTAssertEqual(record.sessionId, "s2")
+            XCTAssertEqual(record.cwd, "/a")
+            XCTAssertNil(record.status)
+            XCTAssertNil(record.waitingFor)
+            XCTAssertNil(record.statusUpdatedAt)
+            XCTAssertFalse(record.waiting.isDialogOpen)
+        }
+        let json = #"{"pid":4243,"sessionId":"s2","status":"waiting","waitingFor":"dialog open","statusUpdatedAt":1791286354878}"#
+        try Data(json.utf8).write(to: directory.appendingPathComponent("4243.json"))
+        let record = try XCTUnwrap(ClaudeSessionRegistry(directory: directory).record(forPid: 4243))
+        XCTAssertEqual(record.statusUpdatedAt, 1791286354878)
+        XCTAssertTrue(record.waiting.isDialogOpen)
     }
 }
 
 final class PasteCheckTests: XCTestCase {
     func testJudge() {
-        XCTAssertEqual(PasteCheck.judge(before: "", after: ""), .missing)
-        XCTAssertEqual(PasteCheck.judge(before: nil, after: ""), .missing)
-        XCTAssertEqual(PasteCheck.judge(before: "", after: "hello"), .pasted)
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "hello"), .missing)
+        XCTAssertEqual(PasteCheck.judge(before: nil, after: "", body: "hello"), .missing)
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "hello", body: "hello"), .pasted)
         // 長文は畳まれるので本文との一致では見ない。
-        XCTAssertEqual(PasteCheck.judge(before: "", after: "[Pasted text #1 +20 lines]"), .pasted)
-        XCTAssertEqual(PasteCheck.judge(before: "[Image #1]", after: "[Image #1]"), .missing)
-        XCTAssertEqual(PasteCheck.judge(before: "[Image #1]", after: "[Image #1] hi"), .pasted)
-        XCTAssertEqual(PasteCheck.judge(before: "", after: nil), .unknown)
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "[Pasted text #1 +20 lines]", body: "long"), .pasted)
+        XCTAssertEqual(PasteCheck.judge(before: "[Image #1]", after: "[Image #1]", body: "hi"), .missing)
+        XCTAssertEqual(PasteCheck.judge(before: "[Image #1]", after: "[Image #1] hi", body: "hi"), .pasted)
+        XCTAssertEqual(PasteCheck.judge(before: "", after: nil, body: "hi"), .unknown)
+    }
+
+    func testPlaceholderShapedBodyIsNotJudgedMissing() {
+        // 入っても例文と同じ形なので InputBox.text は空を返す。確かめられないので従来どおり送る。
+        let plain = #"Try "fix lint errors""#
+        XCTAssertEqual(InputBox.text(screen: ["─────────", "❯ " + plain, "─────────"]), "")
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: plain), .unknown)
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "\u{1b}[200~" + plain + "\u{1b}[201~"), .unknown)
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "Try \"a\nb\""), .missing)
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "Try it"), .missing)
+    }
+
+    func testExtraWaitGrowsWithLengthAndIsCapped() {
+        XCTAssertEqual(PasteCheck.extraWait(bodyLength: 10), 1.005, accuracy: 0.001)
+        XCTAssertGreaterThan(PasteCheck.extraWait(bodyLength: 4000), PasteCheck.extraWait(bodyLength: 100))
+        XCTAssertEqual(PasteCheck.extraWait(bodyLength: 1_000_000), 4.0)
+    }
+
+    func testLeftoverCheck() {
+        XCTAssertTrue(LeftoverCheck.none.decide(box: "x") == (.send, .none))
+        // 1 回だけ知らせる。
+        XCTAssertTrue(LeftoverCheck.warnOnce.decide(box: "x") == (.refuse(strict: false), .none))
+        XCTAssertTrue(LeftoverCheck.warnOnce.decide(box: "") == (.send, .none))
+        XCTAssertTrue(LeftoverCheck.warnOnce.decide(box: nil) == (.send, .warnOnce))
+        // 貼り付けが入らなかった後は、遅れて入った本文が消えるまで何度でも止める。
+        let strict = LeftoverCheck.untilClear(baseline: "")
+        XCTAssertTrue(strict.decide(box: "hello") == (.refuse(strict: true), strict))
+        XCTAssertTrue(strict.decide(box: nil) == (.refuse(strict: true), strict))
+        XCTAssertTrue(strict.decide(box: "") == (.send, .none))
+        let images = LeftoverCheck.untilClear(baseline: "[Image #1]")
+        XCTAssertTrue(images.decide(box: "[Image #1]") == (.send, .none))
+        XCTAssertTrue(images.decide(box: "[Image #1] hello") == (.refuse(strict: true), images))
     }
 
     func testNotPastedRestoresDraft() throws {
         XCTAssertTrue(SendCompletion.notPasted(imagesPasted: false).restoresDraft)
         let notice = try XCTUnwrap(SendCompletion.notPasted(imagesPasted: false).notice)
         XCTAssertTrue(notice.contains("端末の入力欄に入りませんでした"))
+        XCTAssertTrue(notice.contains("遅れて端末に入った場合は、次の送信の前に残りとして知らせます"))
+        XCTAssertTrue(try XCTUnwrap(SendCompletion.notPasted(imagesPasted: false).remoteNotice).contains("遅れて端末に入った場合"))
         XCTAssertFalse(notice.contains("[Image #N]"))
         XCTAssertTrue(try XCTUnwrap(SendCompletion.notPasted(imagesPasted: true).notice).contains("[Image #N]"))
         XCTAssertNotNil(SendCompletion.notPasted(imagesPasted: false).remoteNotice)
