@@ -3,11 +3,14 @@ import SwiftUI
 
 /// プロジェクトのリンク（LP 等）の追加・編集・削除・並べ替え。
 /// 全行が正しい間だけ保存する（途中の行があればファイルは前の内容のまま）。文字欄は少し間を置いてまとめて書く。
+/// 名前と URL が両方空の行は画面に残すだけで保存の対象にしない（「追加」した直後の行が他の行の保存を止めないため）。
 struct ProjectLinksEditor: View {
     let store: SettingsStore
     let project: ManagedProject
     @State private var rows: [Row] = []
     @State private var problems: [[String]] = []
+    /// 最後に設定から欄へ入れた値。利用者が触るまでは空白を落としただけの差を書き直さないために持つ。
+    @State private var loaded: [ProjectLink] = []
     @FocusState private var focused: Field?
 
     /// 画面で行を見分けるためだけの印（ファイルには書かない）。
@@ -94,26 +97,48 @@ struct ProjectLinksEditor: View {
         store.flushPending()
     }
 
-    /// 欄の今の中身（前後の空白は落とす）。
-    private var trimmed: [ProjectLink] {
-        rows.map { ProjectLink(name: $0.name.trimmingCharacters(in: .whitespaces),
-                               url: $0.url.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    /// 欄の今の中身を行ごとに（前後の空白は落とす）。名前と URL が両方空の行は nil。
+    private var trimmedRows: [ProjectLink?] {
+        rows.map { row in
+            let link = ProjectLink(name: row.name.trimmingCharacters(in: .whitespaces),
+                                   url: row.url.trimmingCharacters(in: .whitespacesAndNewlines))
+            return link.name.isEmpty && link.url.isEmpty ? nil : link
+        }
+    }
+
+    /// 保存の対象になる行だけ。
+    private var trimmed: [ProjectLink] { trimmedRows.compactMap { $0 } }
+
+    /// 欄の中身をそのまま（利用者が触っていないかを見るため）。
+    private var raw: [ProjectLink] { rows.map { ProjectLink(name: $0.name, url: $0.url) } }
+
+    /// 行ごとの問題（空の行は問題なし）。並びは `rows` と同じ。
+    private var rowProblems: [[String]] {
+        var problems = SettingsValidation.projectLinkRowProblems(trimmed).makeIterator()
+        return trimmedRows.map { $0 == nil ? [] : (problems.next() ?? []) }
     }
 
     /// 全行が正しい時だけ保存する形。どこかが途中なら nil。
     private var draft: [ProjectLink]? {
-        let links = trimmed
-        return SettingsValidation.projectLinkRowProblems(links).allSatisfy(\.isEmpty) ? links : nil
+        rowProblems.allSatisfy(\.isEmpty) ? trimmed : nil
     }
 
     private func load(_ links: [ProjectLink]) {
         rows = links.map { Row(name: $0.name, url: $0.url) }
+        loaded = links
         problems = []
     }
 
     private func commit() {
+        problems = rowProblems
+        // 設定から入れたままなら予約しない（開いただけで書き直さない）。
+        guard raw != loaded else { return }
         let links = trimmed
-        problems = SettingsValidation.projectLinkRowProblems(links)
+        // 欄の中身が設定と同じなら書くものは無い（前の入力の予約も要らない）。
+        guard links != project.links else {
+            store.cancelPending(key: key)
+            return
+        }
         guard problems.allSatisfy(\.isEmpty) else {
             store.cancelPending(key: key)
             return

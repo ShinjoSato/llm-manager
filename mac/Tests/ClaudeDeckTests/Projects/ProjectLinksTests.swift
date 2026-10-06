@@ -17,13 +17,45 @@ final class ProjectLinksTests: XCTestCase {
         }
     }
 
+    func testRejectsUserInfo() {
+        for bad in ["https://user:pass@example.com", "https://user@example.com/path", "https://:@example.com",
+                    "https://@example.com", "http://admin:x@localhost:3000/"] {
+            XCTAssertNil(ProjectLinks.url(from: bad), bad)
+        }
+        // パスやクエリの中の @ は userinfo ではない。
+        XCTAssertNotNil(ProjectLinks.url(from: "https://example.com/@user"))
+        XCTAssertNotNil(ProjectLinks.url(from: "https://example.com/?to=a@example.com"))
+    }
+
+    /// 国際化ドメインは通り、punycode に直した URL になる（`URLComponents` の挙動を固定する）。
+    func testInternationalizedDomainIsAccepted() throws {
+        let url = try XCTUnwrap(ProjectLinks.url(from: "https://例え.jp/パス?q=日本"))
+        XCTAssertEqual(url.absoluteString, "https://xn--r8jz45g.jp/%E3%83%91%E3%82%B9?q=%E6%97%A5%E6%9C%AC")
+        XCTAssertEqual(ProjectLinks.url(from: "https://xn--r8jz45g.jp")?.absoluteString, "https://xn--r8jz45g.jp")
+        XCTAssertNil(SettingsValidation.linkURLProblem("https://例え.jp"))
+    }
+
     func testOpenableKeepsOrderAndDropsInvalid() {
         let links = [ProjectLink(name: "LP", url: "https://a.example"),
                      ProjectLink(name: "", url: "https://b.example"),
                      ProjectLink(name: "Bad", url: "javascript:x"),
+                     ProjectLink(name: "Auth", url: "https://u:p@d.example"),
                      ProjectLink(name: "Docs", url: "http://c.example/docs")]
         XCTAssertEqual(ProjectLinks.openable(links).map(\.name), ["LP", "Docs"])
         XCTAssertEqual(ProjectLinks.openable([]), [])
+    }
+
+    func testOpenableDropsLaterDuplicateNames() {
+        let links = [ProjectLink(name: "LP", url: "https://a.example"),
+                     ProjectLink(name: "Docs", url: "https://b.example"),
+                     ProjectLink(name: " LP ", url: "https://c.example"),
+                     ProjectLink(name: "lp", url: "https://d.example"),
+                     ProjectLink(name: "Docs", url: "https://e.example")]
+        // 空白を除いて同じ名前は先のものだけ。大文字小文字は別の名前。
+        XCTAssertEqual(ProjectLinks.openable(links).map(\.url), ["https://a.example", "https://b.example", "https://d.example"])
+        // 先の同じ名前が開けないものなら、後の開けるものを残す。
+        let shadowed = [ProjectLink(name: "LP", url: "nope"), ProjectLink(name: "LP", url: "https://ok.example")]
+        XCTAssertEqual(ProjectLinks.openable(shadowed).map(\.url), ["https://ok.example"])
     }
 
     func testMatchedProjectLinks() {
