@@ -13,6 +13,7 @@ public enum SettingsImport {
         public var format: Format
         public var addedProjects = 0
         public var linkedGitHub = 0
+        public var addedLinks = 0
         public var addedBoards = 0
         /// 既にあった・読めなかったため足さなかった行。
         public var skipped = 0
@@ -23,6 +24,7 @@ public enum SettingsImport {
             var parts: [String] = []
             if addedProjects > 0 { parts.append("プロジェクト \(addedProjects) 件") }
             if linkedGitHub > 0 { parts.append("GitHub の紐づけ \(linkedGitHub) 件") }
+            if addedLinks > 0 { parts.append("リンク \(addedLinks) 件") }
             if addedBoards > 0 { parts.append("ボード \(addedBoards) 件") }
             let added = parts.isEmpty ? "足したものはありません" : parts.joined(separator: "・") + "を足しました"
             var result = skipped > 0 ? "\(added)（既にある・読めない \(skipped) 件は飛ばしました）" : added
@@ -93,12 +95,21 @@ public enum SettingsImport {
             }
             for var project in incoming.projects {
                 if let index = merged.projects.firstIndex(where: { $0.path == project.path }) {
+                    var filled = false
                     if merged.projects[index].github == nil, let link = project.github {
                         merged.projects[index].github = link
                         summary.linkedGitHub += 1
-                    } else {
-                        summary.skipped += 1
+                        filled = true
                     }
+                    // 同じ名前のリンクは足さず、無い名前だけ末尾に足す。
+                    let names = Set(merged.projects[index].links.map(\.name))
+                    let newLinks = project.links.filter { !names.contains($0.name) }
+                    if !newLinks.isEmpty {
+                        merged.projects[index].links += newLinks
+                        summary.addedLinks += newLinks.count
+                        filled = true
+                    }
+                    if !filled { summary.skipped += 1 }
                     continue
                 }
                 if merged.projects.contains(where: { $0.id == project.id }) { project.id = UUID() }

@@ -83,7 +83,7 @@ struct ProjectLauncher: View {
                 Button { SettingsWindow.show(tab: .projects) } label: {
                     Label("設定を開く…", systemImage: "gearshape")
                 }
-                .help("プロジェクトの名前・状態・メモ・GitHub の紐づけを編集する")
+                .help("プロジェクトの名前・状態・メモ・リンク・GitHub の紐づけを編集する")
             }
             .buttonStyle(.plain)
             .font(ChatTheme.caption)

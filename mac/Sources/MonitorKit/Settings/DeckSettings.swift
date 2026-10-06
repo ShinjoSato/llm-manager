@@ -52,15 +52,20 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
     public var status: ProjectStatus
     public var note: String
     public var github: GitHubLink?
+    /// LP やデザインなど、ルームの見出しから開くリンク（並びは配列の順）。
+    public var links: [ProjectLink]
+
+    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links }
 
     public init(id: UUID = UUID(), name: String, path: String, status: ProjectStatus = .active, note: String = "",
-                github: GitHubLink? = nil) {
+                github: GitHubLink? = nil, links: [ProjectLink] = []) {
         self.id = id
         self.name = name
         self.path = path
         self.status = status
         self.note = note
         self.github = github
+        self.links = links
     }
 
     public init(from decoder: Decoder) throws {
@@ -71,6 +76,19 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         status = try c.decode(ProjectStatus.self, forKey: .status)
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         github = try c.decodeIfPresent(GitHubLink.self, forKey: .github)
+        links = try c.decodeIfPresent([ProjectLink].self, forKey: .links) ?? []
+    }
+
+    /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(path, forKey: .path)
+        try c.encode(status, forKey: .status)
+        try c.encode(note, forKey: .note)
+        try c.encodeIfPresent(github, forKey: .github)
+        if !links.isEmpty { try c.encode(links, forKey: .links) }
     }
 
     /// フォルダから作る（表示名はフォルダ名）。
@@ -107,6 +125,17 @@ public struct GitHubLink: Codable, Equatable, Sendable {
         self.owner = owner
         self.repo = repo
         self.projectNumber = projectNumber
+    }
+}
+
+/// プロジェクトに紐づく外部のリンク（LP・デザイン・ドキュメント等）。見出しの「リンク」から開く。
+public struct ProjectLink: Codable, Equatable, Sendable {
+    public var name: String
+    public var url: String
+
+    public init(name: String, url: String) {
+        self.name = name
+        self.url = url
     }
 }
 

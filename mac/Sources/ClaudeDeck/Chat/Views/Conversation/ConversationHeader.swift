@@ -56,7 +56,7 @@ struct StatusBadge: View {
     }
 }
 
-/// 見出しの「VS Code」「GitHub」「Xcode」「閉じる」と、押した結果の短い一言。
+/// 見出しの「VS Code」「GitHub」「リンク」「Xcode」「閉じる」と、押した結果の短い一言。
 struct EditorButtons: View {
     let model: ChatModel
     let room: Room
@@ -80,6 +80,7 @@ struct EditorButtons: View {
                          help: "VS Code で開く: \(room.cwd)") { editors.openInVSCode(room) }
             GitHubButton(editors: editors, room: room, destinations: editors.githubDestinations(for: room),
                          opening: editors.openingGitHub.contains(room.id))
+            ProjectLinkButton(editors: editors, room: room, links: editors.projectLinks(for: room))
             if let xcodeProject {
                 HeaderButton(symbol: "hammer", title: "Xcode",
                              help: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) }
@@ -125,6 +126,36 @@ struct GitHubButton: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help(destinations.map(\.help).joined(separator: "\n"))
+            .onHover { hovering = $0 }
+        }
+    }
+}
+
+/// 設定のリンク（LP 等）。1 つならそのまま開き、複数なら名前のメニューで選ぶ。無ければ出さない。
+struct ProjectLinkButton: View {
+    let editors: EditorLauncher
+    let room: Room
+    let links: [ProjectLink]
+    @State private var hovering = false
+
+    private static let symbol = "link"
+
+    var body: some View {
+        if links.count == 1, let only = links.first {
+            HeaderButton(symbol: Self.symbol, title: "リンク", help: ProjectLinks.help(for: only)) { editors.openLink(only, for: room) }
+        } else if links.count > 1 {
+            Menu {
+                ForEach(Array(links.enumerated()), id: \.offset) { _, link in
+                    Button(link.name) { editors.openLink(link, for: room) }
+                }
+            } label: {
+                HeaderButtonLabel(symbol: Self.symbol, title: "リンク", disabled: false, hovering: hovering, showsMenu: true)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(links.map(ProjectLinks.help(for:)).joined(separator: "\n"))
             .onHover { hovering = $0 }
         }
     }

@@ -81,6 +81,33 @@ final class SettingsFileTests: XCTestCase {
         XCTAssertEqual((object["boards"] as? [[String: Any]])?.first?.keys.sorted(), ["name", "number", "owner"])
     }
 
+    func testLinksAreWrittenOnlyWhenPresent() throws {
+        var settings = sample()
+        settings.projects[0].links = [ProjectLink(name: "LP", url: "https://example.com/lp"),
+                                      ProjectLink(name: "Figma", url: "https://www.figma.com/file/x")]
+        try file.save(settings)
+        XCTAssertEqual(file.load(), .loaded(settings))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        let projects = try XCTUnwrap(object["projects"] as? [[String: Any]])
+        let links = try XCTUnwrap(projects[0]["links"] as? [[String: Any]])
+        XCTAssertEqual(links.map { $0["name"] as? String }, ["LP", "Figma"])
+        XCTAssertEqual(links[0].keys.sorted(), ["name", "url"])
+        // 無いプロジェクトには links を書かない（手で書いたファイルの形を変えない）。
+        XCTAssertNil(projects[1]["links"])
+        // links の無いファイルも読める。
+        let json = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active"}]}"#
+        guard case .loaded(let loaded) = SettingsFile.decode(Data(json.utf8)) else { return XCTFail() }
+        XCTAssertEqual(loaded.projects[0].links, [])
+    }
+
+    func testBadLinksStillLoadAsWarnings() {
+        let json = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active","links":[{"name":"","url":"ftp://x"},{"name":"LP","url":"https://example.com"},{"name":"LP","url":"https://example.org"}]}]}"#
+        guard case .loaded(let settings) = SettingsFile.decode(Data(json.utf8)) else { return XCTFail() }
+        XCTAssertEqual(settings.projects[0].links.count, 3)
+        // 名前が空・URL の形・同じ名前の 3 件。
+        XCTAssertEqual(SettingsValidation.warnings(settings).count, 3)
+    }
+
     func testMissingGithubAndRepoAreOptional() throws {
         let json = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"archived","github":{"owner":"o","projectNumber":3}}]}"#
         guard case .loaded(let s) = SettingsFile.decode(Data(json.utf8)) else { return XCTFail() }
@@ -738,6 +765,29 @@ final class SettingsImportTests: XCTestCase {
         XCTAssertEqual(summary.skipped, 1)
     }
 
+    func testSettingsImportAddsMissingLinksOnly() throws {
+        let incoming = DeckSettings(projects: [
+            ManagedProject(name: "a", path: "/p/a", links: [ProjectLink(name: "LP", url: "https://incoming.example/lp"),
+                                                           ProjectLink(name: "Docs", url: "https://incoming.example/docs")]),
+            ManagedProject(name: "b", path: "/p/b", links: [ProjectLink(name: "LP", url: "https://b.example")]),
+            ManagedProject(name: "c", path: "/p/c"),
+        ])
+        let existing = DeckSettings(projects: [
+            ManagedProject(name: "a-local", path: "/p/a", links: [ProjectLink(name: "LP", url: "https://local.example/lp")]),
+            ManagedProject(name: "b-local", path: "/p/b", links: [ProjectLink(name: "LP", url: "https://local.example/b")]),
+            ManagedProject(name: "c-local", path: "/p/c"),
+        ])
+        let (settings, summary) = try SettingsImport.merge(try incoming.encoded(), into: existing)
+        // 同じ名前は手元を残し、無い名前だけ末尾に足す。
+        XCTAssertEqual(settings.projects[0].links, [ProjectLink(name: "LP", url: "https://local.example/lp"),
+                                                    ProjectLink(name: "Docs", url: "https://incoming.example/docs")])
+        XCTAssertEqual(settings.projects[1].links, existing.projects[1].links)
+        XCTAssertEqual(settings.projects[2].links, [])
+        XCTAssertEqual(summary.addedLinks, 1)
+        XCTAssertEqual(summary.skipped, 2)
+        XCTAssertTrue(summary.message.contains("リンク 1 件"))
+    }
+
     func testSettingsImportRejectsUnknownVersion() {
         XCTAssertThrowsError(try SettingsImport.merge(Data(#"{"version":9}"#.utf8), into: DeckSettings())) { error in
             guard case .unreadable(let reason) = error as? SettingsImport.Failure else { return XCTFail() }
@@ -790,6 +840,27 @@ final class SettingsValidationTests: XCTestCase {
         XCTAssertEqual(SettingsValidation.linkProblems(GitHubLink(owner: "o", projectNumber: 1)), [])
         XCTAssertEqual(SettingsValidation.linkProblems(GitHubLink(owner: "o")).count, 1)
         XCTAssertEqual(SettingsValidation.linkProblems(GitHubLink(owner: "", repo: "r/x", projectNumber: 0)).count, 3)
+    }
+
+    func testProjectLinks() {
+        XCTAssertEqual(SettingsValidation.projectLinkProblems(ProjectLink(name: "LP", url: "https://example.com")), [])
+        XCTAssertEqual(SettingsValidation.projectLinkProblems(ProjectLink(name: " ", url: "https://example.com")).count, 1)
+        XCTAssertEqual(SettingsValidation.projectLinkProblems(ProjectLink(name: "LP", url: "")).count, 1)
+        XCTAssertEqual(SettingsValidation.projectLinkProblems(ProjectLink(name: "LP", url: "javascript:alert(1)")).count, 1)
+        XCTAssertEqual(SettingsValidation.projectLinkProblems(ProjectLink(name: "", url: "file:///etc/hosts")).count, 2)
+        XCTAssertNil(SettingsValidation.linkURLProblem(" https://example.com/path?q=1 "))
+        XCTAssertNotNil(SettingsValidation.linkURLProblem("example.com"))
+        // 同じ名前は後の行の問題になる（前後の空白は同じ名前とみなす）。
+        let rows = SettingsValidation.projectLinkRowProblems([ProjectLink(name: "LP", url: "https://a.example"),
+                                                              ProjectLink(name: "Docs", url: "https://b.example"),
+                                                              ProjectLink(name: " LP ", url: "https://c.example")])
+        XCTAssertEqual(rows.map(\.count), [0, 0, 1])
+        var project = ManagedProject(name: "a", path: "/p/a", links: [ProjectLink(name: "LP", url: "https://a.example")])
+        XCTAssertEqual(SettingsValidation.projectProblems(project), [])
+        project.links.append(ProjectLink(name: "LP", url: "nope"))
+        XCTAssertEqual(SettingsValidation.projectProblems(project).count, 2)
+        // 読めない扱いにはしない。
+        XCTAssertEqual(SettingsValidation.blockingProblems(DeckSettings(projects: [project])), [])
     }
 
     func testWholeSettings() {
