@@ -1,42 +1,5 @@
 import Foundation
 
-/// フック受け口が受け取るペイロード（Claude Code のフック JSON のうち使う分）。
-public struct HookPayload: Sendable, Equatable {
-    public var sessionId: String?
-    public var hookEventName: String?
-    public var toolName: String?
-    public var notificationType: String?
-    public var notificationMessage: String?
-    public var errorType: String?
-    public var errorMessage: String?
-    public var agentType: String?
-
-    public init(sessionId: String? = nil, hookEventName: String? = nil, toolName: String? = nil,
-                notificationType: String? = nil, notificationMessage: String? = nil, errorType: String? = nil,
-                errorMessage: String? = nil, agentType: String? = nil) {
-        self.sessionId = sessionId
-        self.hookEventName = hookEventName
-        self.toolName = toolName
-        self.notificationType = notificationType
-        self.notificationMessage = notificationMessage
-        self.errorType = errorType
-        self.errorMessage = errorMessage
-        self.agentType = agentType
-    }
-
-    /// JSON のオブジェクトから読む。文字列でない値は無いものとして扱う。
-    public init(json o: [String: Any]) {
-        self.init(sessionId: JSONLoose.string(o["session_id"]),
-                  hookEventName: JSONLoose.string(o["hook_event_name"]),
-                  toolName: JSONLoose.string(o["tool_name"]),
-                  notificationType: JSONLoose.string(o["notification_type"]),
-                  notificationMessage: JSONLoose.string(o["notification_message"]),
-                  errorType: JSONLoose.string(o["error_type"]),
-                  errorMessage: JSONLoose.string(o["error_message"]),
-                  agentType: JSONLoose.string(o["agent_type"]))
-    }
-}
-
 /// 伝言・エディタ操作の失敗。`code` は画面の言い換えに使う（not_found / not_alive / no_socket / unreachable / no_project / failed）。
 public struct HubFailure: Error, Sendable, Equatable, LocalizedError {
     public var code: String
@@ -58,31 +21,6 @@ final class WaiterTicket: @unchecked Sendable {
     var id: Int? {
         get { lock.withLock { value } }
         set { lock.withLock { value = newValue } }
-    }
-}
-
-/// 待ち行列から溢れて捨てたフックの数。積む側（任意のスレッド）と流す側の間で受け渡す。
-final class HookDropCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    /// セッションごとの件数。どのルームの状態が古いままかを知らせるため。
-    private var counts: [String: Int] = [:]
-    /// セッションの分からない分。どのルームにも出せないので合計にだけ数える。
-    private var unattributed = 0
-
-    func add(sessionId: String?) {
-        lock.withLock {
-            if let sessionId, !sessionId.isEmpty { counts[sessionId, default: 0] += 1 } else { unattributed += 1 }
-        }
-    }
-
-    var total: Int { lock.withLock { counts.values.reduce(unattributed, +) } }
-
-    /// 溜まった分を取り出して空に戻す。
-    func take() -> (bySession: [String: Int], total: Int) {
-        lock.withLock {
-            defer { counts = [:]; unattributed = 0 }
-            return (counts, counts.values.reduce(unattributed, +))
-        }
     }
 }
 
@@ -115,16 +53,8 @@ public actor SessionHub {
     private var wantsRunning = false
     private var sink: (@Sendable (MonitorEvent) -> Void)?
 
-    private enum HookMessage: Sendable {
-        /// `receivedAt` は受け口に届いた時刻。反映が遅れてもログ行との前後はこれで比べる。
-        case hook(HookPayload, receivedAt: Double)
-        case flush(CheckedContinuation<Void, Never>)
-    }
-    /// フックは届いた順に 1 本の流れで反映する。HTTP の応答は反映を待たない。
-    private nonisolated let hookInbox: AsyncStream<HookMessage>.Continuation
-    private nonisolated let droppedHooks = HookDropCounter()
-    /// 受信時刻の取得と積むことを一続きにする（待ち行列の順を時刻の順にそろえる）。
-    private nonisolated let hookOrder = NSLock()
+    /// フックは届いた順に 1 本の流れで反映する。
+    private nonisolated let hooks: HookInbox
     public static let hookBufferLimit = 4096
 
     public init(home: ClaudeHome,
@@ -141,12 +71,11 @@ public actor SessionHub {
         scanner = InventoryScanner(directory: home.sessionsDirectory, isAlive: isAlive)
         self.metaLoader = metaLoader
         poller = TranscriptPoller(home: home, startedAt: now())
-        let (stream, inbox) = AsyncStream<HookMessage>.makeStream(bufferingPolicy: .bufferingNewest(max(1, hookBufferLimit)))
-        hookInbox = inbox
-        let dropped = droppedHooks
+        let hooks = HookInbox(limit: hookBufferLimit, now: now)
+        self.hooks = hooks
         Task { [weak self] in
-            for await message in stream {
-                let lost = dropped.take()
+            for await message in hooks.stream {
+                let lost = hooks.takeDropped()
                 if lost.total > 0 { await self?.reportDroppedHooks(lost.bySession, total: lost.total) }
                 switch message {
                 case .hook(let payload, let receivedAt): await self?.applyHook(payload, receivedAt: receivedAt)
@@ -163,28 +92,17 @@ public actor SessionHub {
     }
 
     deinit {
-        hookInbox.finish()
+        hooks.finish()
     }
 
     /// フックを反映の待ち行列に積む。届いた順に `applyHook` へ流す。
     public nonisolated func enqueueHook(_ payload: HookPayload) {
-        hookOrder.withLock { offer(.hook(payload, receivedAt: now())) }
+        hooks.enqueue(payload)
     }
 
     /// それまでに積んだフックが反映し終わるまで待つ（溢れて押し出された時は待たずに戻る）。
     public nonisolated func flushHooks() async {
-        await withCheckedContinuation { done in hookOrder.withLock { offer(.flush(done)) } }
-    }
-
-    /// 溢れて押し出された古い方を黙って捨てない（待ち手は起こし、フックは数えて後で知らせる）。
-    private nonisolated func offer(_ message: HookMessage) {
-        switch hookInbox.yield(message) {
-        case .dropped(.flush(let done)): done.resume()
-        case .dropped(.hook(let payload, _)): droppedHooks.add(sessionId: payload.sessionId)
-        case .terminated:
-            if case .flush(let done) = message { done.resume() }
-        default: break
-        }
+        await hooks.flush()
     }
 
     private func reportDroppedHooks(_ lost: [String: Int], total: Int) {
@@ -195,7 +113,7 @@ public actor SessionHub {
     }
 
     /// 試験用: 押し出されてまだ知らせていないフックの数。
-    nonisolated var pendingDroppedHookCount: Int { droppedHooks.total }
+    nonisolated var pendingDroppedHookCount: Int { hooks.pendingDroppedCount }
 
     /// 変化の受け口を差し替える（`start` 前に呼ぶ）。
     public func setSink(_ sink: (@Sendable (MonitorEvent) -> Void)?) {
@@ -352,69 +270,7 @@ public actor SessionHub {
         }
         guard let state = found else { return false }
 
-        let now = receivedAt ?? now()
-        var status: SessionStatus?
-        var detail: String?
-        var tool: String?
-        var message: String?
-        var feedLine: (FeedKind, String)?
-
-        switch payload.hookEventName ?? "" {
-        case "UserPromptSubmit":
-            status = .working
-            feedLine = (.status, "指示を受け取りました")
-        case "Stop":
-            status = .idle
-            feedLine = (.status, "応答完了")
-        case "Notification":
-            let type = payload.notificationType ?? ""
-            if type == "permission_prompt" {
-                status = .permission
-                tool = payload.toolName
-                message = payload.notificationMessage
-                detail = Attention.permissionDetail(toolName: tool, message: message,
-                                                    currentTool: state.currentTool, currentAction: state.currentAction)
-                feedLine = (.status, "権限の確認待ち" + (detail.map { ": \($0)" } ?? ""))
-            } else if type == "idle_prompt" || type == "agent_needs_input" {
-                status = .waiting
-                detail = payload.notificationMessage
-                feedLine = (.status, "入力待ちで停止中")
-            } else {
-                // 未知の種別を握り潰すと、フック層が効いていないことに気づけない。
-                feedLine = (.status, "通知: \(type.isEmpty ? "(種別なし)" : type)")
-            }
-        case "StopFailure":
-            status = .error
-            detail = payload.errorType ?? payload.errorMessage
-            feedLine = (.status, "停止: \(detail ?? "APIエラー")")
-        case "SubagentStart":
-            feedLine = (.agent, "サブエージェント開始: \(payload.agentType ?? "?")")
-        case "SubagentStop":
-            feedLine = (.agent, "サブエージェント完了: \(payload.agentType ?? "?")")
-        case "PreToolUse":
-            status = .working
-            if let name = payload.toolName, !name.isEmpty, name != state.currentTool {
-                state.currentTool = name
-                state.currentAction = nil
-            }
-        default:
-            break
-        }
-
-        // 届いた後のログ活動を先に読んでいれば、その待ちには既に答えが出ている。
-        if let candidate = status, Attention.needsAttention(candidate), state.lastActivity > now { status = nil }
-        if let status {
-            let prev = Attention.heldStatus(state.hookStatus, hookAt: state.hookAt, lastActivityAt: state.lastActivity)
-            state.attentionSince = Attention.nextAttentionSince(prevStatus: prev, prevSince: state.attentionSince,
-                                                                nextStatus: status, now: now)
-            state.hookStatus = status
-            state.hookDetail = detail
-            state.hookTool = tool
-            state.hookMessage = message
-            state.hookAt = max(state.hookAt, now)
-            if status == .working { state.lastActivityAt = max(state.lastActivityAt ?? 0, now) }
-        }
-        if let (kind, text) = feedLine { push(id, kind, text) }
+        if let line = HookIntake.apply(payload, to: state, now: receivedAt ?? now()) { push(id, line) }
         emitUpdate()
         return true
     }
