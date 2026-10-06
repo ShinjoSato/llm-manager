@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// ウィンドウ左端の細いバー。左の一覧を「ルーム」（状態別）と「ディレクトリ」（プロジェクトの枠）で切り替える。
+/// ウィンドウ左端の細いバー。左の一覧を「ルーム」（状態別）と「ディレクトリ」（登録プロジェクト）で切り替える。
 struct ListModeBar: View {
     @Bindable var model: ChatModel
 

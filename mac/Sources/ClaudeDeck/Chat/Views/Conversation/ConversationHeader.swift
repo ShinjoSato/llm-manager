@@ -68,21 +68,13 @@ struct EditorButtons: View {
         let editors = model.editors
         let xcodeProject = editors.xcodeProject(for: room)
         let closing = editors.closingXcode.contains(room.id)
+        let target = room.editorTarget
         HStack(spacing: 6) {
-            if let note = editors.notes[room.id] {
-                Text(note.outcome.message)
-                    .font(ChatTheme.caption)
-                    .foregroundStyle(note.outcome.isFailure ? ChatTheme.error : ChatTheme.working)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: 200, alignment: .trailing)
-                    .help(note.outcome.message)
-            }
-            HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", name: "VS Code",
-                         detail: "VS Code で開く: \(room.cwd)") { editors.openInVSCode(room) }
-            GitHubButton(editors: editors, room: room, destinations: editors.githubDestinations(for: room),
-                         opening: editors.openingGitHub.contains(room.id))
-            ProjectLinkButton(editors: editors, room: room, links: editors.projectLinks(for: room))
+            EditorNoteText(note: editors.notes[target.key])
+            VSCodeButton(editors: editors, target: target)
+            GitHubButton(editors: editors, target: target, destinations: editors.githubDestinations(for: target),
+                         opening: editors.openingGitHub.contains(target.key))
+            ProjectLinkButton(editors: editors, target: target, links: editors.projectLinks(for: target))
             if let xcodeProject {
                 HeaderButton(symbol: "hammer", name: "Xcode",
                              detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) }
@@ -101,10 +93,37 @@ struct EditorButtons: View {
     }
 }
 
+/// 押した結果の短い一言（無ければ何も出さない）。
+struct EditorNoteText: View {
+    let note: EditorNote?
+
+    var body: some View {
+        if let note {
+            Text(note.outcome.message)
+                .font(ChatTheme.caption)
+                .foregroundStyle(note.outcome.isFailure ? ChatTheme.error : ChatTheme.working)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 200, alignment: .trailing)
+                .help(note.outcome.message)
+        }
+    }
+}
+
+struct VSCodeButton: View {
+    let editors: EditorLauncher
+    let target: EditorTarget
+
+    var body: some View {
+        HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", name: "VS Code",
+                     detail: "VS Code で開く: \(target.cwd)") { editors.openInVSCode(target) }
+    }
+}
+
 /// 開く先が 1 つならそのまま開き、ボードとリポジトリの両方ならメニューで選ぶ。
 struct GitHubButton: View {
     let editors: EditorLauncher
-    let room: Room
+    let target: EditorTarget
     let destinations: [GitHubDestination]
     let opening: Bool
     @State private var hovering = false
@@ -116,11 +135,11 @@ struct GitHubButton: View {
 
     var body: some View {
         if destinations.count == 1, let only = destinations.first {
-            HeaderButton(symbol: Self.symbol, name: Self.name, detail: only.help, busyStatus: busyStatus) { editors.openOnGitHub(only, for: room) }
+            HeaderButton(symbol: Self.symbol, name: Self.name, detail: only.help, busyStatus: busyStatus) { editors.openOnGitHub(only, for: target) }
         } else if destinations.count > 1 {
             Menu {
                 ForEach(Array(destinations.enumerated()), id: \.offset) { _, destination in
-                    Button(destination.menuTitle) { editors.openOnGitHub(destination, for: room) }
+                    Button(destination.menuTitle) { editors.openOnGitHub(destination, for: target) }
                 }
             } label: {
                 HeaderButtonLabel(symbol: Self.symbol, busy: opening, disabled: opening, hovering: hovering, showsMenu: true)
@@ -139,7 +158,7 @@ struct GitHubButton: View {
 /// 設定のリンク（LP 等）。1 つならそのまま開き、複数なら名前のメニューで選ぶ。無ければ出さない。
 struct ProjectLinkButton: View {
     let editors: EditorLauncher
-    let room: Room
+    let target: EditorTarget
     let links: [ProjectLink]
     @State private var hovering = false
 
@@ -148,11 +167,11 @@ struct ProjectLinkButton: View {
 
     var body: some View {
         if links.count == 1, let only = links.first {
-            HeaderButton(symbol: Self.symbol, name: Self.name, detail: ProjectLinks.help(for: only)) { editors.openLink(only, for: room) }
+            HeaderButton(symbol: Self.symbol, name: Self.name, detail: ProjectLinks.help(for: only)) { editors.openLink(only, for: target) }
         } else if links.count > 1 {
             Menu {
                 ForEach(Array(links.enumerated()), id: \.offset) { _, link in
-                    Button(link.name) { editors.openLink(link, for: room) }
+                    Button(link.name) { editors.openLink(link, for: target) }
                 }
             } label: {
                 HeaderButtonLabel(symbol: Self.symbol, busy: false, disabled: false, hovering: hovering, showsMenu: true)

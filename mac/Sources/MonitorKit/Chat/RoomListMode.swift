@@ -1,6 +1,6 @@
 import Foundation
 
-/// 左の一覧の見方（状態別のルームか、プロジェクトの枠か）。
+/// 左の一覧の見方（状態別のルームか、登録ディレクトリか）。
 public enum RoomListMode: String, CaseIterable, Sendable {
     case rooms
     case directories

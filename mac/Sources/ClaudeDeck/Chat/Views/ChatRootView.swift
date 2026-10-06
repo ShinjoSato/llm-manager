@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// メイン画面: 一覧の切り替えバー（左端 48px）| ルーム一覧（312px）| 会話（中央）| 右パネル（任意。ステージパネルはここに差し込む）。
+/// メイン画面: 一覧の切り替えバー（左端 48px）| ルームかディレクトリの一覧（312px）| 会話かディレクトリの詳細（中央）| 右パネル（任意。ステージパネルはここに差し込む）。
 struct ChatRootView<Trailing: View>: View {
     @Bindable var model: ChatModel
     private let trailing: Trailing
@@ -44,7 +44,14 @@ struct ChatRootView<Trailing: View>: View {
 
     @ViewBuilder
     private var center: some View {
-        if let room = model.selectedRoom {
+        if let selected = model.selectedDirectory {
+            if let directory = selected.directory {
+                DirectoryDetailView(model: model, directory: directory)
+                    .id(selected.id)
+            } else {
+                DirectoryMissingView()
+            }
+        } else if let room = model.selectedRoom {
             ConversationView(model: model, room: room)
                 .id(room.id)
         } else {
@@ -60,9 +67,9 @@ struct ChatRootView<Trailing: View>: View {
         }
     }
 
-    /// 何も選んでいない時だけ先頭を選ぶ。選択中のルームが一覧から消えても別のルームへ移さない（戻ってきた時に書きかけごと続けられるように）。
+    /// 会話を出していて何も選んでいない時だけ先頭を選ぶ。選択中のルームが一覧から消えても別のルームへ移さない（戻ってきた時に書きかけごと続けられるように）。
     private func selectFirstIfNeeded() {
-        if model.selection == nil, let first = model.firstVisibleRoom {
+        if model.center == .room, model.selection == nil, let first = model.firstVisibleRoom {
             model.select(first.id)
         }
     }

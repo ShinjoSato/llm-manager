@@ -89,7 +89,7 @@ public struct ThemePalette: Sendable, Equatable {
     public var permissionChip: ThemeFill
     /// 選択肢カードの今の問いのタブ。
     public var menuTabCurrent: ThemeFill
-    /// 枠の見出しの要対応バッジ（権限待ち・入力待ち）。
+    /// ディレクトリの行の要対応バッジ（権限待ち・入力待ち）。
     public var permissionBadge: ThemeFill
     public var waitingBadge: ThemeFill
     /// 「ツール N件」の地と縁（実行中は稼働の色）。
