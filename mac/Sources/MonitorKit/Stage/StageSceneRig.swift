@@ -201,7 +201,10 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         groundMaterial?.diffuse.contents = Self.color(backdrop.ground)
         // three.js の地面（MeshStandardMaterial）には奥からの光（rim）の照り返しが乗る。lambert には無いので一定量を足す。
         let glow = backdrop.groundEmission
-        groundMaterial?.emission.contents = Self.linearColor(CGFloat(glow.r), CGFloat(glow.g), CGFloat(glow.b))
+        // 色は 1 を超えると切り詰められるので、超える分は強さで足す（白いパネルに床を寄せるため）。
+        let peak = max(glow.r, glow.g, glow.b, 1)
+        groundMaterial?.emission.contents = Self.linearColor(CGFloat(glow.r / peak), CGFloat(glow.g / peak), CGFloat(glow.b / peak))
+        groundMaterial?.emission.intensity = CGFloat(peak)
         scene.fogColor = Self.color(backdrop.fog)
     }
 

@@ -70,7 +70,7 @@ struct DirectoryDetailView: View {
             ForEach(Array(openable.enumerated()), id: \.offset) { _, link in
                 Button { model.editors.openLink(link, for: target) } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "link").font(.system(size: 11)).foregroundStyle(ChatTheme.accent)
+                        Image(systemName: "link").font(.system(size: 11)).foregroundStyle(ChatTheme.link)
                         Text(link.name).font(ChatTheme.body).foregroundStyle(ChatTheme.text).lineLimit(1)
                         Text(link.url).font(ChatTheme.caption).foregroundStyle(ChatTheme.tertiary)
                             .lineLimit(1).truncationMode(.middle)

@@ -184,7 +184,9 @@ final class StageSceneTests: XCTestCase {
             ("idle", session(.idle)),
             ("stopped", session(.stopped)),
         ]
-        let lightBackground = NSColor(srgbRed: 0xeb / 255.0, green: 0xe7 / 255.0, blue: 0xf2 / 255.0, alpha: 1)
+        let panelHex = ThemePalette.light.stagePanel
+        let lightBackground = NSColor(srgbRed: CGFloat((panelHex >> 16) & 0xff) / 255, green: CGFloat((panelHex >> 8) & 0xff) / 255,
+                                      blue: CGFloat(panelHex & 0xff) / 255, alpha: 1)
         let out = ProcessInfo.processInfo.environment["STAGE_SNAPSHOT_DIR"].map { URL(fileURLWithPath: $0) }
         for (backdrop, panel, suffix) in [(StageBackdrop.night, background, ""), (.light, lightBackground, "-light")] {
             rig.setBackdrop(backdrop)

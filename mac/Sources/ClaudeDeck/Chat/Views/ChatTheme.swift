@@ -10,6 +10,8 @@ enum ChatTheme {
     static let inputSurface = color(\.inputSurface)
     static let inputBorder = color(\.inputBorder)
     static let selectedRow = color(\.selectedRow)
+    static let selectionInk = color(\.selectionInk)
+    static let link = color(\.link)
 
     static let text = color(\.text)
     static let nsText = nsColor(\.text)
