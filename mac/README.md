@@ -27,8 +27,12 @@ mac/
       MainViewController.swift    メインウィンドウ = チャット画面（SwiftUI を NSHostingView で載せる）
       MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
       LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
-    Terminal/
-      ClaudeTerminalView.swift    PTY ホスト + 環境からの API キー除去 + 画面の読み取り（ScreenState）+ 画面末尾の上限表示の監視
+    Terminal/                   Claude Code を PTY でホストする端末ビュー（1 つの型を役割ごとの extension に分ける）
+      ClaudeTerminalView.swift    本体（ClaudeStatus・ScreenState・持ち物・PTY 受信の傍受）
+      ClaudeTerminalView+Launch.swift  claude の起動（環境からの API キー除去・--resume）
+      ClaudeTerminalView+Input.swift   入力（貼り付け・Enter・画像の取り込み待ち・権限 / 選択メニュー / タブへの回答）
+      ClaudeTerminalView+Screen.swift  画面の読み取り（状態の監視・実画面の行・背景色・選択メニューの解析・画面の写し）
+      ClaudeTerminalView+Limit.swift   画面末尾の上限表示の監視と強制終了
     Chat/                       チャット画面（ルーム一覧・会話・入力欄・権限カード・選択肢カード）
       Model/                      ChatModel と、それが束ねる部品（@Observable・画面に依らない）
         ChatModel.swift             ルーム一覧（監視のセッション + ホスト中のセッション）・選択・claude の起動と終了。下の部品を束ねる
@@ -41,16 +45,34 @@ mac/
         HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
       Views/                      画面（SwiftUI）
         ChatRootView.swift          3 カラムの骨組み（ルーム一覧 | 会話 | 右パネルの差し込み口）
-        RoomListView.swift          ルーム一覧・検索・「+」（新しいルーム・プロジェクト一覧の管理）・監視 / フックの受け口の状態
-        ConversationView.swift      見出し・吹き出し・ツール行・権限カード・選択肢カード
-        Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード・添付（ボタン / ⌘V / ドロップ）とチップ）
+        RoomList/                   左のルーム一覧
+          RoomListView.swift          一覧・検索・「+」のポップオーバー・右クリックメニュー
+          RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・頭文字アイコン（RoomAvatar）
+          RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態）
+          ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
+        Conversation/               中央の会話
+          ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）
+          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「Xcode」「閉じる」のボタン
+          MessageList.swift           吹き出しの一覧（末尾への自動スクロール・カードの差し込み・空の時の案内）
+          MessageBubbles.swift        発話 1 件（EntryView）・自分 / Claude の吹き出し
+          ToolsRow.swift              「ツール N件 ▸」の畳み
+          PermissionCard.swift        権限確認のカード
+          MenuCard.swift              選択肢のカード（選択肢の行・AskUserQuestion のタブ）
+          UnreadableMenuCard.swift    選択肢が読めない時のカード
+          PromptCardParts.swift       カードの共通部品（見出し・等幅の抜粋・控えめなボタン・枠・終了の確認）
+        Composer/                   入力欄
+          Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード・添付ボタン）
+          AttachmentStrip.swift       入力欄の上の添付チップ
+          AttachmentDrop.swift        ドロップから添付を拾う
+          ComposerTextView.swift      Return を横取りする NSTextView（⌘V の添付は MonitorKit の AttachmentPasteTextView）
         ChatImageViews.swift        吹き出しの画像（サムネイルの格子・拡大表示のシート・表示時に読み込んで NSCache に持つ ChatImageLoader）
         MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）
         ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
         PixelAvatar.swift           ルーム一覧と見出しのドット絵キャラ（絵は DeckCore の PixelCharacter）
         ChatTheme.swift             色・文字・時刻の書式のトークン（ダーク固定。AppKit 側の色も）
     Stage/                      右側のステージパネル（360px）
-      StagePanel.swift            見出し（開閉）・ステージ・いまの動き・随伴するサブエージェント・ライブフィード
+      StagePanel.swift            見出し（開閉）・ステージ・畳んだ状態
+      StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
     Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・書き出し / 読み込み
     Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
