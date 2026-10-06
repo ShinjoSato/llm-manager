@@ -156,7 +156,7 @@ public actor SessionHub {
     /// `waitForMeta` が false なら、新しいセッションのメタ情報は後から埋める（フックの反映を待たせないため）。
     func scanInventory(waitForMeta: Bool = true) async {
         let now = now()
-        let outcome = scanner.scan(known: sessions, now: now)
+        let outcome = scanner.scan(known: sessions, now: now, clock: self.now)
         for state in outcome.created {
             poller.attach(state)
             sessions[state.raw.sessionId] = state

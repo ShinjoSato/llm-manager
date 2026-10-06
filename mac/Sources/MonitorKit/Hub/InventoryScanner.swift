@@ -27,7 +27,8 @@ struct InventoryScanner {
     }
 
     /// レジストリを走査して既知の一覧に当てる。既知の State の在庫の欄（raw・endedAt・socketPath）はここで書く。
-    mutating func scan(known sessions: [String: SessionState], now: Double) -> Outcome {
+    /// `clock` は初めて見つけた時点で止まっていたセッションの終了時刻に使う（走査の頭の `now` ではなく、その場の時刻）。
+    mutating func scan(known sessions: [String: SessionState], now: Double, clock: () -> Double) -> Outcome {
         var outcome = Outcome()
         var seen = Set<String>()
 
@@ -37,7 +38,7 @@ struct InventoryScanner {
                 let state = SessionState(raw: raw)
                 state.knownAtStart = !scanned
                 state.socketPath = Self.socketFor(raw)
-                state.endedAt = raw.alive ? nil : now
+                state.endedAt = raw.alive ? nil : clock()
                 outcome.created.append(state)
                 outcome.changed = true
                 outcome.feed.append((raw.sessionId, FeedLine(kind: .session, text: "セッション検出: \(HubText.basename(raw.cwd))")))
