@@ -15,6 +15,8 @@ final class SitePreviewState {
 /// サイトのプレビュー。`zoom` で縮めて表示幅（CSS ピクセル）ぶんを枠に収める。
 struct SiteWebView: NSViewRepresentable {
     let url: URL
+    /// 開発サーバーの時はその origin。ページの遷移をそこに限り、他はブラウザで開く。
+    let origin: URL?
     let zoom: Double
     /// 変わったら読み直す。
     let reloadToken: Int
@@ -35,6 +37,7 @@ struct SiteWebView: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         let coordinator = context.coordinator
+        coordinator.origin = origin
         if view.pageZoom != zoom { view.pageZoom = zoom }
         guard coordinator.loadedURL != url || coordinator.loadedToken != reloadToken else { return }
         let sameURL = coordinator.loadedURL == url
@@ -59,22 +62,33 @@ struct SiteWebView: NSViewRepresentable {
         let state: SitePreviewState
         var loadedURL: URL?
         var loadedToken = 0
+        var origin: URL?
 
         init(state: SitePreviewState) {
             self.state = state
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
-            SiteNavigationPolicy.allows(action.request.url, mainFrame: action.targetFrame?.isMainFrame ?? true) ? .allow : .cancel
+            apply(SiteNavigationPolicy.decide(action.request.url, mainFrame: action.targetFrame?.isMainFrame ?? true, origin: origin))
         }
 
-        /// 新しいウィンドウで開くリンクは同じ枠で開く。
+        /// 新しいウィンドウで開くリンクは同じ枠で開く（開発サーバーの外へのものはブラウザで）。
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = action.request.url, SiteNavigationPolicy.allows(url, mainFrame: true) {
+            if let url = action.request.url, apply(SiteNavigationPolicy.decide(url, mainFrame: true, origin: origin)) == .allow {
                 webView.load(URLRequest(url: url))
             }
             return nil
+        }
+
+        private func apply(_ decision: SiteNavigationPolicy.Decision) -> WKNavigationActionPolicy {
+            switch decision {
+            case .allow: return .allow
+            case .cancel: return .cancel
+            case .openInBrowser(let url):
+                NSWorkspace.shared.open(url)
+                return .cancel
+            }
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

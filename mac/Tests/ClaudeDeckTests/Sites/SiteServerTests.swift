@@ -309,6 +309,33 @@ final class SiteViewportTests: XCTestCase {
 }
 
 final class SiteNavigationPolicyTests: XCTestCase {
+    func testDevServerKeepsMainFrameOnSameOrigin() {
+        let origin = URL(string: "http://localhost:3000/")
+        func decide(_ url: String, mainFrame: Bool = true) -> SiteNavigationPolicy.Decision {
+            SiteNavigationPolicy.decide(URL(string: url), mainFrame: mainFrame, origin: origin)
+        }
+        XCTAssertEqual(decide("http://localhost:3000/about"), .allow)
+        XCTAssertEqual(decide("HTTP://LOCALHOST:3000/ja/"), .allow)
+        XCTAssertEqual(decide("about:blank"), .allow)
+        XCTAssertEqual(decide("https://example.com/x"), .openInBrowser(URL(string: "https://example.com/x")!))
+        XCTAssertEqual(decide("http://localhost:3001/"), .openInBrowser(URL(string: "http://localhost:3001/")!))
+        XCTAssertEqual(decide("https://localhost:3000/"), .openInBrowser(URL(string: "https://localhost:3000/")!))
+        XCTAssertEqual(decide("http://127.0.0.1:3000/"), .openInBrowser(URL(string: "http://127.0.0.1:3000/")!))
+        XCTAssertEqual(decide("file:///etc/hosts"), .cancel)
+        XCTAssertEqual(decide("javascript:alert(1)"), .cancel)
+        XCTAssertEqual(decide("data:text/html,x"), .cancel)
+        // 埋め込み（iframe 等）は今までどおり。
+        XCTAssertEqual(decide("https://www.youtube.com/embed/x", mainFrame: false), .allow)
+        XCTAssertEqual(decide("file:///etc/hosts", mainFrame: false), .cancel)
+    }
+
+    func testWithoutOriginKeepsExistingPolicy() {
+        XCTAssertEqual(SiteNavigationPolicy.decide(URL(string: "https://example.com/"), mainFrame: true, origin: nil), .allow)
+        XCTAssertEqual(SiteNavigationPolicy.decide(URL(string: "file:///etc/hosts"), mainFrame: true, origin: nil), .cancel)
+        XCTAssertTrue(SiteNavigationPolicy.sameOrigin(URL(string: "https://a.example/")!, URL(string: "https://a.example:443/x")!))
+        XCTAssertFalse(SiteNavigationPolicy.sameOrigin(URL(string: "http://a.example/")!, URL(string: "http://b.example/")!))
+    }
+
     func testAllowsWebAndRefusesLocalOrScript() {
         for ok in ["http://127.0.0.1:5000/", "https://apps.apple.com/app/x", "about:blank", "blob:https://a.example/x"] {
             XCTAssertTrue(SiteNavigationPolicy.allows(URL(string: ok), mainFrame: true), ok)

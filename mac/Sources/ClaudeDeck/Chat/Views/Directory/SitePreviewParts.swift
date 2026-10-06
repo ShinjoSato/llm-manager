@@ -85,6 +85,8 @@ struct SegmentButton: View {
 /// 表示幅で組ませたページを、与えられた幅と高さに縮めて収める枠。
 struct SitePreviewFrame: View {
     let url: URL
+    /// 開発サーバーの時はその origin（遷移をそこに限る）。
+    var origin: URL? = nil
     let viewport: SiteViewport
     let reloadToken: Int
     let state: SitePreviewState
@@ -96,7 +98,7 @@ struct SitePreviewFrame: View {
         let bezel = viewport.bezel
         let phoneRadius = 28 * layout.scale + 6
         ZStack {
-            SiteWebView(url: url, zoom: layout.scale, reloadToken: reloadToken, state: state)
+            SiteWebView(url: url, origin: origin, zoom: layout.scale, reloadToken: reloadToken, state: state)
                 .frame(width: layout.frameWidth, height: layout.frameHeight)
                 .clipShape(RoundedRectangle(cornerRadius: viewport == .phone ? phoneRadius : 4))
                 .padding(bezel)
@@ -164,6 +166,9 @@ struct DevServerControls: View {
                 if active {
                     HeaderButton(symbol: "stop.fill", name: "開発サーバーを停止", detail: "npm run dev をプロセスグループごと止める",
                                  busyStatus: server?.phase == .stopping ? "停止中…" : nil, action: onStop)
+                } else if server?.isCleaningUp == true {
+                    HeaderButton(symbol: "play.fill", name: "開発サーバーを起動", detail: "前のプロセスの残りを止めています",
+                                 busyStatus: "片付け中…", action: onStart)
                 } else if readiness?.problem == nil {
                     HeaderButton(symbol: "play.fill", name: "開発サーバーを起動",
                                  detail: readiness.flatMap(Self.scriptDetail) ?? "npm run dev", action: onStart)

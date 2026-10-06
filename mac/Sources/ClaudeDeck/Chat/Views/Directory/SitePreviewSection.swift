@@ -196,13 +196,13 @@ struct SitePreviewSection: View {
         if snapshot == nil {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
         } else if let url = targetURL {
-            SitePreviewFrame(url: url, viewport: viewport, reloadToken: reloadToken, state: preview,
-                             maxHeight: Self.maxPreviewHeight)
+            SitePreviewFrame(url: url, origin: source == .devServer ? url : nil, viewport: viewport, reloadToken: reloadToken,
+                             state: preview, maxHeight: Self.maxPreviewHeight)
         } else if source == .devServer, location != nil {
             if devServer?.isActive == true {
                 hint("開発サーバーがアドレス（http://localhost:…）を出すとここに映ります。")
             } else if snapshot?.readiness?.problem == nil {
-                hint("▶ で `npm run dev` を起動すると、変更がここにすぐ映ります（起動は押した時だけ・アプリの終了で止まります）。")
+                hint("▶ で `npm run dev` を起動すると、変更がここにすぐ映ります（起動は押した時だけ。ルームを閉じても動き続け、停止ボタン・アプリの終了・プロジェクトの削除で止まります）。")
             }
         } else if source == .export, hasExport {
             if snapshot?.serverProblem != nil {

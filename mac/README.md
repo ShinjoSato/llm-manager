@@ -47,7 +47,7 @@ mac/
         HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
         SessionRestorer.swift       ホスト中のセッションの記録（hosted-sessions.json）と起動時の再開・作業中だったものへの続きの頼み
         SiteThumbnailStore.swift    「ディレクトリ」の行の LP のサムネイル（オフスクリーンの WKWebView で撮って縮小・キャッシュ・1 つずつ）
-        DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める）
+        DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める。ルームを閉じても止めない）
       Views/                      画面（SwiftUI）
         ChatRootView.swift          骨組み（切り替えバー | 一覧 | 会話かディレクトリの詳細 | 右パネルの差し込み口）
         RoomList/                   左の一覧（ルーム / ディレクトリ）
@@ -506,16 +506,23 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
       `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec npm run dev`。子の環境からも API キーと Claude Code の子セッション印を除き（`ChildEnvironment`。claude の起動と共通）、
       `BROWSER=none`・`NO_COLOR=1` を足す。stdin は `/dev/null`、stdout / stderr は 1 本にまとめて読む。**新しいプロセスグループ**（`posix_spawn` の `SETPGROUP`）で起動し、
       止める時はグループごと SIGTERM → 3 秒待って残れば SIGKILL（`DevServerStopPlan`）。先頭のプロセスはグループが止まり切るまで刈り取らず、
-      送る前に今も自分の子か（`waitid(WNOWAIT)`）を確かめる（番号の使い回しで別のプロセスに送らないため）。止めるのは停止ボタン・アプリの終了
-      （`applicationWillTerminate` と SIGTERM / SIGINT の経路の両方で、止まり切るまで待ってから終える）・プロジェクトが設定から消えた時（設定が読めない間は止めない）。
+      送る前に今も自分の子か（`waitid(WNOWAIT)`）を確かめる（番号の使い回しで別のプロセスに送らないため。グループの一覧を `sysctl` で取れない時は、先頭が生きていれば残っているとみなして手順を続ける）。
+      **開発サーバーはルームではなくプロジェクト（サイトのフォルダ）に付く**ので、ルームを閉じても止めない。止めるのは停止ボタン・アプリの終了
+      （`applicationWillTerminate` と SIGTERM / SIGINT の経路の両方で、片付け中のものも含めて止まり切るまで待ってから終える）・プロジェクトが設定から消えた時（設定が読めない間は止めない。止め切ってから一覧から外す）。
+      止めている間は孫まで止め切るまで「停止中」のままで、先頭が自然に終わった時も、グループに残ったものを止め切るまでは片付け中として扱う（その間は同じサイトを起動しない）。
       自動では起動しない。同じサイト（フォルダ）は二重に起動しない（`DevServerStore`）。
-      - 出力の各行（色などの制御文字は落とす）から `http://localhost:NNNN` / `127.0.0.1:NNNN`（Next の `Local:` 行・Vite の `➜ Local:` 等）を見つけてプレビューにつなぐ。
+      **アプリが強制終了・クラッシュした時（SIGKILL 等で終了の処理が走らない時）は開発サーバーが残りうる**（設計上の限界。残ったら `lsof -i :<ポート>` 等で見つけて止める）。
+      - 出力の各行（色などの制御文字は落とす）から `http://localhost:NNNN` / `127.0.0.1:NNNN` を見つけてプレビューにつなぐ。Next の `- Local:` 行・Vite の `➜ Local:` 行を優先し、
+        無ければ最初の手元のアドレス（後から `Local:` 行が出ればそちらへ乗り換え、`Local:` 行で決めた後は替えない）。前後に語の文字が続くもの（`xlocalhost` 等）は拾わない。
         `0.0.0.0` / `[::1]` は `localhost` で開き、LAN のアドレス・「使用中」のエラーの行のアドレスは使わない。プレビューで開くのは手元（localhost / 127.0.0.1）の
-        アドレスだけで、WKWebView の遷移の制限は書き出しと同じ（HMR の WebSocket はそのまま通る）。
+        アドレスだけ。**ページそのものの遷移は開いたアドレスと同じ origin（スキーム・ホスト・ポート）に限り**、それ以外の http / https のリンクは既定のブラウザで開く
+        （`SiteNavigationPolicy.decide`。埋め込みの扱いと HMR の WebSocket は書き出しと同じ。書き出し・公開 URL の遷移の扱いは変えない）。
+      - 出力は読んだ順に、まとめてメインへ渡す（受け手が詰まっている間は 256KB までためて古い方から捨てる）。行の分け方は読む位置をずらして最後に一度だけ削り、
+        改行の来ない 16KB を超える行は UTF-8 の文字の境界で切る。画面の出力の反映は 0.2 秒に 1 回に間引く。
       - 出力の末尾 400 行を節の中で見られる（「出力を見る」）。起動に失敗した・すぐ終わった時は理由を出す: npm / node が無い（終了コード 127 等）・
         dev スクリプトが無い・ポートが使用中（`EADDRINUSE` / `Port N is already in use`）・それ以外は終了コード。
       - 判定（起動条件・アドレスの読み取り・失敗の理由・止める手順）は `Sources/MonitorKit/Sites/DevServerRules.swift`、子プロセスは `DevServerProcess.swift`
-        （テストあり。sh で孫を持つ子を立て、グループごと止まる・SIGTERM を無視しても SIGKILL で止まる・すぐの終了を知らせる、を確かめる）、
+        （テストあり。sh で孫を持つ子を立て、グループごと止まる・SIGTERM を無視しても SIGKILL で止まる・すぐの終了を知らせる・先頭が終わった後も SIGTERM を無視する孫を止め切る・出力が順に届く、を確かめる）、
         持ち手は `Sources/ClaudeDeck/Chat/Model/DevServerStore.swift`。初めて開いた時の見る元は、開発サーバーが動いていればそれ、書き出しが無く起動できるなら開発サーバー、それ以外は書き出し。
     - WKWebView は Cookie 等を残さない（`nonPersistent`）。外部のサイトへの遷移はそのまま許し、`file:`・`javascript:`・ページそのものの `data:` 等へは遷移しない
       （新しいウィンドウで開くリンクは同じ枠で開く）。

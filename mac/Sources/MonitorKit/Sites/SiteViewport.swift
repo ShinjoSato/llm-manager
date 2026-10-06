@@ -101,6 +101,40 @@ public enum SiteNavigationPolicy {
         }
     }
 
+    /// 遷移の扱い。
+    public enum Decision: Equatable, Sendable {
+        case allow
+        case cancel
+        /// プレビューでは開かず、既定のブラウザで開く。
+        case openInBrowser(URL)
+    }
+
+    /// `origin` があれば（開発サーバー）、ページそのものの遷移はそれと同じ origin に限り、他の http / https はブラウザへ回す。
+    /// `origin` が無ければ（書き出し・公開 URL）`allows` のとおり。
+    public static func decide(_ url: URL?, mainFrame: Bool, origin: URL?) -> Decision {
+        guard let origin, mainFrame else { return allows(url, mainFrame: mainFrame) ? .allow : .cancel }
+        if let url, sameOrigin(url, origin) { return .allow }
+        if url?.scheme?.lowercased() == "about" { return .allow }
+        if let external = browserURL(url) { return .openInBrowser(external) }
+        return .cancel
+    }
+
+    /// スキーム・ホスト・ポート（省略時は既定のポート）が同じか。
+    public static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
+        guard let schemeA = a.scheme?.lowercased(), let schemeB = b.scheme?.lowercased(), schemeA == schemeB,
+              let hostA = a.host?.lowercased(), let hostB = b.host?.lowercased(), hostA == hostB else { return false }
+        return effectivePort(a, scheme: schemeA) == effectivePort(b, scheme: schemeB)
+    }
+
+    private static func effectivePort(_ url: URL, scheme: String) -> Int? {
+        if let port = url.port { return port }
+        switch scheme {
+        case "http": return 80
+        case "https": return 443
+        default: return nil
+        }
+    }
+
     /// 「ブラウザで開く」に渡してよいもの（http / https だけ）。
     public static func browserURL(_ url: URL?) -> URL? {
         guard let url, let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https", url.host != nil else { return nil }

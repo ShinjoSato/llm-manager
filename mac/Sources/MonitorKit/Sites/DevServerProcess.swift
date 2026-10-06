@@ -4,6 +4,8 @@ import Foundation
 /// 先頭のプロセスはグループが止まり切るまで刈り取らない（番号が使い回されず、グループが自分の子のものだと言い切れるため）。
 public final class DevServerProcess: @unchecked Sendable {
     public let pid: pid_t
+    /// 受け手が詰まっている間にため込む出力の上限（超えたら古い方から捨てる）。
+    static let maxPendingOutput = 256 * 1024
 
     private let lock = NSLock()
     private var exited: DevServerExit?
@@ -13,16 +15,25 @@ public final class DevServerProcess: @unchecked Sendable {
     private var stopTask: Task<Void, Never>?
     private var exitSource: DispatchSourceProcess?
     private var output: FileHandle?
+    private let deliveryQueue: DispatchQueue
+    private let onOutput: @Sendable (Data) -> Void
     private let onExit: @Sendable (DevServerExit) -> Void
     private var exitReported = false
+    private var pendingOutput = Data()
+    private var flushScheduled = false
 
-    private init(pid: pid_t, onExit: @escaping @Sendable (DevServerExit) -> Void) {
+    private init(pid: pid_t, deliveryQueue: DispatchQueue, onOutput: @escaping @Sendable (Data) -> Void,
+                 onExit: @escaping @Sendable (DevServerExit) -> Void) {
         self.pid = pid
+        self.deliveryQueue = deliveryQueue
+        self.onOutput = onOutput
         self.onExit = onExit
     }
 
     /// 起動する。stdin は /dev/null、stdout と stderr は 1 本にまとめて `onOutput` へ。
+    /// `onOutput` と `onExit` は `deliveryQueue`（直列のキュー）で、届いた順に呼ぶ。
     public static func spawn(executable: String, arguments: [String], environment: [String: String], directory: String,
+                             deliveryQueue: DispatchQueue = .main,
                              onOutput: @escaping @Sendable (Data) -> Void,
                              onExit: @escaping @Sendable (DevServerExit) -> Void) throws -> DevServerProcess {
         var fds: [Int32] = [0, 0]
@@ -67,14 +78,14 @@ public final class DevServerProcess: @unchecked Sendable {
             throw PosixSpawnError.failed(rc)
         }
 
-        let process = DevServerProcess(pid: pid, onExit: onExit)
+        let process = DevServerProcess(pid: pid, deliveryQueue: deliveryQueue, onOutput: onOutput, onExit: onExit)
         let handle = FileHandle(fileDescriptor: readFD, closeOnDealloc: true)
         handle.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
             } else {
-                onOutput(data)
+                process.enqueue(data)
             }
         }
         let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global(qos: .utility))
@@ -97,6 +108,39 @@ public final class DevServerProcess: @unchecked Sendable {
         return DevServerExit(siginfoCode: info.si_code, status: info.si_status)
     }
 
+    /// 受け取った出力をためて、受け手のキューへまとめて渡す（届いた順のまま、詰まっても際限なくはためない）。
+    private func enqueue(_ data: Data) {
+        let schedule = lock.withLock { () -> Bool in
+            pendingOutput.append(data)
+            if pendingOutput.count > Self.maxPendingOutput {
+                pendingOutput = Self.trimmedOutput(pendingOutput, limit: Self.maxPendingOutput)
+            }
+            guard !flushScheduled else { return false }
+            flushScheduled = true
+            return true
+        }
+        if schedule { deliveryQueue.async { [self] in flushOutput() } }
+    }
+
+    private func flushOutput() {
+        let data = lock.withLock { () -> Data in
+            flushScheduled = false
+            defer { pendingOutput = Data() }
+            return pendingOutput
+        }
+        if !data.isEmpty { onOutput(data) }
+    }
+
+    /// 古い方を捨てて `limit` 以下にする。行の途中から始まらないよう、残す側の最初の改行の後ろから残す。
+    static func trimmedOutput(_ data: Data, limit: Int) -> Data {
+        guard data.count > limit else { return data }
+        let tail = data.suffix(limit)
+        if let newline = tail.firstIndex(of: 0x0A), newline < tail.endIndex - 1 {
+            return Data(tail[(newline + 1)...])
+        }
+        return Data(tail)
+    }
+
     private func leaderExited() {
         guard let exit = peekExit() else { return }
         let report = lock.withLock { () -> Bool in
@@ -107,16 +151,22 @@ public final class DevServerProcess: @unchecked Sendable {
             return !exitReported
         }
         guard report else { return }
-        // 出力の最後を読み切ってから知らせる（理由の判定に使うため）。
+        // 残った孫を片付けてから刈り取る。
+        Task { await self.stop() }
+        // 出力の最後を読み切ってから、出力と同じキューで知らせる（理由の判定に使うため）。
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.2) { [self] in
-            onExit(exit)
-            // 残った孫を片付けてから刈り取る。
-            Task { await self.stop() }
+            deliveryQueue.async { [self] in
+                flushOutput()
+                onExit(exit)
+            }
         }
     }
 
     /// 先頭のプロセスが終わっていれば、その終わり方。
     public var exitStatus: DevServerExit? { lock.withLock { exited } }
+
+    /// グループを止め切って（またはあきらめて）先頭を刈り取ったか。
+    public var isFinished: Bool { lock.withLock { reaped } }
 
     /// グループごと止める（SIGTERM → 猶予の後 SIGKILL）。何度呼んでも 1 回分の手順になる。
     public func stop() async {
@@ -147,7 +197,8 @@ public final class DevServerProcess: @unchecked Sendable {
     private func advance(now: Date) -> Bool {
         lock.withLock {
             let owns = ownsGroupLocked()
-            let alive = owns && Self.groupAlive(pid)
+            // 一覧を取れない時は、先頭が生きていれば残っているとみなして手順を続ける。
+            let alive = owns && (Self.groupAlive(pid) ?? (peekExit() == nil))
             let step = DevServerStopPlan.next(ownsGroup: owns, groupAlive: alive, termSentAt: termSentAt,
                                               killSentAt: killSentAt, now: now)
             switch step {
@@ -190,16 +241,17 @@ public final class DevServerProcess: @unchecked Sendable {
         }
     }
 
-    /// グループに終わっていないプロセスが残っているか。
-    static func groupAlive(_ pgid: pid_t) -> Bool {
+    /// グループに終わっていないプロセスが残っているか（一覧を取れなければ nil）。
+    static func groupAlive(_ pgid: pid_t) -> Bool? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PGRP, pgid]
         var size = 0
-        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return false }
+        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0 else { return nil }
+        guard size > 0 else { return false }
         let stride = MemoryLayout<kinfo_proc>.stride
         // 測った後に増えても入るよう、少し余らせる。
         var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / stride + 8)
         size = procs.count * stride
-        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return false }
+        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return nil }
         return procs.prefix(size / stride).contains { $0.kp_eproc.e_pgid == pgid && $0.kp_proc.p_stat != SZOMB }
     }
 }

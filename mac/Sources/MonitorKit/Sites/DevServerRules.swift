@@ -43,6 +43,18 @@ public struct DevServerExit: Equatable, Sendable {
     }
 }
 
+/// 出力から読んだ開発サーバーのアドレス。
+public struct DevServerAddress: Equatable, Sendable {
+    public var url: URL
+    /// Next・Vite の `Local:` の行から読んだか。
+    public var fromLocalLine: Bool
+
+    public init(url: URL, fromLocalLine: Bool) {
+        self.url = url
+        self.fromLocalLine = fromLocalLine
+    }
+}
+
 /// 起動条件・出力からのアドレスの読み取り・失敗の理由。
 public enum DevServerRules {
     /// 節の中で見られる出力の行数。
@@ -78,12 +90,21 @@ public enum DevServerRules {
 
     // MARK: - アドレス
 
+    // 前後に語の文字が続くもの（xlocalhost・localhost:30000x 等）は拾わない。
     private static let addressPattern = try! NSRegularExpression(
-        pattern: #"(?:(https?)://)?(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\]):([0-9]{1,5})(/[A-Za-z0-9._~%/\-]*)?"#,
+        pattern: #"(?:(?<![A-Za-z0-9+.\-])(https?)://)?(?<![A-Za-z0-9_.\-])(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\]):([0-9]{1,5})(?![0-9A-Za-z_])(/[A-Za-z0-9._~%/\-]*)?"#,
         options: [.caseInsensitive])
+
+    /// Next・Vite が手元のアドレスを出す行（`- Local:` / `➜  Local:`）。
+    private static let localLabelPattern = try! NSRegularExpression(pattern: #"(?<![A-Za-z])Local:\s"#)
 
     /// 出力の 1 行から、開発サーバーの手元のアドレス（localhost / 127.0.0.1）を読む。LAN のアドレスやエラーの行は使わない。
     public static func address(in rawLine: String) -> URL? {
+        addressMatch(in: rawLine)?.url
+    }
+
+    /// `address(in:)` に、Next・Vite の `Local:` の行から読んだかを添えたもの。
+    public static func addressMatch(in rawLine: String) -> DevServerAddress? {
         let line = DevServerLog.clean(rawLine)
         let lower = line.lowercased()
         // 「使用中」のエラーに出るアドレスは自分のものではない。
@@ -98,9 +119,20 @@ public enum DevServerRules {
             let host = rawHost == "127.0.0.1" ? "127.0.0.1" : "localhost"
             var path = Range(match.range(at: 4), in: line).map { String(line[$0]) } ?? "/"
             if path.isEmpty { path = "/" }
-            if let url = URL(string: "\(scheme)://\(host):\(port)\(path)") { return url }
+            guard let url = URL(string: "\(scheme)://\(host):\(port)\(path)") else { continue }
+            let labeled = localLabelPattern.firstMatch(in: line, range: range) != nil
+            return DevServerAddress(url: url, fromLocalLine: labeled)
         }
         return nil
+    }
+
+    /// 新しく揃った行から、つなぐアドレスを決める。`Local:` の行のものを優先し、無ければ最初の手元のアドレス。
+    /// `Local:` の行から決めた後は替えない（後の出力の別の URL に引きずられないため）。
+    public static func nextAddress(current: DevServerAddress?, newLines: [String]) -> DevServerAddress? {
+        if current?.fromLocalLine == true { return current }
+        let found = newLines.lazy.compactMap(addressMatch(in:)).filter { isLocalAddress($0.url) }
+        if let labeled = found.first(where: \.fromLocalLine) { return labeled }
+        return current ?? found.first
     }
 
     /// プレビューで開いてよい開発サーバーのアドレス（手元の http / https だけ）。
@@ -156,16 +188,32 @@ public struct DevServerLog: Equatable, Sendable {
     public mutating func append(_ data: Data) -> [String] {
         pending.append(data)
         var completed: [String] = []
-        while let newline = pending.firstIndex(of: 0x0A) {
-            completed.append(Self.decode(pending[pending.startIndex..<newline]))
-            pending.removeSubrange(pending.startIndex...newline)
+        // 読む位置だけを進め、使い終えた分は最後に一度だけ削る（塊ごとに詰め直すと出力の量の二乗になるため）。
+        var start = pending.startIndex
+        while let newline = pending[start...].firstIndex(of: 0x0A) {
+            completed.append(Self.decode(pending[start..<newline]))
+            start = newline + 1
         }
-        if pending.count > Self.maxLineBytes {
-            completed.append(Self.decode(pending))
-            pending.removeAll()
+        while pending.endIndex - start > Self.maxLineBytes {
+            let cut = Self.characterBoundary(in: pending, from: start, limit: Self.maxLineBytes)
+            completed.append(Self.decode(pending[start..<cut]))
+            start = cut
         }
+        if start != pending.startIndex { pending = Data(pending[start...]) }
         push(completed)
         return completed
+    }
+
+    /// `from` から `limit` バイト以内で、UTF-8 の文字の途中にならない切れ目。
+    static func characterBoundary(in data: Data, from start: Data.Index, limit: Int) -> Data.Index {
+        var cut = start + limit
+        // 続きのバイト（10xxxxxx）の前では切らない。文字は 4 バイトまでなので 3 つ戻れば足りる。
+        var steps = 0
+        while cut > start, steps < 3, data[cut] & 0xC0 == 0x80 {
+            cut -= 1
+            steps += 1
+        }
+        return cut > start ? cut : start + limit
     }
 
     /// 終わった時に、改行の無い最後の行を確定させる。

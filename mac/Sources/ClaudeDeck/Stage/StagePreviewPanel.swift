@@ -82,9 +82,9 @@ private struct StageSitePreview: View {
     private var devServer: DevServer? { location.flatMap { DevServerStore.shared.server(for: $0.root) } }
 
     /// 開発サーバーが映せればそれ、無ければ書き出し。
-    private var target: (url: URL, label: String)? {
-        if let url = devServer?.url { return (url, "開発サーバー") }
-        if let url = snapshot?.exportURL { return (url, "書き出し") }
+    private var target: (url: URL, label: String, origin: URL?)? {
+        if let url = devServer?.url { return (url, "開発サーバー", url) }
+        if let url = snapshot?.exportURL { return (url, "書き出し", nil) }
         return nil
     }
 
@@ -154,7 +154,7 @@ private struct StageSitePreview: View {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
         } else if let target {
             GeometryReader { proxy in
-                SitePreviewFrame(url: target.url, viewport: viewport, reloadToken: reloadToken, state: preview,
+                SitePreviewFrame(url: target.url, origin: target.origin, viewport: viewport, reloadToken: reloadToken, state: preview,
                                  maxHeight: max(proxy.size.height, 120))
             }
         } else {
@@ -169,7 +169,7 @@ private struct StageSitePreview: View {
                 .foregroundStyle(ChatTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
-                if let location, devServer?.isActive != true, snapshot?.readiness?.problem == nil {
+                if let location, devServer?.canStart ?? true, snapshot?.readiness?.problem == nil {
                     Button { DevServerStore.shared.start(project: project, location: location) } label: {
                         Label("開発サーバーを起動", systemImage: "play.fill")
                             .font(ChatTheme.caption)
