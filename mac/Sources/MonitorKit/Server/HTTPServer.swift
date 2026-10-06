@@ -44,6 +44,8 @@ public struct HTTPResponse: Sendable, Equatable {
     public var body: Data
     /// あれば `body` の代わりに chunked で流す。
     public var stream: HTTPBodyStream?
+    /// HEAD への応答: Content-Length は本文の長さのまま、本文は送らない。
+    public var omitsBody = false
 
     public init(status: Int, headers: [(String, String)] = [], body: Data = Data(), stream: HTTPBodyStream? = nil) {
         self.status = status
@@ -61,13 +63,14 @@ public struct HTTPResponse: Sendable, Equatable {
 
     public static func == (a: HTTPResponse, b: HTTPResponse) -> Bool {
         a.status == b.status && a.body == b.body && a.headers.map { "\($0.0):\($0.1)" } == b.headers.map { "\($0.0):\($0.1)" }
-            && a.stream === b.stream
+            && a.stream === b.stream && a.omitsBody == b.omitsBody
     }
 
     static func reason(_ status: Int) -> String {
         switch status {
         case 100: return "Continue"
         case 200: return "OK"
+        case 308: return "Permanent Redirect"
         case 400: return "Bad Request"
         case 401: return "Unauthorized"
         case 403: return "Forbidden"
@@ -96,7 +99,7 @@ public struct HTTPResponse: Sendable, Equatable {
         }
         head += "Content-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         var data = Data(head.utf8)
-        data.append(body)
+        if !omitsBody { data.append(body) }
         return data
     }
 

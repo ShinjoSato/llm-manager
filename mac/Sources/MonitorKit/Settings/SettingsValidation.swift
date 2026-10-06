@@ -50,7 +50,13 @@ public enum SettingsValidation {
         if !project.path.hasPrefix("/") { problems.append("パスは絶対パスにしてください") }
         if let link = project.github { problems += linkProblems(link) }
         for row in projectLinkRowProblems(project.links) { problems += row }
+        if let site = project.site, let p = sitePathProblem(site.path) { problems.append(p) }
         return problems
+    }
+
+    /// サイトの場所: プロジェクトからの相対パスで、外を指さないもの。
+    public static func sitePathProblem(_ path: String) -> String? {
+        SiteLocator.normalizedRelativePath(path).failure
     }
 
     /// リンクの URL: http / https で host があるもの。
@@ -112,6 +118,7 @@ public enum SettingsValidation {
             for (link, problems) in zip(project.links, projectLinkRowProblems(project.links)) {
                 for p in problems { result.append("「\(project.name)」のリンク「\(link.name)」: \(p)") }
             }
+            if let site = project.site, let p = sitePathProblem(site.path) { result.append("「\(project.name)」のサイト: \(p)") }
         }
         for (index, board) in settings.boards.enumerated() {
             for p in boardProblems(board) { result.append("ボード「\(board.name)」: \(p)") }

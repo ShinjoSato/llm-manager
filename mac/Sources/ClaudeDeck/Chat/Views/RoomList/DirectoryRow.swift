@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 「ディレクトリ」の 1 行（色の点・名前・パスの末尾・動いているセッションの件数といちばん急ぐ状態）。
+/// 「ディレクトリ」の 1 行（色の点・名前・パスの末尾・動いているセッションの件数といちばん急ぐ状態・LP のサムネイル）。
 struct DirectoryRow: View, Equatable {
     let directory: ProjectDirectory
     let selected: Bool
@@ -36,6 +36,7 @@ struct DirectoryRow: View, Equatable {
                     if let status = directory.urgentStatus { DirectoryStatusBadge(status: status) }
                 }
             }
+            SiteThumbnailView(project: project)
         }
         .padding(.vertical, 9)
         .padding(.horizontal, 12)
@@ -70,5 +71,31 @@ struct DirectoryStatusBadge: View {
             .padding(.vertical, attention ? 1 : 0)
             .background(Capsule().fill(attention ? ChatTheme.attentionBadge(for: status) : .clear))
             .fixedSize()
+    }
+}
+
+/// LP のサムネイル（書き出しが無ければ出さない）。行は Equatable で描き直しを絞るので、撮れた時はここだけが描き直る。
+struct SiteThumbnailView: View {
+    let project: ManagedProject
+    private var store: SiteThumbnailStore { SiteThumbnailStore.shared }
+
+    var body: some View {
+        // 空の Group では onAppear が来ないので、無い時も幅 0 の場所を置く。
+        ZStack {
+            if let image = store.images[project.path] {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 64, height: 40, alignment: .top)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(ChatTheme.border))
+                    .accessibilityHidden(true)
+            } else {
+                Color.clear.frame(width: 0, height: 0)
+            }
+        }
+        .task(id: project.site?.path ?? "") { store.request(project) }
+        .onAppear { store.request(project) }
     }
 }
