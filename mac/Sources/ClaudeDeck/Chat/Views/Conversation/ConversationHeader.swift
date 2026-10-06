@@ -76,17 +76,13 @@ struct EditorButtons: View {
                     .frame(maxWidth: 200, alignment: .trailing)
                     .help(note.outcome.message)
             }
-            HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", title: "VS Code",
-                         help: "VS Code で開く: \(room.cwd)") { editors.openInVSCode(room) }
+            HeaderButton(symbol: "chevron.left.forwardslash.chevron.right", name: "VS Code") { editors.openInVSCode(room) }
             GitHubButton(editors: editors, room: room, destinations: editors.githubDestinations(for: room),
                          opening: editors.openingGitHub.contains(room.id))
             ProjectLinkButton(editors: editors, room: room, links: editors.projectLinks(for: room))
             if let xcodeProject {
-                HeaderButton(symbol: "hammer", title: "Xcode",
-                             help: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) }
-                HeaderButton(symbol: "xmark", title: closing ? "閉じています…" : "閉じる",
-                             help: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
-                             disabled: closing) { confirmingClose = true }
+                HeaderButton(symbol: "hammer", name: "Xcode") { editors.openInXcode(room) }
+                HeaderButton(symbol: "xmark", name: "閉じる", busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true }
                     .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
                         Button("閉じる", role: .destructive) { editors.closeInXcode(room) }
                         Button("やめる", role: .cancel) {}
@@ -108,24 +104,27 @@ struct GitHubButton: View {
     @State private var hovering = false
 
     private static let symbol = "rectangle.3.group"
+    private static let name = "GitHub"
+
+    private var busyStatus: String? { opening ? "開いています…" : nil }
 
     var body: some View {
         if destinations.count == 1, let only = destinations.first {
-            HeaderButton(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", help: only.help, disabled: opening) { editors.openOnGitHub(only, for: room) }
+            HeaderButton(symbol: Self.symbol, name: Self.name, detail: only.help, busyStatus: busyStatus) { editors.openOnGitHub(only, for: room) }
         } else if destinations.count > 1 {
             Menu {
                 ForEach(Array(destinations.enumerated()), id: \.offset) { _, destination in
                     Button(destination.menuTitle) { editors.openOnGitHub(destination, for: room) }
                 }
             } label: {
-                HeaderButtonLabel(symbol: Self.symbol, title: opening ? "開いています…" : "GitHub", disabled: opening, hovering: hovering, showsMenu: true)
+                HeaderButtonLabel(symbol: Self.symbol, busy: opening, disabled: opening, hovering: hovering, showsMenu: true)
             }
             .disabled(opening)
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help(destinations.map(\.help).joined(separator: "\n"))
+            .headerButtonHelp(name: Self.name, detail: destinations.map(\.help).joined(separator: "\n"), busyStatus: busyStatus)
             .onHover { hovering = $0 }
         }
     }
@@ -139,66 +138,86 @@ struct ProjectLinkButton: View {
     @State private var hovering = false
 
     private static let symbol = "link"
+    private static let name = "リンク"
 
     var body: some View {
         if links.count == 1, let only = links.first {
-            HeaderButton(symbol: Self.symbol, title: "リンク", help: ProjectLinks.help(for: only)) { editors.openLink(only, for: room) }
+            HeaderButton(symbol: Self.symbol, name: Self.name, detail: ProjectLinks.help(for: only)) { editors.openLink(only, for: room) }
         } else if links.count > 1 {
             Menu {
                 ForEach(Array(links.enumerated()), id: \.offset) { _, link in
                     Button(link.name) { editors.openLink(link, for: room) }
                 }
             } label: {
-                HeaderButtonLabel(symbol: Self.symbol, title: "リンク", disabled: false, hovering: hovering, showsMenu: true)
+                HeaderButtonLabel(symbol: Self.symbol, busy: false, disabled: false, hovering: hovering, showsMenu: true)
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help(links.map(ProjectLinks.help(for:)).joined(separator: "\n"))
+            .headerButtonHelp(name: Self.name, detail: links.map(ProjectLinks.help(for:)).joined(separator: "\n"), busyStatus: nil)
             .onHover { hovering = $0 }
         }
     }
 }
 
+/// 見出しのアイコンボタンの見た目。名前は出さずホバーの help と VoiceOver に回す。
 struct HeaderButtonLabel: View {
     let symbol: String
-    let title: String
+    let busy: Bool
     let disabled: Bool
     let hovering: Bool
     var showsMenu = false
 
+    private static let side: CGFloat = 30
+
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol).font(.system(size: 11, weight: .medium))
-            Text(title)
-            if showsMenu { Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)) }
+        HStack(spacing: 2) {
+            ZStack {
+                if busy {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                } else {
+                    Image(systemName: symbol).font(.system(size: 12, weight: .medium))
+                }
+            }
+            .frame(width: 14, height: 14)
+            if showsMenu { Image(systemName: "chevron.down").font(.system(size: 7, weight: .semibold)) }
         }
-        .font(.system(size: 12, weight: .medium))
         .foregroundStyle(disabled ? ChatTheme.tertiary : ChatTheme.text)
-        .padding(.horizontal, 10)
-        .frame(height: 30)
+        .frame(minWidth: Self.side, minHeight: Self.side, maxHeight: Self.side)
+        .padding(.horizontal, showsMenu ? 4 : 0)
         .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
         .contentShape(Rectangle())
     }
 }
 
+extension View {
+    /// ホバーの help は名前を先頭に、処理中は状態、そうでなければ開く先を続ける。
+    func headerButtonHelp(name: String, detail: String?, busyStatus: String?) -> some View {
+        let lines = [name, busyStatus ?? detail].compactMap { $0 }.filter { !$0.isEmpty }
+        return help(lines.joined(separator: "\n"))
+            .accessibilityLabel(name)
+            .accessibilityValue(busyStatus ?? "")
+    }
+}
+
 struct HeaderButton: View {
     let symbol: String
-    let title: String
-    let help: String
-    var disabled = false
+    let name: String
+    var detail: String? = nil
+    var busyStatus: String? = nil
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
+        let busy = busyStatus != nil
         Button(action: action) {
-            HeaderButtonLabel(symbol: symbol, title: title, disabled: disabled, hovering: hovering)
+            HeaderButtonLabel(symbol: symbol, busy: busy, disabled: busy, hovering: hovering)
         }
         .buttonStyle(.plain)
-        .disabled(disabled)
-        .help(help)
+        .disabled(busy)
+        .headerButtonHelp(name: name, detail: detail, busyStatus: busyStatus)
         .onHover { hovering = $0 }
     }
 }
