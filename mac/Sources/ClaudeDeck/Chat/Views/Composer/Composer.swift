@@ -63,7 +63,7 @@ struct Composer: View {
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 14).fill(ChatTheme.inputSurface))
         .overlay(RoundedRectangle(cornerRadius: 14)
-            .stroke(dropTargeted ? ChatTheme.accent : (relay ? ChatTheme.permission.opacity(0.6) : ChatTheme.inputBorder),
+            .stroke(dropTargeted ? ChatTheme.working : (relay ? ChatTheme.permission.opacity(0.6) : ChatTheme.inputBorder),
                     style: StrokeStyle(lineWidth: dropTargeted ? 2 : 1, dash: relay && !dropTargeted ? [5, 4] : [])))
         .opacity(enabled ? 1 : 0.7)
         .overlay(alignment: .topLeading) {

@@ -74,7 +74,11 @@ enum ChatTheme {
         let nightColor = NSColor(hex: night)
         let lightColor = NSColor(hex: light)
         return NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua ? lightColor : nightColor
+            // ポップオーバー等の vibrant 系も明暗で振り分ける。
+            switch appearance.bestMatch(from: [.darkAqua, .vibrantDark, .aqua, .vibrantLight]) {
+            case .aqua?, .vibrantLight?: return lightColor
+            default: return nightColor
+            }
         }
     }
 
