@@ -48,7 +48,9 @@ struct ChatRootView<Trailing: View>: View {
 
     @ViewBuilder
     private var center: some View {
-        if let selected = model.selectedDirectory {
+        if model.center == .links {
+            LinkOverviewView(model: model)
+        } else if let selected = model.selectedDirectory {
             if let directory = selected.directory {
                 DirectoryDetailView(model: model, directory: directory)
                     .id(selected.id)

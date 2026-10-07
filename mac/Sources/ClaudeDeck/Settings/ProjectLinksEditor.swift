@@ -19,10 +19,35 @@ struct ProjectLinksEditor: View {
         var name: String
         var url: String
         var kind: ProjectLinkKind?
+        var pinned: Bool
+        var note: String
+        var remind: Bool
+        var day: Int
+
+        init(_ link: ProjectLink) {
+            name = link.name
+            url = link.url
+            kind = link.kind
+            pinned = link.isPinned
+            note = link.resolvedNote
+            remind = link.reminderDay != nil
+            day = link.reminderDay ?? 1
+        }
+
+        /// 欄の中身をそのまま（利用者が触っていないかを見るため）。
+        var raw: ProjectLink {
+            ProjectLink(name: name, url: url, kind: kind, pinned: pinned ? true : nil, note: note.isEmpty ? nil : note, reminderDay: remind ? day : nil)
+        }
+
+        /// 保存する形（前後の空白は落とす）。
+        var trimmed: ProjectLink {
+            ProjectLink(name: name.trimmingCharacters(in: .whitespaces), url: url.trimmingCharacters(in: .whitespacesAndNewlines),
+                        kind: kind, pinned: pinned ? true : nil, note: ProjectLinks.noteToSave(note), reminderDay: remind ? day : nil)
+        }
     }
 
     private enum Field: Hashable {
-        case name(UUID), url(UUID)
+        case name(UUID), url(UUID), note(UUID), day(UUID)
     }
 
     private var key: String { SettingsStore.projectKey(id: project.id, field: "links") }
@@ -51,20 +76,37 @@ struct ProjectLinksEditor: View {
                             .help("このリンクを削除")
                     }
                     .buttonStyle(.borderless)
+                    HStack(spacing: 8) {
+                        Toggle("ピン", isOn: boolBinding(index, \.pinned)).toggleStyle(.checkbox)
+                            .help("会話と詳細の見出しに単独のボタンで出す（設定の順に \(ProjectLinks.pinLimit) つまで）")
+                        field("メモ（1 行）", text: binding(index, \.note)).focused($focused, equals: .note(row.id))
+                        Toggle("毎月", isOn: boolBinding(index, \.remind)).toggleStyle(.checkbox)
+                        Stepper(value: dayBinding(index), in: 1...31) {
+                            TextField("日", value: dayBinding(index), format: .number)
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 44)
+                                .focused($focused, equals: .day(row.id))
+                                .onSubmit { store.flushPending() }
+                        }
+                        .disabled(!row.remind)
+                        Text("日に確認").font(.caption).foregroundStyle(.secondary)
+                    }
                     if problems.indices.contains(index) {
                         ForEach(problems[index], id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
                     }
                 }
             }
             Button {
-                let row = Row(name: "", url: "", kind: nil)
+                let row = Row(ProjectLink(name: "", url: ""))
                 rows.append(row)
                 focused = .name(row.id)
             } label: { Label("リンクを追加", systemImage: "plus") }
         } header: {
             Text("リンク")
         } footer: {
-            Text("LP やデザインなど、このプロジェクトの会話の見出しの「リンク」から既定のブラウザで開くアドレス（http / https）。名前はプロジェクトの中で重ねられません。")
+            Text("LP やデザインなど、このプロジェクトの会話の見出しの「リンク」から既定のブラウザで開くアドレス（http / https）。名前はプロジェクトの中で重ねられません。「毎月 N 日に確認」は、その日を過ぎてアプリから開いていなければ印を出します（最終確認日は link-visits.json に持ち、この設定には書きません）。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .onAppear { load(project.links) }
@@ -91,6 +133,16 @@ struct ProjectLinksEditor: View {
                 set: { if rows.indices.contains(index) { rows[index][keyPath: keyPath] = $0 } })
     }
 
+    private func boolBinding(_ index: Int, _ keyPath: WritableKeyPath<Row, Bool>) -> Binding<Bool> {
+        Binding(get: { rows.indices.contains(index) ? rows[index][keyPath: keyPath] : false },
+                set: { if rows.indices.contains(index) { rows[index][keyPath: keyPath] = $0 } })
+    }
+
+    private func dayBinding(_ index: Int) -> Binding<Int> {
+        Binding(get: { rows.indices.contains(index) ? rows[index].day : 1 },
+                set: { if rows.indices.contains(index) { rows[index].day = $0 } })
+    }
+
     /// 種類の欄。無い（従来の形）行は「その他」として見せ、選んだ時だけ値を持つ。
     private func kindBinding(_ index: Int) -> Binding<ProjectLinkKind> {
         Binding(get: { rows.indices.contains(index) ? rows[index].kind ?? .other : .other },
@@ -113,8 +165,7 @@ struct ProjectLinksEditor: View {
     /// 欄の今の中身を行ごとに（前後の空白は落とす）。名前と URL が両方空の行は nil。
     private var trimmedRows: [ProjectLink?] {
         rows.map { row in
-            let link = ProjectLink(name: row.name.trimmingCharacters(in: .whitespaces),
-                                   url: row.url.trimmingCharacters(in: .whitespacesAndNewlines), kind: row.kind)
+            let link = row.trimmed
             return link.name.isEmpty && link.url.isEmpty ? nil : link
         }
     }
@@ -123,12 +174,15 @@ struct ProjectLinksEditor: View {
     private var trimmed: [ProjectLink] { trimmedRows.compactMap { $0 } }
 
     /// 欄の中身をそのまま（利用者が触っていないかを見るため）。
-    private var raw: [ProjectLink] { rows.map { ProjectLink(name: $0.name, url: $0.url, kind: $0.kind) } }
+    private var raw: [ProjectLink] { rows.map(\.raw) }
 
     /// 行ごとの問題（空の行は問題なし）。並びは `rows` と同じ。
     private var rowProblems: [[String]] {
         var problems = SettingsValidation.projectLinkRowProblems(trimmed).makeIterator()
-        return trimmedRows.map { $0 == nil ? [] : (problems.next() ?? []) }
+        return trimmedRows.map { link in
+            guard let link else { return [] }
+            return (problems.next() ?? []) + [SettingsValidation.reminderDayProblem(link.reminderDay)].compactMap { $0 }
+        }
     }
 
     /// 全行が正しい時だけ保存する形。どこかが途中なら nil。
@@ -137,9 +191,19 @@ struct ProjectLinksEditor: View {
     }
 
     private func load(_ links: [ProjectLink]) {
-        rows = links.map { Row(name: $0.name, url: $0.url, kind: $0.kind) }
-        loaded = links
+        rows = links.map(Row.init)
+        // 比べるのは欄に入れた形（ファイルの `pinned: false` 等を触っていないのに書き直さない）。
+        loaded = rows.map(\.raw)
         problems = []
+    }
+
+    /// 同じ名前の行の URL を変えた時は最終確認日を新しい URL へ引き継ぐ（今の設定の行と比べる）。
+    private func carryVisits(_ links: [ProjectLink]) {
+        for link in links {
+            guard let current = project.links.first(where: { $0.name.trimmingCharacters(in: .whitespaces) == link.name }),
+                  current.url != link.url else { continue }
+            LinkVisitStore.shared.carry(projectID: project.id, from: current.url, to: link.url)
+        }
     }
 
     private func commit() {
@@ -156,6 +220,7 @@ struct ProjectLinksEditor: View {
             store.cancelPending(key: key)
             return
         }
+        carryVisits(links)
         store.scheduleProject(id: project.id, field: "links", \.links, links)
     }
 }

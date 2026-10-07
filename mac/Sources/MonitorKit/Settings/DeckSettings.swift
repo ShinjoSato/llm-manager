@@ -147,31 +147,55 @@ public struct ProjectLink: Codable, Equatable, Sendable {
     public var url: String
     /// 種類（無ければ「その他」として扱う）。
     public var kind: ProjectLinkKind?
+    /// 見出しに単独のボタンで出すか（無ければ出さない）。
+    public var pinned: Bool?
+    /// 1 行のメモ（無ければ空）。
+    public var note: String?
+    /// 毎月この日に確認する（1〜31。無ければ確認しない。範囲外は警告として読み、保存で落とす）。
+    public var reminderDay: Int?
 
-    public init(name: String, url: String, kind: ProjectLinkKind? = nil) {
+    public init(name: String, url: String, kind: ProjectLinkKind? = nil, pinned: Bool? = nil, note: String? = nil, reminderDay: Int? = nil) {
         self.name = name
         self.url = url
         self.kind = kind
+        self.pinned = pinned
+        self.note = note
+        self.reminderDay = reminderDay
     }
 
     /// 画面で使う種類（無ければその他）。
     public var resolvedKind: ProjectLinkKind { kind ?? .other }
+    public var isPinned: Bool { pinned == true }
+    public var resolvedNote: String { note ?? "" }
+    /// 使える確認の日（1〜31 だけ）。
+    public var validReminderDay: Int? { reminderDay.flatMap { (1...31).contains($0) ? $0 : nil } }
 
-    private enum CodingKeys: String, CodingKey { case name, url, kind }
+    private enum CodingKeys: String, CodingKey { case name, url, kind, pinned, note, reminderDay }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         url = try c.decode(String.self, forKey: .url)
         kind = try c.decodeIfPresent(ProjectLinkKind.self, forKey: .kind)
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        // 整数でない値（"5"・5.5）は 0（＝範囲外）として読み、警告に回す（設定全体を読めなくしない）。
+        if c.contains(.reminderDay), (try? c.decodeNil(forKey: .reminderDay)) != true {
+            reminderDay = (try? c.decode(Int.self, forKey: .reminderDay)) ?? 0
+        } else {
+            reminderDay = nil
+        }
     }
 
-    /// `kind` は無い時だけ出さない（手で書いたファイルの形を変えないため）。
+    /// 既定の値（種類なし・ピンなし・メモ空・確認なし）は書かない（手で書いたファイルの形を変えないため）。
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(name, forKey: .name)
         try c.encode(url, forKey: .url)
         try c.encodeIfPresent(kind, forKey: .kind)
+        if pinned == true { try c.encode(true, forKey: .pinned) }
+        if let note, !note.isEmpty { try c.encode(note, forKey: .note) }
+        try c.encodeIfPresent(validReminderDay, forKey: .reminderDay)
     }
 }
 

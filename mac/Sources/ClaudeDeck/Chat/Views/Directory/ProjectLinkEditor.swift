@@ -2,7 +2,8 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// 詳細の「リンク」の 1 行。クリックで開き、ホバーで「編集」「上へ」「下へ」「削除」を出す。
+/// 詳細の「リンク」の 1 行。クリックで開き、ピンは押すと切り替え、ホバーで「編集」「上へ」「下へ」「削除」を出す。
+/// メモ・「毎月 N 日に確認」は 2 行目、最終確認日は右に出し、確認の日を過ぎてまだ開いていなければ先頭に「確認」。
 struct ProjectLinkRow: View {
     let projectID: UUID
     let index: Int
@@ -16,10 +17,13 @@ struct ProjectLinkRow: View {
 
     var body: some View {
         let openable = problems.isEmpty
+        let visits = LinkVisitStore.shared
+        let due = openable && visits.isDue(projectID: projectID, link: link)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Button(action: open) {
                     HStack(spacing: 8) {
+                        if due { LinkDueBadge() }
                         Image(systemName: link.resolvedKind.symbol)
                             .font(.system(size: 11))
                             .frame(width: 14)
@@ -35,12 +39,25 @@ struct ProjectLinkRow: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: 0)
+                        if openable {
+                            Text(ProjectLinks.lastOpenedLabel(visits.lastOpened(projectID: projectID, link: link)))
+                                .font(ChatTheme.caption)
+                                .foregroundStyle(due ? ChatTheme.permission : ChatTheme.tertiary)
+                                .fixedSize()
+                                .help("最後にこのアプリから開いた日")
+                        }
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!openable)
                 .help(openable ? ProjectLinks.help(for: link) : problems.joined(separator: "・"))
+                // ピンは付いている間だけ常に見せる。
+                ProjectLinkRowButton(symbol: link.isPinned ? "pin.fill" : "pin", name: link.isPinned ? "ピンを外す" : "見出しにピン留め",
+                                     tint: link.isPinned ? ChatTheme.link : nil) {
+                    ProjectLinkActions.togglePin(projectID: projectID, index: index, expecting: link)
+                }
+                .opacity(link.isPinned || hovering || editing ? 1 : 0)
                 HStack(spacing: 2) {
                     ProjectLinkRowButton(symbol: "pencil", name: "編集") { editing = true }
                         .popover(isPresented: $editing, arrowEdge: .bottom) {
@@ -55,6 +72,7 @@ struct ProjectLinkRow: View {
                 // 場所を変えずに、ホバーと編集中だけ見せる。
                 .opacity(hovering || editing ? 1 : 0)
             }
+            LinkDetailLine(link: link)
             if !openable {
                 Text(problems.joined(separator: "・"))
                     .font(ChatTheme.caption)
@@ -93,6 +111,8 @@ struct ProjectLinkAddButton: View {
 private struct ProjectLinkRowButton: View {
     let symbol: String
     let name: String
+    /// 指定があればその色（ピンが付いている印）。
+    var tint: Color? = nil
     let action: () -> Void
     @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
@@ -101,7 +121,7 @@ private struct ProjectLinkRowButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isEnabled ? ChatTheme.text : ChatTheme.tertiary)
+                .foregroundStyle(isEnabled ? (tint ?? ChatTheme.text) : ChatTheme.tertiary)
                 .frame(width: 24, height: 22)
                 .background(RoundedRectangle(cornerRadius: 6).fill(hovering && isEnabled ? ChatTheme.selectedRow : .clear))
                 .contentShape(Rectangle())
@@ -126,6 +146,10 @@ struct ProjectLinkForm: View {
     @State private var name: String
     @State private var urlText: String
     @State private var kind: ProjectLinkKind
+    @State private var note: String
+    @State private var pinned: Bool
+    @State private var remind: Bool
+    @State private var day: Int
     @State private var nameTouched: Bool
     @State private var kindTouched = false
     @State private var kindSuggested = false
@@ -145,6 +169,10 @@ struct ProjectLinkForm: View {
         _name = State(initialValue: initial.name)
         _urlText = State(initialValue: initial.url)
         _kind = State(initialValue: initial.resolvedKind)
+        _note = State(initialValue: initial.resolvedNote)
+        _pinned = State(initialValue: initial.isPinned)
+        _remind = State(initialValue: initial.reminderDay != nil)
+        _day = State(initialValue: initial.reminderDay ?? 1)
         // 編集では入っている名前を提案で置き換えない。
         _nameTouched = State(initialValue: index != nil)
     }
@@ -156,7 +184,10 @@ struct ProjectLinkForm: View {
     private var candidate: ProjectLink {
         ProjectLink(name: name.trimmingCharacters(in: .whitespaces),
                     url: urlText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    kind: ProjectLinks.kindToSave(selected: kind, touched: kindTouched, suggested: kindSuggested, original: initial.kind))
+                    kind: ProjectLinks.kindToSave(selected: kind, touched: kindTouched, suggested: kindSuggested, original: initial.kind),
+                    pinned: pinned ? true : nil,
+                    note: ProjectLinks.noteToSave(note),
+                    reminderDay: remind ? day : nil)
     }
 
     /// 自動で取りに行くのはクエリの無いアドレスだけ（一度きりのログイン用リンク等を使い切らない）。
@@ -182,7 +213,8 @@ struct ProjectLinkForm: View {
             position = links.count - 1
         }
         let rows = SettingsValidation.projectLinkRowProblems(links)
-        return rows.indices.contains(position) ? rows[position] : []
+        let own = rows.indices.contains(position) ? rows[position] : []
+        return own + [SettingsValidation.reminderDayProblem(candidate.reminderDay)].compactMap { $0 }
     }
 
     var body: some View {
@@ -223,6 +255,32 @@ struct ProjectLinkForm: View {
                     }
                     .labelsHidden()
                     .frame(maxWidth: 200, alignment: .leading)
+                }
+                GridRow {
+                    label("メモ")
+                    TextField("メモ", text: $note, prompt: Text("1 行のメモ（任意）"))
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(save)
+                }
+                GridRow {
+                    label("確認")
+                    HStack(spacing: 8) {
+                        Toggle("毎月", isOn: $remind).toggleStyle(.checkbox)
+                        Stepper(value: $day, in: 1...31) {
+                            TextField("日", value: $day, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 44)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .disabled(!remind)
+                        Text("日に確認（過ぎてまだ開いていなければ印を出す）")
+                            .font(ChatTheme.caption)
+                            .foregroundStyle(ChatTheme.secondary)
+                    }
+                }
+                GridRow {
+                    label("ピン")
+                    Toggle("見出しに単独のボタンで出す（設定の順に \(ProjectLinks.pinLimit) つまで）", isOn: $pinned).toggleStyle(.checkbox)
                 }
             }
             if !problems.isEmpty {
@@ -315,6 +373,8 @@ struct ProjectLinkForm: View {
             failure = saved ? "このリンクは外で変わりました。閉じて開き直してください" : (store.problem ?? "保存できませんでした")
             return
         }
+        // 同じ行の URL を変えた時は最終確認日を新しい URL へ引き継ぐ。
+        if index != nil, link.url != initial.url { LinkVisitStore.shared.carry(projectID: projectID, from: initial.url, to: link.url) }
         onClose()
     }
 }
@@ -327,6 +387,15 @@ enum ProjectLinkActions {
             let target = index + delta
             guard project.links.indices.contains(index), project.links.indices.contains(target), project.links[index] == link else { return }
             project.links.swapAt(index, target)
+        }
+    }
+
+    /// ピンの付け外し（外す時は欄ごと落とし、`false` を書かない）。
+    @MainActor
+    static func togglePin(projectID: UUID, index: Int, expecting link: ProjectLink) {
+        _ = SettingsStore.shared.updateProject(id: projectID) { project in
+            guard project.links.indices.contains(index), project.links[index] == link else { return }
+            project.links[index].pinned = link.isPinned ? nil : true
         }
     }
 

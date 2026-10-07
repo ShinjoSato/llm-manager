@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return (window.firstResponder as? NSTextView)?.hasMarkedText() ?? false
         }
         SettingsStore.shared.startWatching()
+        LinkVisitStore.shared.start()
 
         let main = MainViewController()
         self.main = main

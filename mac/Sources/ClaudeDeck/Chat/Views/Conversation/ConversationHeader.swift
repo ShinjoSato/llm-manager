@@ -76,6 +76,7 @@ struct EditorButtons: View {
                     detail: VSCodeButton.detail(target)) { editors.openInVSCode(target) },
         ]
         if let github = HeaderAction.github(priority: 3, editors: editors, target: target) { actions.append(github) }
+        actions += HeaderAction.pins(priority: 2, editors: editors, target: target)
         if let links = HeaderAction.links(priority: 2, editors: editors, target: target) { actions.append(links) }
         if let xcodeProject {
             actions.append(.button(id: "xcode", priority: 4, symbol: "hammer", name: "Xcode",
@@ -222,6 +223,8 @@ struct HeaderButtonLabel: View {
     let disabled: Bool
     let hovering: Bool
     var showsMenu = false
+    /// 右上に小さな黄色の点（確認が必要なピン）。
+    var dot = false
 
     private static let side: CGFloat = 30
 
@@ -242,6 +245,16 @@ struct HeaderButtonLabel: View {
         .padding(.horizontal, showsMenu ? 4 : 0)
         .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+        .overlay(alignment: .topTrailing) {
+            if dot {
+                Circle()
+                    .fill(ChatTheme.permission)
+                    .frame(width: 7, height: 7)
+                    .overlay(Circle().stroke(ChatTheme.background, lineWidth: 1.5))
+                    .offset(x: 2, y: -2)
+                    .accessibilityHidden(true)
+            }
+        }
         .contentShape(Rectangle())
     }
 }
@@ -385,13 +398,14 @@ struct HeaderButton: View {
     let name: String
     var detail: String? = nil
     var busyStatus: String? = nil
+    var dot = false
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         let busy = busyStatus != nil
         Button(action: action) {
-            HeaderButtonLabel(symbol: symbol, busy: busy, disabled: busy, hovering: hovering)
+            HeaderButtonLabel(symbol: symbol, busy: busy, disabled: busy, hovering: hovering, dot: dot)
         }
         .buttonStyle(.plain)
         .disabled(busy)

@@ -147,6 +147,37 @@ final class ProjectLinksTests: XCTestCase {
         XCTAssertEqual(suggested("http://192.168.1.10:3000/"), "192.168.1.10")
     }
 
+    // MARK: - ピン・メモ・前回
+
+    func testPinnedKeepsOrderAndLimit() {
+        let links = [ProjectLink(name: "A", url: "https://a.example", pinned: true),
+                     ProjectLink(name: "B", url: "https://b.example"),
+                     ProjectLink(name: "Bad", url: "nope", pinned: true),
+                     ProjectLink(name: "C", url: "https://c.example", pinned: true),
+                     ProjectLink(name: "D", url: "https://d.example", pinned: false),
+                     ProjectLink(name: "E", url: "https://e.example", pinned: true),
+                     ProjectLink(name: "F", url: "https://f.example", pinned: true)]
+        XCTAssertEqual(ProjectLinks.pinned(links).map(\.name), ["A", "C", "E"])
+        XCTAssertEqual(ProjectLinks.pinned(links, limit: 1).map(\.name), ["A"])
+        XCTAssertEqual(ProjectLinks.pinned(links, limit: 0), [])
+        XCTAssertEqual(ProjectLinks.pinned([]), [])
+        XCTAssertEqual(ProjectLinks.pinLimit, 3)
+    }
+
+    func testNoteToSaveTrimsAndDropsEmpty() {
+        XCTAssertNil(ProjectLinks.noteToSave(""))
+        XCTAssertNil(ProjectLinks.noteToSave("  \n"))
+        XCTAssertEqual(ProjectLinks.noteToSave("  月初に見る "), "月初に見る")
+    }
+
+    func testLastOpenedLabel() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let date = calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: 9))!
+        XCTAssertEqual(ProjectLinks.lastOpenedLabel(date, calendar: calendar), "前回: 10/8")
+        XCTAssertEqual(ProjectLinks.lastOpenedLabel(nil), "未確認")
+    }
+
     // MARK: - 種類ごとのまとめ
 
     func testGroupedKeepsKindOrderAndLinkOrder() {
