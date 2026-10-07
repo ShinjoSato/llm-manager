@@ -307,7 +307,7 @@ final class AppModel {
     /// 確認画面で「ペアリングする」を押した時だけ呼ぶ。
     func confirmPairing(_ offer: PairingOffer) async {
         let payload = offer.payload
-        if let problem = payload.addressProblem ?? payload.problem(now: Date().timeIntervalSince1970 * 1000) {
+        if let problem = offer.problem() {
             pairingError = PairingError(problem)
             return
         }
@@ -453,9 +453,14 @@ final class AppModel {
         }
     }
 
+    /// 送る本文（入力欄の前後の空白を除いたもの）。
+    func draftText(_ roomId: String) -> String {
+        (drafts[roomId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 送れたら（mac が受け付けたら）入力欄を空にする。
     func send(_ room: RemoteRoom) {
-        let text = (drafts[room.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = draftText(room.id)
         // 送っている最中は送らない（メモだけ残って送信中のままにならないよう、メモを作る前に確かめる）。
         guard !text.isEmpty, !inFlight.contains(room.id) else { return }
         let relay = room.send.mode == .relay
@@ -465,7 +470,7 @@ final class AppModel {
             try await client.sendMessage(roomId: room.id, text: text)
         } completion: { [weak self] result in
             guard let self else { return }
-            if result?.ok == true, self.drafts[room.id]?.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            if result?.ok == true, self.draftText(room.id) == text {
                 self.drafts[room.id] = ""
             }
             guard relay, let sid = room.sessionId, let index = self.relayNotes[sid]?.firstIndex(where: { $0.id == note.id }) else { return }

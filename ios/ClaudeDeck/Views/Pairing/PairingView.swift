@@ -132,7 +132,7 @@ struct PairingConfirmView: View {
 
     var body: some View {
         let payload = offer.payload
-        let problem = payload.addressProblem ?? payload.problem(now: Date().timeIntervalSince1970 * 1000)
+        let problem = offer.problem()
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
