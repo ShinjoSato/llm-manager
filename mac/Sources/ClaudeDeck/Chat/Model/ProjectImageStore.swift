@@ -49,8 +49,9 @@ final class ProjectImageStore {
     @ObservationIgnored private lazy var gate = DecodeGate(limit: Self.decodeLimit)
     @ObservationIgnored private var generation = 0
 
-    /// 走査し直す。呼び出し側の取り消しで走査を止め、遅れて返った古い走査の結果は捨てる。
-    func reload(projectPath: String) async {
+    /// 走査し直す。呼び出し側の取り消しで走査を止め、遅れて返った古い走査の結果は捨てる。走り切って反映した時だけ true。
+    @discardableResult
+    func reload(projectPath: String) async -> Bool {
         generation += 1
         let current = generation
         scanning = true
@@ -58,10 +59,11 @@ final class ProjectImageStore {
             ProjectImages.scan(projectPath: projectPath, isCancelled: { Task.isCancelled })
         }
         let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
-        guard generation == current else { return }
+        guard generation == current else { return false }
         scanning = false
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return false }
         scan = result
+        return true
     }
 
     /// 同じファイルでも更新されていれば別の絵として読み直す。
@@ -86,6 +88,7 @@ final class ProjectImageStore {
         if let cached = cache.object(forKey: cacheKey) { return cached }
         // 枠が画面から消えたら（取り消し）読まずに返す。
         guard await gate.acquire() else { return nil }
+        if Task.isCancelled { await gate.release(); return nil }
         let path = image.path
         let decoded = await Task.detached(priority: .userInitiated) { Self.decode(path: path, maxPixels: maxPixels) }.value
         await gate.release()

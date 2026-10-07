@@ -10,7 +10,7 @@ struct ProjectImagesSection: View {
     @State private var previewing: ProjectImage?
     @State private var collapsedGroups: Set<String> = []
     @State private var reloadToken = 0
-    @State private var scannedToken: Int?
+    @State private var scanned: ScanRequest?
     @AppStorage("directory.images.collapsed") private var collapsed = false
 
     private static let columns = [GridItem(.adaptive(minimum: 116, maximum: 150), spacing: 10, alignment: .top)]
@@ -26,9 +26,10 @@ struct ProjectImagesSection: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.claudeBubbleBorder))
         // 畳んでいる間は走査せず、開いた時に初めて走査する（畳めば走査中のものは取りやめる）。
         .task(id: ScanKey(path: project.path, open: !collapsed, token: reloadToken)) {
-            guard !collapsed, store.scan == nil || scannedToken != reloadToken else { return }
-            scannedToken = reloadToken
-            await store.reload(projectPath: project.path)
+            let request = ScanRequest(path: project.path, token: reloadToken)
+            guard !collapsed, scanned != request else { return }
+            // 走り切った時だけ済みにする（畳んで取りやめた走査は開いた時にやり直す）。
+            if await store.reload(projectPath: project.path) { scanned = request }
         }
         .sheet(item: $previewing) { image in
             ProjectImagePreview(image: image, store: store)
@@ -38,6 +39,11 @@ struct ProjectImagesSection: View {
     private struct ScanKey: Hashable {
         let path: String
         let open: Bool
+        let token: Int
+    }
+
+    private struct ScanRequest: Equatable {
+        let path: String
         let token: Int
     }
 
