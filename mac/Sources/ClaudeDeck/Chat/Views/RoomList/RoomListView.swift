@@ -110,6 +110,8 @@ struct RoomListView: View {
                 .contextMenu {
                     Button("Claude Code を起動") { model.launch(directory.project) }
                     Button("Finder で表示") { model.editors.revealInFinder(directory.project.editorTarget) }
+                    Divider()
+                    Button("アイコンと色を変更…") { SettingsWindow.show(tab: .projects, project: directory.project.id) }
                 }
                 .padding(.vertical, 1)
             case .inactiveHeader(let count):

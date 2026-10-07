@@ -2,7 +2,7 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・リンク・サイト。
+/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・アイコンと色・リンク・サイト。
 struct ProjectSettingsTab: View {
     let store: SettingsStore
     let navigation: SettingsNavigation
@@ -147,6 +147,7 @@ private struct ProjectDetailForm: View {
                         store.scheduleProject(id: project.id, field: "note", \.note, value)
                     }
             }
+            ProjectBadgeEditor(store: store, project: project)
             ProjectLinksEditor(store: store, project: project)
             ProjectSiteEditor(store: store, project: project)
             Section {

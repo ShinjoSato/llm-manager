@@ -85,18 +85,39 @@ struct ExternalTag: View {
     }
 }
 
-/// プロジェクトの頭文字アイコン（セッションを持たないプロジェクト一覧用）。
+/// プロジェクトのアイコン（セッションを持たないプロジェクト一覧用）。印を渡せば縁取りの丸 + SF Symbol、無ければ頭文字の角丸四角。
 struct RoomAvatar: View {
     let name: String
     let size: CGFloat
+    var badge: ProjectBadge? = nil
 
     var body: some View {
-        let color = ChatTheme.avatarColor(for: name)
-        Text(RoomGrouping.initial(of: name))
-            .font(.system(size: size * 0.42, weight: .bold))
+        if let badge {
+            ProjectBadgeView(badge: badge, size: size)
+        } else {
+            let color = ChatTheme.avatarColor(for: name)
+            Text(RoomGrouping.initial(of: name))
+                .font(.system(size: size * 0.42, weight: .bold))
+                .foregroundStyle(color)
+                .frame(width: size, height: size)
+                .background(RoundedRectangle(cornerRadius: size * 0.28).fill(color.opacity(0.16)))
+                .overlay(RoundedRectangle(cornerRadius: size * 0.28).stroke(color.opacity(0.28)))
+        }
+    }
+}
+
+/// プロジェクトの印: 同じ色の薄い塗りの丸に、中央に色のアイコン。一覧・詳細の見出し・「+」・設定で同じ絵。
+struct ProjectBadgeView: View {
+    let badge: ProjectBadge
+    let size: CGFloat
+
+    var body: some View {
+        let color = ChatTheme.avatarColor(for: badge.colorKey)
+        Image(systemName: badge.symbol)
+            .font(.system(size: size * 0.5, weight: .medium))
             .foregroundStyle(color)
             .frame(width: size, height: size)
-            .background(RoundedRectangle(cornerRadius: size * 0.28).fill(color.opacity(0.16)))
-            .overlay(RoundedRectangle(cornerRadius: size * 0.28).stroke(color.opacity(0.28)))
+            .background(Circle().fill(color.opacity(0.14)))
+            .accessibilityHidden(true)
     }
 }

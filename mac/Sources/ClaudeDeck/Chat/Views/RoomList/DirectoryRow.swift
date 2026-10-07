@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 「ディレクトリ」の 1 行（色の点・名前・パスの末尾・動いているセッションの件数といちばん急ぐ状態・LP のサムネイル）。
+/// 「ディレクトリ」の 1 行（印・名前・パスの末尾・動いているセッションの件数といちばん急ぐ状態・LP のサムネイル）。
 struct DirectoryRow: View, Equatable {
     let directory: ProjectDirectory
     let selected: Bool
@@ -11,10 +11,8 @@ struct DirectoryRow: View, Equatable {
     var body: some View {
         let project = directory.project
         HStack(alignment: .top, spacing: 10) {
-            Circle()
-                .fill(ChatTheme.avatarColor(for: project.name))
-                .frame(width: 8, height: 8)
-                .padding(.top, 6)
+            ProjectBadgeView(badge: ProjectBadge.resolve(project: project), size: 22)
+                .padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(project.name)

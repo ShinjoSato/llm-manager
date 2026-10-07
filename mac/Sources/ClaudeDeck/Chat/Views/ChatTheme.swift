@@ -67,9 +67,9 @@ enum ChatTheme {
     static let headline = Font.system(size: 16, weight: .bold)
     static let mono = Font.system(size: 12, design: .monospaced)
 
-    /// プロジェクトの頭文字アイコンの色（名前から決定的に選ぶ）。
-    static let avatarPalette: [Color] = ThemePalette.night.avatarPalette.indices.map { index in
-        Color(nsColor: dynamic(night: ThemePalette.night.avatarPalette[index], light: ThemePalette.light.avatarPalette[index]))
+    /// プロジェクトの印の色（`ProjectColor.allCases` の順。ナイト / ライトで動的）。
+    static let avatarPalette: [Color] = ProjectColor.allCases.map { key in
+        Color(nsColor: dynamic(night: ThemePalette.night.avatar(key), light: ThemePalette.light.avatar(key)))
     }
 
     // MARK: - テーマと外観
@@ -112,8 +112,13 @@ enum ChatTheme {
         }
     }
 
+    static func avatarColor(for key: ProjectColor) -> Color {
+        avatarPalette[key.paletteIndex]
+    }
+
+    /// 名前から決める既定の色（設定で色を選んでいないプロジェクト）。
     static func avatarColor(for name: String) -> Color {
-        avatarPalette[RoomGrouping.colorIndex(for: name, paletteSize: avatarPalette.count)]
+        avatarColor(for: ProjectBadge.defaultColor(for: name))
     }
 
     /// 要対応のバッジの地。要対応でない状態は塗らない。
