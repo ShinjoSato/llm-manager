@@ -18,7 +18,6 @@ public enum RemoteResultText {
             switch result.code {
             case "answered": return "既に答えています（同じ確認には送り直していません）。"
             case "toggled": return "チェックを切り替えました。"
-            case "relayed": return nil
             default: return nil
             }
         }
@@ -96,8 +95,6 @@ public struct RemoteIssue: Sendable, Equatable {
     public var detail: String
     /// 再ペアリングしないと直らない。
     public var needsPairing: Bool { kind == .pinMismatch || kind == .revoked }
-    /// 自動で張り直して意味がある。
-    public var retryable: Bool { kind != .pinMismatch && kind != .revoked && kind != .incompatible }
     /// iPhone の設定を開いてもらうと直る。
     public var needsSettings: Bool { kind == .localNetworkDenied }
 

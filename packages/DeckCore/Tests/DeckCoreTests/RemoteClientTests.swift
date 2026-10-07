@@ -243,8 +243,6 @@ final class RemoteMessagesTests: XCTestCase {
         XCTAssertEqual(unreachable.kind, .unreachable)
         XCTAssertTrue(unreachable.detail.contains("Wi-Fi") && unreachable.detail.contains("スリープ") && unreachable.detail.contains("iPhone 連携"))
         XCTAssertTrue(RemoteIssue.from(RemoteClientError.transport(.networkConnectionLost)).detail.contains("一時的"))
-        XCTAssertTrue(unreachable.retryable)
-        XCTAssertFalse(RemoteIssue.from(RemoteClientError.pinMismatch).retryable)
     }
 
     func testOfflineErrorIsSplitByPathCheck() {
@@ -260,7 +258,6 @@ final class RemoteMessagesTests: XCTestCase {
             let denied = RemoteIssue.diagnose(offline, path: .localNetworkDenied, onWiFi: wifi)
             XCTAssertEqual(denied, .localNetworkDenied)
             XCTAssertTrue(denied.needsSettings)
-            XCTAssertTrue(denied.retryable)
             XCTAssertFalse(denied.needsPairing)
         }
         // 経路が無い・Wi-Fi でないと分かっている時は Wi-Fi。
@@ -268,7 +265,6 @@ final class RemoteMessagesTests: XCTestCase {
         XCTAssertEqual(RemoteIssue.diagnose(offline, path: .inconclusive, onWiFi: false), .offline)
         XCTAssertEqual(RemoteIssue.diagnose(offline, path: nil, onWiFi: false), .offline)
         XCTAssertFalse(RemoteIssue.offline.needsSettings)
-        XCTAssertTrue(RemoteIssue.offline.retryable)
         // 確かめられなければ言い切らない。
         XCTAssertEqual(RemoteIssue.diagnose(offline, path: .inconclusive, onWiFi: true), .ambiguousOffline)
         XCTAssertEqual(RemoteIssue.diagnose(offline, path: nil, onWiFi: nil), .ambiguousOffline)

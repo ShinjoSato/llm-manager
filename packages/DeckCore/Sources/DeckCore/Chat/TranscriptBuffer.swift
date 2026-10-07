@@ -10,8 +10,6 @@ public struct TranscriptBuffer: Sendable, Equatable {
 
     public init() {}
 
-    public var isEmpty: Bool { items.isEmpty }
-
     /// GET を投げる直前に呼ぶ。
     public mutating func beginFetch() {
         liveIds = []
