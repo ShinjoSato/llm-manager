@@ -76,7 +76,7 @@ final class GitHubURLsTests: XCTestCase {
     }
 
     func testSegmentEncodesSeparators() {
-        XCTAssertEqual(GitHubURLs.segment("a/b?c#d"), "a%2Fb%3Fc%23d")
+        XCTAssertEqual(URLPath.segment("a/b?c#d"), "a%2Fb%3Fc%23d")
     }
 
     func testUserAPIURL() {

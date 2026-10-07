@@ -69,9 +69,7 @@ public struct ClaudeSessionRegistry: Sendable {
 
     /// pid のレコードを読む。`/clear` 等で sessionId は差し替わるので、キャッシュせず毎回読む。
     public func record(forPid pid: Int32) -> ClaudeSessionRecord? {
-        let url = directory.appendingPathComponent("\(pid).json")
-        guard let data = try? Data(contentsOf: url),
-              let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data),
+        guard let record = JSONFile.read(ClaudeSessionRecord.self, from: directory.appendingPathComponent("\(pid).json")),
               record.pid == pid, !record.sessionId.isEmpty else { return nil }
         return record
     }
@@ -80,9 +78,7 @@ public struct ClaudeSessionRegistry: Sendable {
     public func allRecords() -> [ClaudeSessionRecord] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         return urls.filter { $0.pathExtension == "json" }.compactMap { url in
-            guard let data = try? Data(contentsOf: url),
-                  let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data),
-                  !record.sessionId.isEmpty else { return nil }
+            guard let record = JSONFile.read(ClaudeSessionRecord.self, from: url), !record.sessionId.isEmpty else { return nil }
             return record
         }
     }

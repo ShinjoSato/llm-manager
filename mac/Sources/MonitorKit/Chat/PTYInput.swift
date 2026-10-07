@@ -125,7 +125,7 @@ public struct SessionWaiting: Sendable, Equatable {
         guard isDialogOpen else { return false }
         if !InputBox.isPlainEmpty(screen: screen) { return true }
         guard let statusUpdatedAt, let screenChangedAt else { return false }
-        return Date(timeIntervalSince1970: statusUpdatedAt / 1000) >= screenChangedAt.addingTimeInterval(-Self.freshMargin)
+        return Date(epochMillis: statusUpdatedAt) >= screenChangedAt.addingTimeInterval(-Self.freshMargin)
     }
 }
 

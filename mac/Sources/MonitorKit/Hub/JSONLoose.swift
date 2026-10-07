@@ -126,7 +126,7 @@ enum JSONLoose {
     }
 
     private static func nonZero(_ d: Date) -> Double? {
-        let ms = (d.timeIntervalSince1970 * 1000).rounded()
+        let ms = epochMillis(d)
         return ms == 0 ? nil : ms
     }
 }
@@ -176,5 +176,10 @@ enum Bytes {
 
 /// 現在時刻（epoch ミリ秒）。
 @Sendable public func epochMillisNow() -> Double {
-    (Date().timeIntervalSince1970 * 1000).rounded()
+    epochMillis(Date())
+}
+
+/// 整数に丸めた epoch ミリ秒（ログの時刻と同じ精度にそろえる）。
+func epochMillis(_ date: Date) -> Double {
+    (date.timeIntervalSince1970 * 1000).rounded()
 }

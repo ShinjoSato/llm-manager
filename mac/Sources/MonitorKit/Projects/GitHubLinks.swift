@@ -84,20 +84,20 @@ public enum GitHubDestination: Equatable, Sendable {
 /// GitHub の URL の組み立て。値が不正なら nil（開かない）。
 public enum GitHubURLs {
     public static func board(owner: String, number: Int, kind: GitHubOwnerKind) -> URL? {
-        guard number > 0, SettingsValidation.ownerProblem(owner) == nil, let owner = segment(owner) else { return nil }
+        guard number > 0, SettingsValidation.ownerProblem(owner) == nil, let owner = URLPath.segment(owner) else { return nil }
         let scope = kind == .organization ? "orgs" : "users"
         return URL(string: "https://github.com/\(scope)/\(owner)/projects/\(number)")
     }
 
     public static func repository(owner: String, repo: String) -> URL? {
         guard SettingsValidation.ownerProblem(owner) == nil, SettingsValidation.repoProblem(repo) == nil,
-              let owner = segment(owner), let repo = segment(repo) else { return nil }
+              let owner = URLPath.segment(owner), let repo = URLPath.segment(repo) else { return nil }
         return URL(string: "https://github.com/\(owner)/\(repo)")
     }
 
     /// owner の種類を引く公開 API（認証なし）。
     public static func userAPI(owner: String) -> URL? {
-        guard SettingsValidation.ownerProblem(owner) == nil, let owner = segment(owner) else { return nil }
+        guard SettingsValidation.ownerProblem(owner) == nil, let owner = URLPath.segment(owner) else { return nil }
         return URL(string: "https://api.github.com/users/\(owner)")
     }
 
@@ -107,14 +107,6 @@ public enum GitHubURLs {
               let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let type = object["type"] as? String else { return nil }
         return GitHubOwnerKind(rawValue: type)
-    }
-
-    /// 検証済みでも区切りや `?` `#` が混ざらないよう、1 区間としてエンコードする。
-    static func segment(_ value: String) -> String? {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/;?#")
-        guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed), !encoded.isEmpty else { return nil }
-        return encoded
     }
 }
 

@@ -20,7 +20,7 @@ public enum SiteFiles {
         if parts.contains(where: { $0 == "." || $0 == ".." }) { return .forbidden }
         // .git・.env 等を書き出しに紛れ込ませても出さない。
         if parts.contains(where: { $0.hasPrefix(".") }) { return .notFound }
-        guard let realRoot = SiteLocator.realPath(root), isDirectory(realRoot, fileManager),
+        guard let realRoot = FilePaths.realPath(root), isDirectory(realRoot, fileManager),
               SiteLocator.isExportInside(exportDir: root) else { return .notFound }
         let trailingSlash = decoded.hasSuffix("/")
         let candidate = parts.isEmpty ? realRoot : (realRoot as NSString).appendingPathComponent(parts.joined(separator: "/"))
@@ -52,14 +52,12 @@ public enum SiteFiles {
 
     /// 転送先は分けた部分から組み直す（`//host` の形にして別のサイトへ飛ばさせない）。
     static func location(_ parts: [String]) -> String {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/;?#")
-        return "/" + parts.map { $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? $0 }.joined(separator: "/")
+        "/" + parts.map { URLPath.segment($0) ?? $0 }.joined(separator: "/")
     }
 
     /// 書き出しに 404.html があればそれ。
     public static func notFoundPage(root: String, fileManager: FileManager = .default) -> String? {
-        guard let realRoot = SiteLocator.realPath(root), SiteLocator.isExportInside(exportDir: root) else { return nil }
+        guard let realRoot = FilePaths.realPath(root), SiteLocator.isExportInside(exportDir: root) else { return nil }
         let page = (realRoot as NSString).appendingPathComponent("404.html")
         guard let file = inside(page, realRoot: realRoot), isRegularFile(file, fileManager) else { return nil }
         return file
@@ -67,7 +65,7 @@ public enum SiteFiles {
 
     /// 実体が書き出しのフォルダの中にあればその実体のパス。無い・外・隠しファイルを指すなら nil。
     static func inside(_ path: String, realRoot: String) -> String? {
-        guard let real = SiteLocator.realPath(path) else { return nil }
+        guard let real = FilePaths.realPath(path) else { return nil }
         if real == realRoot { return real }
         guard real.hasPrefix(realRoot + "/") else { return nil }
         // 隠しでない名前のリンクから .env 等の実体を返さない。

@@ -20,7 +20,7 @@ public struct LinkVisits: Codable, Sendable, Equatable {
 
     public func lastOpened(projectID: UUID, url: String) -> Date? {
         guard let key = Self.key(projectID: projectID, url: url), let millis = visits[key] else { return nil }
-        return Date(timeIntervalSince1970: millis / 1000)
+        return Date(epochMillis: millis)
     }
 
     public mutating func record(projectID: UUID, url: String, at date: Date) {
@@ -55,28 +55,22 @@ public struct LinkVisitsFile: Sendable {
 
     public init(url: URL, restrictsDirectory: Bool? = nil) {
         self.url = url
-        self.restrictsDirectory = restrictsDirectory
-            ?? (url.deletingLastPathComponent().standardizedFileURL.path == DeckPaths.applicationSupport.standardizedFileURL.path)
+        self.restrictsDirectory = restrictsDirectory ?? DeckPaths.isInApplicationSupport(url)
     }
 
     public static func defaultURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-        if let path = environment[environmentKey], !path.isEmpty {
-            return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        }
-        return DeckPaths.applicationSupport.appendingPathComponent("link-visits.json")
+        DeckPaths.file("link-visits.json", overriddenBy: environmentKey, environment: environment)
     }
 
     /// 無い・壊れた・知らない版は空（記録が消えるだけで、次の記録で書き直す）。
     public func load() -> LinkVisits {
-        guard let data = try? Data(contentsOf: url),
-              let visits = try? JSONDecoder().decode(LinkVisits.self, from: data),
+        guard let visits = JSONFile.read(LinkVisits.self, from: url),
               visits.version == LinkVisits.currentVersion else { return LinkVisits() }
         return visits
     }
 
     public func save(_ visits: LinkVisits) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try SecureFile.write(try encoder.encode(visits), to: url, restrictDirectory: restrictsDirectory)
+        try SecureFile.writeJSON(visits, to: url, restrictDirectory: restrictsDirectory,
+                                 formatting: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     }
 }

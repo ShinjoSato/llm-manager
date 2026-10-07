@@ -98,7 +98,7 @@ public enum SiteLocator {
                 return SiteLookup(location: nil, candidates: found, problem: "指定のフォルダ（\(relative)）が見つかりません")
             }
             // シンボリックリンクでプロジェクトの外へ出ていないかを実体で確かめる。
-            guard let realProject = realPath(projectPath), let realRoot = realPath(root),
+            guard let realProject = FilePaths.realPath(projectPath), let realRoot = FilePaths.realPath(root),
                   realRoot == realProject || realRoot.hasPrefix(realProject + "/") else {
                 return SiteLookup(location: nil, candidates: found, problem: "指定のフォルダ（\(relative)）がプロジェクトの外を指しています")
             }
@@ -148,17 +148,10 @@ public enum SiteLocator {
 
     /// 選んだフォルダをプロジェクトからの相対パスにする。外なら nil。
     public static func relativePath(of path: String, in projectPath: String) -> String? {
-        guard let realProject = realPath(projectPath), let real = realPath(path) else { return nil }
+        guard let realProject = FilePaths.realPath(projectPath), let real = FilePaths.realPath(path) else { return nil }
         if real == realProject { return "." }
         guard real.hasPrefix(realProject + "/") else { return nil }
         return String(real.dropFirst(realProject.count + 1))
-    }
-
-    /// シンボリックリンクを解いた実体のパス（無ければ nil）。
-    public static func realPath(_ path: String) -> String? {
-        guard let resolved = realpath(path, nil) else { return nil }
-        defer { free(resolved) }
-        return String(cString: resolved)
     }
 
     /// 書き出しのトップの更新時刻（無い・書き出しがサイトの外を指すなら nil）。
@@ -170,7 +163,7 @@ public enum SiteLocator {
     /// 書き出しのフォルダ（`out` がリンクでも）の実体がサイトのフォルダの実体の中にあるか。
     public static func isExportInside(exportDir: String) -> Bool {
         let siteRoot = (exportDir as NSString).deletingLastPathComponent
-        guard let realSite = realPath(siteRoot), let realExport = realPath(exportDir) else { return false }
+        guard let realSite = FilePaths.realPath(siteRoot), let realExport = FilePaths.realPath(exportDir) else { return false }
         return realExport.hasPrefix(realSite + "/")
     }
 }
