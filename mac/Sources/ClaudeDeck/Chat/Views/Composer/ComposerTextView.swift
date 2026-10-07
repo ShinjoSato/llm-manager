@@ -109,7 +109,11 @@ final class SubmitTextView: AttachmentPasteTextView {
     var onSubmit: (() -> Void)?
     /// 空欄の案内。下書きではなく表示内容で判定して自前で描くので、変換中（marked text）も重ならない。
     var placeholder = "" {
-        didSet { if placeholder != oldValue { needsDisplay = true } }
+        didSet {
+            guard placeholder != oldValue else { return }
+            setAccessibilityPlaceholderValue(placeholder)
+            needsDisplay = true
+        }
     }
     var placeholderColor: NSColor = .placeholderTextColor {
         didSet { needsDisplay = true }
@@ -130,8 +134,11 @@ final class SubmitTextView: AttachmentPasteTextView {
         let padding = textContainer?.lineFragmentPadding ?? 0
         let rect = NSRect(x: inset.width + padding, y: inset.height,
                           width: max(0, bounds.width - (inset.width + padding) * 2), height: max(0, bounds.height - inset.height))
-        (placeholder as NSString).draw(in: rect, withAttributes: [
-            .font: font ?? .systemFont(ofSize: 14), .foregroundColor: placeholderColor,
+        // 空欄の高さは 1 行分なので、幅に入りきらない案内は折り返さず末尾を省略する。
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        (placeholder as NSString).draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: [
+            .font: font ?? .systemFont(ofSize: 14), .foregroundColor: placeholderColor, .paragraphStyle: style,
         ])
     }
 
