@@ -6,14 +6,7 @@ public enum HookServerRoutes {
     /// 既定の待ち受け。`~/.claude/settings.json` のフックと claude-deck-channel がこのポートを宛先にしている。
     public static let defaultPort = 8766
 
-    /// 全ての口に先に掛ける検査。外れたら handler を呼ばずに返す。
-    public static func guarded(_ request: HTTPRequest, port: Int,
-                               handler: @Sendable (HTTPRequest) async -> HTTPResponse) async -> HTTPResponse {
-        if let rejected = rejection(request, port: port) { return rejected }
-        return await handler(request)
-    }
-
-    /// 本文を読む前にも掛けられる検査（ヘッダーと接続元だけを見る）。通れば nil。
+    /// 全ての口に本文を読む前に掛ける検査（ヘッダーと接続元だけを見る）。通れば nil。
     public static func rejection(_ request: HTTPRequest, port: Int) -> HTTPResponse? {
         // DNS リバインディング対策。CORS は付けない（任意のサイトから作業内容を読ませないため）。
         guard LoopbackGuard.isAllowedHost(request.header("host"), port: port) else {
@@ -29,7 +22,7 @@ public enum HookServerRoutes {
 
     static let notFound = HTTPResponse.json(404, ["ok": false, "error": "not found"])
 
-    /// 口の振り分け。`guarded` を通った後に呼ぶ。
+    /// 口の振り分け。`rejection` を通った後に呼ぶ。
     public static func handle(_ request: HTTPRequest, hub: SessionHub) async -> HTTPResponse {
         switch (request.method, request.path) {
         case ("GET", "/api/health"):

@@ -32,7 +32,8 @@ final class ProjectBadgeSettingsTests: XCTestCase {
         XCTAssertFalse(written.contains("\"icon\""))
         XCTAssertFalse(written.contains("\"color\""))
         XCTAssertEqual(try decode(written), settings)
-        XCTAssertTrue(SettingsValidation.problems(settings).isEmpty)
+        XCTAssertTrue(SettingsValidation.blockingProblems(settings).isEmpty)
+        XCTAssertTrue(SettingsValidation.warnings(settings).isEmpty)
     }
 
     func testChosenIconAndColorRoundTrip() throws {
@@ -45,7 +46,8 @@ final class ProjectBadgeSettingsTests: XCTestCase {
         let back = try decode(written)
         XCTAssertEqual(back, settings)
         XCTAssertEqual(ProjectBadge.resolve(project: back.projects[0]), ProjectBadge(colorKey: .teal, symbol: "iphone"))
-        XCTAssertTrue(SettingsValidation.problems(back).isEmpty)
+        XCTAssertTrue(SettingsValidation.blockingProblems(back).isEmpty)
+        XCTAssertTrue(SettingsValidation.warnings(back).isEmpty)
         // 「自動」「既定」に戻せばキーが消える。
         settings.projects[0].icon = nil
         settings.projects[0].color = nil
@@ -85,7 +87,6 @@ final class ProjectBadgeSettingsTests: XCTestCase {
         XCTAssertEqual(warnings.count, 2)
         XCTAssertTrue(warnings.contains { $0.contains("「mirio」の印") && $0.contains("magenta") })
         XCTAssertTrue(warnings.contains { $0.contains("「mirio」の印") && $0.contains("アイコンが空") })
-        XCTAssertEqual(SettingsValidation.projectProblems(project).count, 2)
         XCTAssertEqual(ProjectBadge.resolve(project: project), ProjectBadge(colorKey: ProjectBadge.defaultColor(for: "mirio"), symbol: "folder"))
         // 書き戻しても手で書いた値を壊さない。
         XCTAssertTrue(try text(settings).contains("\"color\" : \"magenta\""))
@@ -98,7 +99,8 @@ final class ProjectBadgeSettingsTests: XCTestCase {
           "projects": [ { "id": "\(id.uuidString)", "name": "mirio", "path": "/tmp/mirio", "status": "active",
                           "icon": "claude.deck.no.such.symbol", "color": "blue" } ] }
         """)
-        XCTAssertTrue(SettingsValidation.problems(settings).isEmpty)
+        XCTAssertTrue(SettingsValidation.blockingProblems(settings).isEmpty)
+        XCTAssertTrue(SettingsValidation.warnings(settings).isEmpty)
         XCTAssertEqual(ProjectBadge.resolve(project: settings.projects[0]), ProjectBadge(colorKey: .blue, symbol: "folder"))
         XCTAssertEqual(try decode(try text(settings)).projects[0].icon, "claude.deck.no.such.symbol")
     }

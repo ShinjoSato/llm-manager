@@ -44,18 +44,6 @@ public enum SettingsValidation {
         return problems
     }
 
-    public static func projectProblems(_ project: ManagedProject) -> [String] {
-        var problems: [String] = []
-        if project.name.trimmingCharacters(in: .whitespaces).isEmpty { problems.append("名前を入れてください") }
-        if !project.path.hasPrefix("/") { problems.append("パスは絶対パスにしてください") }
-        if let link = project.github { problems += linkProblems(link) }
-        for row in projectLinkRowProblems(project.links) { problems += row }
-        if let site = project.site, let p = sitePathProblem(site.path) { problems.append(p) }
-        if let p = ProjectBadge.colorProblem(project.color) { problems.append(p) }
-        if let p = ProjectBadge.iconProblem(project.icon) { problems.append(p) }
-        return problems
-    }
-
     /// サイトの場所: プロジェクトからの相対パスで、外を指さないもの。
     public static func sitePathProblem(_ path: String) -> String? {
         SiteLocator.normalizedRelativePath(path).failure
@@ -139,10 +127,5 @@ public enum SettingsValidation {
             }
         }
         return result
-    }
-
-    /// 設定全体の問題（読めないもの + 警告）。空なら問題なし。
-    public static func problems(_ settings: DeckSettings) -> [String] {
-        blockingProblems(settings) + warnings(settings)
     }
 }

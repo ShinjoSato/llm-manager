@@ -270,12 +270,7 @@ extension ChoiceMenu {
 
     static let submitLabels: Set<String> = ["Submit", "Next"]
 
-    /// メニューを探す範囲（画面の下部。入力欄の上に重なったメニューがあればそこ、無ければ入力欄の下だけ）。
-    static func menuZone(_ screen: [String]) -> [String] {
-        menuZoneWithOffset(screen).lines
-    }
-
-    /// メニューを探す範囲と、その先頭が `screen` の何行目か、入力欄の上に重なったメニューか。
+    /// メニューを探す範囲（入力欄の上に重なったメニューがあればそこ、無ければ入力欄の下だけ）と、その先頭が `screen` の何行目か、重なったメニューか。
     static func menuZoneWithOffset(_ screen: [String]) -> (lines: [String], offset: Int, overlay: Bool) {
         let trimmed = TerminalScreen.droppingTrailingBlankLines(screen)
         var offset = max(0, trimmed.count - tailLines)
@@ -327,7 +322,7 @@ extension ChoiceMenu {
     /// 選択肢として読める・メニューが無い時は nil。
     public static func unreadable(screen: [String]) -> UnreadableMenu? {
         guard isShowing(screen: screen), parseShowing(screen: screen) == nil else { return nil }
-        let lines = menuZone(screen).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let lines = menuZoneWithOffset(screen).lines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let footer = footerIndex(lines).map { lines[$0] } ?? ""
         let exits = footerExits(footer) || lines.contains { $0.lowercased().contains("trust this folder") }
         return UnreadableMenu(lines: Array(lines.suffix(12)), cancelExits: exits)

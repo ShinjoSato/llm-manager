@@ -32,7 +32,6 @@ public struct StageSpot: Sendable, Equatable {
 public struct StageLayout: Sendable, Equatable {
     public var spots: [StageSpot]
     public var spanX: Double
-    public var spanZ: Double
 }
 
 public struct StageCameraFit: Sendable, Equatable {
@@ -130,7 +129,7 @@ public enum StageBlueprint {
 
     /// ピラミッドを並べる格子。横長の画面に合わせて奥より先に横へ広げる。
     public static func gridLayout(count: Int, spacingX: Double, spacingZ: Double, maxCols: Double) -> StageLayout {
-        guard count > 0 else { return StageLayout(spots: [], spanX: 0, spanZ: 0) }
+        guard count > 0 else { return StageLayout(spots: [], spanX: 0) }
         let cols = min(count, max(1, Int(maxCols.rounded(.toNearestOrAwayFromZero))))
         let rows = (count + cols - 1) / cols
         var spots: [StageSpot] = []
@@ -149,7 +148,7 @@ public enum StageBlueprint {
         let right = xs.max() ?? 0
         let offset = (left + right) / 2
         for i in spots.indices { spots[i].x -= offset }
-        return StageLayout(spots: spots, spanX: right - left, spanZ: Double(rows - 1) * spacingZ)
+        return StageLayout(spots: spots, spanX: right - left)
     }
 
     /// 画面の縦横比から、1 行に並べてよい基数を決める。

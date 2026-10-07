@@ -40,6 +40,8 @@ public final class MonitorStore {
 
     /// フィードを何件まで持つか。
     public let feedLimit: Int
+    /// 受け口が使用中だった時に取り直す間隔（秒）。使っていたプロセスが止まれば自動で引き継ぐ。
+    static let serverRetryInterval: TimeInterval = 5
 
     /// 会話の追記の受け口（チャット画面が使う）。
     @ObservationIgnored public var onTranscript: ((TranscriptEvent) -> Void)?
@@ -197,12 +199,11 @@ public final class MonitorStore {
         case .listening(let bound):
             log("受け口を開きました: http://127.0.0.1:\(bound)")
         case .portInUse, .failed:
-            log("受け口を開けません（\(state)）。\(configuration.serverRetryInterval) 秒後に取り直します")
+            log("受け口を開けません（\(state)）。\(Self.serverRetryInterval) 秒後に取り直します")
             // 自分の起動したものではないので止めない。空いたら引き継ぐ。
             serverRetry?.cancel()
-            let interval = configuration.serverRetryInterval
             serverRetry = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(interval))
+                try? await Task.sleep(for: .seconds(Self.serverRetryInterval))
                 guard let self, !Task.isCancelled, self.running, server === self.server else { return }
                 self.listen(server, port: port)
             }

@@ -8,20 +8,16 @@ public struct MonitorConfiguration: Sendable, Equatable {
     public var usageFile: URL?
     /// フック等を受けるアプリ内サーバーのポート。nil なら待ち受けない。
     public var serverPort: Int?
-    /// 使用中だった時に取り直す間隔（秒）。使っていたプロセスが止まれば自動で引き継ぐ。
-    public var serverRetryInterval: TimeInterval
     /// true なら状態とイベントの要約を標準エラーに出す。
     public var debugLogging: Bool
 
     public init(claudeHome: ClaudeHome = .fromEnvironment(),
                 usageFile: URL? = nil,
                 serverPort: Int? = HookServerRoutes.defaultPort,
-                serverRetryInterval: TimeInterval = 5,
                 debugLogging: Bool = false) {
         self.claudeHome = claudeHome
         self.usageFile = usageFile
         self.serverPort = serverPort
-        self.serverRetryInterval = serverRetryInterval
         self.debugLogging = debugLogging
     }
 

@@ -389,14 +389,6 @@ public final class SettingsStore {
         }
     }
 
-    @discardableResult
-    public func updateBoard(id: UUID, _ change: (inout GitHubBoard) -> Void) -> Bool {
-        update { settings in
-            guard let index = settings.boards.firstIndex(where: { $0.id == id }) else { return }
-            change(&settings.boards[index])
-        }
-    }
-
     /// 文字欄からのボードの変更（まとめて書く。名前・owner・番号を置き換える）。
     public func scheduleBoard(id: UUID, _ value: GitHubBoard) {
         let read: (DeckSettings) -> GitHubBoard? = { settings in settings.boards.first { $0.id == id } }

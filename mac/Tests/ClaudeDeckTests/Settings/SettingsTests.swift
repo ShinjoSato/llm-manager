@@ -1092,9 +1092,9 @@ final class SettingsValidationTests: XCTestCase {
                                                               ProjectLink(name: " LP ", url: "https://c.example")])
         XCTAssertEqual(rows.map(\.count), [0, 0, 1])
         var project = ManagedProject(name: "a", path: "/p/a", links: [ProjectLink(name: "LP", url: "https://a.example")])
-        XCTAssertEqual(SettingsValidation.projectProblems(project), [])
+        XCTAssertEqual(SettingsValidation.warnings(DeckSettings(projects: [project])), [])
         project.links.append(ProjectLink(name: "LP", url: "nope"))
-        XCTAssertEqual(SettingsValidation.projectProblems(project).count, 2)
+        XCTAssertEqual(SettingsValidation.warnings(DeckSettings(projects: [project])).count, 2)
         // 読めない扱いにはしない。
         XCTAssertEqual(SettingsValidation.blockingProblems(DeckSettings(projects: [project])), [])
     }
@@ -1102,7 +1102,7 @@ final class SettingsValidationTests: XCTestCase {
     func testWholeSettings() {
         var settings = DeckSettings(projects: [ManagedProject(name: "a", path: "/p/a")],
                                     boards: [GitHubBoard(name: "b", owner: "o", number: 1)])
-        XCTAssertEqual(SettingsValidation.problems(settings), [])
+        XCTAssertEqual(SettingsValidation.blockingProblems(settings) + SettingsValidation.warnings(settings), [])
         settings.projects.append(ManagedProject(name: " ", path: "relative"))
         settings.projects.append(ManagedProject(name: "dup", path: "/p/a"))
         settings.boards.append(GitHubBoard(name: "", owner: "-x", number: 0))
@@ -1110,7 +1110,6 @@ final class SettingsValidationTests: XCTestCase {
         // 相対パス・同じパスは読めない扱い、残り（名前が空・ボードの 3 件・同じボード）は警告。
         XCTAssertEqual(SettingsValidation.blockingProblems(settings).count, 2)
         XCTAssertEqual(SettingsValidation.warnings(settings).count, 5)
-        XCTAssertEqual(SettingsValidation.problems(settings).count, 7)
         settings.projects.append(ManagedProject(id: settings.projects[0].id, name: "same-id", path: "/p/other"))
         XCTAssertEqual(SettingsValidation.blockingProblems(settings).count, 3)
     }
