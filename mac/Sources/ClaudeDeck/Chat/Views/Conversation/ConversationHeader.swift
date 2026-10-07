@@ -68,9 +68,9 @@ struct EditorButtons: View {
 
     var body: some View {
         let editors = model.editors
-        let xcodeProject = editors.xcodeProject(for: room)
-        let closing = editors.closingXcode.contains(room.id)
         let target = room.editorTarget
+        let xcodeProject = editors.xcodeProject(for: target)
+        let closing = editors.closingXcode.contains(target.key)
         var actions: [HeaderAction] = [
             .button(id: "vscode", priority: 5, symbol: VSCodeButton.symbol, name: VSCodeButton.name,
                     detail: VSCodeButton.detail(target)) { editors.openInVSCode(target) },
@@ -79,7 +79,7 @@ struct EditorButtons: View {
         if let links = HeaderAction.links(priority: 2, editors: editors, target: target) { actions.append(links) }
         if let xcodeProject {
             actions.append(.button(id: "xcode", priority: 4, symbol: "hammer", name: "Xcode",
-                                   detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(room) })
+                                   detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(target) })
             actions.append(.button(id: "xcode-close", priority: 1, symbol: "xmark.rectangle", name: "閉じる",
                                    detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
                                    busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true })
@@ -90,7 +90,7 @@ struct EditorButtons: View {
         }
         // メニューから押しても確認を出せるよう、ボタンではなく列に付ける。
         .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
-            Button("閉じる", role: .destructive) { editors.closeInXcode(room) }
+            Button("閉じる", role: .destructive) { editors.closeInXcode(target) }
             Button("やめる", role: .cancel) {}
         } message: {
             Text("\(xcodeProject?.lastPathComponent ?? "ワークスペース") を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
