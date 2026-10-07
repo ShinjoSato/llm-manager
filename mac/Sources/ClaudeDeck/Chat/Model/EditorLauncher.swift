@@ -22,18 +22,19 @@ extension ManagedProject {
 final class EditorLauncher {
     /// `EditorTarget.key` → 押した結果。数秒で消す。
     private(set) var notes: [String: EditorNote] = [:]
-    /// Xcode に閉じるよう頼んでいる最中のルーム。二度押しさせない。
-    private(set) var closingXcode: Set<RoomID> = []
+    /// Xcode に閉じるよう頼んでいる最中の `EditorTarget.key`。二度押しさせない。
+    private(set) var closingXcode: Set<String> = []
     /// owner の種類を問い合わせている最中の `EditorTarget.key`。二度押しで同じ先を二度開かない。
     private(set) var openingGitHub: Set<String> = []
 
     @ObservationIgnored private var xcodeProjects: [String: URL?] = [:]
     @ObservationIgnored private let githubOwners = GitHubOwnerKindResolver()
 
-    func xcodeProject(for room: Room) -> URL? {
-        if let cached = xcodeProjects[room.cwd] { return cached }
-        let found = XcodeFinder.find(in: room.cwd).map { URL(fileURLWithPath: $0) }
-        xcodeProjects[room.cwd] = found
+    /// 結果は cwd で覚えるので、同じ場所を指すルームと詳細は同じ答えを引く。
+    func xcodeProject(for target: EditorTarget) -> URL? {
+        if let cached = xcodeProjects[target.cwd] { return cached }
+        let found = XcodeFinder.find(in: target.cwd).map { URL(fileURLWithPath: $0) }
+        xcodeProjects[target.cwd] = found
         return found
     }
 
@@ -54,26 +55,26 @@ final class EditorLauncher {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: target.cwd, isDirectory: true)])
     }
 
-    func openInXcode(_ room: Room) {
-        guard let url = xcodeProject(for: room) else { return }
+    func openInXcode(_ target: EditorTarget) {
+        guard let url = xcodeProject(for: target) else { return }
         guard let app = NSWorkspace.shared.urlForApplication(toOpen: url) else {
-            showNote(.failed("Xcode が見つかりません"), for: room.id.string)
+            showNote(.failed("Xcode が見つかりません"), for: target.key)
             return
         }
-        open(url, with: app, for: room.id.string)
+        open(url, with: app, for: target.key)
     }
 
-    /// Xcode 本体は終了させず、このルームのワークスペースだけを閉じる。
-    func closeInXcode(_ room: Room) {
-        guard let url = xcodeProject(for: room), !closingXcode.contains(room.id) else { return }
-        let roomId = room.id
-        closingXcode.insert(roomId)
-        notes[roomId.string] = nil
+    /// Xcode 本体は終了させず、この先のワークスペースだけを閉じる。
+    func closeInXcode(_ target: EditorTarget) {
+        let key = target.key
+        guard let url = xcodeProject(for: target), !closingXcode.contains(key) else { return }
+        closingXcode.insert(key)
+        notes[key] = nil
         Task { @MainActor [weak self] in
             let outcome = await XcodeClose.close(path: url.path)
             guard let self else { return }
-            self.closingXcode.remove(roomId)
-            self.showNote(outcome, for: roomId.string)
+            self.closingXcode.remove(key)
+            self.showNote(outcome, for: key)
         }
     }
 
