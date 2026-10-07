@@ -119,16 +119,17 @@ struct ProjectLinkForm: View {
     let projectID: UUID
     /// 編集なら元の位置（追加なら nil）。
     let index: Int?
-    let initial: ProjectLink
     let onClose: () -> Void
 
+    /// 開いた時の行。親の描き直しで行がずれても、保存の照合はこれと行う。
+    @State private var initial: ProjectLink
     @State private var name: String
     @State private var urlText: String
     @State private var kind: ProjectLinkKind
-    /// 最後に提案として入れた名前。利用者が触っていなければ今の名前と一致する。
-    @State private var suggestedName = ""
+    @State private var nameTouched = false
     @State private var kindTouched: Bool
     @State private var titleTask: Task<Void, Never>?
+    @State private var fetchingTitle = false
     @State private var failure: String?
     @FocusState private var focused: Field?
 
@@ -137,8 +138,8 @@ struct ProjectLinkForm: View {
     init(projectID: UUID, index: Int?, initial: ProjectLink, onClose: @escaping () -> Void) {
         self.projectID = projectID
         self.index = index
-        self.initial = initial
         self.onClose = onClose
+        _initial = State(initialValue: initial)
         _name = State(initialValue: initial.name)
         _urlText = State(initialValue: initial.url)
         _kind = State(initialValue: initial.resolvedKind)
@@ -148,9 +149,17 @@ struct ProjectLinkForm: View {
 
     private var store: SettingsStore { SettingsStore.shared }
 
+    /// 種類に触れていなければ元の値（nil のまま）を保ち、ファイルに `other` を書き足さない。
     private var candidate: ProjectLink {
         ProjectLink(name: name.trimmingCharacters(in: .whitespaces),
-                    url: urlText.trimmingCharacters(in: .whitespacesAndNewlines), kind: kind)
+                    url: urlText.trimmingCharacters(in: .whitespacesAndNewlines),
+                    kind: kindTouched ? kind : initial.kind)
+    }
+
+    /// 自動で取りに行くのはクエリの無いアドレスだけ（一度きりのログイン用リンク等を使い切らない）。
+    private var autoFetchable: Bool {
+        guard let url = ProjectLinks.url(from: urlText) else { return false }
+        return url.query == nil && url.fragment == nil
     }
 
     /// 今の設定のリンク（外で変わっていれば最新を見る）。
@@ -182,10 +191,18 @@ struct ProjectLinkForm: View {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
                 GridRow {
                     label("名前")
-                    TextField("名前", text: $name, prompt: Text("例: Stripe"))
-                        .textFieldStyle(.roundedBorder)
-                        .focused($focused, equals: .name)
-                        .onSubmit(save)
+                    HStack(spacing: 6) {
+                        TextField("名前", text: Binding(get: { name }, set: { name = $0; nameTouched = true }), prompt: Text("例: Stripe"))
+                            .textFieldStyle(.roundedBorder)
+                            .focused($focused, equals: .name)
+                            .onSubmit(save)
+                        Button { fetchTitle(delay: false, force: true) } label: {
+                            if fetchingTitle { ProgressView().controlSize(.small) } else { Image(systemName: "text.magnifyingglass") }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(fetchingTitle || ProjectLinks.url(from: urlText) == nil)
+                        .help("ページの題名を名前に入れる（このアドレスを取りに行きます）")
+                    }
                 }
                 GridRow {
                     label("URL")
@@ -222,10 +239,10 @@ struct ProjectLinkForm: View {
         .padding(16)
         .frame(width: 420)
         .onAppear {
-            if index == nil { suggest(immediately: true) }
+            if index == nil { suggest(delay: false) }
             focused = index == nil && initial.url.isEmpty ? .url : .name
         }
-        .onChange(of: urlText) { suggest(immediately: false) }
+        .onChange(of: urlText) { suggest(delay: true) }
         // 閉じたら取りに行っていた題名は捨てる。
         .onDisappear { titleTask?.cancel() }
     }
@@ -234,26 +251,30 @@ struct ProjectLinkForm: View {
         Text(text).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary).gridColumnAlignment(.trailing)
     }
 
-    /// URL から種類と名前を提案し、ページの題名も取りに行く。利用者が触った欄は置き換えない。
-    private func suggest(immediately: Bool) {
+    /// URL から種類と名前を提案し、クエリの無いアドレスならページの題名も取りに行く。利用者が触った欄は置き換えない。
+    private func suggest(delay: Bool) {
         titleTask?.cancel()
         titleTask = nil
+        fetchingTitle = false
         guard let url = ProjectLinks.url(from: urlText) else { return }
         if !kindTouched { kind = ProjectLinkKind.suggest(for: url) }
-        guard name == suggestedName else { return }
-        if let host = ProjectLinks.suggestedName(for: url) {
-            name = host
-            suggestedName = host
-        }
+        guard !nameTouched else { return }
+        if let host = ProjectLinks.suggestedName(for: url) { name = host }
+        if autoFetchable { fetchTitle(delay: delay) }
+    }
+
+    /// 題名を取りに行き、戻るまでに利用者が名前を触っていなければ入れる。ボタンからは触っていても入れる。
+    private func fetchTitle(delay: Bool, force: Bool = false) {
+        titleTask?.cancel()
         let text = urlText
         titleTask = Task { @MainActor in
-            if !immediately { try? await Task.sleep(for: .milliseconds(800)) }
+            if delay { try? await Task.sleep(for: .milliseconds(800)) }
             guard !Task.isCancelled else { return }
+            fetchingTitle = true
+            defer { fetchingTitle = false }
             guard let title = await LinkTitleFetcher.title(for: text), !Task.isCancelled else { return }
-            // 待っている間に利用者が名前を変えていたら置き換えない。
-            guard name == suggestedName, urlText == text else { return }
+            guard urlText == text, force || !nameTouched else { return }
             name = title
-            suggestedName = title
         }
     }
 
@@ -269,15 +290,19 @@ struct ProjectLinkForm: View {
                 return
             }
         }
+        // 溜めていた設定画面の変更が先に当たって行がずれた時は、黙って閉じずに知らせる。
+        var applied = false
         let saved = store.updateProject(id: projectID) { project in
-            if let index, project.links.indices.contains(index), project.links[index] == initial {
+            if let index {
+                guard project.links.indices.contains(index), project.links[index] == initial else { return }
                 project.links[index] = link
-            } else if index == nil {
+            } else {
                 project.links.append(link)
             }
+            applied = true
         }
-        guard saved else {
-            failure = store.problem ?? "保存できませんでした"
+        guard saved, applied else {
+            failure = saved ? "このリンクは外で変わりました。閉じて開き直してください" : (store.problem ?? "保存できませんでした")
             return
         }
         onClose()

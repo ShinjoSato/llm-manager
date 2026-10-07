@@ -68,8 +68,9 @@ extension ProjectLinkKind {
         var host = url.host?.lowercased() ?? ""
         if host.hasPrefix("www.") { host.removeFirst(4) }
         let path = url.path.lowercased()
-        let hostAndPath = host + path
-        if billingWords.contains(where: { hostAndPath.contains($0) }) { return .billing }
+        // host のラベルかパスの区切りで一致した時だけ（`usage-guide` のような語の一部では当てない）。
+        let words = Set((host + "/" + path).split(whereSeparator: { $0 == "/" || $0 == "." }).map(String.init))
+        if billingWords.contains(where: { words.contains($0) || words.contains($0 + "s") }) { return .billing }
         if storeHosts.contains(host) { return .store }
         if host.hasPrefix("docs.") || path.hasPrefix("/docs") { return .docs }
         if dashboardPrefixes.contains(where: { host.hasPrefix($0) }) || dashboardHosts.contains(host) { return .dashboard }

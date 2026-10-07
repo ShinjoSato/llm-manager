@@ -13,29 +13,40 @@ enum LinkTitleFetcher {
         config.urlCredentialStorage = nil
         config.urlCache = nil
         let session = URLSession(configuration: config)
-        defer { session.finishTasksAndInvalidate() }
+        defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url)
         request.setValue("text/html", forHTTPHeaderField: "Accept")
         request.setValue("claude-deck", forHTTPHeaderField: "User-Agent")
+        var data = Data()
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
-            var data = Data()
             var sinceCheck = 0
+            var closing = false
             for try await byte in bytes {
                 data.append(byte)
                 sinceCheck += 1
                 if data.count >= LinkTitle.maxBytes { break }
-                // 題名が読めたら残りは要らない（長いページを 3 秒いっぱい読まない）。
+                // 閉じタグが見えたら `>` まで読み足して止める（長いページを 3 秒いっぱい読まない）。
+                if closing {
+                    if byte == UInt8(ascii: ">") { break }
+                    continue
+                }
                 if sinceCheck >= 4096 {
                     sinceCheck = 0
                     try Task.checkCancellation()
-                    if data.range(of: Data("</title".utf8), options: .backwards) != nil { break }
+                    if Self.hasClosingTitle(data) { closing = true }
                 }
             }
             return LinkTitle.parse(data)
         } catch {
-            return nil
+            // 途中で時間切れでも、読めた分に題名があれば使う。
+            return Task.isCancelled ? nil : LinkTitle.parse(data)
         }
+    }
+
+    private static func hasClosingTitle(_ data: Data) -> Bool {
+        let tail = data.suffix(4096 + 8)
+        return tail.range(of: Data("</title".utf8)) != nil || tail.range(of: Data("</TITLE".utf8)) != nil
     }
 }

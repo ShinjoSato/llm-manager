@@ -7,9 +7,41 @@ public enum LinkTitle {
 
     /// 本文の先頭 `maxBytes` から `<title>…</title>` を抜き、HTML エンティティの基本と空白を整える。無ければ nil。
     public static func parse(_ data: Data) -> String? {
-        let head = data.prefix(maxBytes)
-        guard let html = String(data: head, encoding: .utf8) ?? String(data: head, encoding: .isoLatin1) else { return nil }
+        guard let html = decode(Data(data.prefix(maxBytes))) else { return nil }
         return parse(html: html)
+    }
+
+    /// 途中で切った本文を文字にする。UTF-8 の末尾の切れ端は落とし、`<meta charset>` が日本語の文字集合ならそれで読み、どれも無理なら Latin-1。
+    static func decode(_ data: Data) -> String? {
+        let trimmed = trimmingIncompleteUTF8(data)
+        if let utf8 = String(data: trimmed, encoding: .utf8) { return utf8 }
+        let ascii = String(decoding: data.prefix(4096), as: UTF8.self).lowercased()
+        if let match = ascii.range(of: #"charset=["']?([a-z0-9_-]+)"#, options: .regularExpression) {
+            let name = ascii[match].split(separator: "=").last.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) } ?? ""
+            let encoding: String.Encoding? = switch name {
+            case "shift_jis", "shift-jis", "sjis", "windows-31j", "cp932": .shiftJIS
+            case "euc-jp": .japaneseEUC
+            case "iso-2022-jp": .iso2022JP
+            default: nil
+            }
+            if let encoding, let text = String(data: data, encoding: encoding) { return text }
+        }
+        return String(data: trimmed, encoding: .isoLatin1)
+    }
+
+    /// 末尾がマルチバイト文字の途中で切れていれば、その切れ端（最大 3 バイト）を落とす。
+    static func trimmingIncompleteUTF8(_ data: Data) -> Data {
+        let bytes = [UInt8](data.suffix(4))
+        guard !bytes.isEmpty else { return data }
+        // 末尾から継続バイト（10xxxxxx）を数え、その前の先頭バイトが示す長さに足りなければ切れ端。
+        var continuation = 0
+        var index = bytes.count - 1
+        while index >= 0, bytes[index] & 0xC0 == 0x80 { continuation += 1; index -= 1 }
+        guard index >= 0 else { return data }
+        let lead = bytes[index]
+        let expected = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1
+        guard expected > 1, continuation < expected - 1 else { return data }
+        return data.prefix(data.count - (continuation + 1))
     }
 
     public static func parse(html: String) -> String? {

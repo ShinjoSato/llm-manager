@@ -86,6 +86,9 @@ final class ProjectLinksTests: XCTestCase {
         XCTAssertEqual(kind("https://example.com/account/PAYMENT"), .billing)
         XCTAssertEqual(kind("https://billing.example.com/"), .billing)
         XCTAssertEqual(kind("https://example.com/subscription"), .billing)
+        XCTAssertEqual(kind("https://example.com/account/payments"), .billing)
+        XCTAssertEqual(kind("https://example.com/docs/usage-guide"), .docs)
+        XCTAssertEqual(kind("https://example.com/language-usage"), .other)
     }
 
     func testKindSuggestionStoreDocsDashboard() {
@@ -174,5 +177,22 @@ final class LinkTitleTests: XCTestCase {
         let padding = String(repeating: " ", count: LinkTitle.maxBytes)
         XCTAssertNil(LinkTitle.parse(Data((padding + "<title>late</title>").utf8)))
         XCTAssertEqual(LinkTitle.parse(Data(("<title>early</title>" + padding).utf8)), "early")
+    }
+
+    func testDecodesTitleCutInsideMultibyteCharacter() {
+        let html = "<html><head><title>請求のページ</title><meta name=\"description\" content=\"日本語の説明文です"
+        var data = Data(html.utf8)
+        // 「す」（3 バイト）の 2 バイト目で切る。
+        data.removeLast(1)
+        XCTAssertEqual(LinkTitle.parse(data), "請求のページ")
+        XCTAssertEqual(LinkTitle.trimmingIncompleteUTF8(Data("abc".utf8)), Data("abc".utf8))
+        XCTAssertEqual(LinkTitle.trimmingIncompleteUTF8(Data("あ".utf8)), Data("あ".utf8))
+        XCTAssertEqual(LinkTitle.trimmingIncompleteUTF8(Data("あ".utf8).prefix(1)), Data())
+    }
+
+    func testDecodesShiftJISWhenDeclared() throws {
+        let html = "<html><head><meta charset=\"Shift_JIS\"><title>請求</title></head></html>"
+        let data = try XCTUnwrap(html.data(using: .shiftJIS))
+        XCTAssertEqual(LinkTitle.parse(data), "請求")
     }
 }
