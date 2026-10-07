@@ -18,6 +18,7 @@ struct ProjectLinksEditor: View {
         let id = UUID()
         var name: String
         var url: String
+        var kind: ProjectLinkKind?
     }
 
     private enum Field: Hashable {
@@ -36,6 +37,12 @@ struct ProjectLinksEditor: View {
                     HStack(spacing: 8) {
                         field("名前", text: binding(index, \.name)).focused($focused, equals: .name(row.id)).frame(width: 140)
                         field("https://…", text: binding(index, \.url)).focused($focused, equals: .url(row.id))
+                        Picker("種類", selection: kindBinding(index)) {
+                            ForEach(ProjectLinkKind.allCases, id: \.self) { Label($0.label, systemImage: $0.symbol).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+                        .help("種類（アイコンで見分け、メニューを区切ります）")
                         Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }
                             .disabled(index == 0).help("上へ")
                         Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }
@@ -50,7 +57,7 @@ struct ProjectLinksEditor: View {
                 }
             }
             Button {
-                let row = Row(name: "", url: "")
+                let row = Row(name: "", url: "", kind: nil)
                 rows.append(row)
                 focused = .name(row.id)
             } label: { Label("リンクを追加", systemImage: "plus") }
@@ -84,6 +91,12 @@ struct ProjectLinksEditor: View {
                 set: { if rows.indices.contains(index) { rows[index][keyPath: keyPath] = $0 } })
     }
 
+    /// 種類の欄。無い（従来の形）行は「その他」として見せ、選んだ時だけ値を持つ。
+    private func kindBinding(_ index: Int) -> Binding<ProjectLinkKind> {
+        Binding(get: { rows.indices.contains(index) ? rows[index].kind ?? .other : .other },
+                set: { if rows.indices.contains(index) { rows[index].kind = $0 } })
+    }
+
     private func move(_ index: Int, by delta: Int) {
         let target = index + delta
         guard rows.indices.contains(index), rows.indices.contains(target) else { return }
@@ -101,7 +114,7 @@ struct ProjectLinksEditor: View {
     private var trimmedRows: [ProjectLink?] {
         rows.map { row in
             let link = ProjectLink(name: row.name.trimmingCharacters(in: .whitespaces),
-                                   url: row.url.trimmingCharacters(in: .whitespacesAndNewlines))
+                                   url: row.url.trimmingCharacters(in: .whitespacesAndNewlines), kind: row.kind)
             return link.name.isEmpty && link.url.isEmpty ? nil : link
         }
     }
@@ -110,7 +123,7 @@ struct ProjectLinksEditor: View {
     private var trimmed: [ProjectLink] { trimmedRows.compactMap { $0 } }
 
     /// 欄の中身をそのまま（利用者が触っていないかを見るため）。
-    private var raw: [ProjectLink] { rows.map { ProjectLink(name: $0.name, url: $0.url) } }
+    private var raw: [ProjectLink] { rows.map { ProjectLink(name: $0.name, url: $0.url, kind: $0.kind) } }
 
     /// 行ごとの問題（空の行は問題なし）。並びは `rows` と同じ。
     private var rowProblems: [[String]] {
@@ -124,7 +137,7 @@ struct ProjectLinksEditor: View {
     }
 
     private func load(_ links: [ProjectLink]) {
-        rows = links.map { Row(name: $0.name, url: $0.url) }
+        rows = links.map { Row(name: $0.name, url: $0.url, kind: $0.kind) }
         loaded = links
         problems = []
     }

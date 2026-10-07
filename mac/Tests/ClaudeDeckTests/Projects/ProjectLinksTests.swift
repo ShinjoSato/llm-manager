@@ -70,4 +70,152 @@ final class ProjectLinksTests: XCTestCase {
         let help = ProjectLinks.help(for: ProjectLink(name: "LP", url: " https://a.example/lp "))
         XCTAssertEqual(help, "LP を開く: https://a.example/lp")
     }
+
+    // MARK: - 種類
+
+    private func kind(_ text: String) -> ProjectLinkKind {
+        ProjectLinkKind.suggest(for: URL(string: text)!)
+    }
+
+    func testKindSuggestionBilling() {
+        XCTAssertEqual(kind("https://console.anthropic.com/settings/billing"), .billing)
+        XCTAssertEqual(kind("https://platform.openai.com/usage"), .billing)
+        XCTAssertEqual(kind("https://vercel.com/acme/~/settings/billing"), .billing)
+        XCTAssertEqual(kind("https://console.cloud.google.com/billing"), .billing)
+        XCTAssertEqual(kind("https://dashboard.stripe.com/invoices"), .billing)
+        XCTAssertEqual(kind("https://example.com/account/PAYMENT"), .billing)
+        XCTAssertEqual(kind("https://billing.example.com/"), .billing)
+        XCTAssertEqual(kind("https://example.com/subscription"), .billing)
+        XCTAssertEqual(kind("https://example.com/account/payments"), .billing)
+        XCTAssertEqual(kind("https://example.com/docs/usage-guide"), .docs)
+        XCTAssertEqual(kind("https://example.com/language-usage"), .other)
+    }
+
+    func testKindSuggestionStoreDocsDashboard() {
+        XCTAssertEqual(kind("https://appstoreconnect.apple.com/apps"), .store)
+        XCTAssertEqual(kind("https://apps.apple.com/jp/app/x/id1"), .store)
+        XCTAssertEqual(kind("https://play.google.com/console/u/0/developers"), .store)
+        XCTAssertEqual(kind("https://docs.example.com/"), .docs)
+        XCTAssertEqual(kind("https://example.com/docs/start"), .docs)
+        XCTAssertEqual(kind("https://console.anthropic.com/"), .dashboard)
+        XCTAssertEqual(kind("https://dashboard.stripe.com/"), .dashboard)
+        XCTAssertEqual(kind("https://app.supabase.com/project/x"), .dashboard)
+        XCTAssertEqual(kind("https://platform.openai.com/"), .dashboard)
+        XCTAssertEqual(kind("https://vercel.com/acme"), .dashboard)
+        XCTAssertEqual(kind("https://www.github.com/ShinjoSato/llm-manager"), .dashboard)
+        XCTAssertEqual(kind("https://example.com/lp"), .other)
+        XCTAssertEqual(kind("http://localhost:3000/"), .other)
+    }
+
+    /// 請求 → ストア → ドキュメント → ダッシュボード の順に当てる。
+    func testKindSuggestionPrecedence() {
+        XCTAssertEqual(kind("https://appstoreconnect.apple.com/agreements/payments"), .billing)
+        XCTAssertEqual(kind("https://docs.stripe.com/billing"), .billing)
+        XCTAssertEqual(kind("https://console.example.com/docs"), .docs)
+    }
+
+    func testKindToSaveKeepsOriginalUnlessChosenOrSuggested() {
+        XCTAssertNil(ProjectLinks.kindToSave(selected: .other, touched: false, suggested: false, original: nil))
+        XCTAssertEqual(ProjectLinks.kindToSave(selected: .other, touched: false, suggested: false, original: .docs), .docs)
+        XCTAssertEqual(ProjectLinks.kindToSave(selected: .billing, touched: false, suggested: true, original: nil), .billing)
+        XCTAssertEqual(ProjectLinks.kindToSave(selected: .store, touched: true, suggested: false, original: .docs), .store)
+    }
+
+    func testKindLabelsAndSymbols() {
+        XCTAssertEqual(ProjectLinkKind.allCases.map(\.rawValue), ["billing", "dashboard", "store", "docs", "other"])
+        XCTAssertEqual(ProjectLinkKind.allCases.map(\.label), ["請求", "ダッシュボード", "ストア", "ドキュメント", "その他"])
+        XCTAssertEqual(ProjectLinkKind.allCases.map(\.symbol), ["creditcard", "gauge", "storefront", "book", "link"])
+        XCTAssertEqual(ProjectLink(name: "a", url: "https://a.example").resolvedKind, .other)
+        XCTAssertEqual(ProjectLink(name: "a", url: "https://a.example", kind: .docs).resolvedKind, .docs)
+    }
+
+    // MARK: - 名前の提案
+
+    private func suggested(_ text: String) -> String? {
+        ProjectLinks.suggestedName(for: URL(string: text)!)
+    }
+
+    func testSuggestedNameUsesMainHostLabel() {
+        XCTAssertEqual(suggested("https://dashboard.stripe.com/invoices"), "Stripe")
+        XCTAssertEqual(suggested("https://console.anthropic.com/"), "Anthropic")
+        XCTAssertEqual(suggested("https://appstoreconnect.apple.com/apps"), "Apple")
+        XCTAssertEqual(suggested("https://www.figma.com/file/x"), "Figma")
+        XCTAssertEqual(suggested("https://GitHub.com/x"), "Github")
+        XCTAssertEqual(suggested("https://example.co.jp/"), "Example")
+        XCTAssertEqual(suggested("https://shop.example.co.uk/"), "Example")
+        XCTAssertEqual(suggested("http://localhost:3000/"), "Localhost")
+        XCTAssertEqual(suggested("http://192.168.1.10:3000/"), "192.168.1.10")
+    }
+
+    // MARK: - 種類ごとのまとめ
+
+    func testGroupedKeepsKindOrderAndLinkOrder() {
+        let links = [ProjectLink(name: "LP", url: "https://a.example"),
+                     ProjectLink(name: "Stripe", url: "https://b.example", kind: .billing),
+                     ProjectLink(name: "Docs", url: "https://c.example", kind: .docs),
+                     ProjectLink(name: "Usage", url: "https://d.example", kind: .billing)]
+        let groups = ProjectLinks.grouped(links)
+        XCTAssertEqual(groups.map(\.kind), [.billing, .docs, .other])
+        XCTAssertEqual(groups.map { $0.links.map(\.name) }, [["Stripe", "Usage"], ["Docs"], ["LP"]])
+        XCTAssertEqual(ProjectLinks.grouped([]).count, 0)
+        // 種類の無いものだけなら 1 つのまとまり。
+        XCTAssertEqual(ProjectLinks.grouped([links[0]]).map(\.kind), [.other])
+    }
+}
+
+final class LinkTitleTests: XCTestCase {
+    func testParsesTitleAndCleansIt() {
+        XCTAssertEqual(LinkTitle.parse(html: "<html><head><title>Hello</title></head></html>"), "Hello")
+        XCTAssertEqual(LinkTitle.parse(html: "<TITLE lang=\"ja\">\n  Stripe &amp; Co\n  — 請求 </TITLE >"), "Stripe & Co — 請求")
+        XCTAssertEqual(LinkTitle.parse(html: "<title>a &lt;b&gt; &quot;c&quot; &#39;d&#39; &#x41;&#66;&nbsp;e &unknown; &amp</title>"),
+                       "a <b> \"c\" 'd' AB e &unknown; &amp")
+        XCTAssertEqual(LinkTitle.parse(Data("<title>Dash&#x2014;board</title>".utf8)), "Dash—board")
+    }
+
+    func testMissingOrEmptyTitleIsNil() {
+        XCTAssertNil(LinkTitle.parse(html: "<html><body>no title</body></html>"))
+        XCTAssertNil(LinkTitle.parse(html: "<title>   </title>"))
+        XCTAssertNil(LinkTitle.parse(html: "<title>unclosed"))
+        XCTAssertNil(LinkTitle.parse(Data()))
+    }
+
+    /// 先頭 256KB より後ろの `<title>` は見ない。
+    func testOnlyReadsHead() {
+        let padding = String(repeating: " ", count: LinkTitle.maxBytes)
+        XCTAssertNil(LinkTitle.parse(Data((padding + "<title>late</title>").utf8)))
+        XCTAssertEqual(LinkTitle.parse(Data(("<title>early</title>" + padding).utf8)), "early")
+    }
+
+    func testDecodesTitleCutInsideMultibyteCharacter() {
+        let html = "<html><head><title>請求のページ</title><meta name=\"description\" content=\"日本語の説明文です"
+        var data = Data(html.utf8)
+        // 「す」（3 バイト）の 2 バイト目で切る。
+        data.removeLast(1)
+        XCTAssertEqual(LinkTitle.parse(data), "請求のページ")
+        XCTAssertEqual(LinkTitle.trimmingIncompleteUTF8(Data("abc".utf8)), Data("abc".utf8))
+        XCTAssertEqual(LinkTitle.trimmingIncompleteUTF8(Data("あ".utf8)), Data("あ".utf8))
+        XCTAssertEqual(LinkTitle.trimmingIncompleteUTF8(Data("あ".utf8).prefix(1)), Data())
+    }
+
+    func testDecodesShiftJISWhenDeclared() throws {
+        let html = "<html><head><meta charset=\"Shift_JIS\"><title>請求</title><p>説明です"
+        let data = try XCTUnwrap(html.data(using: .shiftJIS))
+        XCTAssertEqual(LinkTitle.parse(data), "請求")
+        // 2 バイト文字の 1 バイト目で切れても読める。
+        XCTAssertEqual(LinkTitle.parse(data.dropLast(1)), "請求")
+    }
+
+    func testUndecodableDeclaredCharsetGivesNoTitle() throws {
+        var data = try XCTUnwrap("<meta charset=\"Shift_JIS\"><title>".data(using: .shiftJIS))
+        data.append(contentsOf: [0x81, 0x20, 0x81, 0x20])
+        data.append(contentsOf: Data("</title>".utf8))
+        XCTAssertNil(LinkTitle.parse(data))
+    }
+
+    func testInvalidByteInUTF8DoesNotFallBackToLatin1() {
+        var data = Data("<title>請求</title><p>".utf8)
+        data.append(0xFF)
+        data.append(contentsOf: Data("x".utf8))
+        XCTAssertEqual(LinkTitle.parse(data), "請求")
+    }
 }
