@@ -134,6 +134,7 @@ mac/
     Projects/                   ルームとプロジェクトの照合と、見出しのボタンの先
       GitHubLinks.swift           ルームの cwd と設定のプロジェクトの対応（ProjectMatcher）と GitHub の URL（ボード / リポジトリ）
       ProjectLinks.swift          設定のリンク（LP 等）の URL の検証（http / https で host のあるものだけ）と、見出しの「リンク」に出すもの
+      ProjectBadge.swift          プロジェクトの印（色のキー `ProjectColor`・SF Symbol）の解決。無い時は名前のハッシュの色と `folder`、設定画面のアイコンの候補
       EditorActions.swift         見出しの「VS Code / GitHub / リンク / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
     Sites/                      ディレクトリの詳細の「サイト」（LP のプレビュー）
       SiteLocator.swift           LP の場所の自動検出と、設定の `site`（相対パス）の検証・解決（プロジェクトの外を指さない）
@@ -489,7 +490,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   （空の段は出さない・各段は最後に動いた順・同時刻は名前順）。組み立ては DeckCore の `RoomGrouping`。
 - 状態は監視の `SessionSnapshot.status`。監視の開始前は、ホスト中のセッションだけ端末画面からのローカル判定（作業中 / 権限プロンプト / 待機）で代わりに出す。
 - **「ディレクトリ」**: 設定（settings.json）に登録したプロジェクトの一覧。設定の順で、進行中（active）を上に、休止・保管（paused / archived）は
-  「休止・保管」の見出しの下にまとめて薄く出す（設定の変更はすぐ映る）。各行は色の点（ルームの頭文字アイコンと同じ色）・名前・パスの末尾・
+  「休止・保管」の見出しの下にまとめて薄く出す（設定の変更はすぐ映る）。各行は印（色の縁取りの丸に SF Symbol のアイコン。設定の `color` / `icon`、無ければ名前から決めた色と `folder`。`ProjectBadge`）・名前・パスの末尾・
   そのプロジェクトで終了していないセッションの件数と、その中でいちばん急ぐ状態（要対応は色の地）。セッションの照合は「GitHub」ボタンと同じ
   （status を問わず全プロジェクトで、cwd がプロジェクトの path と一致か配下・いちばん深い path。`ProjectMatcher`。外部セッションも登録済みの path の配下なら数える）。
   検索欄は名前とパスで絞る（空白区切りで AND）。右クリックで「Claude Code を起動」「Finder で表示」。組み立て・並び・検索・件数と状態の集計は
@@ -852,7 +853,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
                   "links": [ { "name": "LP", "url": "https://example.com/lp" },
                              { "name": "Stripe", "url": "https://dashboard.stripe.com/invoices", "kind": "billing" },
                              { "name": "Figma", "url": "https://www.figma.com/file/…" } ],
-                  "site": { "path": "site" } } ],
+                  "site": { "path": "site" },
+                  "icon": "iphone", "color": "blue" } ],
   "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
 ```
 
@@ -868,6 +870,10 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   `path` はプロジェクトからの相対パス（`.` はプロジェクト直下。静的書き出しはその下の `out/`）。絶対パス・`~`・`..` を含むものは警告として読み込み、使わない
   （シンボリックリンクでプロジェクトの外を指すものも使わない）。`site` の形が崩れている（オブジェクトでない・`path` の文字列が無い）時は、その `site` だけを無視して警告を出す（ファイル全体は読める。次に保存すると `site` は書かれない）。
   **サイトを指定したら、`site` を知らない前のビルドで設定を保存しない**（`site` を落として書くため）。
+  `icon` / `color` はディレクトリ一覧・詳細の見出し・「+」の一覧に出る印で、どちらも省略できる（無ければアプリも書かない）。
+  `icon` は SF Symbol の名前（無ければ `folder`。この OS に無い名前は読めて値も残るが、表示は `folder` に落ちる。空は警告）。
+  `color` は `red` / `orange` / `yellow` / `green` / `teal` / `blue` / `indigo` / `purple` / `pink` / `brown` / `gray` のどれか（無ければ名前から決める。知らない値は警告として読み込み、値は残したまま名前から決めた色で出す）。
+  設定画面のプロジェクトタブの「アイコンと色」か、ディレクトリ一覧の行の右クリック「アイコンと色を変更…」から選ぶ（「自動」「既定」でキーを消す）。
   `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
 - 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600。ディレクトリを 0700 に締めるのは既定の場所（`~/Library/Application Support/claude-deck/`）の時だけで、
   `CLAUDE_DECK_SETTINGS` で向けた先のディレクトリの権限は変えない。

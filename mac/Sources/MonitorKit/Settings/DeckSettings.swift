@@ -56,13 +56,18 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
     public var links: [ProjectLink]
     /// LP の場所（無ければ自動で探す）。
     public var site: ProjectSite?
+    /// 印のアイコン（SF Symbol 名。無ければ `ProjectBadge.defaultSymbol`）。
+    public var icon: String?
+    /// 印の色（`ProjectColor` のキー。無ければ名前から決める）。
+    public var color: String?
     /// 形が読めずに捨てた `site`（警告に出すだけで、保存・比較には含めない）。
     public var ignoredSite = IgnoredField()
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links, site }
+    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links, site, icon, color }
 
     public init(id: UUID = UUID(), name: String, path: String, status: ProjectStatus = .active, note: String = "",
-                github: GitHubLink? = nil, links: [ProjectLink] = [], site: ProjectSite? = nil) {
+                github: GitHubLink? = nil, links: [ProjectLink] = [], site: ProjectSite? = nil,
+                icon: String? = nil, color: String? = nil) {
         self.id = id
         self.name = name
         self.path = path
@@ -71,6 +76,8 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         self.github = github
         self.links = links
         self.site = site
+        self.icon = icon
+        self.color = color
     }
 
     public init(from decoder: Decoder) throws {
@@ -89,9 +96,11 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         } else {
             site = nil
         }
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        color = try c.decodeIfPresent(String.self, forKey: .color)
     }
 
-    /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。
+    /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。`site` / `icon` / `color` も無ければ書かない。
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
@@ -102,6 +111,8 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         try c.encodeIfPresent(github, forKey: .github)
         if !links.isEmpty { try c.encode(links, forKey: .links) }
         try c.encodeIfPresent(site, forKey: .site)
+        try c.encodeIfPresent(icon, forKey: .icon)
+        try c.encodeIfPresent(color, forKey: .color)
     }
 
     /// フォルダから作る（表示名はフォルダ名）。

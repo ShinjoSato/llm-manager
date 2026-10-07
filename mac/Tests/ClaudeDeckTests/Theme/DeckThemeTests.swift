@@ -26,7 +26,10 @@ final class DeckThemeTests: XCTestCase {
                        [0x34d399, 0x053321, 0x053321, 0x0d1320, 0x0b111d])
         XCTAssertEqual([p.feedTool, p.feedPrompt, p.feedStatus, p.feedSession, p.feedAgent],
                        [0x7dd3fc, 0xc4b5fd, 0xfcd34d, 0x6ee7b7, 0xf0abfc])
-        XCTAssertEqual(p.avatarPalette, [0x60a5fa, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0xf87171])
+        // 名前のハッシュで引く 8 色（blue → red の順）は、キーを足す前の色のまま。
+        XCTAssertEqual(ProjectColor.hashCandidates.map(p.avatar),
+                       [0x60a5fa, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0xf87171])
+        XCTAssertEqual([p.avatar(.indigo), p.avatar(.brown), p.avatar(.gray)], [0x818cf8, 0xd4a373, 0x9ca3af])
         XCTAssertEqual(DeckTheme.night.palette, .night)
         XCTAssertEqual([p.selectionInk, p.link], [p.accent, p.accent])
     }
@@ -168,10 +171,37 @@ final class DeckThemeTests: XCTestCase {
         for (hue, colors) in roles {
             for color in colors { XCTAssertEqual(PastelHue(color), hue, String(color, radix: 16)) }
         }
-        // 頭文字の色も 4 色相のどれかで、4 色すべてを使う。
-        let avatarHues = p.avatarPalette.map(PastelHue.init)
-        XCTAssertFalse(avatarHues.contains(nil))
-        XCTAssertEqual(Set(avatarHues.compactMap { $0 }), Set(PastelHue.allCases))
+    }
+
+    /// 印の色は利用者が選ぶ 11 色で、ライトはナイトと同じ色相の濃い版（灰だけは色味を持たない）。
+    func testAvatarPaletteKeepsHueAcrossThemes() {
+        XCTAssertEqual(ThemePalette.night.avatarPalette.count, ProjectColor.allCases.count)
+        XCTAssertEqual(ThemePalette.light.avatarPalette.count, ProjectColor.allCases.count)
+        for key in ProjectColor.allCases {
+            let night = ThemePalette.night.avatar(key), light = ThemePalette.light.avatar(key)
+            if key == .gray {
+                XCTAssertLessThanOrEqual(chroma(night), 24)
+                XCTAssertLessThanOrEqual(chroma(light), 24)
+                continue
+            }
+            let (hn, hl) = (hue(night), hue(light))
+            let distance = min(abs(hn - hl), 360 - abs(hn - hl))
+            XCTAssertLessThanOrEqual(distance, 20, "\(key): night \(Int(hn))° light \(Int(hl))°")
+            XCTAssertLessThan(ThemeContrast.lightness(light), ThemeContrast.lightness(night), "\(key)")
+        }
+        // 同じテーマの中で同じ色を 2 つのキーに使わない。
+        XCTAssertEqual(Set(ThemePalette.night.avatarPalette).count, ProjectColor.allCases.count)
+        XCTAssertEqual(Set(ThemePalette.light.avatarPalette).count, ProjectColor.allCases.count)
+    }
+
+    private func hue(_ hex: UInt32) -> Double {
+        let r = Double((hex >> 16) & 0xff), g = Double((hex >> 8) & 0xff), b = Double(hex & 0xff)
+        let (hi, lo) = (max(r, g, b), min(r, g, b))
+        guard hi > lo else { return 0 }
+        var hue: Double
+        if hi == r { hue = 60 * ((g - b) / (hi - lo)) } else if hi == g { hue = 60 * ((b - r) / (hi - lo) + 2) } else { hue = 60 * ((r - g) / (hi - lo) + 4) }
+        if hue < 0 { hue += 360 }
+        return hue
     }
 
     func testLightStageBackdropBlendsWithPanel() {
