@@ -15,6 +15,15 @@ public enum RoomPhase: Int, Sendable, CaseIterable, Comparable {
         }
     }
 
+    /// Remote API の区分から（知らない区分は待機へ）。
+    public init(_ phase: RemoteRoomPhase) {
+        switch phase {
+        case .attention: self = .attention
+        case .active: self = .active
+        case .idle, .unknown: self = .idle
+        }
+    }
+
     public var title: String {
         switch self {
         case .attention: return "要対応"
