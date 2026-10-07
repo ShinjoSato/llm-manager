@@ -36,10 +36,7 @@ struct ConversationHeader: View {
         }
         .padding(.horizontal, 20)
         .frame(height: 64)
-        // 下線は背景側に置き、ボタンの吹き出しが線の下に潜らないようにする。
-        .background {
-            ChatTheme.background.overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
-        }
+        .headerBackground()
     }
 }
 
@@ -52,11 +49,7 @@ struct StatusBadge: View {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(ChatTheme.label(for: status))
         }
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(color.opacity(0.14)))
+        .statusCapsule(color)
     }
 }
 
@@ -243,8 +236,7 @@ struct HeaderButtonLabel: View {
         .foregroundStyle(busy ? ChatTheme.tertiary : ChatTheme.text)
         .frame(minWidth: Self.side, minHeight: Self.side, maxHeight: Self.side)
         .padding(.horizontal, showsMenu ? 4 : 0)
-        .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !busy ? ChatTheme.selectedRow : ChatTheme.inputSurface))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+        .roundedSurface(9, fill: hovering && !busy ? ChatTheme.selectedRow : ChatTheme.inputSurface, stroke: ChatTheme.inputBorder)
         .overlay(alignment: .topTrailing) {
             if dot {
                 Circle()
@@ -305,8 +297,7 @@ struct HeaderTooltip: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .fixedSize(horizontal: false, vertical: true)
-        .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.claudeBubble))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.claudeBubbleBorder))
+        .roundedSurface(8, fill: ChatTheme.claudeBubble, stroke: ChatTheme.claudeBubbleBorder)
     }
 }
 

@@ -68,8 +68,7 @@ struct RoomListView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 32)
-        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+        .inputFieldSurface(9)
         .padding(.horizontal, 16)
         .padding(.bottom, 4)
     }
@@ -122,8 +121,7 @@ struct RoomListView: View {
 
     private func sectionTitle(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(ChatTheme.tertiary)
+            .sectionLabelStyle()
             .padding(.horizontal, 12)
             .padding(.top, 14)
             .padding(.bottom, 4)
@@ -172,8 +170,6 @@ struct RoomListView: View {
         if let session = room.hosted {
             Button(session.end == nil ? "ルームを閉じる（claude を終了）" : "ルームを閉じる") { model.close(session) }
         }
-        Button("Finder で表示") {
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: room.cwd)])
-        }
+        Button("Finder で表示") { SystemActions.revealInFinder(path: room.cwd) }
     }
 }

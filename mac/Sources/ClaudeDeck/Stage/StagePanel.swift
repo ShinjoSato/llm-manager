@@ -127,15 +127,12 @@ struct StagePanel: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 2) {
+            SegmentGroup {
                 ForEach(StagePanelView.allCases) { option in
                     SegmentButton(symbol: option.symbol, name: option.label, detail: option.detail,
                                   selected: option == view) { viewRaw = option.rawValue }
                 }
             }
-            .padding(2)
-            .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
             Text(view.label)
                 .font(StageTheme.label)
                 .tracking(1.2)

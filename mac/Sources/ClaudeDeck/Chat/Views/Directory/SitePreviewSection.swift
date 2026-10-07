@@ -43,10 +43,7 @@ struct SitePreviewSection: View {
             info
             content
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.claudeBubble))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.claudeBubbleBorder))
+        .detailCard()
         .task(id: TaskKey(path: project.path, site: project.site?.path, token: reloadToken)) { await refresh() }
     }
 
@@ -83,8 +80,7 @@ struct SitePreviewSection: View {
     private func toolbarTitle(compact: Bool) -> some View {
         HStack(spacing: 8) {
             Text("サイト")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ChatTheme.tertiary)
+                .sectionLabelStyle()
                 .fixedSize()
             if location != nil || !links.isEmpty {
                 sourcePicker(compact: compact)
@@ -129,8 +125,7 @@ struct SitePreviewSection: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 7).fill(ChatTheme.inputSurface))
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(ChatTheme.inputBorder))
+            .inputFieldSurface(7)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

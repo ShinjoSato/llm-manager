@@ -61,15 +61,8 @@ struct ChatRootView<Trailing: View>: View {
             ConversationView(model: model, room: room)
                 .id(room.id)
         } else {
-            VStack(spacing: 10) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.system(size: 28))
-                    .foregroundStyle(ChatTheme.tertiary)
-                Text("左のルームを選ぶか、「+」からプロジェクトを選んで Claude Code を起動します。")
-                    .font(ChatTheme.body)
-                    .foregroundStyle(ChatTheme.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            CenterPlaceholder(symbol: "bubble.left.and.bubble.right",
+                              text: "左のルームを選ぶか、「+」からプロジェクトを選んで Claude Code を起動します。")
         }
     }
 

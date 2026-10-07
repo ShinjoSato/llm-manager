@@ -153,9 +153,7 @@ private struct SettingsProblemBanner: View {
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button("Finder で表示") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-            }
+            Button("Finder で表示") { SystemActions.revealInFinder(path: path) }
             Button("読み直す", action: retry)
         }
         .padding(12)

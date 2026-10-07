@@ -72,9 +72,7 @@ struct LinkOverviewView: View {
         .padding(.horizontal, 20)
         .padding(.top, 12)
         .padding(.bottom, 10)
-        .background {
-            ChatTheme.background.overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
-        }
+        .headerBackground()
         .zIndex(1)
     }
 
@@ -136,10 +134,7 @@ private struct LinkOverviewSectionView: View {
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.claudeBubble))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.claudeBubbleBorder))
+        .detailCard()
     }
 }
 

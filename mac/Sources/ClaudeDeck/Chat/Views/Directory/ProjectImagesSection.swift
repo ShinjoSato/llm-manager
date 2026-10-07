@@ -20,10 +20,7 @@ struct ProjectImagesSection: View {
             toolbar
             if !collapsed { content }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.claudeBubble))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.claudeBubbleBorder))
+        .detailCard()
         // 畳んでいる間は走査せず、開いた時に初めて走査する（畳めば走査中のものは取りやめる）。
         .task(id: ScanKey(path: project.path, open: !collapsed, token: reloadToken)) {
             let request = ScanRequest(path: project.path, token: reloadToken)
@@ -51,13 +48,9 @@ struct ProjectImagesSection: View {
         HStack(spacing: 8) {
             Button { collapsed.toggle() } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(ChatTheme.tertiary)
-                        .frame(width: 10)
+                    DisclosureChevron(collapsed: collapsed)
                     Text(store.scan.map { "画像  \($0.count)" } ?? "画像")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(ChatTheme.tertiary)
+                        .sectionLabelStyle()
                 }
                 .contentShape(Rectangle())
             }
@@ -96,10 +89,7 @@ struct ProjectImagesSection: View {
                 if isCollapsed { collapsedGroups.remove(group.id) } else { collapsedGroups.insert(group.id) }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(ChatTheme.tertiary)
-                        .frame(width: 10)
+                    DisclosureChevron(collapsed: isCollapsed)
                     Text(group.relativePath == "." ? "プロジェクト直下" : group.relativePath)
                         .font(ChatTheme.mono)
                         .foregroundStyle(ChatTheme.text)
@@ -160,8 +150,8 @@ private struct ProjectImageCell: View {
                 .lineLimit(1)
         }
         .contextMenu {
-            Button("Finder で表示") { ProjectImageActions.revealInFinder(image) }
-            Button("パスをコピー") { ProjectImageActions.copyPath(image) }
+            Button("Finder で表示") { SystemActions.revealInFinder(path: image.path) }
+            Button("パスをコピー") { SystemActions.copy(image.path) }
         }
         .task(id: "\(store.key(image))|\(ProjectImageStore.thumbnailPixels)") {
             // 別の画像に替わったら前の絵を出し続けない（読み直しは NSCache に当たる）。
@@ -180,20 +170,7 @@ private struct ProjectImageCell: View {
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: .infinity)
             .background(shape.fill(ChatTheme.inputSurface))
-            .overlay {
-                if let shown {
-                    Image(nsImage: shown.image)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fill)
-                } else if failed {
-                    Image(systemName: "photo")
-                        .font(.system(size: 18))
-                        .foregroundStyle(ChatTheme.tertiary)
-                } else {
-                    ProgressView().controlSize(.small)
-                }
-            }
+            .overlay { ThumbnailContent(image: shown?.image, failed: failed) }
             .clipShape(shape)
             .overlay(shape.stroke(ChatTheme.border))
             .contentShape(shape)
@@ -206,18 +183,6 @@ enum ProjectImageCaption {
         let size = ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
         guard let dimensions else { return size }
         return "\(dimensions.width)×\(dimensions.height)・\(size)"
-    }
-}
-
-enum ProjectImageActions {
-    static func revealInFinder(_ image: ProjectImage) {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: image.path)])
-    }
-
-    static func copyPath(_ image: ProjectImage) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(image.path, forType: .string)
     }
 }
 
@@ -243,11 +208,11 @@ private struct ProjectImagePreview: View {
                         .foregroundStyle(ChatTheme.tertiary)
                 }
                 Spacer(minLength: 12)
-                Button("Finder で表示") { ProjectImageActions.revealInFinder(image) }
+                Button("Finder で表示") { SystemActions.revealInFinder(path: image.path) }
                 Button("閉じる") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
-            content
+            ImagePreviewContent(image: full?.image, failed: failed)
         }
         .padding(16)
         .background(ChatTheme.background)
@@ -256,25 +221,6 @@ private struct ProjectImagePreview: View {
             guard !Task.isCancelled else { return }
             full = result
             failed = result == nil
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if let full {
-            let size = ChatImagePreview.fitted(full.image.size)
-            Image(nsImage: full.image)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: size.width, height: size.height)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else if failed {
-            Label("画像を読み込めませんでした", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(ChatTheme.secondary)
-                .frame(width: 480, height: 320)
-        } else {
-            ProgressView().frame(width: 480, height: 320)
         }
     }
 }

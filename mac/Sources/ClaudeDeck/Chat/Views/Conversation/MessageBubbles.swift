@@ -42,6 +42,16 @@ struct EntryView: View {
     }
 }
 
+/// 吹き出しの形。話し手の側の下の角だけを小さく丸める。
+enum BubbleShape {
+    /// 右に寄せる吹き出し（本人の発話・伝言）。
+    static let outgoing = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
+                                                 bottomTrailingRadius: 4, topTrailingRadius: 16)
+    /// 左に寄せる吹き出し（Claude）。
+    static let incoming = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 4,
+                                                 bottomTrailingRadius: 16, topTrailingRadius: 16)
+}
+
 struct UserBubble: View {
     let text: String
     var images: [ChatImage] = []
@@ -62,9 +72,7 @@ struct UserBubble: View {
                     .lineSpacing(3)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
-                                                       bottomTrailingRadius: 4, topTrailingRadius: 16)
-                        .fill(ChatTheme.userBubble))
+                    .background(BubbleShape.outgoing.fill(ChatTheme.userBubble))
             }
             if pending {
                 Text("送信しました（記録を待っています）").font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)
@@ -80,8 +88,7 @@ struct ClaudeBubble: View {
     var imageSource: ChatImageSource?
 
     var body: some View {
-        let shape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 4,
-                                           bottomTrailingRadius: 16, topTrailingRadius: 16)
+        let shape = BubbleShape.incoming
         VStack(alignment: .leading, spacing: 6) {
             if !images.isEmpty, let imageSource {
                 ChatImageGrid(images: images, source: imageSource)

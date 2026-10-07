@@ -175,10 +175,7 @@ private struct DirectoryDetailHeader: View {
         }
         .padding(.horizontal, 20)
         .frame(height: 64)
-        // 下線は背景側に置き、ボタンの吹き出しが線の下に潜らないようにする。
-        .background {
-            ChatTheme.background.overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
-        }
+        .headerBackground()
         .zIndex(1)
     }
 
@@ -222,11 +219,7 @@ private struct ProjectStatusTag: View {
     var body: some View {
         let color = status == .active ? ChatTheme.working : ChatTheme.tertiary
         Text(status.label)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.14)))
+            .statusCapsule(color)
     }
 }
 
@@ -237,14 +230,10 @@ private struct DetailSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ChatTheme.tertiary)
+                .sectionLabelStyle()
             content
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.claudeBubble))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.claudeBubbleBorder))
+        .detailCard()
     }
 }
 
@@ -267,15 +256,8 @@ private struct DetailField<Content: View>: View {
 /// 選んだディレクトリが設定から外された時。
 struct DirectoryMissingView: View {
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "folder.badge.questionmark")
-                .font(.system(size: 28))
-                .foregroundStyle(ChatTheme.tertiary)
-            Text("このディレクトリは設定から外されました。左の一覧から選び直してください。")
-                .font(ChatTheme.body)
-                .foregroundStyle(ChatTheme.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(ChatTheme.background)
+        CenterPlaceholder(symbol: "folder.badge.questionmark",
+                          text: "このディレクトリは設定から外されました。左の一覧から選び直してください。")
+            .background(ChatTheme.background)
     }
 }

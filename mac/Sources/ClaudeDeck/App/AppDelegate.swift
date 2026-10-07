@@ -138,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// ウィンドウの内容を PNG で撮影し、デスクトップに保存 + クリップボードにコピー + Finder で表示。
     /// 自前のビュー階層を描画するため、画面収録権限は不要。
-    @objc private func captureScreenshot() {
+    @MainActor @objc private func captureScreenshot() {
         guard let contentView = window?.contentView else { return }
         let rect = contentView.bounds
         guard let rep = contentView.bitmapImageRepForCachingDisplay(in: rect) else { return }
@@ -163,6 +163,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         // Finder で保存先を表示
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        SystemActions.revealInFinder(url)
     }
 }

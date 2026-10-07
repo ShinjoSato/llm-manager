@@ -16,12 +16,9 @@ struct UnreadableMenuCard: View {
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.secondary)
             HStack(spacing: 8) {
-                Button {
+                CardEscapeButton(exits: menu.cancelExits) {
                     if menu.cancelExits { exitMenu = menu } else { onCancel(menu) }
-                } label: {
-                    CardButtonLabel(title: menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
                 }
-                .buttonStyle(.plain)
                 if busy { ProgressView().controlSize(.small) }
             }
             .disabled(busy)

@@ -126,8 +126,7 @@ private struct MarkdownCodeBlock: View {
                 .foregroundStyle(ChatTheme.text)
                 .padding(10)
         }
-        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.codeSurface))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.border))
+        .roundedSurface(9, fill: ChatTheme.codeSurface, stroke: ChatTheme.border)
     }
 }
 

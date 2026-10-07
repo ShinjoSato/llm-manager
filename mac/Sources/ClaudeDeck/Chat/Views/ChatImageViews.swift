@@ -56,8 +56,7 @@ final class ChatImageLoader {
             let decoded = await Task.detached(priority: .userInitiated) {
                 await Self.decode(image, sessionId: sessionId, maxPixels: maxPixels, source: source)
             }.value
-            guard let decoded else { return nil }
-            return NSImage(cgImage: decoded.image, size: NSSize(width: decoded.image.width, height: decoded.image.height))
+            return decoded.map { NSImage(pixelSized: $0.image) }
         }
         inFlight[key] = task
         let result = await task.value
@@ -79,12 +78,7 @@ final class ChatImageLoader {
             data = await source(sessionId, itemId, index)
         }
         guard let data, let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixels,
-        ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map(DecodedImage.init)
+        return ImageDecoding.thumbnail(of: source, maxPixels: maxPixels).map(DecodedImage.init)
     }
 }
 
@@ -135,18 +129,7 @@ struct ChatImageThumbnail: View {
         let shape = RoundedRectangle(cornerRadius: 10)
         ZStack {
             shape.fill(ChatTheme.inputSurface)
-            if let shown = loaded ?? source.loader.cachedThumbnail(image, sessionId: source.sessionId) {
-                Image(nsImage: shown)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fill)
-            } else if failed {
-                Image(systemName: "photo")
-                    .font(.system(size: 18))
-                    .foregroundStyle(ChatTheme.tertiary)
-            } else {
-                ProgressView().controlSize(.small)
-            }
+            ThumbnailContent(image: loaded ?? source.loader.cachedThumbnail(image, sessionId: source.sessionId), failed: failed)
         }
         .frame(width: side, height: side)
         .clipShape(shape)
@@ -177,7 +160,7 @@ struct ChatImagePreview: View {
                 Button("閉じる") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
-            content
+            ImagePreviewContent(image: full, failed: failed)
         }
         .padding(16)
         .background(ChatTheme.background)
@@ -186,12 +169,38 @@ struct ChatImagePreview: View {
             failed = full == nil
         }
     }
+}
 
-    @ViewBuilder
-    private var content: some View {
-        if let full {
-            let size = Self.fitted(full.size)
-            Image(nsImage: full)
+/// サムネイルの枠の中身（読めた絵・読めなかった印・読み込み中）。
+struct ThumbnailContent: View {
+    let image: NSImage?
+    let failed: Bool
+
+    var body: some View {
+        if let image {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fill)
+        } else if failed {
+            Image(systemName: "photo")
+                .font(.system(size: 18))
+                .foregroundStyle(ChatTheme.tertiary)
+        } else {
+            ProgressView().controlSize(.small)
+        }
+    }
+}
+
+/// 拡大表示の絵（画面に収まる大きさ）。読めなければ理由、読み込み中は回転の印。
+struct ImagePreviewContent: View {
+    let image: NSImage?
+    let failed: Bool
+
+    var body: some View {
+        if let image {
+            let size = Self.fitted(image.size)
+            Image(nsImage: image)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)

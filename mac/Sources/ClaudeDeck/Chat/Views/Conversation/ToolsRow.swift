@@ -51,8 +51,7 @@ struct ToolsRow: View {
                 .textSelection(.enabled)
                 .padding(10)
                 .frame(maxWidth: 640, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.codeSurface))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.border))
+                .roundedSurface(9, fill: ChatTheme.codeSurface, stroke: ChatTheme.border)
             }
         }
     }

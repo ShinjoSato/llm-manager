@@ -10,11 +10,8 @@ struct ConnectionNotice: View {
             Image(systemName: "bolt.horizontal.circle")
             Text(text)
         }
-        .font(ChatTheme.caption)
         .foregroundStyle(ChatTheme.permission)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 6)
+        .listNoticeBand()
     }
 
     private var text: String {
@@ -45,11 +42,8 @@ struct HookServerNotice: View {
             Image(systemName: "exclamationmark.triangle")
             Text(text).fixedSize(horizontal: false, vertical: true)
         }
-        .font(ChatTheme.caption)
         .foregroundStyle(ChatTheme.permission)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 6)
+        .listNoticeBand()
         .accessibilityIdentifier("hook-server-notice")
     }
 }
@@ -83,10 +77,7 @@ struct RestoreNotice: View {
                 .controlSize(.small)
             }
         }
-        .font(ChatTheme.caption)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 6)
+        .listNoticeBand()
         .accessibilityIdentifier("restore-notice")
     }
 }
@@ -106,11 +97,8 @@ struct QuitWaitNotice: View {
             Button("取り消す") { coordinator.cancelWaiting() }
                 .controlSize(.small)
         }
-        .font(ChatTheme.caption)
         .foregroundStyle(ChatTheme.permission)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 6)
+        .listNoticeBand()
         .accessibilityIdentifier("quit-wait-notice")
     }
 }

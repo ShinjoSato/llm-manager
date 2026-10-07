@@ -31,8 +31,7 @@ struct AttachmentStrip: View {
         }
         .padding(4)
         .padding(.trailing, 6)
-        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.background.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+        .roundedSurface(9, fill: ChatTheme.background.opacity(0.6), stroke: ChatTheme.inputBorder)
     }
 
     private func chip(_ attachment: Attachment) -> some View {
@@ -68,8 +67,7 @@ struct AttachmentStrip: View {
         }
         .padding(4)
         .padding(.trailing, 2)
-        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.background.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+        .roundedSurface(9, fill: ChatTheme.background.opacity(0.6), stroke: ChatTheme.inputBorder)
         .help(attachment.path)
     }
 }

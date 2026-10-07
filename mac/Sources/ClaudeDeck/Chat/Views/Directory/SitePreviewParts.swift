@@ -45,15 +45,23 @@ struct SiteViewportPicker: View {
 
     var body: some View {
         let current = SiteViewport(rawValue: raw) ?? .desktop
-        HStack(spacing: 2) {
+        SegmentGroup {
             ForEach(SiteViewport.allCases) { option in
                 SegmentButton(symbol: option.symbol, name: option.label, detail: "幅 \(Int(option.width))px で表示",
                               selected: option == current) { raw = option.rawValue }
             }
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.inputSurface))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+    }
+}
+
+/// `SegmentButton` を並べる枠。
+struct SegmentGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: 2) { content }
+            .padding(2)
+            .inputFieldSurface(9)
     }
 }
 
@@ -232,8 +240,7 @@ struct DevServerLogView: View {
                 .padding(8)
             }
             .frame(height: height)
-            .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.codeSurface))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.border))
+            .roundedSurface(8, fill: ChatTheme.codeSurface, stroke: ChatTheme.border)
             .onAppear { proxy.scrollTo(lines.count - 1, anchor: .bottom) }
             .onChange(of: lines) { _, new in proxy.scrollTo(new.count - 1, anchor: .bottom) }
         }

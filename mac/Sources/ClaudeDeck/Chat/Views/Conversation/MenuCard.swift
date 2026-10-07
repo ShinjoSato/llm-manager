@@ -65,12 +65,9 @@ struct MenuCard: View {
                 Text(notice).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
             }
             HStack(spacing: 8) {
-                Button {
+                CardEscapeButton(exits: menu.cancelExits) {
                     if menu.cancelExits { exitMenu = menu } else { onChoose(menu, nil) }
-                } label: {
-                    CardButtonLabel(title: menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
                 }
-                .buttonStyle(.plain)
                 if busy { SendingIndicator() }
             }
         }
@@ -117,8 +114,7 @@ private struct MenuOptionRow: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(isCursor && !disabled ? ChatTheme.permission.opacity(0.6) : ChatTheme.inputBorder))
+            .roundedSurface(9, fill: hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface, stroke: isCursor && !disabled ? ChatTheme.permission.opacity(0.6) : ChatTheme.inputBorder)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -176,8 +172,7 @@ private struct MenuTabBar: View {
                 .foregroundStyle(enabled && !onCursorFreeText ? ChatTheme.text : ChatTheme.tertiary)
                 .padding(.horizontal, 10)
                 .frame(height: 26)
-                .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.inputSurface))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.inputBorder))
+                .inputFieldSurface(8)
         }
         .buttonStyle(.plain)
         .disabled(!enabled || onCursorFreeText)

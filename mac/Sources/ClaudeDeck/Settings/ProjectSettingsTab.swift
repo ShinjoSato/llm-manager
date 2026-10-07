@@ -82,14 +82,10 @@ struct ProjectSettingsTab: View {
     }
 
     private func addFolders() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = true
-        panel.prompt = "追加"
-        guard panel.runModal() == .OK else { return }
+        let urls = SystemActions.choose(folders: true, multiple: true, prompt: "追加")
+        guard !urls.isEmpty else { return }
         let before = Set(store.projects.map(\.id))
-        store.add(paths: panel.urls.map(\.path))
+        store.add(paths: urls.map(\.path))
         if let added = store.projects.last(where: { !before.contains($0.id) }) { selection = added.id }
     }
 }
@@ -126,9 +122,7 @@ private struct ProjectDetailForm: View {
                 LabeledContent("フォルダ") {
                     HStack(spacing: 8) {
                         Text(project.path).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                        Button("Finder で表示") {
-                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.path)])
-                        }
+                        Button("Finder で表示") { SystemActions.revealInFinder(path: project.path) }
                         .controlSize(.small)
                     }
                 }

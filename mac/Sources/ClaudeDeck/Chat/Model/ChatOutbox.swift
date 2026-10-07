@@ -205,7 +205,7 @@ final class ChatOutbox {
             }
             if let attachment = result.attachment {
                 if let image = result.thumbnail {
-                    thumbnails[attachment.id] = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+                    thumbnails[attachment.id] = NSImage(pixelSized: image)
                 }
                 attachments[roomId, default: []].append(attachment)
             } else if let failure = result.failure {

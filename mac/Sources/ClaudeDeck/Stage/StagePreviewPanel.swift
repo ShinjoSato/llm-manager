@@ -187,8 +187,7 @@ private struct StageSitePreview: View {
                         .foregroundStyle(ChatTheme.text)
                         .padding(.horizontal, 10)
                         .frame(height: 26)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(ChatTheme.inputSurface))
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(ChatTheme.inputBorder))
+                        .inputFieldSurface(7)
                 }
                 .buttonStyle(.plain)
                 .headerButtonHelp(name: "サイトの欄を開く", detail: "\(project.name) の詳細の「サイト」", busyStatus: nil)
