@@ -112,6 +112,14 @@ public enum SettingsImport {
                         merged.projects[index].site = site
                         filled = true
                     }
+                    if merged.projects[index].icon == nil, let icon = project.icon {
+                        merged.projects[index].icon = icon
+                        filled = true
+                    }
+                    if merged.projects[index].color == nil, let color = project.color {
+                        merged.projects[index].color = color
+                        filled = true
+                    }
                     let added = addLinks(project.links, to: &merged.projects[index].links, summary: &summary)
                     if added > 0 {
                         summary.addedLinks += added

@@ -78,8 +78,10 @@ public struct ThemePalette: Sendable, Equatable {
     public var feedSession: UInt32
     public var feedAgent: UInt32
 
+    /// プロジェクトの印の色（`ProjectColor.allCases` の順。`avatar(_:)` でキーから引く）。
     public var avatarPalette: [UInt32]
 
+    public func avatar(_ key: ProjectColor) -> UInt32 { avatarPalette[key.paletteIndex] }
 
     public var cardFill: ThemeFill
     public var cardBorder: ThemeFill
@@ -113,7 +115,7 @@ public struct ThemePalette: Sendable, Equatable {
         userBubble: 0x2563eb, userBubbleText: 0xffffff, claudeBubble: 0x172033, claudeBubbleBorder: 0x222d42,
         accent: 0x34d399, onAccent: 0x053321, onPermission: 0x053321, codeSurface: 0x0d1320, stagePanel: 0x0b111d,
         feedTool: 0x7dd3fc, feedPrompt: 0xc4b5fd, feedStatus: 0xfcd34d, feedSession: 0x6ee7b7, feedAgent: 0xf0abfc,
-        avatarPalette: [0x60a5fa, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0xf87171],
+        avatarPalette: [0xf87171, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0x60a5fa, 0x818cf8, 0xa78bfa, 0xf472b6, 0xd4a373, 0x9ca3af],
         cardFill: .tint(0xfbbf24, 0.06), cardBorder: .solid(0xfbbf24), pendingCardFill: .tint(0xfbbf24, 0.04),
         permissionChip: .tint(0xfbbf24, 0.14), menuTabCurrent: .tint(0xfbbf24, 0.25),
         permissionBadge: .tint(0xfbbf24, 0.18), waitingBadge: .tint(0x7cc4ff, 0.18),
@@ -133,7 +135,8 @@ public struct ThemePalette: Sendable, Equatable {
         userBubble: 0xdde9fc, userBubbleText: 0x15315c, claudeBubble: 0xffffff, claudeBubbleBorder: 0xe1e4ea,
         accent: 0xb4e6c6, onAccent: 0x0b4a2c, onPermission: 0xffffff, codeSurface: 0xf3f4f6, stagePanel: 0xffffff,
         feedTool: 0x7a5600, feedPrompt: 0x1d5dbd, feedStatus: 0xb02a22, feedSession: 0x1b6b3a, feedAgent: 0x2a4a8c,
-        avatarPalette: [0x1d5dbd, 0x2a4a8c, 0x8c3a33, 0x6e5418, 0x7a5600, 0x1b6b3a, 0x3a6b4a, 0xb02a22],
+        // 印の色だけは利用者が選ぶ 11 色相で、ナイトと同じ色相の濃い版（白い面の上で 4.5 以上）。
+        avatarPalette: [0xb02a22, 0xa3480c, 0x7a5600, 0x1b6b3a, 0x0e6b6b, 0x1d5dbd, 0x4140b5, 0x6d3db4, 0xb02a74, 0x74482a, 0x5a6472],
         cardFill: .solid(0xfff5d4), cardBorder: .solid(0xecd07a), pendingCardFill: .solid(0xfff9e6),
         permissionChip: .solid(0xfbe7a6), menuTabCurrent: .solid(0xf8e08f),
         permissionBadge: .solid(0xfdedb3), waitingBadge: .solid(0xdde9fc),

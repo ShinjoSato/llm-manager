@@ -51,6 +51,8 @@ public enum SettingsValidation {
         if let link = project.github { problems += linkProblems(link) }
         for row in projectLinkRowProblems(project.links) { problems += row }
         if let site = project.site, let p = sitePathProblem(site.path) { problems.append(p) }
+        if let p = ProjectBadge.colorProblem(project.color) { problems.append(p) }
+        if let p = ProjectBadge.iconProblem(project.icon) { problems.append(p) }
         return problems
     }
 
@@ -127,6 +129,8 @@ public enum SettingsValidation {
             }
             if let site = project.site, let p = sitePathProblem(site.path) { result.append("「\(project.name)」のサイト: \(p)") }
             if project.ignoredSite.isSet { result.append("「\(project.name)」のサイト: 形が正しくないため無視しました（{\"path\": \"相対パス\"} の形で書いてください）") }
+            if let p = ProjectBadge.colorProblem(project.color) { result.append("「\(project.name)」の印: \(p)") }
+            if let p = ProjectBadge.iconProblem(project.icon) { result.append("「\(project.name)」の印: \(p)") }
         }
         for (index, board) in settings.boards.enumerated() {
             for p in boardProblems(board) { result.append("ボード「\(board.name)」: \(p)") }
