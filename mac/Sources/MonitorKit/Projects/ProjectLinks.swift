@@ -22,6 +22,11 @@ public enum ProjectLinks {
         }
     }
 
+    /// 保存する種類。利用者が選んだか提案が入った時はその値、どちらも無ければ元の値（無ければ無いまま。`other` を書き足さない）。
+    public static func kindToSave(selected: ProjectLinkKind, touched: Bool, suggested: Bool, original: ProjectLinkKind?) -> ProjectLinkKind? {
+        touched || suggested ? selected : original
+    }
+
     public static func help(for link: ProjectLink) -> String {
         "\(link.name) を開く: \(link.url.trimmingCharacters(in: .whitespacesAndNewlines))"
     }

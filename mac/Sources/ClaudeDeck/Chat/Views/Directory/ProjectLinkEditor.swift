@@ -126,9 +126,11 @@ struct ProjectLinkForm: View {
     @State private var name: String
     @State private var urlText: String
     @State private var kind: ProjectLinkKind
-    @State private var nameTouched = false
-    @State private var kindTouched: Bool
+    @State private var nameTouched: Bool
+    @State private var kindTouched = false
+    @State private var kindSuggested = false
     @State private var titleTask: Task<Void, Never>?
+    @State private var fetchGeneration = 0
     @State private var fetchingTitle = false
     @State private var failure: String?
     @FocusState private var focused: Field?
@@ -143,17 +145,18 @@ struct ProjectLinkForm: View {
         _name = State(initialValue: initial.name)
         _urlText = State(initialValue: initial.url)
         _kind = State(initialValue: initial.resolvedKind)
-        // 編集では選んである種類を提案で上書きしない。
-        _kindTouched = State(initialValue: index != nil)
+        // 編集では入っている名前を提案で置き換えない。
+        _nameTouched = State(initialValue: index != nil)
     }
+
+    private var isEditing: Bool { index != nil }
 
     private var store: SettingsStore { SettingsStore.shared }
 
-    /// 種類に触れていなければ元の値（nil のまま）を保ち、ファイルに `other` を書き足さない。
     private var candidate: ProjectLink {
         ProjectLink(name: name.trimmingCharacters(in: .whitespaces),
                     url: urlText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    kind: kindTouched ? kind : initial.kind)
+                    kind: ProjectLinks.kindToSave(selected: kind, touched: kindTouched, suggested: kindSuggested, original: initial.kind))
     }
 
     /// 自動で取りに行くのはクエリの無いアドレスだけ（一度きりのログイン用リンク等を使い切らない）。
@@ -192,7 +195,7 @@ struct ProjectLinkForm: View {
                 GridRow {
                     label("名前")
                     HStack(spacing: 6) {
-                        TextField("名前", text: Binding(get: { name }, set: { name = $0; nameTouched = true }), prompt: Text("例: Stripe"))
+                        TextField("名前", text: Binding(get: { name }, set: { if $0 != name { name = $0; nameTouched = true } }), prompt: Text("例: Stripe"))
                             .textFieldStyle(.roundedBorder)
                             .focused($focused, equals: .name)
                             .onSubmit(save)
@@ -257,7 +260,11 @@ struct ProjectLinkForm: View {
         titleTask = nil
         fetchingTitle = false
         guard let url = ProjectLinks.url(from: urlText) else { return }
-        if !kindTouched { kind = ProjectLinkKind.suggest(for: url) }
+        // 編集では選んである種類を提案で上書きしない。
+        if !isEditing, !kindTouched {
+            kind = ProjectLinkKind.suggest(for: url)
+            kindSuggested = true
+        }
         guard !nameTouched else { return }
         if let host = ProjectLinks.suggestedName(for: url) { name = host }
         if autoFetchable { fetchTitle(delay: delay) }
@@ -267,11 +274,14 @@ struct ProjectLinkForm: View {
     private func fetchTitle(delay: Bool, force: Bool = false) {
         titleTask?.cancel()
         let text = urlText
+        fetchGeneration += 1
+        let generation = fetchGeneration
         titleTask = Task { @MainActor in
             if delay { try? await Task.sleep(for: .milliseconds(800)) }
             guard !Task.isCancelled else { return }
             fetchingTitle = true
-            defer { fetchingTitle = false }
+            // 取り消された古い取得が、新しい取得の表示を消さないように自分の番だけ戻す。
+            defer { if fetchGeneration == generation { fetchingTitle = false } }
             guard let title = await LinkTitleFetcher.title(for: text), !Task.isCancelled else { return }
             guard urlText == text, force || !nameTouched else { return }
             name = title

@@ -16,17 +16,25 @@ public enum LinkTitle {
         let trimmed = trimmingIncompleteUTF8(data)
         if let utf8 = String(data: trimmed, encoding: .utf8) { return utf8 }
         let ascii = String(decoding: data.prefix(4096), as: UTF8.self).lowercased()
+        var charset = ""
         if let match = ascii.range(of: #"charset=["']?([a-z0-9_-]+)"#, options: .regularExpression) {
-            let name = ascii[match].split(separator: "=").last.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) } ?? ""
-            let encoding: String.Encoding? = switch name {
-            case "shift_jis", "shift-jis", "sjis", "windows-31j", "cp932": .shiftJIS
-            case "euc-jp": .japaneseEUC
-            case "iso-2022-jp": .iso2022JP
-            default: nil
-            }
-            if let encoding, let text = String(data: data, encoding: encoding) { return text }
+            charset = ascii[match].split(separator: "=").last.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) } ?? ""
         }
-        return String(data: trimmed, encoding: .isoLatin1)
+        let encoding: String.Encoding? = switch charset {
+        case "shift_jis", "shift-jis", "sjis", "windows-31j", "cp932": .shiftJIS
+        case "euc-jp": .japaneseEUC
+        case "iso-2022-jp": .iso2022JP
+        case "iso-8859-1", "latin1", "windows-1252": .isoLatin1
+        default: nil
+        }
+        if let encoding {
+            // 途中で切れた末尾（2 バイト文字の 1 バイト目・エスケープ列）を少しずつ削って読む。
+            for drop in 0...3 where data.count > drop {
+                if let text = String(data: data.dropLast(drop), encoding: encoding) { return text }
+            }
+        }
+        // UTF-8 の宣言か無宣言は、読めない所を置換文字にして残りを生かす。
+        return String(decoding: trimmed, as: UTF8.self)
     }
 
     /// 末尾がマルチバイト文字の途中で切れていれば、その切れ端（最大 3 バイト）を落とす。

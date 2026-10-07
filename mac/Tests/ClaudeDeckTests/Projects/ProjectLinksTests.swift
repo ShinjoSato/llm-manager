@@ -114,6 +114,13 @@ final class ProjectLinksTests: XCTestCase {
         XCTAssertEqual(kind("https://console.example.com/docs"), .docs)
     }
 
+    func testKindToSaveKeepsOriginalUnlessChosenOrSuggested() {
+        XCTAssertNil(ProjectLinks.kindToSave(selected: .other, touched: false, suggested: false, original: nil))
+        XCTAssertEqual(ProjectLinks.kindToSave(selected: .other, touched: false, suggested: false, original: .docs), .docs)
+        XCTAssertEqual(ProjectLinks.kindToSave(selected: .billing, touched: false, suggested: true, original: nil), .billing)
+        XCTAssertEqual(ProjectLinks.kindToSave(selected: .store, touched: true, suggested: false, original: .docs), .store)
+    }
+
     func testKindLabelsAndSymbols() {
         XCTAssertEqual(ProjectLinkKind.allCases.map(\.rawValue), ["billing", "dashboard", "store", "docs", "other"])
         XCTAssertEqual(ProjectLinkKind.allCases.map(\.label), ["請求", "ダッシュボード", "ストア", "ドキュメント", "その他"])
@@ -191,8 +198,17 @@ final class LinkTitleTests: XCTestCase {
     }
 
     func testDecodesShiftJISWhenDeclared() throws {
-        let html = "<html><head><meta charset=\"Shift_JIS\"><title>請求</title></head></html>"
+        let html = "<html><head><meta charset=\"Shift_JIS\"><title>請求</title><p>説明です"
         let data = try XCTUnwrap(html.data(using: .shiftJIS))
+        XCTAssertEqual(LinkTitle.parse(data), "請求")
+        // 2 バイト文字の 1 バイト目で切れても読める。
+        XCTAssertEqual(LinkTitle.parse(data.dropLast(1)), "請求")
+    }
+
+    func testInvalidByteInUTF8DoesNotFallBackToLatin1() {
+        var data = Data("<title>請求</title><p>".utf8)
+        data.append(0xFF)
+        data.append(contentsOf: Data("x".utf8))
         XCTAssertEqual(LinkTitle.parse(data), "請求")
     }
 }
