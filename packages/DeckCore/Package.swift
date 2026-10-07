@@ -1,8 +1,7 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// mac アプリ（claude-deck）と iPhone アプリで共有する、プラットフォームに依存しない部分。
-// Foundation / Security / CryptoKit だけに依存させ、UI は持たない。
+// mac と iPhone で共有する、Foundation / Security / CryptoKit だけに依存する部分（UI は持たない）。
 let package = Package(
     name: "DeckCore",
     platforms: [

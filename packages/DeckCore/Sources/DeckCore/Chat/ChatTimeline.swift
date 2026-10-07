@@ -56,8 +56,7 @@ public enum ChatTimeline {
         return entries
     }
 
-    /// transcript に、アプリから送った伝言と、画像付きでまだ記録されていない発話を時刻順に差し込む。
-    /// transcript 側に写し・記録があればそちらを出す。
+    /// 送った伝言と、まだ記録されていない画像付きの発話を時刻順に差し込む（transcript に載ればそちらを出す）。
     public static func entries(from items: [TranscriptItem], notes: [RelayNote],
                                pending: [PendingImageMessage] = []) -> [ChatEntry] {
         let unrecorded = PendingImageMessages.unrecorded(pending, in: items)

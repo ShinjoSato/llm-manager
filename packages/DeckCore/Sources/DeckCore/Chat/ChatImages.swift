@@ -88,8 +88,7 @@ public enum PendingImageMessages {
         now - message.sentAt >= lifetime
     }
 
-    /// まだ transcript に載っていないもの。1 件の発話は 1 通にだけ対応させる（古い順に突き合わせる）。
-    /// `now` を渡すと期限切れも除く。
+    /// まだ transcript に載っていないもの（古い順に 1 発話 1 通で突き合わせ、`now` があれば期限切れも除く）。
     public static func unrecorded(_ messages: [PendingImageMessage], in items: [TranscriptItem],
                                   now: Double? = nil) -> [PendingImageMessage] {
         guard !messages.isEmpty else { return [] }

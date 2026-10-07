@@ -1,8 +1,7 @@
 import Foundation
 
-/// 実行ファイルの署名（とシミュレータ向けの `__TEXT,__entitlements`）からエンタイトルメントを読む。
-/// CKContainer はエンタイトルメントが無いとプロセスごと落ちるので、作る前にこれで確かめる。
-/// iOS には自分のエンタイトルメントを問い合わせる API が無く、App Store / TestFlight の版は embedded.mobileprovision を持たないため、署名を直接読む。
+/// 実行ファイルの署名（シミュレータは `__TEXT,__entitlements`）からエンタイトルメントを読む。CKContainer は無いと落ちるので作る前に確かめる。
+/// iOS には問い合わせる API が無く、配布版は embedded.mobileprovision も持たないため、署名を直接読む。
 public enum ExecutableEntitlements {
     public typealias Values = [String: Any]
 
