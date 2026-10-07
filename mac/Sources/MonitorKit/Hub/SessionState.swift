@@ -84,9 +84,14 @@ enum HubText {
         return trimmed.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? String(trimmed)
     }
 
+    /// 空白をつめて 1 行にし、長ければ切る。
     static func truncate(_ text: String, _ max: Int) -> String {
-        let flat = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        guard flat.utf16.count > max else { return flat }
-        return String(decoding: Array(flat.utf16.prefix(max)), as: UTF16.self) + "…"
+        clip(text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "), max)
+    }
+
+    /// UTF-16 単位で `max` を超えたら切って「…」を付ける。
+    static func clip(_ text: String, _ max: Int) -> String {
+        guard text.utf16.count > max else { return text }
+        return String(decoding: Array(text.utf16.prefix(max)), as: UTF16.self) + "…"
     }
 }

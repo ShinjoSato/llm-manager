@@ -252,9 +252,13 @@ public struct AttachmentStore: Sendable {
         return removed
     }
 
-    private func copy(_ original: URL, extension ext: String, name: String) throws -> URL {
+    private func newFileURL(extension ext: String) throws -> URL {
         try prepare()
-        let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        return directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+    }
+
+    private func copy(_ original: URL, extension ext: String, name: String) throws -> URL {
+        let url = try newFileURL(extension: ext)
         do {
             try FileManager.default.copyItem(at: original, to: url)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -266,8 +270,7 @@ public struct AttachmentStore: Sendable {
     }
 
     private func write(_ data: Data, extension ext: String) throws -> URL {
-        try prepare()
-        let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        let url = try newFileURL(extension: ext)
         guard FileManager.default.createFile(atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
             throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
         }
@@ -403,7 +406,7 @@ public enum PasteCheck {
     }
 
     static func plainText(_ body: String) -> String {
-        body.replacingOccurrences(of: "\u{1b}[200~", with: "").replacingOccurrences(of: "\u{1b}[201~", with: "")
+        body.replacingOccurrences(of: PTYInput.pasteStart, with: "").replacingOccurrences(of: PTYInput.pasteEnd, with: "")
             .trimmingCharacters(in: .whitespaces)
     }
 }

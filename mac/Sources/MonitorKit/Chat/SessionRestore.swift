@@ -309,7 +309,7 @@ public enum QuitConfirmation {
     /// 稼働中と権限待ちを分けて名前を 3 件まで並べ、待ちの扱いも書く。
     public static func message(busy rooms: [Room], resumesOnLaunch: Bool) -> String {
         var groups: [String] = []
-        let working = rooms.filter { $0.status == .working }
+        let working = Self.working(rooms)
         let permission = rooms.filter { $0.status == .permission }
         if !working.isEmpty { groups.append("稼働中 \(working.count) 件（\(names(working))）") }
         if !permission.isEmpty { groups.append("権限待ち \(permission.count) 件（\(names(permission))）") }

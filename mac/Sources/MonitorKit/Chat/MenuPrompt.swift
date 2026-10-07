@@ -161,7 +161,7 @@ public struct MenuTabs: Sendable, Hashable {
         var ranges: [Range<Int>] = []
         var hasSubmit = false
         for (offset, item) in items.enumerated() {
-            let text = String(characters[(item.range.lowerBound + 1)..<item.range.upperBound]).trimmingCharacters(in: .whitespaces)
+            let text = String(characters[(item.range.lowerBound + 1)..<item.range.upperBound]).trimmed
             var upper = item.range.upperBound
             while upper > item.range.lowerBound + 1, characters[upper - 1].isWhitespace { upper -= 1 }
             let range = item.range.lowerBound..<upper
@@ -218,12 +218,12 @@ extension ChoiceMenu {
         guard rows.count >= 2, let first = rows.first, let cursor = rows.firstIndex(where: { $0.index == cursorRow }) else { return nil }
         let (question, questionRow) = questionAbove(lines, before: first.index)
         let top = questionRow ?? first.index
-        let footer = footerRow.map { lines[$0].trimmingCharacters(in: .whitespaces) } ?? ""
+        let footer = footerRow.map { lines[$0].trimmed } ?? ""
         let context: [String]
         var tabs: MenuTabs?
         if let (tabRow, parsed, ranges) = tabRow(lines, above: top, question: question) {
             // タブ行より上は会話の履歴なので、本文はタブ行と問いの間だけ。
-            context = Array(lines[(tabRow + 1)..<top].map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.suffix(12))
+            context = Array(lines[(tabRow + 1)..<top].map { $0.trimmed }.filter { !$0.isEmpty }.suffix(12))
             tabs = parsed
             if parsed.hasSubmit, question == reviewQuestion || context.contains(reviewTitle) {
                 tabs?.current = parsed.tabs.count
@@ -250,7 +250,7 @@ extension ChoiceMenu {
             if PermissionPrompt.isSeparator(line) || isHistoryOrProgress(line) { return nil }
             if let (tabs, ranges) = MenuTabs.parse(line) { return (index, tabs, ranges) }
             // 本文の「☐ …」をタブと読まないよう、確認画面以外はすぐ上の行だけを見る。
-            if question != reviewQuestion, !line.trimmingCharacters(in: .whitespaces).isEmpty { return nil }
+            if question != reviewQuestion, !line.trimmed.isEmpty { return nil }
             index -= 1
             scanned += 1
         }
@@ -263,9 +263,8 @@ extension ChoiceMenu {
     }
 
     static func submitLabel(_ line: String) -> String? {
-        var rest = Substring(line.trimmingCharacters(in: .whitespaces))
-        if rest.hasPrefix("❯") { rest = rest.dropFirst().drop(while: \.isWhitespace) }
-        return submitLabels.contains(String(rest)) ? String(rest) : nil
+        let label = String(strippingCursor(line).text)
+        return submitLabels.contains(label) ? label : nil
     }
 
     static let submitLabels: Set<String> = ["Submit", "Next"]
@@ -291,9 +290,9 @@ extension ChoiceMenu {
 
     /// 操作案内の行か。行頭が案内の文言か、「·」で区切った各部分がキーの案内で `Enter to …` と `Esc to …` を含む行。
     static func isFooter(_ line: String) -> Bool {
-        let lowered = line.trimmingCharacters(in: .whitespaces).lowercased()
+        let lowered = line.trimmed.lowercased()
         if footerPrefixes.contains(where: { lowered.hasPrefix($0) }) { return true }
-        let parts = lowered.split(separator: "·").map { $0.trimmingCharacters(in: .whitespaces) }
+        let parts = lowered.split(separator: "·").map { $0.trimmed }
         guard parts.count >= 2,
               parts.allSatisfy({ $0.range(of: footerPartPattern, options: .regularExpression) != nil }) else { return false }
         return parts.contains { $0.hasPrefix("enter to ") } && parts.contains { $0.hasPrefix("esc to ") }
@@ -309,7 +308,7 @@ extension ChoiceMenu {
         var index = (footerRow ?? lines.count) - 1
         var scanned = 0
         while index >= 0, scanned < cursorSearchLines {
-            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            let trimmed = lines[index].trimmed
             if trimmed.hasPrefix("⏺") { return nil }
             if trimmed.hasPrefix("❯") { return index }
             index -= 1
@@ -322,7 +321,7 @@ extension ChoiceMenu {
     /// 選択肢として読める・メニューが無い時は nil。
     public static func unreadable(screen: [String]) -> UnreadableMenu? {
         guard isShowing(screen: screen), parseShowing(screen: screen) == nil else { return nil }
-        let lines = menuZoneWithOffset(screen).lines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let lines = menuZoneWithOffset(screen).lines.map { $0.trimmed }.filter { !$0.isEmpty }
         let footer = footerIndex(lines).map { lines[$0] } ?? ""
         let exits = footerExits(footer) || lines.contains { $0.lowercased().contains("trust this folder") }
         return UnreadableMenu(lines: Array(lines.suffix(12)), cancelExits: exits)
@@ -356,7 +355,7 @@ extension ChoiceMenu {
             var submit: (row: Int, label: String)?
             for row in (index + 1)..<end {
                 let line = lines[row]
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                let trimmed = line.trimmed
                 if trimmed.isEmpty || PermissionPrompt.isSeparator(line) { continue }
                 if offset == lastChecked, let label = submitLabel(line) {
                     submit = (row, label)
@@ -380,11 +379,11 @@ extension ChoiceMenu {
 
     /// 番号の無い選択肢（trust 確認）。❯ の行と、空行を挟まずに同じ字下げで並ぶ行。
     static func plainRows(_ lines: [String], cursorRow: Int) -> [(index: Int, option: MenuPrompt.Option)] {
-        let cursorLine = Substring(lines[cursorRow].trimmingCharacters(in: .whitespaces)).dropFirst()
+        let cursorLine = Substring(lines[cursorRow].trimmed).dropFirst()
         let column = lines[cursorRow].prefix(while: \.isWhitespace).count + 1 + cursorLine.prefix(while: \.isWhitespace).count
         func isSibling(_ index: Int) -> Bool {
             let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = line.trimmed
             return !trimmed.isEmpty && !trimmed.hasPrefix("❯") && leadingWidth(line) == column && !PermissionPrompt.isSeparator(line)
         }
         var start = cursorRow
@@ -392,9 +391,9 @@ extension ChoiceMenu {
         var end = cursorRow
         while end + 1 < lines.count, isSibling(end + 1) { end += 1 }
         return (start...end).map { index in
-            var text = Substring(lines[index].trimmingCharacters(in: .whitespaces))
+            var text = Substring(lines[index].trimmed)
             if text.hasPrefix("❯") { text = text.dropFirst() }
-            return (index, MenuPrompt.Option(number: nil, label: text.trimmingCharacters(in: .whitespaces)))
+            return (index, MenuPrompt.Option(number: nil, label: text.trimmed))
         }
     }
 
@@ -405,11 +404,11 @@ extension ChoiceMenu {
         while index >= 0 {
             let line = lines[index]
             if PermissionPrompt.isSeparator(line) { return ("", nil) }
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = line.trimmed
             if trimmed.hasPrefix(gutter) {
                 var top = index
-                while top > 0, lines[top - 1].trimmingCharacters(in: .whitespaces).hasPrefix(gutter) { top -= 1 }
-                let parts = lines[top...index].map { $0.trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces) }
+                while top > 0, lines[top - 1].trimmed.hasPrefix(gutter) { top -= 1 }
+                let parts = lines[top...index].map { $0.trimmed.dropFirst().trimmed }
                 return (joinWrapped(parts), top)
             }
             if !trimmed.isEmpty { return (trimmed, index) }
@@ -442,7 +441,7 @@ extension ChoiceMenu {
     /// 罫線が見当たらなければ空行・会話の行・経過表示で止める（照合に使うので変化する行を入れない）。
     static func contextAbove(_ lines: [String], before row: Int) -> [String] {
         var end = row - 1
-        while end >= 0, lines[end].trimmingCharacters(in: .whitespaces).isEmpty { end -= 1 }
+        while end >= 0, lines[end].trimmed.isEmpty { end -= 1 }
         if end >= 0, PermissionPrompt.isSeparator(lines[end]) { end -= 1 }
         guard end >= 0 else { return [] }
         var top = end
@@ -456,7 +455,7 @@ extension ChoiceMenu {
         guard top < end else { return [] }
         var collected: [String] = []
         for line in lines[(top + 1)...end].reversed() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = line.trimmed
             if trimmed.isEmpty {
                 if bounded { continue }
                 break
@@ -471,7 +470,7 @@ extension ChoiceMenu {
 
     /// 会話の履歴（返答の ⏺・過去の発話の ❯）や経過表示（`✻ Thinking… (3s)` 等）の行。
     static func isHistoryOrProgress(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let trimmed = line.trimmed
         guard let first = trimmed.first else { return false }
         if first == "⏺" || first == "❯" { return true }
         return "✻✽✶✳✢✺·*".contains(first) && trimmed.contains("…")
@@ -484,17 +483,15 @@ extension ChoiceMenu {
         for (mark, checked) in marks where label.hasPrefix(mark) {
             let rest = label.dropFirst(mark.count)
             guard rest.isEmpty || rest.first?.isWhitespace == true else { continue }
-            return (rest.trimmingCharacters(in: .whitespaces), checked)
+            return (rest.trimmed, checked)
         }
         return (label, nil)
     }
 
     static func label(afterNumberIn line: String) -> String {
-        var rest = Substring(line.trimmingCharacters(in: .whitespaces))
-        if rest.hasPrefix("❯") { rest = rest.dropFirst().drop(while: \.isWhitespace) }
-        rest = rest.drop(while: \.isNumber)
+        var rest = strippingCursor(line).text.drop(while: \.isNumber)
         if rest.first == "." { rest = rest.dropFirst() }
-        return rest.trimmingCharacters(in: .whitespaces)
+        return rest.trimmed
     }
 
     /// 番号の桁の位置（❯ の付いた行も付かない行と同じ桁に揃う）。

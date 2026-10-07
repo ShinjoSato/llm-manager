@@ -222,8 +222,7 @@ public struct SessionTerminator: Sendable {
         if await waitForExit(pid: pid, original: original, within: interruptGrace) { return exited(sessionId: sessionId) }
 
         // 待つ間に pid が別物へ替わっていないことを確かめてから強める（レジストリは終了処理中に消えうるので素性で見る）。
-        guard let current = inspect(pid), !current.isZombie else { return exited(sessionId: sessionId) }
-        guard current.isSameProcess(as: original) else { return exited(sessionId: sessionId) }
+        guard isStillRunning(pid, original) else { return exited(sessionId: sessionId) }
         signal(pid, SIGTERM)
         if await waitForExit(pid: pid, original: original, within: terminateGrace) { return exited(sessionId: sessionId) }
         return .stillRunning
@@ -242,8 +241,13 @@ public struct SessionTerminator: Sendable {
         while waited < grace {
             await sleep(pollInterval)
             waited += pollInterval
-            guard let current = inspect(pid), !current.isZombie, current.isSameProcess(as: original) else { return true }
+            guard isStillRunning(pid, original) else { return true }
         }
         return false
+    }
+
+    private func isStillRunning(_ pid: Int32, _ original: ProcessFacts) -> Bool {
+        guard let current = inspect(pid), !current.isZombie else { return false }
+        return current.isSameProcess(as: original)
     }
 }

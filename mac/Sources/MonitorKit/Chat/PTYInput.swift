@@ -17,16 +17,22 @@ public enum PTYInput {
 
     /// 矢印キー。端末がアプリケーションカーソルモード（DECCKM）なら SS3、そうでなければ CSI（実キーボードと同じ列）。
     public static func arrowKey(_ direction: MenuNavigator.Direction, applicationCursor: Bool) -> String {
-        let final = direction == .up ? "A" : "B"
-        return (applicationCursor ? "\u{1b}O" : "\u{1b}[") + final
+        cursorKey(direction == .up ? "A" : "B", applicationCursor: applicationCursor)
     }
 
     /// AskUserQuestion のタブ移動（Tabs の既定の割り当て: → が tabs:next、← が tabs:previous。v2.1.286）。
     /// Tab キーは複数選択では選択肢の移動に取られるので使わない。
     public static func tabKey(_ direction: MenuTabMover.Direction, applicationCursor: Bool) -> String {
-        let final = direction == .next ? "C" : "D"
-        return (applicationCursor ? "\u{1b}O" : "\u{1b}[") + final
+        cursorKey(direction == .next ? "C" : "D", applicationCursor: applicationCursor)
     }
+
+    static func cursorKey(_ final: String, applicationCursor: Bool) -> String {
+        (applicationCursor ? "\u{1b}O" : "\u{1b}[") + final
+    }
+
+    /// bracketed paste の始まりと終わり。
+    static let pasteStart = "\u{1b}[200~"
+    static let pasteEnd = "\u{1b}[201~"
 
     /// 貼り付けと Enter を同時に送ると Enter が貼り付けに飲まれるので、少し空ける。
     public static let submitDelay: TimeInterval = 0.3
@@ -38,10 +44,10 @@ public enum PTYInput {
         body = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return nil }
         if bracketedPaste {
-            return "\u{1b}[200~" + body + "\u{1b}[201~"
+            return pasteStart + body + pasteEnd
         }
         // 貼り付けモードでない端末では改行が送信になるので、1 行に畳む。
-        return body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+        return body.split(separator: "\n").map { $0.trimmed }.joined(separator: " ")
     }
 
     /// 改行とタブ以外の制御文字（C0・DEL・C1）を落とす。ESC や Ctrl-C 等が本文から端末操作として効かないようにするため。
@@ -139,7 +145,7 @@ public enum ChoiceMenu {
     static let footerPartPattern = #"^[a-z0-9↑↓←→/+\-]{1,15} to [a-z]"#
 
     public static func isShowing(screen: [String]) -> Bool {
-        var lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(tailLines)).map { $0.trimmingCharacters(in: .whitespaces) }
+        var lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(tailLines)).map { $0.trimmed }
         if overlayRange(lines) != nil { return true }
         // 下部に入力欄があれば、それより上は会話の履歴、欄の中は入力中の文なので見ない。
         if let start = InputBox.zoneStart(lines) {
@@ -163,7 +169,7 @@ public enum ChoiceMenu {
         var seen = 0
         while index >= 0, seen < overlayFooterReach {
             let line = lines[index]
-            if !line.trimmingCharacters(in: .whitespaces).isEmpty {
+            if !line.trimmed.isEmpty {
                 if PermissionPrompt.isSeparator(line) { return nil }
                 if isFooter(line) {
                     // ダイアログは上端を罫線で閉じ、中に会話・ステータス行を挟まない（返答の中の案内行風の文を拾わないため）。
@@ -180,7 +186,7 @@ public enum ChoiceMenu {
 
     /// 会話（⏺）かステータス（✻）の行か。
     static func isConversationLine(_ line: String) -> Bool {
-        let t = line.trimmingCharacters(in: .whitespaces)
+        let t = line.trimmed
         return t.hasPrefix("⏺") || t.hasPrefix("✻")
     }
 
@@ -199,10 +205,8 @@ public enum ChoiceMenu {
 
     /// 自由入力の行に ❯ が乗って文字が空の時の「❯ n.」。案内行が出ていなくても入力欄への送信を止めるため、判定にだけ使う。
     static func emptyFreeTextNumber(_ line: String) -> Int? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.hasPrefix("❯") else { return nil }
-        let rest = trimmed.dropFirst().drop(while: \.isWhitespace)
-        guard rest.last == "." else { return nil }
+        let (rest, hasCursor) = strippingCursor(line)
+        guard hasCursor, rest.last == "." else { return nil }
         let digits = rest.dropLast()
         guard (1...2).contains(digits.count), digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
         return Int(digits)
@@ -210,17 +214,20 @@ public enum ChoiceMenu {
 
     /// 選択肢の番号。`cursor` なら ❯ の付いた行だけを見る。
     static func choiceNumber(_ line: String, cursor: Bool) -> Int? {
-        var rest = Substring(line.trimmingCharacters(in: .whitespaces))
-        if rest.hasPrefix("❯") {
-            rest = rest.dropFirst().drop(while: \.isWhitespace)
-        } else if cursor {
-            return nil
-        }
+        let (rest, hasCursor) = strippingCursor(line)
+        if cursor && !hasCursor { return nil }
         let digits = rest.prefix(while: \.isASCII).prefix(while: \.isNumber)
         guard !digits.isEmpty, digits.count <= 2 else { return nil }
         let after = rest.dropFirst(digits.count)
         guard after.first == ".", after.dropFirst().first?.isWhitespace == true else { return nil }
         return Int(digits)
+    }
+
+    /// 前後の空白と行頭の ❯（続く空白も）を外した行と、❯ があったか。
+    static func strippingCursor(_ line: String) -> (text: Substring, hasCursor: Bool) {
+        let trimmed = Substring(line.trimmed)
+        guard trimmed.hasPrefix("❯") else { return (trimmed, false) }
+        return (trimmed.dropFirst().drop(while: \.isWhitespace), true)
     }
 }
 
@@ -231,7 +238,7 @@ public enum InputBox {
     static func promptIndex(_ lines: [String]) -> Int? {
         lines.indices.last { index in
             guard index > 0 else { return false }
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            let line = lines[index].trimmed
             guard line.hasPrefix("❯"), PermissionPrompt.isSeparator(lines[index - 1]) else { return false }
             return ChoiceMenu.choiceNumber(line, cursor: true) == nil || closingRule(lines, after: index) != nil
         }
@@ -258,7 +265,7 @@ public enum InputBox {
         var parts: [String] = []
         for (offset, line) in lines[start...].enumerated() {
             if offset > 0, PermissionPrompt.isSeparator(line) { break }
-            var t = Substring(line.trimmingCharacters(in: .whitespaces))
+            var t = Substring(line.trimmed)
             if offset == 0 { t = t.dropFirst().drop(while: \.isWhitespace) }
             if !t.isEmpty { parts.append(String(t)) }
         }
@@ -299,7 +306,7 @@ public struct PermissionPrompt: Sendable, Equatable {
     public static func parse(screen: [String]) -> PermissionPrompt? {
         guard let questionIndex = screen.lastIndex(where: { isQuestion($0) }) else { return nil }
         let after = screen[(questionIndex + 1)...].prefix(6)
-        guard after.contains(where: { $0.trimmingCharacters(in: .whitespaces).range(of: #"^(❯\s*)?1\.\s*Yes"#, options: .regularExpression) != nil }) else {
+        guard after.contains(where: { $0.trimmed.range(of: #"^(❯\s*)?1\.\s*Yes"#, options: .regularExpression) != nil }) else {
             return nil
         }
         var start = questionIndex
@@ -309,14 +316,14 @@ public struct PermissionPrompt: Sendable, Equatable {
             start -= 1
         }
         let body = screen[start..<questionIndex]
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmed }
             .filter { !$0.isEmpty && !$0.hasPrefix("Tip:") && !isRule($0, of: "╌") }
         guard let title = body.first else { return PermissionPrompt(title: "権限の確認", lines: []) }
         return PermissionPrompt(title: title, lines: Array(body.dropFirst()))
     }
 
     static func isQuestion(_ line: String) -> Bool {
-        let t = line.trimmingCharacters(in: .whitespaces).lowercased()
+        let t = line.trimmed.lowercased()
         return t.hasPrefix("do you want to") && t.hasSuffix("?")
     }
 
@@ -326,9 +333,14 @@ public struct PermissionPrompt: Sendable, Equatable {
     }
 
     static func isRule(_ line: String, of character: Character) -> Bool {
-        let t = line.trimmingCharacters(in: .whitespaces)
+        let t = line.trimmed
         return t.count >= 8 && t.allSatisfy { $0 == character }
     }
+}
+
+extension StringProtocol {
+    /// 前後の空白（改行は含めない）を落とす。
+    var trimmed: String { trimmingCharacters(in: .whitespaces) }
 }
 
 /// 端末バッファの読み出しの補助。
@@ -336,7 +348,7 @@ public enum TerminalScreen {
     /// 末尾の空行を落とす。端末が縦に長いと TUI は上詰めで描くので、下の空行で見る範囲がずれないようにする。
     public static func droppingTrailingBlankLines(_ screen: [String]) -> [String] {
         var end = screen.count
-        while end > 0, screen[end - 1].trimmingCharacters(in: .whitespaces).isEmpty { end -= 1 }
+        while end > 0, screen[end - 1].trimmed.isEmpty { end -= 1 }
         return Array(screen[..<end])
     }
 

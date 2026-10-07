@@ -75,7 +75,7 @@ public enum LimitGuard {
             guard tail.contains(where: isMenuHint) else { return nil }
             return menuLine(tail)
         }
-        let boxBottom = lines[(boxTop + 2)...].firstIndex(where: isRule)
+        let boxBottom = lines[(boxTop + 2)...].firstIndex(where: PermissionPrompt.isSeparator)
         if let boxBottom {
             let footer = lines[(boxBottom + 1)...]
             for line in footer {
@@ -124,8 +124,7 @@ public enum LimitGuard {
     /// 「❯ 1. Stop and wait for limit to reset」のような選択肢の行。
     static func menuLine<C: Collection>(_ lines: C) -> String? where C.Element == String {
         lines.first { line in
-            var t = Substring(line.trimmed)
-            if t.hasPrefix("❯") { t = t.dropFirst().drop(while: { $0.isWhitespace }) }
+            var t = ChoiceMenu.strippingCursor(line).text
             let digits = t.prefix(while: { $0.isASCII && $0.isNumber })
             guard !digits.isEmpty, digits.count <= 2 else { return false }
             t = t.dropFirst(digits.count)
@@ -137,7 +136,7 @@ public enum LimitGuard {
     /// 入力欄の上の罫線の位置（罫線の直下が `❯` で始まり、選択肢ではない行）。
     static func inputBoxTop(_ lines: [String]) -> Int? {
         lines.indices.last { index in
-            guard index + 1 < lines.count, isRule(lines[index]) else { return false }
+            guard index + 1 < lines.count, PermissionPrompt.isSeparator(lines[index]) else { return false }
             let next = lines[index + 1].trimmed
             return next.hasPrefix("❯") && !isNumberedChoice(next)
         }
@@ -147,11 +146,6 @@ public enum LimitGuard {
         let rest = line.dropFirst().drop(while: { $0.isWhitespace })
         let digits = rest.prefix(while: { $0.isASCII && $0.isNumber })
         return !digits.isEmpty && rest.dropFirst(digits.count).hasPrefix(".")
-    }
-
-    static func isRule(_ line: String) -> Bool {
-        let t = line.trimmed
-        return t.count >= 8 && (t.allSatisfy { $0 == "─" } || t.allSatisfy { $0 == "━" })
     }
 
     /// フッターは左右に複数の表示が空白で並ぶので、2 つ以上の空白で区切る。
@@ -190,8 +184,4 @@ public struct UsageLimitLatch: Sendable, Equatable {
         }
         return until != nil
     }
-}
-
-private extension StringProtocol {
-    var trimmed: String { trimmingCharacters(in: .whitespaces) }
 }

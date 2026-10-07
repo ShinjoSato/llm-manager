@@ -51,15 +51,17 @@ final class HookDropCounter: @unchecked Sendable {
         }
     }
 
-    var total: Int { lock.withLock { counts.values.reduce(unattributed, +) } }
+    var total: Int { lock.withLock { sumLocked() } }
 
     /// 溜まった分を取り出して空に戻す。
     func take() -> (bySession: [String: Int], total: Int) {
         lock.withLock {
             defer { counts = [:]; unattributed = 0 }
-            return (counts, counts.values.reduce(unattributed, +))
+            return (counts, sumLocked())
         }
     }
+
+    private func sumLocked() -> Int { counts.values.reduce(unattributed, +) }
 }
 
 /// フックの待ち行列。受け口（任意のスレッド）から積み、持ち主（SessionHub）が届いた順に 1 本の流れで取り出す。HTTP の応答は反映を待たない。
