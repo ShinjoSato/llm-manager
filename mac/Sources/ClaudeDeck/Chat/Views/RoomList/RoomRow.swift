@@ -106,7 +106,7 @@ struct RoomAvatar: View {
     }
 }
 
-/// プロジェクトの印: 色の縁取りの丸（1px）に同じ色の薄い塗り、中央に色のアイコン。一覧・詳細の見出し・「+」・設定で同じ絵。
+/// プロジェクトの印: 同じ色の薄い塗りの丸に、中央に色のアイコン。一覧・詳細の見出し・「+」・設定で同じ絵。
 struct ProjectBadgeView: View {
     let badge: ProjectBadge
     let size: CGFloat
@@ -118,7 +118,6 @@ struct ProjectBadgeView: View {
             .foregroundStyle(color)
             .frame(width: size, height: size)
             .background(Circle().fill(color.opacity(0.14)))
-            .overlay(Circle().strokeBorder(color, lineWidth: 1))
             .accessibilityHidden(true)
     }
 }
