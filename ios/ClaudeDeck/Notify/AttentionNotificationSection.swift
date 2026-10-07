@@ -24,8 +24,8 @@ struct AttentionNotificationSection: View {
                 Text(text)
                     .font(DeckTheme.caption)
                     .foregroundStyle(DeckTheme.permission)
-                if needsSettings, let url = URL(string: UIApplication.openSettingsURLString) {
-                    Button("設定を開く") { UIApplication.shared.open(url) }
+                if needsSettings {
+                    Button("設定を開く") { UIApplication.openAppSettings() }
                 }
             }
         } header: {

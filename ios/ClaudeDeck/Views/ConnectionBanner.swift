@@ -21,7 +21,7 @@ struct ConnectionBanner: View {
                 banner(color: DeckTheme.permission, symbol: issue.needsSettings ? "network.slash" : "wifi.exclamationmark",
                        title: issue.title + (seconds > 0 ? "（\(seconds) 秒後につなぎ直します）" : "（つなぎ直しています）"),
                        detail: Self.wifiNote(for: issue, onWiFi: model.onWiFi) + issue.detail + staleNote,
-                       action: issue.needsSettings ? ("設定を開く", { Self.openSettings() }) : reconnect,
+                       action: issue.needsSettings ? ("設定を開く", { UIApplication.openAppSettings() }) : reconnect,
                        secondary: issue.needsSettings ? reconnect : nil,
                        expandedByDefault: issue.needsSettings)
             }
@@ -35,12 +35,6 @@ struct ConnectionBanner: View {
     static func wifiNote(for issue: RemoteIssue, onWiFi: Bool?) -> String {
         guard onWiFi == false, issue.kind != .offline, issue.kind != .localNetworkDenied else { return "" }
         return "iPhone が Wi-Fi につながっていません。\n"
-    }
-
-    /// このアプリの設定画面（ローカルネットワークの許可がある）を開く。戻ると前に出た時の再接続が走る。
-    static func openSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
     }
 
     private var staleNote: String {
@@ -97,16 +91,31 @@ struct ConnectionBanner: View {
     }
 
     private func actionButton(_ action: (String, () -> Void)) -> some View {
-        Button(action: action.1) {
-            Text(action.0)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DeckTheme.text)
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                .background(RoundedRectangle(cornerRadius: 9).fill(DeckTheme.inputSurface))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(DeckTheme.inputBorder))
-        }
-        .buttonStyle(.plain)
+        Button(action: action.1) { ActionButtonLabel(title: action.0) }
+            .buttonStyle(.plain)
+    }
+}
+
+/// 帯や注意書きに添える小さなボタンの見た目。
+struct ActionButtonLabel: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(DeckTheme.text)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 9).fill(DeckTheme.inputSurface))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(DeckTheme.inputBorder))
+    }
+}
+
+extension UIApplication {
+    /// このアプリの設定画面（通知・カメラ・ローカルネットワークの許可）を開く。戻ると前に出た時の再接続が走る。
+    static func openAppSettings() {
+        guard let url = URL(string: openSettingsURLString) else { return }
+        shared.open(url)
     }
 }
 

@@ -129,13 +129,8 @@ struct MenuCard: View {
             if menu.options.contains(where: { !$0.selectable }) {
                 hint("文字を入力する選択肢はここからは選べません。「キャンセル」で閉じてから、下の入力欄で伝えてください。")
             }
-            Button {
-                if menu.cancelExits { confirmingExit = true } else { onChoose(nil, false) }
-            } label: {
-                CardButtonLabel(title: menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("menu-cancel")
+            MenuCancelButton(cancelExits: menu.cancelExits, confirmingExit: $confirmingExit) { onChoose(nil, false) }
+                .accessibilityIdentifier("menu-cancel")
             if busy { SendingIndicator() }
         }
         .disabled(busy)
@@ -264,12 +259,7 @@ struct UnreadableMenuCard: View {
                 .foregroundStyle(DeckTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if !menu.lines.isEmpty { CardCode(text: menu.lines.suffix(12).joined(separator: "\n")) }
-            Button {
-                if menu.cancelExits { confirmingExit = true } else { onCancel(false) }
-            } label: {
-                CardButtonLabel(title: menu.cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
-            }
-            .buttonStyle(.plain)
+            MenuCancelButton(cancelExits: menu.cancelExits, confirmingExit: $confirmingExit) { onCancel(false) }
             if busy { SendingIndicator() }
         }
         .disabled(busy)
@@ -354,6 +344,22 @@ private struct CardButtonLabel: View {
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(RoundedRectangle(cornerRadius: 10).fill(DeckTheme.inputSurface))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(DeckTheme.inputBorder))
+    }
+}
+
+/// 選択メニューの取り消し（Esc）。Esc が終了になるメニューでは先に確認を出す。
+private struct MenuCancelButton: View {
+    let cancelExits: Bool
+    @Binding var confirmingExit: Bool
+    let onCancel: () -> Void
+
+    var body: some View {
+        Button {
+            if cancelExits { confirmingExit = true } else { onCancel() }
+        } label: {
+            CardButtonLabel(title: cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
+        }
+        .buttonStyle(.plain)
     }
 }
 
