@@ -216,7 +216,7 @@ struct ProjectLinkForm: View {
                 }
                 GridRow {
                     label("種類")
-                    Picker("種類", selection: Binding(get: { kind }, set: { kind = $0; kindTouched = true })) {
+                    Picker("種類", selection: Binding(get: { kind }, set: { if $0 != kind { kind = $0; kindTouched = true } })) {
                         ForEach(ProjectLinkKind.allCases, id: \.self) { kind in
                             Label(kind.label, systemImage: kind.symbol).tag(kind)
                         }

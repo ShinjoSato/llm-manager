@@ -11,7 +11,7 @@ public enum LinkTitle {
         return parse(html: html)
     }
 
-    /// 途中で切った本文を文字にする。UTF-8 の末尾の切れ端は落とし、`<meta charset>` が日本語の文字集合ならそれで読み、どれも無理なら Latin-1。
+    /// 途中で切った本文を文字にする。UTF-8 の末尾の切れ端は落とし、`<meta charset>` の宣言があればその文字集合で読み（読めなければ nil）、無宣言は読めない所を置換した UTF-8。
     static func decode(_ data: Data) -> String? {
         let trimmed = trimmingIncompleteUTF8(data)
         if let utf8 = String(data: trimmed, encoding: .utf8) { return utf8 }
@@ -28,10 +28,11 @@ public enum LinkTitle {
         default: nil
         }
         if let encoding {
-            // 途中で切れた末尾（2 バイト文字の 1 バイト目・エスケープ列）を少しずつ削って読む。
+            // 途中で切れた末尾（2 バイト文字の 1 バイト目・エスケープ列）を少しずつ削って読む。それでも読めなければ化けた題名を出さない。
             for drop in 0...3 where data.count > drop {
                 if let text = String(data: data.dropLast(drop), encoding: encoding) { return text }
             }
+            return nil
         }
         // UTF-8 の宣言か無宣言は、読めない所を置換文字にして残りを生かす。
         return String(decoding: trimmed, as: UTF8.self)

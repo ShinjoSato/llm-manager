@@ -205,6 +205,13 @@ final class LinkTitleTests: XCTestCase {
         XCTAssertEqual(LinkTitle.parse(data.dropLast(1)), "請求")
     }
 
+    func testUndecodableDeclaredCharsetGivesNoTitle() throws {
+        var data = try XCTUnwrap("<meta charset=\"Shift_JIS\"><title>".data(using: .shiftJIS))
+        data.append(contentsOf: [0x81, 0x20, 0x81, 0x20])
+        data.append(contentsOf: Data("</title>".utf8))
+        XCTAssertNil(LinkTitle.parse(data))
+    }
+
     func testInvalidByteInUTF8DoesNotFallBackToLatin1() {
         var data = Data("<title>請求</title><p>".utf8)
         data.append(0xFF)
