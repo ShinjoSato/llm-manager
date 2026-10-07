@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 # claude-deck.app を組み立てて署名する（Developer ID 署名・公証はしない）。
-#   このアプリ・この Mac・手元の証明書に合うプロビジョニングプロファイルがあれば Apple Development で署名し、
-#   iCloud（CloudKit）のエンタイトルメントを付ける。無ければ従来どおり ad-hoc 署名（iCloud 経由の通知は無効。アプリが画面で理由を出す）。
+# 合うプロビジョニングプロファイルがあれば Apple Development で署名して iCloud のエンタイトルメントを付け、無ければ ad-hoc（iCloud 経由の通知は無効）。
 #
 # 使い方: mac/scripts/bundle.sh [--build-system auto|default|native] [--debug] [--out <dir>] [--profile <path>] [--adhoc]
-#   --build-system  auto（既定）: 通常ビルドを試し、失敗したら native に切り替える
-#                   Metal Toolchain が無い環境では通常ビルドが SwiftTerm のシェーダーで失敗するため
+#   --build-system  auto（既定）は通常ビルドが失敗したら native で再試行する（Metal Toolchain が無いと SwiftTerm のシェーダーで失敗するため）
 #   --debug         debug 構成でビルドする（既定は release）
 #   --out           出力先ディレクトリ（既定: mac/dist）
-#   --profile       使うプロファイル（合わなければ止まる。既定: 環境変数 CLAUDE_DECK_PROFILE → mac/Resources/claude-deck.provisionprofile →
+#   --profile       使うプロファイル（合わなければ止まる。既定は CLAUDE_DECK_PROFILE → mac/Resources/claude-deck.provisionprofile →
 #                   Xcode のプロファイル置き場から、App ID・iCloud コンテナ・この Mac・手元の証明書が合う macOS 用のもの）
 #   --adhoc         プロファイルがあっても ad-hoc で署名する
-#   署名の証明書はプロファイルに入っているものとキーチェーンの「Apple Development:」で一致するもの
-#   （環境変数 CLAUDE_DECK_SIGN_IDENTITY でハッシュか名前の一部に絞れる）
-#   チーム ID・バンドル ID・iCloud コンテナは config/Deck.xcconfig と config/Local.xcconfig（あれば）から読む。
-#   環境変数 CLAUDE_DECK_TEAM_ID / CLAUDE_DECK_BUNDLE_PREFIX / CLAUDE_DECK_ICLOUD_CONTAINER があれば（空でも）そちらを使う。
-#   チーム ID かコンテナが空なら ad-hoc で署名する。
+# チーム ID・バンドル ID・iCloud コンテナは config/Deck.xcconfig と config/Local.xcconfig から読み、
+# 環境変数 CLAUDE_DECK_TEAM_ID / CLAUDE_DECK_BUNDLE_PREFIX / CLAUDE_DECK_ICLOUD_CONTAINER があれば（空でも）そちらを使う。
+# チーム ID かコンテナが空なら ad-hoc。署名の証明書は CLAUDE_DECK_SIGN_IDENTITY（ハッシュか名前の一部）で絞れる。
 set -euo pipefail
 
 MAC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,7 +36,7 @@ while [[ $# -gt 0 ]]; do
     --out) OUT_DIR="${2:?}"; shift 2 ;;
     --profile) PROFILE="${2:?}"; shift 2 ;;
     --adhoc) FORCE_ADHOC=1; shift ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *) echo "不明なオプション: $1" >&2; exit 2 ;;
   esac
 done
