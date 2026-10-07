@@ -7,6 +7,8 @@ struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     let isEnabled: Bool
+    /// 空欄の案内（送れない理由があればそれ）。
+    var placeholder = ""
     let onSubmit: () -> Void
     var onAttach: ([AttachmentSource]) -> Void = { _ in }
 
@@ -30,6 +32,8 @@ struct ComposerTextView: NSViewRepresentable {
         textView.font = .systemFont(ofSize: 14)
         textView.textColor = ChatTheme.nsText
         textView.insertionPointColor = ChatTheme.nsText
+        textView.placeholderColor = ChatTheme.nsTertiary
+        textView.placeholder = placeholder
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
@@ -58,6 +62,7 @@ struct ComposerTextView: NSViewRepresentable {
             textView.string = text
             context.coordinator.recalculateHeight(textView)
         }
+        textView.placeholder = placeholder
         textView.isEditable = isEnabled
         textView.isSelectable = isEnabled
         // 空でも欄全体をクリックで拾えるよう、高さを表示域に合わせておく。
@@ -102,6 +107,56 @@ final class FocusingScrollView: NSScrollView {
 
 final class SubmitTextView: AttachmentPasteTextView {
     var onSubmit: (() -> Void)?
+    /// 空欄の案内。下書きではなく表示内容で判定して自前で描くので、変換中（marked text）も重ならない。
+    var placeholder = "" {
+        didSet {
+            guard placeholder != oldValue else { return }
+            setAccessibilityPlaceholderValue(placeholder)
+            needsDisplay = true
+        }
+    }
+    var placeholderColor: NSColor = .placeholderTextColor {
+        didSet { needsDisplay = true }
+    }
+
+    override var string: String {
+        get { super.string }
+        set {
+            super.string = newValue
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard !placeholder.isEmpty, ComposerPlaceholder.isShown(shown: string, hasMarkedText: hasMarkedText()) else { return }
+        let inset = textContainerInset
+        let padding = textContainer?.lineFragmentPadding ?? 0
+        let rect = NSRect(x: inset.width + padding, y: inset.height,
+                          width: max(0, bounds.width - (inset.width + padding) * 2), height: max(0, bounds.height - inset.height))
+        // 空欄の高さは 1 行分なので、幅に入りきらない案内は折り返さず末尾を省略する。
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        (placeholder as NSString).draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: [
+            .font: font ?? .systemFont(ofSize: 14), .foregroundColor: placeholderColor, .paragraphStyle: style,
+        ])
+    }
+
+    // 変換の開始・終了と確定後の変更は textDidChange だけでは拾えないので、ここで描き直しを立てる。
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        needsDisplay = true
+    }
+
+    override func unmarkText() {
+        super.unmarkText()
+        needsDisplay = true
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        needsDisplay = true
+    }
 
     override func keyDown(with event: NSEvent) {
         let isReturn = event.keyCode == 36 || event.keyCode == 76

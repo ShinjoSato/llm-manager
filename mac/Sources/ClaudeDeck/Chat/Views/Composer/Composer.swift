@@ -93,17 +93,11 @@ struct Composer: View {
             .buttonStyle(.plain)
             .disabled(!enabled)
             .help("画像・ファイルを添付（⌘V で画像の貼り付け・ドラッグ＆ドロップも可）")
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty {
-                    Text(disabledReason ?? placeholder)
-                        .font(ChatTheme.body)
-                        .foregroundStyle(ChatTheme.tertiary)
-                        .allowsHitTesting(false)
-                }
-                ComposerTextView(text: $text, height: $height, isEnabled: enabled, onSubmit: submit, onAttach: onAttach)
-                    .frame(height: height)
-            }
-            .padding(.vertical, 6)
+            // 案内は端末ビューが表示内容で出し分ける（下書きが空のままの変換中に SwiftUI 側では消せない）。
+            ComposerTextView(text: $text, height: $height, isEnabled: enabled, placeholder: disabledReason ?? placeholder,
+                             onSubmit: submit, onAttach: onAttach)
+                .frame(height: height)
+                .padding(.vertical, 6)
             Button(action: submit) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 14, weight: .bold))
