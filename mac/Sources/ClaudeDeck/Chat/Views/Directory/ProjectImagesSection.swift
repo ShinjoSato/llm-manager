@@ -9,6 +9,8 @@ struct ProjectImagesSection: View {
     @State private var store = ProjectImageStore()
     @State private var previewing: ProjectImage?
     @State private var collapsedGroups: Set<String> = []
+    @State private var reloadToken = 0
+    @State private var scannedToken: Int?
     @AppStorage("directory.images.collapsed") private var collapsed = false
 
     private static let columns = [GridItem(.adaptive(minimum: 116, maximum: 150), spacing: 10, alignment: .top)]
@@ -22,10 +24,21 @@ struct ProjectImagesSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.claudeBubble))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.claudeBubbleBorder))
-        .task(id: project.path) { store.reload(projectPath: project.path) }
+        // 畳んでいる間は走査せず、開いた時に初めて走査する（畳めば走査中のものは取りやめる）。
+        .task(id: ScanKey(path: project.path, open: !collapsed, token: reloadToken)) {
+            guard !collapsed, store.scan == nil || scannedToken != reloadToken else { return }
+            scannedToken = reloadToken
+            await store.reload(projectPath: project.path)
+        }
         .sheet(item: $previewing) { image in
             ProjectImagePreview(image: image, store: store)
         }
+    }
+
+    private struct ScanKey: Hashable {
+        let path: String
+        let open: Bool
+        let token: Int
     }
 
     private var toolbar: some View {
@@ -47,7 +60,8 @@ struct ProjectImagesSection: View {
             Spacer(minLength: 8)
             HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "プロジェクト配下を走査し直す",
                          busyStatus: store.scanning ? "走査中" : nil) {
-                store.reload(projectPath: project.path)
+                collapsed = false
+                reloadToken += 1
             }
         }
     }
@@ -62,7 +76,7 @@ struct ProjectImagesSection: View {
                 groupView(group)
             }
             if scan.truncated {
-                emptyText("画像が \(ProjectImages.maxCount) 件を超えたため、浅いフォルダから \(scan.count) 件までを出しています（深さ \(ProjectImages.maxDepth) まで）")
+                emptyText("画像が \(ProjectImages.maxCount) 件かフォルダが \(ProjectImages.maxDirectories) 個を超えたため、浅いフォルダから \(scan.count) 件までを出しています（深さ \(ProjectImages.maxDepth) まで）")
             }
         } else {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 40)
@@ -112,20 +126,20 @@ struct ProjectImagesSection: View {
     }
 }
 
-/// グリッドの 1 枠: サムネイル・ファイル名・寸法とファイルサイズ。
+/// グリッドの 1 枠: サムネイル・ファイル名・寸法とファイルサイズ。読んだ絵と寸法は枠ごとに持つ（他の枠の読み込みで描き直さない）。
 private struct ProjectImageCell: View {
     let image: ProjectImage
     let store: ProjectImageStore
     let open: () -> Void
 
-    @State private var loaded: NSImage?
+    @State private var loaded: ProjectImageStore.LoadedImage?
     @State private var failed = false
 
     var body: some View {
-        let key = store.key(image)
+        let shown = loaded ?? store.cachedThumbnail(image)
         VStack(alignment: .leading, spacing: 4) {
             Button(action: open) {
-                thumbnail
+                thumbnail(shown)
             }
             .buttonStyle(.plain)
             .help("クリックで拡大: \(image.relativePath)")
@@ -134,7 +148,7 @@ private struct ProjectImageCell: View {
                 .foregroundStyle(ChatTheme.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Text(ProjectImageCaption.text(dimensions: store.dimensions[key], fileSize: image.fileSize))
+            Text(ProjectImageCaption.text(dimensions: shown?.pixelSize, fileSize: image.fileSize))
                 .font(.system(size: 10))
                 .foregroundStyle(ChatTheme.tertiary)
                 .lineLimit(1)
@@ -143,24 +157,26 @@ private struct ProjectImageCell: View {
             Button("Finder で表示") { ProjectImageActions.revealInFinder(image) }
             Button("パスをコピー") { ProjectImageActions.copyPath(image) }
         }
-        .task(id: "\(key)|\(ProjectImageStore.thumbnailPixels)") {
+        .task(id: "\(store.key(image))|\(ProjectImageStore.thumbnailPixels)") {
             // 別の画像に替わったら前の絵を出し続けない（読み直しは NSCache に当たる）。
             loaded = nil
             failed = false
-            loaded = await store.thumbnail(image)
-            failed = loaded == nil
+            let result = await store.thumbnail(image)
+            guard !Task.isCancelled else { return }
+            loaded = result
+            failed = result == nil
         }
     }
 
-    private var thumbnail: some View {
+    private func thumbnail(_ shown: ProjectImageStore.LoadedImage?) -> some View {
         let shape = RoundedRectangle(cornerRadius: 10)
         return Color.clear
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: .infinity)
             .background(shape.fill(ChatTheme.inputSurface))
             .overlay {
-                if let shown = loaded ?? store.cachedThumbnail(image) {
-                    Image(nsImage: shown)
+                if let shown {
+                    Image(nsImage: shown.image)
                         .resizable()
                         .interpolation(.high)
                         .aspectRatio(contentMode: .fill)
@@ -204,7 +220,7 @@ private struct ProjectImagePreview: View {
     let image: ProjectImage
     let store: ProjectImageStore
     @Environment(\.dismiss) private var dismiss
-    @State private var full: NSImage?
+    @State private var full: ProjectImageStore.LoadedImage?
     @State private var failed = false
 
     var body: some View {
@@ -216,7 +232,7 @@ private struct ProjectImagePreview: View {
                         .foregroundStyle(ChatTheme.text)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text(ProjectImageCaption.text(dimensions: store.dimensions[store.key(image)], fileSize: image.fileSize))
+                    Text(ProjectImageCaption.text(dimensions: full?.pixelSize, fileSize: image.fileSize))
                         .font(ChatTheme.caption)
                         .foregroundStyle(ChatTheme.tertiary)
                 }
@@ -230,16 +246,18 @@ private struct ProjectImagePreview: View {
         .padding(16)
         .background(ChatTheme.background)
         .task {
-            full = await store.preview(image)
-            failed = full == nil
+            let result = await store.preview(image)
+            guard !Task.isCancelled else { return }
+            full = result
+            failed = result == nil
         }
     }
 
     @ViewBuilder
     private var content: some View {
         if let full {
-            let size = ChatImagePreview.fitted(full.size)
-            Image(nsImage: full)
+            let size = ChatImagePreview.fitted(full.image.size)
+            Image(nsImage: full.image)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)

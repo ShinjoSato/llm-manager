@@ -118,6 +118,48 @@ final class ProjectImagesTests: XCTestCase {
         XCTAssertEqual(scan.groups[0].images[0].fileSize, 5)
     }
 
+    func testDirectoryLimitStopsScanAndFlagsTruncation() throws {
+        try touch("a/1.png")
+        try touch("b/2.png")
+        try touch("c/3.png")
+        // 直下 + a + b の 3 フォルダで止まり、c は見ない。
+        let scan = ProjectImages.scan(projectPath: project, maxDirectories: 3)
+        XCTAssertTrue(scan.truncated)
+        XCTAssertEqual(paths(scan), ["a": ["a/1.png"], "b": ["b/2.png"]])
+        let whole = ProjectImages.scan(projectPath: project, maxDirectories: 4)
+        XCTAssertFalse(whole.truncated)
+        XCTAssertEqual(whole.count, 3)
+    }
+
+    func testCancellationStopsAtNextDirectory() throws {
+        try touch("top.png")
+        try touch("a/1.png")
+        try touch("b/2.png")
+        var visited = 0
+        let scan = ProjectImages.scan(projectPath: project, isCancelled: {
+            visited += 1
+            return visited > 2
+        })
+        XCTAssertEqual(paths(scan), [".": ["top.png"], "a": ["a/1.png"]])
+        XCTAssertFalse(scan.truncated)
+        XCTAssertEqual(ProjectImages.scan(projectPath: project, isCancelled: { true }).count, 0)
+    }
+
+    func testSkippedFoldersMatchIgnoringCase() throws {
+        try touch("Build/x.png")
+        try touch("NODE_MODULES/y.png")
+        try touch("pods/z.png")
+        try touch("src/ok.png")
+        XCTAssertEqual(paths(ProjectImages.scan(projectPath: project)), ["src": ["src/ok.png"]])
+    }
+
+    func testScanOrderIsNaturalSoTruncationKeepsFirstShown() throws {
+        for n in [10, 2, 1] { try touch("shot\(n).png") }
+        let scan = ProjectImages.scan(projectPath: project, maxCount: 2)
+        XCTAssertTrue(scan.truncated)
+        XCTAssertEqual(paths(scan), [".": ["shot1.png", "shot2.png"]])
+    }
+
     func testMissingProjectYieldsEmptyScan() {
         let scan = ProjectImages.scan(projectPath: dir.appendingPathComponent("nope").path)
         XCTAssertTrue(scan.groups.isEmpty)

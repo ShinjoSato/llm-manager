@@ -37,7 +37,7 @@ public struct ProjectImageGroup: Equatable, Sendable, Identifiable {
 /// 走査の結果。
 public struct ProjectImageScan: Equatable, Sendable {
     public var groups: [ProjectImageGroup]
-    /// 件数の上限で打ち切った。
+    /// 件数かフォルダ数の上限で打ち切った。
     public var truncated: Bool
 
     public var count: Int { groups.reduce(0) { $0 + $1.images.count } }
@@ -54,25 +54,38 @@ public enum ProjectImages {
     /// 探す深さ（プロジェクト直下を 0 として、このフォルダの中までは見る）。
     public static let maxDepth = 8
     public static let maxCount = 2000
+    /// 読むフォルダ数の上限（画像が無くても巨大なツリーで走査が終わらないのを防ぐ）。
+    public static let maxDirectories = 20_000
     /// 中を見ないフォルダ（依存・ビルドの成果物）。隠しフォルダも見ない。
     public static let skipped: Set<String> = SiteLocator.skipped.union([".build", ".swiftpm"])
+    /// 大文字小文字を区別しないファイルシステムで `Build/` 等を素通りさせないため、小文字でも照合する。
+    private static let skippedLowercased = Set(skipped.map { $0.lowercased() })
 
     public static func isImage(_ name: String) -> Bool {
         extensions.contains((name as NSString).pathExtension.lowercased())
     }
 
-    /// 浅いフォルダから順に集め、上限に達したら打ち切る。
+    /// 浅いフォルダから順に集め、上限に達したら打ち切る。`isCancelled` が真になればそこまでの結果を返す。
     public static func scan(projectPath: String, maxDepth: Int = maxDepth, maxCount: Int = maxCount,
+                            maxDirectories: Int = maxDirectories, isCancelled: () -> Bool = { false },
                             fileManager: FileManager = .default) -> ProjectImageScan {
         var images: [ProjectImage] = []
         var truncated = false
         let realProject = SiteLocator.realPath(projectPath)
         var queue: [(relative: String, depth: Int)] = [(".", 0)]
-        scanning: while !queue.isEmpty {
-            let (relative, depth) = queue.removeFirst()
+        var head = 0
+        scanning: while head < queue.count {
+            if isCancelled() { break }
+            if head >= maxDirectories {
+                truncated = true
+                break
+            }
+            let (relative, depth) = queue[head]
+            head += 1
             let dir = SiteLocator.absolute(relative, in: projectPath)
             guard let names = try? fileManager.contentsOfDirectory(atPath: dir) else { continue }
-            for name in names.sorted() where !name.hasPrefix(".") {
+            // 画面の並びと同じ順で集め、打ち切った時に残るものを表示と一致させる。
+            for name in names.sorted(by: Self.naturalOrder) where !name.hasPrefix(".") {
                 let child = (dir as NSString).appendingPathComponent(name)
                 let childRelative = relative == "." ? name : "\(relative)/\(name)"
                 guard let attrs = try? fileManager.attributesOfItem(atPath: child),
@@ -80,7 +93,7 @@ public enum ProjectImages {
                 let found: ProjectImage?
                 switch type {
                 case .typeDirectory:
-                    if depth < maxDepth, !skipped.contains(name) { queue.append((childRelative, depth + 1)) }
+                    if depth < maxDepth, !skippedLowercased.contains(name.lowercased()) { queue.append((childRelative, depth + 1)) }
                     found = nil
                 case .typeRegular:
                     found = isImage(name) ? image(childRelative, path: child, attrs: attrs) : nil
@@ -116,13 +129,11 @@ public enum ProjectImages {
         var buckets: [String: [ProjectImage]] = [:]
         for image in images { buckets[groupPath(for: image.relativePath), default: []].append(image) }
         return buckets.map { path, members in
-            ProjectImageGroup(relativePath: path, images: members.sorted {
-                $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
-            })
+            ProjectImageGroup(relativePath: path, images: members.sorted { naturalOrder($0.relativePath, $1.relativePath) })
         }.sorted { a, b in
             let da = depth(of: a.relativePath), db = depth(of: b.relativePath)
             if da != db { return da < db }
-            return a.relativePath.localizedStandardCompare(b.relativePath) == .orderedAscending
+            return naturalOrder(a.relativePath, b.relativePath)
         }
     }
 
@@ -138,5 +149,10 @@ public enum ProjectImages {
 
     static func depth(of groupPath: String) -> Int {
         groupPath == "." ? 0 : groupPath.split(separator: "/").count
+    }
+
+    /// 数字を自然順に並べる（img2 < img10）。
+    static func naturalOrder(_ a: String, _ b: String) -> Bool {
+        a.localizedStandardCompare(b) == .orderedAscending
     }
 }

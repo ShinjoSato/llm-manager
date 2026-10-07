@@ -11,40 +11,57 @@ final class ProjectImageStore {
     /// 拡大表示の長辺。原寸が大きすぎる画像でもメモリを食い過ぎないよう抑える。
     static let previewPixels = 2400
     /// ImageIO で読めないもの（SVG 等）を描く時の長辺。ベクターは大きく描いても意味が薄い。
-    private static let rasterPixels = 1200
+    nonisolated private static let rasterPixels = 1200
+    /// 同時にデコードする枚数（枠が一斉に表示されても CPU とメモリを食いすぎないため）。
+    private static let decodeLimit = 4
 
     struct PixelSize: Equatable {
         let width: Int
         let height: Int
     }
 
-    private(set) var scan: ProjectImageScan?
-    private(set) var scanning = false
-    /// 読み込めた画像のピクセル寸法（キャッシュのキーごと。SVG 等は無い）。
-    private(set) var dimensions: [String: PixelSize] = [:]
+    /// 読み込んだ絵と、読めた時の原寸のピクセル寸法（SVG 等は無い）。
+    final class LoadedImage {
+        let image: NSImage
+        let pixelSize: PixelSize?
 
-    @ObservationIgnored private let thumbnails = NSCache<NSString, NSImage>()
-    @ObservationIgnored private let previews = NSCache<NSString, NSImage>()
-    @ObservationIgnored private var inFlight: [String: Task<NSImage?, Never>] = [:]
-    @ObservationIgnored private var generation = 0
-
-    init() {
-        thumbnails.countLimit = 600
-        thumbnails.totalCostLimit = 96 * 1024 * 1024
-        previews.countLimit = 3
+        init(image: NSImage, pixelSize: PixelSize?) {
+            self.image = image
+            self.pixelSize = pixelSize
+        }
     }
 
-    /// 走査し直す。遅れて返った古い走査の結果は捨てる。
-    func reload(projectPath: String) {
+    private(set) var scan: ProjectImageScan?
+    private(set) var scanning = false
+
+    // 画面の初期化のたびに作られるので、使う時まで NSCache を作らない。
+    @ObservationIgnored private lazy var thumbnails: NSCache<NSString, LoadedImage> = {
+        let cache = NSCache<NSString, LoadedImage>()
+        cache.countLimit = 600
+        cache.totalCostLimit = 96 * 1024 * 1024
+        return cache
+    }()
+    @ObservationIgnored private lazy var previews: NSCache<NSString, LoadedImage> = {
+        let cache = NSCache<NSString, LoadedImage>()
+        cache.countLimit = 3
+        return cache
+    }()
+    @ObservationIgnored private lazy var gate = DecodeGate(limit: Self.decodeLimit)
+    @ObservationIgnored private var generation = 0
+
+    /// 走査し直す。呼び出し側の取り消しで走査を止め、遅れて返った古い走査の結果は捨てる。
+    func reload(projectPath: String) async {
         generation += 1
         let current = generation
         scanning = true
-        Task {
-            let result = await Task.detached(priority: .userInitiated) { ProjectImages.scan(projectPath: projectPath) }.value
-            guard generation == current else { return }
-            scan = result
-            scanning = false
+        let task = Task.detached(priority: .userInitiated) {
+            ProjectImages.scan(projectPath: projectPath, isCancelled: { Task.isCancelled })
         }
+        let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        guard generation == current else { return }
+        scanning = false
+        guard !Task.isCancelled else { return }
+        scan = result
     }
 
     /// 同じファイルでも更新されていれば別の絵として読み直す。
@@ -52,51 +69,45 @@ final class ProjectImageStore {
         "\(image.path)|\(image.modified?.timeIntervalSince1970 ?? 0)|\(image.fileSize)"
     }
 
-    func cachedThumbnail(_ image: ProjectImage) -> NSImage? {
+    func cachedThumbnail(_ image: ProjectImage) -> LoadedImage? {
         thumbnails.object(forKey: "\(key(image))|\(Self.thumbnailPixels)" as NSString)
     }
 
-    func thumbnail(_ image: ProjectImage) async -> NSImage? {
+    func thumbnail(_ image: ProjectImage) async -> LoadedImage? {
         await load(image, maxPixels: Self.thumbnailPixels, cache: thumbnails)
     }
 
-    func preview(_ image: ProjectImage) async -> NSImage? {
+    func preview(_ image: ProjectImage) async -> LoadedImage? {
         await load(image, maxPixels: Self.previewPixels, cache: previews)
     }
 
-    private func load(_ image: ProjectImage, maxPixels: Int, cache: NSCache<NSString, NSImage>) async -> NSImage? {
-        let baseKey = key(image)
-        let cacheKey = "\(baseKey)|\(maxPixels)"
-        if let cached = cache.object(forKey: cacheKey as NSString) { return cached }
-        // 同じ画像を複数の枠・再描画から同時に頼まれても 1 回だけ読む。
-        if let running = inFlight[cacheKey] { return await running.value }
+    private func load(_ image: ProjectImage, maxPixels: Int, cache: NSCache<NSString, LoadedImage>) async -> LoadedImage? {
+        let cacheKey = "\(key(image))|\(maxPixels)" as NSString
+        if let cached = cache.object(forKey: cacheKey) { return cached }
+        // 枠が画面から消えたら（取り消し）読まずに返す。
+        guard await gate.acquire() else { return nil }
         let path = image.path
-        let task = Task<NSImage?, Never> {
-            let decoded = await Task.detached(priority: .userInitiated) { Self.decode(path: path, maxPixels: maxPixels) }.value
-            guard let decoded else { return nil }
-            if let size = decoded.pixelSize { dimensions[baseKey] = size }
-            return NSImage(cgImage: decoded.image, size: NSSize(width: decoded.image.width, height: decoded.image.height))
-        }
-        inFlight[cacheKey] = task
-        let result = await task.value
-        inFlight[cacheKey] = nil
-        if let result {
-            cache.setObject(result, forKey: cacheKey as NSString, cost: Int(result.size.width * result.size.height * 4))
-        }
-        return result
+        let decoded = await Task.detached(priority: .userInitiated) { Self.decode(path: path, maxPixels: maxPixels) }.value
+        await gate.release()
+        guard let decoded else { return nil }
+        let loaded = LoadedImage(image: NSImage(cgImage: decoded.image, size: NSSize(width: decoded.image.width, height: decoded.image.height)),
+                                 pixelSize: decoded.pixelSize)
+        cache.setObject(loaded, forKey: cacheKey, cost: decoded.image.width * decoded.image.height * 4)
+        return loaded
     }
 
     nonisolated private static func decode(path: String, maxPixels: Int) -> DecodedImage? {
         let url = URL(fileURLWithPath: path)
         if let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
            CGImageSourceGetCount(source) > 0 {
+            let index = frameIndex(of: source, path: path)
             let options: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: maxPixels,
             ]
-            if let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
-                return DecodedImage(image: thumbnail, pixelSize: pixelSize(of: source))
+            if let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) {
+                return DecodedImage(image: thumbnail, pixelSize: pixelSize(of: source, index: index))
             }
         }
         // SVG 等 ImageIO が読めないものは NSImage で描く（寸法は出さない）。
@@ -104,9 +115,20 @@ final class ProjectImageStore {
         return rasterize(image, maxPixels: min(maxPixels, rasterPixels)).map { DecodedImage(image: $0, pixelSize: nil) }
     }
 
+    /// 読むフレーム。ICO は入っている大きさの中でいちばん大きいもの、HEIC 等は主画像。
+    nonisolated private static func frameIndex(of source: CGImageSource, path: String) -> Int {
+        guard (path as NSString).pathExtension.lowercased() == "ico" else { return CGImageSourceGetPrimaryImageIndex(source) }
+        let count = CGImageSourceGetCount(source)
+        return (0..<count).max { a, b in area(pixelSize(of: source, index: a)) < area(pixelSize(of: source, index: b)) } ?? 0
+    }
+
+    nonisolated private static func area(_ size: PixelSize?) -> Int {
+        size.map { $0.width * $0.height } ?? 0
+    }
+
     /// 回転の向きを反映した原寸のピクセル寸法。
-    nonisolated private static func pixelSize(of source: CGImageSource) -> PixelSize? {
-        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+    nonisolated private static func pixelSize(of source: CGImageSource, index: Int) -> PixelSize? {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
               let width = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
               let height = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue else { return nil }
         let orientation = (props[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
@@ -133,4 +155,50 @@ final class ProjectImageStore {
 private struct DecodedImage: @unchecked Sendable {
     let image: CGImage
     let pixelSize: ProjectImageStore.PixelSize?
+}
+
+/// デコードの同時実行を絞る。枠が空くのを待っている間に取り消されれば待つのをやめる。
+actor DecodeGate {
+    private let limit: Int
+    private var running = 0
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Bool, Never>)] = []
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    /// 枠を取れたら true。取り消されていれば（待つ前・待っている間とも）false。
+    func acquire() async -> Bool {
+        if Task.isCancelled { return false }
+        if running < limit {
+            running += 1
+            return true
+        }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(returning: false)
+                } else {
+                    waiters.append((id, continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
+        }
+    }
+
+    /// 待っている人がいればその人に枠を譲る。
+    func release() {
+        if waiters.isEmpty {
+            running -= 1
+        } else {
+            waiters.removeFirst().continuation.resume(returning: true)
+        }
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(returning: false)
+    }
 }
