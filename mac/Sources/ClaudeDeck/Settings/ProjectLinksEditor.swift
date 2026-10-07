@@ -30,8 +30,8 @@ struct ProjectLinksEditor: View {
             kind = link.kind
             pinned = link.isPinned
             note = link.resolvedNote
-            remind = link.reminderDay != nil
-            day = link.reminderDay ?? 1
+            remind = link.validReminderDay != nil
+            day = link.validReminderDay ?? 1
         }
 
         /// 欄の中身をそのまま（利用者が触っていないかを見るため）。

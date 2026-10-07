@@ -171,8 +171,8 @@ struct ProjectLinkForm: View {
         _kind = State(initialValue: initial.resolvedKind)
         _note = State(initialValue: initial.resolvedNote)
         _pinned = State(initialValue: initial.isPinned)
-        _remind = State(initialValue: initial.reminderDay != nil)
-        _day = State(initialValue: initial.reminderDay ?? 1)
+        _remind = State(initialValue: initial.validReminderDay != nil)
+        _day = State(initialValue: initial.validReminderDay ?? 1)
         // 編集では入っている名前を提案で置き換えない。
         _nameTouched = State(initialValue: index != nil)
     }

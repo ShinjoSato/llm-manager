@@ -57,7 +57,7 @@ struct HeaderAction: Identifiable {
             let due = projectID.map { LinkVisitStore.shared.isDue(projectID: $0, link: link) } ?? false
             let reminder = link.validReminderDay.map { "確認が必要です（\(LinkReminder.label(day: $0))）" }
             let detail = [ProjectLinks.help(for: link), due ? reminder : nil].compactMap { $0 }.joined(separator: "\n")
-            return HeaderAction(id: "pin:\(link.url)", name: link.name, priority: priority, subpriority: -1,
+            return HeaderAction(id: "pin:\(link.name)", name: link.name, priority: priority, subpriority: -1,
                                 button: AnyView(HeaderButton(symbol: link.resolvedKind.symbol, name: link.name, detail: detail, dot: due) {
                                     editors.openLink(link, for: target)
                                 }),

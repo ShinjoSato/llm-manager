@@ -15,7 +15,7 @@ public enum LinkReminder {
     public static func dueDate(reminderDay: Int, inMonthOf month: Date, calendar: Calendar) -> Date? {
         guard (1...31).contains(reminderDay),
               let range = calendar.range(of: .day, in: .month, for: month),
-              let start = calendar.date(from: calendar.dateComponents([.year, .month], from: month)) else { return nil }
+              let start = calendar.dateInterval(of: .month, for: month)?.start else { return nil }
         let day = min(reminderDay, range.count)
         return calendar.date(byAdding: .day, value: day - 1, to: start)
     }

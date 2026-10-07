@@ -21,9 +21,10 @@ final class LinkVisitStore {
         visits = file.load()
     }
 
-    /// 設定から消えたリンクの分を片付け、日付の時計を回す。設定が読めない間は古い一覧で消さない。
+    /// 設定から消えたリンクの分を片付け、日付の時計を回す。設定が読めない・空の間は消さない（外で消されたファイルや別の設定で全部失わないため）。
     func start() {
-        if SettingsStore.shared.problem == nil { prune(keeping: SettingsStore.shared.projects) }
+        let settings = SettingsStore.shared
+        if settings.problem == nil, !settings.projects.isEmpty { prune(keeping: settings.projects) }
         clock?.cancel()
         clock = Task { @MainActor [weak self] in
             while !Task.isCancelled {
