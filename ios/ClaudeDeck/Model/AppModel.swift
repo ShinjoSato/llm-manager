@@ -78,7 +78,6 @@ final class AppModel {
     struct Notice: Equatable {
         var text: String
         var isError: Bool
-        var at: Date
     }
 
     private let keychain: PairingKeychain
@@ -484,7 +483,7 @@ final class AppModel {
                          completion: ((RemoteActionResult?) -> Void)? = nil) {
         guard !inFlight.contains(room.id) else { return }
         guard let client, connection == .connected else {
-            notices[room.id] = Notice(text: "Mac につながっていないので送れません。", isError: true, at: Date())
+            notices[room.id] = Notice(text: "Mac につながっていないので送れません。", isError: true)
             completion?(nil)
             return
         }
@@ -495,12 +494,12 @@ final class AppModel {
             do {
                 let result = try await call(client)
                 if let text = RemoteResultText.text(for: result, operation: operation) {
-                    notices[room.id] = Notice(text: text, isError: !result.ok, at: Date())
+                    notices[room.id] = Notice(text: text, isError: !result.ok)
                 }
                 completion?(result)
             } catch {
                 let issue = RemoteIssue.from(error)
-                notices[room.id] = Notice(text: "\(issue.title)。届いたかどうか分からないので、画面の様子を確かめてください。", isError: true, at: Date())
+                notices[room.id] = Notice(text: "\(issue.title)。届いたかどうか分からないので、画面の様子を確かめてください。", isError: true)
                 completion?(nil)
             }
         }

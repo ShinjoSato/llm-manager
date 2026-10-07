@@ -48,7 +48,7 @@ private struct ConversationTitle: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            PixelAvatar(status: room.status, size: 30, hidesFromAccessibility: true)
+            PixelAvatar(status: room.status, size: 30)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(room.name)

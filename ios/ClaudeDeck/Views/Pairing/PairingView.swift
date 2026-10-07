@@ -11,7 +11,7 @@ struct PairingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(spacing: 14) {
-                    PixelAvatar(status: .waiting, size: 64, hidesFromAccessibility: true)
+                    PixelAvatar(status: .waiting, size: 64)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("claude-deck")
                             .font(.system(size: 26, weight: .bold))

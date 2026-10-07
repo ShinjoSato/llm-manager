@@ -135,7 +135,7 @@ struct RoomRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            PixelAvatar(status: room.status, size: 40, hidesFromAccessibility: true)
+            PixelAvatar(status: room.status, size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(room.name)
@@ -200,7 +200,6 @@ struct RoomRow: View {
 struct InlineNotice: View {
     let symbol: String
     let text: String
-    var color: Color = DeckTheme.permission
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -208,7 +207,7 @@ struct InlineNotice: View {
             Text(text).fixedSize(horizontal: false, vertical: true)
         }
         .font(DeckTheme.caption)
-        .foregroundStyle(color)
+        .foregroundStyle(DeckTheme.permission)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
