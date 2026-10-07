@@ -17,6 +17,7 @@ enum ChatTheme {
     static let nsText = nsColor(\.text)
     static let secondary = color(\.secondary)
     static let tertiary = color(\.tertiary)
+    static let nsTertiary = nsColor(\.tertiary)
     static let heading = color(\.heading)
 
     static let permission = color(\.permission)
