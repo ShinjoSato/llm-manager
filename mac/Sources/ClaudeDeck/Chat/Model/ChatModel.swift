@@ -38,6 +38,8 @@ struct RoomListItem: Identifiable {
 enum ChatCenter: Equatable {
     case room
     case directory(UUID)
+    /// 全プロジェクト横断のリンク一覧。
+    case links
 }
 
 /// 画面に 1 つだけ出す警告。どの部品からでも出せるよう ChatModel と分けて持つ。
@@ -245,6 +247,11 @@ final class ChatModel {
 
     func selectDirectory(_ id: UUID) {
         center = .directory(id)
+    }
+
+    /// 横断のリンク一覧を中央に出す（選択中のルームは残す）。
+    func selectLinks() {
+        center = .links
     }
 
     /// 詳細を出している中央のディレクトリ。設定から外された時は project が nil。

@@ -92,12 +92,17 @@ struct RoomListView: View {
     @ViewBuilder
     private var directoryItems: some View {
         let entries = model.directoryEntries
+        let visits = LinkVisitStore.shared
+        // 横断のリンク一覧への固定の行。検索で消えない。
+        LinkOverviewListRow(model: model)
         if entries.isEmpty { directoryEmptyState }
         ForEach(entries) { entry in
             switch entry {
             case .directory(let directory):
                 Button { model.selectDirectory(directory.id) } label: {
-                    DirectoryRow(directory: directory, selected: model.center == .directory(directory.id))
+                    DirectoryRow(directory: directory, selected: model.center == .directory(directory.id),
+                                 dueLinks: LinkOverview.hasDue(directory.project, visits: visits.visits, today: visits.now,
+                                                               calendar: .autoupdatingCurrent))
                         .equatable()
                         .contentShape(Rectangle())
                 }

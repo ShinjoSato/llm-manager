@@ -493,18 +493,23 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   「休止・保管」の見出しの下にまとめて薄く出す（設定の変更はすぐ映る）。各行は印（色の薄い塗りの丸（縁取りなし）に SF Symbol のアイコン。設定の `color` / `icon`、無ければ名前から決めた色と `folder`。`ProjectBadge`）・名前・パスの末尾・
   そのプロジェクトで終了していないセッションの件数と、その中でいちばん急ぐ状態（要対応は色の地）。セッションの照合は「GitHub」ボタンと同じ
   （status を問わず全プロジェクトで、cwd がプロジェクトの path と一致か配下・いちばん深い path。`ProjectMatcher`。外部セッションも登録済みの path の配下なら数える）。
+  名前の右に、確認の日を過ぎてまだ開いていないリンクがあれば小さな黄色の点（要対応のバッジとは別。下の「リンク」）。
   検索欄は名前とパスで絞る（空白区切りで AND）。右クリックで「Claude Code を起動」「Finder で表示」。組み立て・並び・検索・件数と状態の集計は
   `Sources/MonitorKit/Projects/ProjectDirectories.swift`（テストあり）、行は `Views/RoomList/DirectoryRow.swift`。
+  最上部（検索欄の下）に固定の行「リンク」（右に確認が必要なリンクの件数。検索で消えない）があり、押すと中央に全プロジェクト横断のリンク一覧を出す
+  （`ChatCenter.links`・`Views/Links/LinkOverviewView.swift`）: 種類の絞り込みと「確認が必要なものだけ」、プロジェクトごとの節に各リンクの行
+  （確認のバッジ・種類・名前・URL・メモ・前回・ピン）。押すとブラウザで開いて最終確認日を記録する。編集はしない（「詳細を開く」で詳細へ）。
+  組み立ては `Sources/MonitorKit/Projects/LinkOverview.swift`（テストあり）。
   - 行を押すと中央（会話の場所）にプロジェクトの**詳細**を出す（`Views/Directory/DirectoryDetailView.swift`）。見出しは名前・状態・パスと、
     アイコンだけのボタン「Claude Code を起動」（動いているルームがあれば「ルームへ移る」。「+」と同じ起動経路）・「VS Code」・「Finder」・
     「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
-    本文は概要（フルパス・状態・メモ）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンクの一覧（押すとブラウザで開く。開けない形・名前が重なるものは出さず件数だけ）、
+    本文は概要（フルパス・状態・メモ）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンクの一覧（押すとブラウザで開き最終確認日を記録する。各行にピンの切り替え・メモ・「毎月 N 日に確認」・「前回: M/D」（未記録は「未確認」）・確認の日を過ぎてまだ開いていなければ「確認」のバッジ。追加・編集のポップオーバーにメモ・毎月の確認の日・ピンの欄がある）、
     そのプロジェクトのスレッド（ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）。
     本文は中央の欄の幅いっぱいに使う（文章の節は読みやすいよう 900px まで、サイトのプレビューは欄いっぱい）。
   - **見出しのボタンが入りきらない時**（会話の見出しも同じ）: 名前とパスは省略表示（最小 140px）まで縮め、それでも入らなければ優先度の低いボタンから
     「…」（`ellipsis.circle`。ホバーで「ほかの操作」と回したボタンの名前）のメニューにまとめる。メニューの項目は同じ動作を呼ぶ
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
-    回す順は、詳細が「設定で編集」→「Finder」→「リンク」→「GitHub」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→「リンク」→「GitHub」→「Xcode」→「VS Code」。
+    回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
     候補は `ViewThatFits` で入るものを選ぶ（`Views/Conversation/HeaderActions.swift`）。回す順の計算は `Sources/MonitorKit/Chat/HeaderOverflow.swift`（テストあり）。
   - **サイト**（概要の下）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
     - 場所: 設定の `site`（下記「設定（settings.json）」）があればそれ、無ければプロジェクト直下と 2 階層までのサブフォルダから探す
@@ -615,6 +620,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   「リンク」は、同じ照合で紐づいたプロジェクトに `links`（LP 等の名前と URL・種類）がある時だけ「GitHub」の隣に出す。1 つならそのまま既定のブラウザで開き、
   複数なら名前のメニュー（種類のアイコン付き。種類が 2 つ以上なら種類ごとに区切る）で選ぶ。開く直前にも URL を確かめ、http / https で host のあるものだけ開く（`javascript:` や `file:` は開かず理由を出す）。
   設定で不正なリンク（名前が空・URL の形）はボタンに含めない。設定の変更はすぐ映る。判定は `Sources/MonitorKit/Projects/ProjectLinks.swift`。
+  `pinned` のリンクは種類のアイコンの単独ボタンとして「リンク」の左に出す（設定の順に最大 3 つ。4 つ目以降はメニューの中だけ。ホバーで名前と URL）。
+  入りきらない時は「リンク」と同じ優先度の段でピンから先に（右から）「…」へ回り、次に「リンク」が回る（`HeaderOverflow` の subpriority。テストあり）。
+  確認の日を過ぎてまだ開いていないピンはアイコンの右上に小さな黄色の点。どの経路で開いても `EditorLauncher.openLink` を通り、開けた時だけ最終確認日を記録する（下の「設定（settings.json）」の `link-visits.json`）。
   ルームを移っても各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
 - 端末ビュー（`ClaudeTerminalView`）は画面に載せない。PTY の受信は main キューで端末バッファに流れ、状態・権限プロンプト・選択待ち・上限表示は
   0.3 秒ごとのタイマーと受信時にバッファ末尾の `rows` 行を読むので、ビュー階層に無くても動く。桁数は作成時の 960×640pt のまま固定。
@@ -851,7 +859,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   "projects": [ { "id": "<UUID>", "name": "mirio", "path": "/abs/path", "status": "active", "note": "…",
                   "github": { "owner": "ShinjoSato", "repo": "ailovei", "projectNumber": 4 },
                   "links": [ { "name": "LP", "url": "https://example.com/lp" },
-                             { "name": "Stripe", "url": "https://dashboard.stripe.com/invoices", "kind": "billing" },
+                             { "name": "Stripe", "url": "https://dashboard.stripe.com/invoices", "kind": "billing",
+                               "pinned": true, "note": "月初に請求を見る", "reminderDay": 1 },
                              { "name": "Figma", "url": "https://www.figma.com/file/…" } ],
                   "site": { "path": "site" },
                   "icon": "iphone", "color": "blue" } ],
@@ -862,6 +871,13 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   `links` は会話の見出しの「リンク」から開くもの（LP・デザイン・請求ページ等）で、省略できる（空ならアプリも書かない）。並びは配列の順。
   `url` は http / https で host のあるものだけ（それ以外や `user:pass@` 付きは警告として読み込み、ボタンには出さない）。`name` は同じプロジェクトの中で重ねない（重なれば先のものだけボタンに出す）。
   `kind` は種類で `billing`（請求）/ `dashboard`（ダッシュボード）/ `store`（ストア）/ `docs`（ドキュメント）/ `other`（その他）。省略できる（無ければその他として扱い、種類に触れずに保存しても書き足さない）。知らない値はその他として読み、そのリンクの種類を選び直して保存すると `other` に書き換わる。
+  `pinned`（true なら会話と詳細の見出しに単独のボタンで出す。設定の順に 3 つまで）・`note`（1 行のメモ）・`reminderDay`（1〜31。毎月この日に確認する）はどれも省略でき、
+  既定の値（false・空・無し）はアプリも書かない。`reminderDay` が 1〜31 の整数でなければ警告として読み、次に保存した時に落とす。
+  リンクを最後に開いた時刻は settings.json には書かず、`~/Library/Application Support/claude-deck/link-visits.json`
+  （`CLAUDE_DECK_LINK_VISITS` で差し替え・0600・置き換えで書く。`{"version":1,"visits":{"<プロジェクト id>|<正規化した URL>": <epoch ミリ秒>}}`）に持つ。
+  アプリから開いた時だけ記録し、URL を編集した行は新しい URL に引き継ぎ、設定から消えたリンクの分は起動時に片付ける（壊れた・知らない版のファイルは空とみなす）。
+  「毎月 N 日に確認」は、今月の N 日（N が月の日数を超える月は末日）以降にまだ開いていなければ「確認」の印を出す（前月の N 日以降に一度も開いていなければ、今月の N 日の前でも出す）。
+  印はアプリの中だけで、通知はしない。判定は `Sources/MonitorKit/Projects/LinkReminder.swift`、記録は `LinkVisits.swift`（どちらもテストあり）。
   種類はアイコンで見分け、「リンク」のメニューを種類ごとに区切る。ディレクトリの詳細の「リンク」の節から追加・編集・並べ替え・削除ができ（設定画面のプロジェクトタブでも同じ）、
   「+ 追加」はクリップボードの http / https のアドレスを初期値にして種類と名前（host の主要部分）を提案する。クエリの無いアドレスは加えてページの `<title>` を 3 秒以内に取りに行き（一度きりのログイン用リンク等を使い切らないため、クエリ付きは名前欄の横のボタンで頼んだ時だけ）、取れれば名前を触っていない時だけ置き換える。
   `links` の形が崩れている（配列でない・要素に `name` か `url` の文字列が無い）ファイルは読めない扱いになる。

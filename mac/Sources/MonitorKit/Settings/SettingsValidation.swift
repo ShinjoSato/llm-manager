@@ -67,6 +67,12 @@ public enum SettingsValidation {
         return ProjectLinks.url(from: url) == nil ? "URL は http:// か https:// で始まるアドレスにしてください" : nil
     }
 
+    /// 毎月の確認の日: 1〜31 の整数だけ（無ければ確認しない）。
+    public static func reminderDayProblem(_ day: Int?) -> String? {
+        guard let day else { return nil }
+        return (1...31).contains(day) ? nil : "毎月の確認の日は 1〜31 です"
+    }
+
     public static func projectLinkProblems(_ link: ProjectLink) -> [String] {
         var problems: [String] = []
         if link.name.trimmingCharacters(in: .whitespaces).isEmpty { problems.append("リンクの名前を入れてください") }
@@ -119,6 +125,7 @@ public enum SettingsValidation {
             }
             for (link, problems) in zip(project.links, projectLinkRowProblems(project.links)) {
                 for p in problems { result.append("「\(project.name)」のリンク「\(link.name)」: \(p)") }
+                if let p = reminderDayProblem(link.reminderDay) { result.append("「\(project.name)」のリンク「\(link.name)」: \(p)（保存で落とします）") }
             }
             if let site = project.site, let p = sitePathProblem(site.path) { result.append("「\(project.name)」のサイト: \(p)") }
             if project.ignoredSite.isSet { result.append("「\(project.name)」のサイト: 形が正しくないため無視しました（{\"path\": \"相対パス\"} の形で書いてください）") }

@@ -97,6 +97,20 @@ final class HeaderOverflowTests: XCTestCase {
         XCTAssertEqual(HeaderOverflow.hiddenIndices(priorities: [1, 1, 1], hiddenCount: 2), [1, 2])
     }
 
+    /// 同じ priority の中では subpriority の低いもの（ピン）が「リンク」より先に、ピン同士は右から隠れる。
+    func testSubpriorityBreaksTiesBeforePosition() {
+        // [VS Code 5, GitHub 3, pin 2/-1, pin 2/-1, リンク 2/0, 閉じる 1]
+        let priorities = [5, 3, 2, 2, 2, 1]
+        let sub = [0, 0, -1, -1, 0, 0]
+        XCTAssertEqual(HeaderOverflow.hiddenIndices(priorities: priorities, subpriorities: sub, hiddenCount: 1), [5])
+        XCTAssertEqual(HeaderOverflow.hiddenIndices(priorities: priorities, subpriorities: sub, hiddenCount: 2), [3, 5])
+        XCTAssertEqual(HeaderOverflow.hiddenIndices(priorities: priorities, subpriorities: sub, hiddenCount: 3), [2, 3, 5])
+        XCTAssertEqual(HeaderOverflow.hiddenIndices(priorities: priorities, subpriorities: sub, hiddenCount: 4), [2, 3, 4, 5])
+        XCTAssertEqual(HeaderOverflow.visibleIndices(priorities: priorities, subpriorities: sub, hiddenCount: 3), [0, 1, 4])
+        // subpriority を渡さなければ従来どおり右から。
+        XCTAssertEqual(HeaderOverflow.hiddenIndices(priorities: [2, 2, 2], hiddenCount: 1), [2])
+    }
+
     func testOutOfRangeCountsAreClamped() {
         XCTAssertEqual(HeaderOverflow.hiddenIndices(priorities: [1, 2], hiddenCount: -1), [])
         XCTAssertEqual(HeaderOverflow.hiddenIndices(priorities: [1, 2], hiddenCount: 9), [0, 1])

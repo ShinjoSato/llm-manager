@@ -13,6 +13,8 @@ struct HeaderAction: Identifiable {
     let name: String
     /// 大きいほど最後まで見出しに残る。
     let priority: Int
+    /// 同じ priority の中での順（小さいものから先に隠れる。ピンは「リンク」の直前に隠れるよう負にする）。
+    var subpriority: Int = 0
     let button: AnyView
     let menuItem: AnyView
 
@@ -46,6 +48,24 @@ struct HeaderAction: Identifiable {
         return HeaderAction(id: "github", name: GitHubButton.name, priority: priority,
                             button: AnyView(GitHubButton(editors: editors, target: target, destinations: destinations, opening: opening)),
                             menuItem: menu)
+    }
+
+    /// ピン留めしたリンク（種類のアイコンの単独ボタン。設定の順に最大 3 つ）。「リンク」と同じ priority で、その直前に隠れる。
+    static func pins(priority: Int, editors: EditorLauncher, target: EditorTarget) -> [HeaderAction] {
+        let projectID = editors.projectID(for: target)
+        return editors.pinnedLinks(for: target).map { link in
+            let due = projectID.map { LinkVisitStore.shared.isDue(projectID: $0, link: link) } ?? false
+            let reminder = link.validReminderDay.map { "確認が必要です（\(LinkReminder.label(day: $0))）" }
+            let detail = [ProjectLinks.help(for: link), due ? reminder : nil].compactMap { $0 }.joined(separator: "\n")
+            return HeaderAction(id: "pin:\(link.name)", name: link.name, priority: priority, subpriority: -1,
+                                button: AnyView(HeaderButton(symbol: link.resolvedKind.symbol, name: link.name, detail: detail, dot: due) {
+                                    editors.openLink(link, for: target)
+                                }),
+                                menuItem: AnyView(HeaderMenuItem(symbol: link.resolvedKind.symbol,
+                                                                 name: due ? "\(link.name)（確認が必要）" : link.name, busyStatus: nil) {
+                                    editors.openLink(link, for: target)
+                                }))
+        }
     }
 
     /// 「リンク」。開けるリンクが無ければ出さない。
@@ -99,8 +119,9 @@ struct HeaderActionRow: View {
 
     private func row(hiddenCount: Int) -> some View {
         let priorities = actions.map(\.priority)
-        let visible = HeaderOverflow.visibleIndices(priorities: priorities, hiddenCount: hiddenCount)
-        let hidden = HeaderOverflow.hiddenIndices(priorities: priorities, hiddenCount: hiddenCount)
+        let subpriorities = actions.map(\.subpriority)
+        let visible = HeaderOverflow.visibleIndices(priorities: priorities, subpriorities: subpriorities, hiddenCount: hiddenCount)
+        let hidden = HeaderOverflow.hiddenIndices(priorities: priorities, subpriorities: subpriorities, hiddenCount: hiddenCount)
         return HStack(spacing: 6) {
             ForEach(visible, id: \.self) { index in actions[index].button }
             if !hidden.isEmpty {

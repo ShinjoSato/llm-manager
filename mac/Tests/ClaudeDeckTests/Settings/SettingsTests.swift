@@ -130,6 +130,61 @@ final class SettingsFileTests: XCTestCase {
         XCTAssertEqual(SettingsValidation.warnings(lenient), [])
     }
 
+    /// ピン・メモ・確認の日は既定の値なら書かず、あれば往復で保たれる。従来のファイルを読んで書き戻しても欄は増えない。
+    func testLinkExtrasRoundTripAndLegacyShapeIsKept() throws {
+        let legacy = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active","links":[{"name":"LP","url":"https://example.com/lp"},{"name":"Docs","url":"https://docs.example","kind":"docs"}]}]}"#
+        guard case .loaded(let loaded) = SettingsFile.decode(Data(legacy.utf8)) else { return XCTFail() }
+        XCTAssertEqual(loaded.projects[0].links.map(\.pinned), [nil, nil])
+        XCTAssertEqual(loaded.projects[0].links.map(\.note), [nil, nil])
+        XCTAssertEqual(loaded.projects[0].links.map(\.reminderDay), [nil, nil])
+        XCTAssertFalse(loaded.projects[0].links[0].isPinned)
+        XCTAssertEqual(loaded.projects[0].links[0].resolvedNote, "")
+        try file.save(loaded)
+        let legacyObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        let legacyLinks = try XCTUnwrap((legacyObject["projects"] as? [[String: Any]])?[0]["links"] as? [[String: Any]])
+        XCTAssertEqual(legacyLinks.map { $0.keys.sorted() }, [["name", "url"], ["kind", "name", "url"]])
+
+        var settings = sample()
+        settings.projects[0].links = [ProjectLink(name: "Stripe", url: "https://dashboard.stripe.com", kind: .billing, pinned: true, note: "月初に", reminderDay: 1),
+                                      ProjectLink(name: "LP", url: "https://example.com/lp", pinned: false, note: "", reminderDay: nil),
+                                      ProjectLink(name: "Docs", url: "https://docs.example", reminderDay: 31)]
+        try file.save(settings)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        let links = try XCTUnwrap((object["projects"] as? [[String: Any]])?[0]["links"] as? [[String: Any]])
+        XCTAssertEqual(links[0].keys.sorted(), ["kind", "name", "note", "pinned", "reminderDay", "url"])
+        XCTAssertEqual(links[0]["pinned"] as? Bool, true)
+        XCTAssertEqual(links[0]["note"] as? String, "月初に")
+        XCTAssertEqual(links[0]["reminderDay"] as? Int, 1)
+        // false・空・無しは書かない。
+        XCTAssertEqual(links[1].keys.sorted(), ["name", "url"])
+        XCTAssertEqual(links[2].keys.sorted(), ["name", "reminderDay", "url"])
+        guard case .loaded(let reloaded) = file.load() else { return XCTFail() }
+        XCTAssertEqual(reloaded.projects[0].links[0], settings.projects[0].links[0])
+        XCTAssertEqual(reloaded.projects[0].links[1], ProjectLink(name: "LP", url: "https://example.com/lp"))
+        XCTAssertEqual(reloaded.projects[0].links[2].reminderDay, 31)
+    }
+
+    /// 範囲外・整数でない確認の日は警告として読み、保存で落とす。
+    func testBadReminderDayIsWarnedAndDroppedOnSave() throws {
+        let json = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active","links":[{"name":"A","url":"https://a.example","reminderDay":40},{"name":"B","url":"https://b.example","reminderDay":"5"},{"name":"C","url":"https://c.example","reminderDay":null},{"name":"D","url":"https://d.example","reminderDay":0}]}]}"#
+        guard case .loaded(let settings) = SettingsFile.decode(Data(json.utf8)) else { return XCTFail() }
+        XCTAssertEqual(settings.projects[0].links.map(\.reminderDay), [40, 0, nil, 0])
+        XCTAssertEqual(settings.projects[0].links.map(\.validReminderDay), [nil, nil, nil, nil])
+        XCTAssertEqual(SettingsValidation.warnings(settings).count, 3)
+        XCTAssertTrue(SettingsValidation.warnings(settings).allSatisfy { $0.contains("1〜31") })
+        // 開ける・保存できる扱いのまま。
+        XCTAssertEqual(ProjectLinks.openable(settings.projects[0].links).count, 4)
+        XCTAssertEqual(SettingsValidation.blockingProblems(settings), [])
+        try file.save(settings)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        let links = try XCTUnwrap((object["projects"] as? [[String: Any]])?[0]["links"] as? [[String: Any]])
+        XCTAssertTrue(links.allSatisfy { $0["reminderDay"] == nil })
+        XCTAssertNil(SettingsValidation.reminderDayProblem(nil))
+        XCTAssertNil(SettingsValidation.reminderDayProblem(31))
+        XCTAssertNotNil(SettingsValidation.reminderDayProblem(32))
+        XCTAssertNotNil(SettingsValidation.reminderDayProblem(0))
+    }
+
     func testBadLinksStillLoadAsWarnings() {
         let json = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active","links":[{"name":"","url":"ftp://x"},{"name":"LP","url":"https://example.com"},{"name":"LP","url":"https://example.org"}]}]}"#
         guard case .loaded(let settings) = SettingsFile.decode(Data(json.utf8)) else { return XCTFail() }
@@ -907,6 +962,19 @@ final class SettingsImportTests: XCTestCase {
         // 新しく足したプロジェクトのリンクはプロジェクトとして数える。
         XCTAssertEqual(summary.addedLinks, 1)
         XCTAssertEqual(summary.addedProjects, 1)
+    }
+
+    func testSettingsImportKeepsPinNoteAndReminder() throws {
+        let link = ProjectLink(name: "Stripe", url: "https://dashboard.stripe.com", kind: .billing, pinned: true, note: "請求", reminderDay: 3)
+        let incoming = DeckSettings(projects: [
+            ManagedProject(name: "a", path: "/p/a", links: [link]),
+            ManagedProject(name: "b", path: "/p/b", links: [link]),
+        ])
+        let existing = DeckSettings(projects: [ManagedProject(name: "a-local", path: "/p/a")])
+        let (settings, summary) = try SettingsImport.merge(try incoming.encoded(), into: existing)
+        XCTAssertEqual(settings.projects[0].links, [link])
+        XCTAssertEqual(settings.projects[1].links, [link])
+        XCTAssertEqual(summary.addedLinks, 1)
     }
 
     func testSettingsImportComparesLinkNamesWithoutSurroundingSpaces() throws {
