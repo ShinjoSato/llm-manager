@@ -26,7 +26,7 @@ struct ProjectLauncher: View {
                         HStack(spacing: 4) {
                             Button { onPick(project) } label: {
                                 HStack(spacing: 8) {
-                                    RoomAvatar(name: project.name, size: 26, badge: ProjectBadge.resolve(project: project))
+                                    ProjectBadgeView(badge: ProjectBadge.resolve(project: project), size: 26)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(project.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(ChatTheme.text)
                                         Text(project.path).font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)

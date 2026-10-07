@@ -16,7 +16,6 @@ final class HostedSession: Identifiable {
 
     let id = UUID()
     let project: ManagedProject
-    let startedAt = Date()
     @ObservationIgnored let terminal: ClaudeTerminalView
     @ObservationIgnored private let observer = TerminalProcessObserver()
 

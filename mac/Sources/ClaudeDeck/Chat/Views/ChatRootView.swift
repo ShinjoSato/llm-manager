@@ -81,9 +81,3 @@ struct ChatRootView<Trailing: View>: View {
     }
 }
 
-extension ChatRootView where Trailing == EmptyView {
-    init(model: ChatModel) {
-        self.init(model: model) { EmptyView() }
-    }
-}
-

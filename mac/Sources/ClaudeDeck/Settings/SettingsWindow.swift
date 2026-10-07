@@ -21,7 +21,6 @@ final class SettingsNavigation {
 enum SettingsWindow {
     private static var window: NSWindow?
     private static let navigation = SettingsNavigation()
-    private static var closeObserver: NSObjectProtocol?
 
     /// 設定画面のウィンドウか（変換中の判定をこの画面に絞るため）。
     static func owns(_ candidate: NSWindow?) -> Bool {
@@ -50,8 +49,8 @@ enum SettingsWindow {
         window.makeKeyAndOrderFront(nil)
         self.window = window
         // 閉じる時は溜めていた文字欄の変更を書き切る。
-        closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
-                                                               queue: .main) { _ in
+        _ = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                   queue: .main) { _ in
             MainActor.assumeIsolated {
                 window.makeFirstResponder(nil)
                 SettingsStore.shared.flushPending(force: true)

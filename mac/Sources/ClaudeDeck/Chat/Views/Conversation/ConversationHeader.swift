@@ -7,7 +7,7 @@ struct ConversationHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            PixelAvatar(status: room.status, size: 38, hidesFromAccessibility: true)
+            PixelAvatar(status: room.status, size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(room.name)
@@ -151,7 +151,7 @@ struct GitHubButton: View {
                     Button(destination.menuTitle) { editors.openOnGitHub(destination, for: target) }
                 }
             } label: {
-                HeaderButtonLabel(symbol: Self.symbol, busy: opening, disabled: opening, hovering: hovering, showsMenu: true)
+                HeaderButtonLabel(symbol: Self.symbol, busy: opening, hovering: hovering, showsMenu: true)
             }
             .disabled(opening)
             .menuStyle(.button)
@@ -181,7 +181,7 @@ struct ProjectLinkButton: View {
             Menu {
                 ProjectLinkMenuItems(links: links) { editors.openLink($0, for: target) }
             } label: {
-                HeaderButtonLabel(symbol: Self.symbol, busy: false, disabled: false, hovering: hovering, showsMenu: true)
+                HeaderButtonLabel(symbol: Self.symbol, busy: false, hovering: hovering, showsMenu: true)
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
@@ -219,8 +219,8 @@ struct ProjectLinkMenuItems: View {
 /// 見出しのアイコンボタンの見た目。名前は出さずホバーの吹き出しと VoiceOver に回す。
 struct HeaderButtonLabel: View {
     let symbol: String
+    /// 処理中は回転の印にして押せない色にする。
     let busy: Bool
-    let disabled: Bool
     let hovering: Bool
     var showsMenu = false
     /// 右上に小さな黄色の点（確認が必要なピン）。
@@ -240,10 +240,10 @@ struct HeaderButtonLabel: View {
             .frame(width: 14, height: 14)
             if showsMenu { Image(systemName: "chevron.down").font(.system(size: 7, weight: .semibold)) }
         }
-        .foregroundStyle(disabled ? ChatTheme.tertiary : ChatTheme.text)
+        .foregroundStyle(busy ? ChatTheme.tertiary : ChatTheme.text)
         .frame(minWidth: Self.side, minHeight: Self.side, maxHeight: Self.side)
         .padding(.horizontal, showsMenu ? 4 : 0)
-        .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
+        .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !busy ? ChatTheme.selectedRow : ChatTheme.inputSurface))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
         .overlay(alignment: .topTrailing) {
             if dot {
@@ -405,7 +405,7 @@ struct HeaderButton: View {
     var body: some View {
         let busy = busyStatus != nil
         Button(action: action) {
-            HeaderButtonLabel(symbol: symbol, busy: busy, disabled: busy, hovering: hovering, dot: dot)
+            HeaderButtonLabel(symbol: symbol, busy: busy, hovering: hovering, dot: dot)
         }
         .buttonStyle(.plain)
         .disabled(busy)

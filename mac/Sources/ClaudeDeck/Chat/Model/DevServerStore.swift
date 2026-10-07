@@ -15,7 +15,6 @@ final class DevServer {
         case failed(String)
     }
 
-    let root: String
     let projectId: UUID
     private(set) var phase: Phase = .starting
     private(set) var lines: [String] = []
@@ -29,8 +28,7 @@ final class DevServer {
     /// 出力の画面への反映の間隔（出力が多くても描き直しを詰まらせない）。
     private static let linesRefreshInterval: Duration = .milliseconds(200)
 
-    init(root: String, projectId: UUID) {
-        self.root = root
+    init(projectId: UUID) {
         self.projectId = projectId
     }
 
@@ -141,7 +139,7 @@ final class DevServerStore {
         let key = Self.key(location.root)
         if let existing = servers[key], !existing.canStart { return }
         startWatchingSettings()
-        let server = DevServer(root: key, projectId: project.id)
+        let server = DevServer(projectId: project.id)
         servers[key] = server
         if let problem = DevServerRules.readiness(siteRoot: key).problem {
             server.fail(problem)

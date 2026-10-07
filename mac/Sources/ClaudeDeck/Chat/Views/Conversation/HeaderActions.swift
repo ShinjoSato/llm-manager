@@ -141,7 +141,7 @@ private struct HeaderOverflowMenu: View {
         Menu {
             ForEach(actions) { $0.menuItem }
         } label: {
-            HeaderButtonLabel(symbol: "ellipsis.circle", busy: false, disabled: false, hovering: hovering)
+            HeaderButtonLabel(symbol: "ellipsis.circle", busy: false, hovering: hovering)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

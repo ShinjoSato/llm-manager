@@ -42,7 +42,8 @@ final class LinkVisitStore {
         LinkReminder.isDue(link, lastOpened: lastOpened(projectID: projectID, link: link), today: now, calendar: .autoupdatingCurrent)
     }
 
-    func record(projectID: UUID, link: ProjectLink, at date: Date = Date()) {
+    func record(projectID: UUID, link: ProjectLink) {
+        let date = Date()
         visits.record(projectID: projectID, url: link.url, at: date)
         now = date
         save()

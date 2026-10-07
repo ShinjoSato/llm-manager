@@ -15,7 +15,7 @@ struct RoomRow: View, Equatable {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            PixelAvatar(status: room.status, size: 36, hidesFromAccessibility: true)
+            PixelAvatar(status: room.status, size: 36)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(room.name)
@@ -82,27 +82,6 @@ struct ExternalTag: View {
             .background(RoundedRectangle(cornerRadius: 4).fill(ChatTheme.externalTagFill))
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(ChatTheme.externalTagBorder))
             .help("アプリの外（VS Code・別ターミナル等）で動いているセッション")
-    }
-}
-
-/// プロジェクトのアイコン（セッションを持たないプロジェクト一覧用）。印を渡せば縁取りの丸 + SF Symbol、無ければ頭文字の角丸四角。
-struct RoomAvatar: View {
-    let name: String
-    let size: CGFloat
-    var badge: ProjectBadge? = nil
-
-    var body: some View {
-        if let badge {
-            ProjectBadgeView(badge: badge, size: size)
-        } else {
-            let color = ChatTheme.avatarColor(for: name)
-            Text(RoomGrouping.initial(of: name))
-                .font(.system(size: size * 0.42, weight: .bold))
-                .foregroundStyle(color)
-                .frame(width: size, height: size)
-                .background(RoundedRectangle(cornerRadius: size * 0.28).fill(color.opacity(0.16)))
-                .overlay(RoundedRectangle(cornerRadius: size * 0.28).stroke(color.opacity(0.28)))
-        }
     }
 }
 

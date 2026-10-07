@@ -141,7 +141,7 @@ private struct DirectoryDetailHeader: View {
         let running = model.runningSession(for: project) != nil
         let xcodeProject = editors.xcodeProject(for: target)
         HStack(spacing: 12) {
-            RoomAvatar(name: project.name, size: 38, badge: ProjectBadge.resolve(project: project))
+            ProjectBadgeView(badge: ProjectBadge.resolve(project: project), size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(project.name)

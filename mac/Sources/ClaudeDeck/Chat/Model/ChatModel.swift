@@ -296,7 +296,7 @@ final class ChatModel {
         hosted.append(session)
         session.start()
         select(.hosted(session.id))
-        saveHostedSoon()
+        restorer.saveNow()
     }
 
     func close(_ session: HostedSession) {
@@ -304,7 +304,7 @@ final class ChatModel {
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         outbox.forgetRoom(.hosted(session.id))
-        saveHostedSoon()
+        restorer.saveNow()
     }
 
     /// 引き継ぎで外部の claude を止められた。同じ会話を `--resume` で起動し、外部ルームの書きかけと添付を引き取る。
@@ -315,7 +315,7 @@ final class ChatModel {
         session.start()
         outbox.move(from: roomId, to: .hosted(session.id))
         select(.hosted(session.id))
-        saveHostedSoon()
+        restorer.saveNow()
     }
 
     /// 前回アプリが止まった時に動いていたセッションを同じ cwd で `--resume` する。書きかけも戻す。選択は未選択の時だけ移す。
@@ -329,10 +329,6 @@ final class ChatModel {
         if let draft = record.draft { outbox.drafts[.hosted(session.id)] = draft }
         if selection == nil { select(.hosted(session.id)) }
         return session
-    }
-
-    private func saveHostedSoon() {
-        restorer.saveNow()
     }
 
     /// 終了の確認に使う、動いているホスト中のルーム。
