@@ -114,4 +114,20 @@ final class ProjectBadgeSettingsTests: XCTestCase {
         b.icon = "star"
         XCTAssertNotEqual(a, b)
     }
+
+    func testImportFillsIconAndColorOfExistingProject() throws {
+        var current = try decode(legacy)
+        current.projects[0].color = "green"
+        let incoming = """
+        { "version": 1,
+          "projects": [ { "id": "\(UUID().uuidString)", "name": "mirio", "path": "/tmp/mirio", "status": "active", "note": "",
+                          "icon": "iphone", "color": "red" } ],
+          "boards": [] }
+        """
+        let (settings, _) = try SettingsImport.merge(Data(incoming.utf8), into: current)
+        let project = try XCTUnwrap(settings.projects.first)
+        // 無い欄は足し、既にある欄は上書きしない。
+        XCTAssertEqual(project.icon, "iphone")
+        XCTAssertEqual(project.color, "green")
+    }
 }

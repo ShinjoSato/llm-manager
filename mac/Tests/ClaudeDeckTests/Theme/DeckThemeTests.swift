@@ -218,6 +218,16 @@ final class DeckThemeTests: XCTestCase {
         let c = [(hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff]
         return c.max()! - c.min()!
     }
+
+    func testLightBadgeColorsReadOnWhiteAndTint() {
+        let p = ThemePalette.light
+        for key in ProjectColor.allCases {
+            let ink = p.avatar(key)
+            XCTAssertGreaterThanOrEqual(ThemeContrast.ratio(ink, 0xffffff), 4.5, key.rawValue)
+            let tint = ThemeContrast.blend(ink, over: 0xffffff, opacity: 0.14)
+            XCTAssertGreaterThanOrEqual(ThemeContrast.ratio(ink, tint), 3.0, key.rawValue)
+        }
+    }
 }
 
 /// ライトで使ってよい 4 つの色相（HSL の色相角の帯）。
