@@ -160,13 +160,7 @@ public actor TranscriptStore {
 
     private func startPolling() {
         guard pollTask == nil else { return }
-        pollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: TranscriptStore.pollInterval)
-                guard let self, !Task.isCancelled else { return }
-                await self.poll()
-            }
-        }
+        pollTask = repeatingTask(every: Self.pollInterval, owner: self) { store in await store.poll() }
     }
 
     public func stop() {

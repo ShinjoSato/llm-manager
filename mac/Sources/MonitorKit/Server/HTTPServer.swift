@@ -236,7 +236,7 @@ public final class HTTPServer: @unchecked Sendable {
         queue.async { [self] in
             generation &+= 1
             let gen = generation
-            let once = Once()
+            let once = OnceFlag()
             let open: @Sendable () -> Void = { [weak self] in
                 guard let self, self.generation == gen, once.claim() else { return }
                 self.openLocked(port: port, onState: onState)
@@ -309,7 +309,7 @@ public final class HTTPServer: @unchecked Sendable {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async { [self] in
                 generation &+= 1
-                let once = Once()
+                let once = OnceFlag()
                 let resume: @Sendable () -> Void = { if once.claim() { continuation.resume() } }
                 if stopLocked(onCancelled: resume) {
                     queue.asyncAfter(deadline: .now() + Self.cancelTimeout, execute: resume)
@@ -393,14 +393,6 @@ public final class HTTPServer: @unchecked Sendable {
         connection.start(queue: queue)
         session.begin()
     }
-}
-
-/// 一度だけ通す印（タイムアウトと取り消し完了のどちらが先でも 1 回だけ開き直すため）。
-private final class Once: @unchecked Sendable {
-    private let lock = NSLock()
-    private var used = false
-
-    func claim() -> Bool { lock.withLock { defer { used = true }; return !used } }
 }
 
 /// 1 接続ぶんの読み取りと応答。キュー上でだけ触る。

@@ -124,12 +124,12 @@ public actor SessionHub {
         pollTranscripts()
         pollUsage()
         emitUpdate()
-        tasks.append(loop(every: Self.inventoryInterval) { hub in
+        tasks.append(repeatingTask(every: Self.inventoryInterval, owner: self) { hub in
             await hub.scanInventory()
             await hub.pollUsage()
         })
-        tasks.append(loop(every: Self.transcriptInterval) { hub in await hub.pollTranscripts() })
-        tasks.append(loop(every: Self.snapshotInterval) { hub in await hub.emitUpdate() })
+        tasks.append(repeatingTask(every: Self.transcriptInterval, owner: self) { hub in await hub.pollTranscripts() })
+        tasks.append(repeatingTask(every: Self.snapshotInterval, owner: self) { hub in await hub.emitUpdate() })
     }
 
     /// 試験用: 回っているループの数。
@@ -139,16 +139,6 @@ public actor SessionHub {
         wantsRunning = false
         tasks.forEach { $0.cancel() }
         tasks = []
-    }
-
-    private func loop(every interval: Duration, _ body: @escaping @Sendable (SessionHub) async -> Void) -> Task<Void, Never> {
-        Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
-                guard let self, !Task.isCancelled else { return }
-                await body(self)
-            }
-        }
     }
 
     // MARK: - 在庫層
