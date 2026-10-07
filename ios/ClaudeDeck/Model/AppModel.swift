@@ -332,10 +332,7 @@ final class AppModel {
     private func adopt(_ pairing: RemotePairing) {
         stopStream()
         self.pairing = pairing
-        state = nil
-        stateUpdatedAt = nil
-        transcripts = [:]
-        recentSessions = []
+        clearRoomData()
         unread = [:]
         relayNotes = [:]
         notices = [:]
@@ -363,11 +360,16 @@ final class AppModel {
         client = nil
         keychain.delete()
         pairing = nil
+        clearRoomData()
+        connection = .unpaired
+    }
+
+    /// 前の Mac の一覧と会話を捨てる。
+    private func clearRoomData() {
         state = nil
         stateUpdatedAt = nil
         transcripts = [:]
         recentSessions = []
-        connection = .unpaired
     }
 
     // MARK: - 会話
