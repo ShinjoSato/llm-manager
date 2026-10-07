@@ -26,6 +26,7 @@ mac/
       AppDelegate.swift           ウィンドウ + メニュー + 終了の確認（applicationShouldTerminate・ウィンドウを閉じる時）
       QuitCoordinator.swift       終了の確認ダイアログと「作業が終わったら終了」の待ち（.terminateLater）
       LaunchSettings.swift        起動時の再開の設定（UserDefaults・既定はオン）
+      AppearanceSettings.swift    カラーテーマ（ナイト / ライト）の設定（UserDefaults）と NSApp.appearance への反映
       MainViewController.swift    メインウィンドウ = チャット画面（SwiftUI を NSHostingView で載せる）
       MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
       LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
@@ -48,20 +49,27 @@ mac/
         SessionRestorer.swift       ホスト中のセッションの記録（hosted-sessions.json）と起動時の再開・作業中だったものへの続きの頼み
         SiteThumbnailStore.swift    「ディレクトリ」の行の LP のサムネイル（オフスクリーンの WKWebView で撮って縮小・キャッシュ・1 つずつ）
         DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める。ルームを閉じても止めない）
+        ProjectImageStore.swift     ディレクトリの詳細の「画像」（走査・サムネイルの縮小をバックグラウンドで・NSCache）
+        LinkVisitStore.swift        リンクの最終確認日（link-visits.json）の読み書き
+        LinkTitleFetcher.swift      リンクの名前の候補にするページの <title> の取得（3 秒・資格情報なし）
       Views/                      画面（SwiftUI）
         ChatRootView.swift          骨組み（切り替えバー | 一覧（境界のドラッグで幅を変える）| 会話かディレクトリの詳細 | 右パネルの差し込み口）
         ListPane.swift              一覧の幅の状態・境界のつかむ所・ウィンドウの最小幅
         RoomList/                   左の一覧（ルーム / ディレクトリ）
           ListModeBar.swift           左端の切り替えバー（「ルーム」/「ディレクトリ」・要対応のバッジ）
           RoomListView.swift          一覧（状態別のルームか登録ディレクトリ）・検索・「+」のポップオーバー・右クリックメニュー
-          DirectoryRow.swift          ディレクトリ 1 行（色の点・名前・パスの末尾・件数といちばん急ぐ状態・LP のサムネイル）
-          RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・頭文字アイコン（RoomAvatar）
+          DirectoryRow.swift          ディレクトリ 1 行（プロジェクトの印・名前・パスの末尾・件数といちばん急ぐ状態・LP のサムネイル）
+          RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・プロジェクトの印（ProjectBadgeView・RoomAvatar）
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
-        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・GitHub・リンク・スレッド）
+        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・画像・GitHub・リンク・スレッド）
+          ProjectLinkEditor.swift     「リンク」の節の追加・編集のポップオーバー（種類と名前の提案・<title> の取得）
+          ProjectImagesSection.swift  「画像」: フォルダごとのサムネイルのグリッド・拡大のシート
           SitePreviewSection.swift    「サイト」: 見る元（開発サーバー / 書き出し / 公開 URL）・表示幅・再読み込み・ブラウザで開く・書き出しの更新時刻
           SitePreviewParts.swift      サイトの欄とステージパネルのプレビューで共有する部品（場所の読み込み・表示幅の切り替え・縮める枠・開発サーバーの操作と出力）
           SiteWebView.swift           プレビューの WKWebView（pageZoom で縮めて表示幅ぶんを収める・file: / javascript: へは遷移しない）
+        Links/
+          LinkOverviewView.swift      中央の横断のリンク一覧と、「ディレクトリ」の固定行「リンク」（LinkOverviewListRow）
         Conversation/               中央の会話
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）
           ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」のボタン
@@ -82,7 +90,7 @@ mac/
         MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）
         ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
         PixelAvatar.swift           ルーム一覧と見出しのドット絵キャラ（絵は DeckCore の PixelCharacter）
-        ChatTheme.swift             色・文字・時刻の書式のトークン（ダーク固定。AppKit 側の色も）
+        ChatTheme.swift             色・文字・時刻の書式のトークン（色はテーマ（ナイト / ライト）ごとの値を描く時の外観で選ぶ。AppKit 側の色も）
     Stage/                      右側のステージパネル（360px）
       StagePanel.swift            見出し（ステージ / プレビューの切り替え・開閉）・ステージ・畳んだ状態
       StagePreviewPanel.swift     プレビュー（選択中のルームのプロジェクトの LP。開発サーバー → 書き出し → 案内）
@@ -136,6 +144,12 @@ mac/
       ProjectLinks.swift          設定のリンク（LP 等）の URL の検証（http / https で host のあるものだけ）と、見出しの「リンク」に出すもの
       ProjectBadge.swift          プロジェクトの印（色のキー `ProjectColor`・SF Symbol）の解決。無い時は名前のハッシュの色と `folder`、設定画面のアイコンの候補
       EditorActions.swift         見出しの「VS Code / GitHub / リンク / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
+      ProjectDirectories.swift    「ディレクトリ」の一覧の組み立て・並び・検索・セッションの件数と状態の集計
+      LinkReminder.swift          リンクの「毎月 N 日に確認」の判定
+      LinkVisits.swift            リンクの最終確認日（link-visits.json）の型と読み書き
+      LinkOverview.swift          横断のリンク一覧の組み立て（節・絞り込み・確認が必要な数）
+      LinkTitle.swift             ページの <title> の読み取り（文字コードの判別・切れた UTF-8 の扱い）
+      ProjectImages.swift         ディレクトリの詳細の「画像」の走査とグループ化
     Sites/                      ディレクトリの詳細の「サイト」（LP のプレビュー）
       SiteLocator.swift           LP の場所の自動検出と、設定の `site`（相対パス）の検証・解決（プロジェクトの外を指さない）
       SiteFiles.swift             配信のパスの解決（書き出しの外・隠しファイルは返さない・フォルダは index.html・拡張子なしは .html）と Content-Type
@@ -160,10 +174,13 @@ mac/
       MenuScreenLog.swift         選択肢カードを出した・読めなかった画面の写しを直近数件残す
       ScreenPane.swift            画面の右に縦線で区切って出る別の欄（差分パネル）を除いて左だけにする
       ComposerSync.swift          入力欄とモデルの下書きの同期判定（変換中は本当の外部変更の時だけ書き戻す）
+      ComposerPlaceholder.swift   入力欄の空欄の案内の出し分け（端末ビューの表示内容で見る・変換中は隠す）
+      RoomListMode.swift          左の一覧の見方（ルーム / ディレクトリ）と要対応の件数
       ListPaneWidth.swift         左の一覧の幅（範囲・保存値の収め方・ドラッグで中央の最小幅を割らない計算）
       HeaderOverflow.swift        見出しのボタンが入りきらない時に「…」へ回す順（優先度の低いものから）
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
-                                SceneKit のノードへの起こし（StageSceneRig）
+                                SceneKit のノードへの起こし（StageSceneRig）・背景側の色（StageBackdrop）・設定画面の見本（CharacterGallery）
+    Theme/                      カラーテーマ（DeckTheme: ナイト / ライトの色の組）
     Notify/                     通知にする要対応の組み立て（AttentionNoticeSource）と iCloud を使えるかの確認・失敗の文言（CloudKitNoticeStore）
     Support/                    共通の下回り
       DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
@@ -174,8 +191,9 @@ mac/
       DeckPaths.swift             Application Support / Caches / Logs の claude-deck
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
-                                Server / Remote / Settings / Sites / Notify / Stage / Terminal / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
+                                Server / Remote / Settings / Sites / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
+  docs/pty-daemon.md            アプリを閉じても claude を動かし続ける常駐プロセスの設計と試作の記録（未実装）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
   scripts/bundle.sh             claude-deck.app を組み立てて署名する（プロファイルがあれば Apple Development + iCloud、無ければ ad-hoc。チャネルの実行ファイルも同梱）
   scripts/statusline.sh         Claude Code の statusLine。表示に加えて使用量を Application Support に残す
@@ -224,7 +242,10 @@ mac/
   早めに返す。全閉じの相手はその送信の失敗で閉じる。いずれも待ち手は外す（判断はチャネルの取り直しに渡るよう取り置く）
 - フックの反映は待ち行列（4096 件）で順に流す。時刻は受け口に届いた時刻で数え（反映が遅れてもログ行との前後を誤らない）、
   未知のセッションは在庫だけ取り込んで先へ進む（メタ情報・Xcode の走査は後から埋め、待たない）。溢れて押し出した分は
-  件数をログとそのセッションのフィードに出す
+  件数をログとそのセッションのフィードに出す。時刻の取得と積み込みは一続きで、待ち行列の順＝時刻の順。
+  届いた後のログ活動を反映前に読んでいれば、権限待ち等は答え済みとして出さない（数えるのは親ログの活動だけ。親が確認で止まっている間も
+  サブエージェントは書き続けるので、その活動は数えない。Channels の保留の取り下げも同じ基準）
+- 止めて開き直す時は、前の待ち受けがポートを手放すのを待つ（最大 2 秒）
 - `allowLocalEndpointReuse` は付けたまま。0.0.0.0 / `[::]` で待ち受ける別プロセス（SO_REUSEADDR の有無とも）が居ても
   127.0.0.1 では bind できず「使用中」になることを試験で確かめている
 - ポートは `CLAUDE_DECK_SERVER_PORT`（既定 8766。`off` で待ち受けない）
@@ -460,6 +481,7 @@ Claude Code の **Channels**（research preview の permission relay）を使う
   「+」と設定画面は同じデータ（`SettingsStore`）を見るので、どちらで変えてもすぐ揃う。
 - 同じプロジェクトを選ぶと、動いているルームがあれば新しく起動せずそのルームに移る（終了済みのルームしか無ければ新しく起動する）。
 - 保存先・取り込みは下記（「設定（settings.json）」）。
+- ボードの中身の表示はアプリには無い（見出しの「GitHub」でブラウザに開くか、`gh project item-list` で見る）。
 
 ## メイン画面: チャット
 
@@ -490,22 +512,58 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   （空の段は出さない・各段は最後に動いた順・同時刻は名前順）。組み立ては DeckCore の `RoomGrouping`。
 - 状態は監視の `SessionSnapshot.status`。監視の開始前は、ホスト中のセッションだけ端末画面からのローカル判定（作業中 / 権限プロンプト / 待機）で代わりに出す。
 - **「ディレクトリ」**: 設定（settings.json）に登録したプロジェクトの一覧。設定の順で、進行中（active）を上に、休止・保管（paused / archived）は
-  「休止・保管」の見出しの下にまとめて薄く出す（設定の変更はすぐ映る）。各行は印（色の薄い塗りの丸（縁取りなし）に SF Symbol のアイコン。設定の `color` / `icon`、無ければ名前から決めた色と `folder`。`ProjectBadge`）・名前・パスの末尾・
+  「休止・保管」の見出しの下にまとめて薄く出す（設定の変更はすぐ映る）。各行は印（直径 22px の色の薄い塗りの丸（縁取りなし）に SF Symbol のアイコン。設定の `color`（`ProjectColor` の 11 キー）/ `icon`、無ければ名前のハッシュで従来の 8 色から決めた色
+  （`ChatTheme.avatarColor(for:)`。キーとナイトの値は従来と同じで、ライトは紫・桃・橙・青緑の 4 色が名前どおりの色相の濃い版）と `folder`。知らない色は警告にして名前の色、
+  無い Symbol は `folder` に落とす。解決は `Sources/MonitorKit/Projects/ProjectBadge.swift`（テストあり）・絵は `ProjectBadgeView`（`RoomRow.swift`）で、詳細の見出しと「+」の一覧も同じ印。
+  行の右クリックの「アイコンと色を変更…」で設定画面のプロジェクトタブの該当プロジェクトを開く）・名前・パスの末尾・
   そのプロジェクトで終了していないセッションの件数と、その中でいちばん急ぐ状態（要対応は色の地）。セッションの照合は「GitHub」ボタンと同じ
   （status を問わず全プロジェクトで、cwd がプロジェクトの path と一致か配下・いちばん深い path。`ProjectMatcher`。外部セッションも登録済みの path の配下なら数える）。
   名前の右に、確認の日を過ぎてまだ開いていないリンクがあれば小さな黄色の点（要対応のバッジとは別。下の「リンク」）。
   検索欄は名前とパスで絞る（空白区切りで AND）。右クリックで「Claude Code を起動」「Finder で表示」。組み立て・並び・検索・件数と状態の集計は
   `Sources/MonitorKit/Projects/ProjectDirectories.swift`（テストあり）、行は `Views/RoomList/DirectoryRow.swift`。
-  最上部（検索欄の下）に固定の行「リンク」（右に確認が必要なリンクの件数。検索で消えない）があり、押すと中央に全プロジェクト横断のリンク一覧を出す
-  （`ChatCenter.links`・`Views/Links/LinkOverviewView.swift`）: 種類の絞り込みと「確認が必要なものだけ」、プロジェクトごとの節に各リンクの行
-  （確認のバッジ・種類・名前・URL・メモ・前回・ピン）。押すとブラウザで開いて最終確認日を記録する。編集はしない（「詳細を開く」で詳細へ）。
-  組み立ては `Sources/MonitorKit/Projects/LinkOverview.swift`（テストあり）。
+  最上部（検索欄の下）に固定の行「リンク」（SF Symbol `link`・右に確認が必要なリンクの件数。検索で消えない。`LinkOverviewListRow`）があり、押すと中央に全プロジェクト横断のリンク一覧を出す
+  （`ChatCenter.links`・`Views/Links/LinkOverviewView.swift`）: 種類の絞り込み（すべて / 請求 / ダッシュボード / ストア / ドキュメント / その他）と「確認が必要なものだけ」、
+  プロジェクトごとの節（status を問わず・開けるリンクのあるものだけ・設定の順。名前・パスの末尾・「詳細を開く」）に各リンクの行
+  （確認のバッジ・種類・名前・URL（中略）・前回・ピンの印・2 行目にメモと「毎月 N 日に確認」）。押すとブラウザで開いて最終確認日を記録する。編集はしない（「詳細を開く」で詳細へ）。
+  組み立て（節・絞り込み・確認が必要な数）は `Sources/MonitorKit/Projects/LinkOverview.swift`（テストあり）。
   - 行を押すと中央（会話の場所）にプロジェクトの**詳細**を出す（`Views/Directory/DirectoryDetailView.swift`）。見出しは名前・状態・パスと、
-    アイコンだけのボタン「Claude Code を起動」（動いているルームがあれば「ルームへ移る」。「+」と同じ起動経路）・「VS Code」・「Finder」・
-    「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
-    本文は概要（フルパス・状態・メモ）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンクの一覧（押すとブラウザで開き最終確認日を記録する。各行にピンの切り替え・メモ・「毎月 N 日に確認」・「前回: M/D」（未記録は「未確認」）・確認の日を過ぎてまだ開いていなければ「確認」のバッジ。追加・編集のポップオーバーにメモ・毎月の確認の日・ピンの欄がある）、
+    アイコンだけのボタン「Claude Code を起動」（動いているルームがあれば「ルームへ移る」。「+」と同じ起動経路・`ChatModel.launch`）・「VS Code」・「Finder」・
+    「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「Xcode」「閉じる」（プロジェクトの path の配下に
+    `.xcworkspace` / `.xcodeproj` がある時だけ。会話の見出しと同じ処理で、検出の結果は cwd ごと、閉じる処理中の印は押した先（ルーム / プロジェクト）ごとに `EditorLauncher` が持つ）・
+    「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
+    本文は概要（フルパス・状態・メモ）、サイト（下記）、画像（下記）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンク（下記）、
     そのプロジェクトのスレッド（ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）。
-    本文は中央の欄の幅いっぱいに使う（文章の節は読みやすいよう 900px まで、サイトのプレビューは欄いっぱい）。
+    本文は中央の欄の幅いっぱいに使う（文章の節は読みやすいよう 900px まで、サイトのプレビューと画像は欄いっぱい）。
+  - **リンク**（詳細の節）: 設定の `links` を全部、種類のアイコン・名前・URL（中略）の行で出す。開けるものは押すとブラウザで開き（開けた時だけ最終確認日を記録）、
+    開けない形・名前の重複は理由付きで薄く出す。各行の右にピン（`pin` / `pin.fill`。押すと `pinned` を切り替え。付いている間は常に見せる）と
+    「前回: M/D」（未記録は「未確認」）、2 行目にメモと「毎月 N 日に確認」、確認の日を過ぎてまだ開いていなければ先頭に小さな黄色のバッジ「確認」（`LinkDueBadge`）。
+    ホバーで「編集」「上へ」「下へ」「削除」（削除は確認なし・並べ替えは上下だけ）、節の下に「+ 追加」。
+    - 追加・編集はポップオーバー（名前・URL・種類の Picker・メモ（1 行）・「毎月」のトグルと日（1〜31 の Stepper）・ピンのトグル・問題の一覧・「キャンセル」「保存」）。
+      検証は設定画面と同じ（名前必須・http / https で host あり・同じ名前は不可・確認の日は 1〜31）で、問題がある間は保存できない。編集で URL を変えた時は最終確認日を新しい URL へ写す。
+    - 「+ 追加」はクリップボードに http / https のアドレスがあれば URL 欄の初期値にし、種類を `ProjectLinkKind.suggest(for:)`（host とパスを小文字で見て、
+      `billing` / `invoice` / `usage` / `payment` / `subscription` → 請求、App Store Connect・apps.apple.com・play.google.com → ストア、`docs.` 始まりか `/docs` 始まり → ドキュメント、
+      `console.` / `dashboard.` / `app.` / `platform.` 等の始まりか vercel.com・github.com 等 → ダッシュボード、それ以外はその他）、名前を `ProjectLinks.suggestedName(for:)`
+      （host の `www.` と TLD を除いた主要部分を先頭大文字に。`co.jp` 等は末尾 3 ラベルで見る）で提案する。URL 欄を書き換えた時も種類・名前を触っていなければ提案し直し、
+      種類に触れていなければ元の `kind`（無ければ無いまま）を保つ。
+    - クエリの無いアドレスは、加えてページの `<title>` をバックグラウンドで取りに行き（`LinkTitleFetcher`。http / https・3 秒・資格情報なし・本文は先頭 256KB で `</title>` が見えたらそこまで・
+      時間切れでも読めた分から抜く。読み取りは `Sources/MonitorKit/Projects/LinkTitle.swift` で、末尾の切れた UTF-8 を落とし `<meta charset>` の Shift_JIS / EUC-JP も読む。テストあり）、
+      利用者が名前を触っていない時だけ置き換える（閉じたら捨てる・取れなくても何も出さない）。クエリ付きのアドレスは一度きりのログイン用リンク等を使い切らないよう自動では取りに行かず、
+      名前欄の横のボタンで頼んだ時だけ取って名前に入れる。
+    - 保存は `SettingsStore.updateProject` で `links` 全体を 1 回で置き換えて即時に書く（設定画面を開いていても揃う）。編集・並べ替え・削除は開いた時の行と今の行が一致する時だけで、
+      設定画面の溜めていた変更が先に当たって行がずれた時は保存せずその旨を出す。部品は `Views/Directory/ProjectLinkEditor.swift`。
+  - **画像**（詳細の節）: プロジェクト配下の画像（png / jpg / jpeg / gif / webp / heic / heif / svg / tiff / bmp / ico）をフォルダ（相対パス・件数）ごとにサムネイルのグリッドで並べる
+    （`Views/Directory/ProjectImagesSection.swift`）。iPhone 側には出していない。
+    - 隠しフォルダ・隠しファイルと `node_modules`・`.next`・`out`・`build`・`dist`・`Pods`・`DerivedData`・`vendor`・`.build`・`.swiftpm`（`SiteLocator.skipped` + 2 つ。大文字小文字は区別しない）の中は見ず、
+      フォルダのシンボリックリンクは辿らず、ファイルのリンクは実体がプロジェクトの中にある時だけ数える。深さ 8・画像 2,000 件・フォルダ 20,000 個で打ち切る
+      （浅いフォルダから画面と同じ自然順で集めるので、超えた時は深い分・後ろの分が落ちる旨を出す）。
+    - `.xcassets` の中（imageset / appiconset）はその `.xcassets` で 1 グループ。グループは浅い順 → 名前順、中は名前順（数字は自然順）。
+    - 枠はサムネイル・ファイル名（中略）・「W×H・サイズ」（寸法は絵と一緒に枠ごとに持つ。HEIC は主画像・ICO はいちばん大きいフレーム。SVG 等 ImageIO で読めないものは寸法なしで NSImage で描く）。
+      クリックで拡大のシート（Esc で閉じる・Finder で表示）、右クリックで「Finder で表示」「パスをコピー」。
+    - 走査とサムネイルの縮小はバックグラウンドで行い（デコードは同時 4 枚まで。`DecodeGate`。枠が画面から消えれば待たずにやめる）、縮小した絵は NSCache に持つ（更新時刻をキーに含めるので再読み込みで新しい絵になる）。
+      表示された枠だけ読み（`LazyVGrid`）、「再読み込み」で走査し直し、別のプロジェクトへ移れば持ち越さない（`.id(project.id)`）。ファイルの監視（自動更新）はしない。
+    - 節は畳める（UserDefaults `directory.images.collapsed`・既定は開く。畳んでいる間は走査せず、開いた時に初めて走査する。畳めば走査中のものは取りやめる）。グループも畳める（画面の間だけ）。
+      画像が無ければ「画像なし」。
+    - 走査とグループ化は `Sources/MonitorKit/Projects/ProjectImages.swift`（テストあり）、ストアは `Chat/Model/ProjectImageStore.swift`。
   - **見出しのボタンが入りきらない時**（会話の見出しも同じ）: 名前とパスは省略表示（最小 140px）まで縮め、それでも入らなければ優先度の低いボタンから
     「…」（`ellipsis.circle`。ホバーで「ほかの操作」と回したボタンの名前）のメニューにまとめる。メニューの項目は同じ動作を呼ぶ
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
@@ -526,11 +584,11 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
       高さの上限は欄の幅から決める（その幅で横いっぱいに収まる高さ）。ただし詳細のスクロール欄の見えている高さの 8 割を超えない（最小 320px は保つ。`SiteViewport.heightLimit`。テストあり）。
     - 見出しの行（「サイト」・見る元 / 幅の切り替え・再読み込み・ブラウザで開く）は 1 行に入らなければ 2 段に折り返す（見る元の名前は省略表示）。
     - 再読み込み（場所と更新時刻も確かめ直す）・ブラウザで開く（今開いているページ。http / https だけ）・書き出しの更新時刻（`out/index.html`）。
-      `out/` が無ければ「`npm run build` で書き出すと見られます」の案内。
+      `out/` が無ければ「`npm run build` で書き出すと見られます」の案内。書き出しがあって配信を開けない時はその旨と理由を出し、「再読み込み」で開き直す。
     - **開発サーバー**（見る元の 1 つ）: ▶ を押した時だけ、サイトの場所で `npm run dev` を起動する（`package.json` に `dev` スクリプトがある時だけ。
       無ければ理由を出してボタンを出さない）。起動は claude と同じく `/bin/zsh -lic` のログインシェルで PATH（nvm 等）を得て、
       `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; exec npm run dev`。子の環境からも API キーと Claude Code の子セッション印を除き（`ChildEnvironment`。claude の起動と共通）、
-      `BROWSER=none`・`NO_COLOR=1` を足す。stdin は `/dev/null`、stdout / stderr は 1 本にまとめて読む。**新しいプロセスグループ**（`posix_spawn` の `SETPGROUP`）で起動し、
+      `BROWSER=none`・`NO_COLOR=1` を足す。stdin は `/dev/null`、stdout / stderr は 1 本にまとめて読む。**新しいプロセスグループ**（`posix_spawn` の `SETPGROUP`。`zsh -lic` でもシェル・npm・node が同じグループにそろうのを実地で確認済み）で起動し、
       止める時はグループごと SIGTERM → 3 秒待って残れば SIGKILL（`DevServerStopPlan`）。先頭のプロセスはグループが止まり切るまで刈り取らず、
       送る前に今も自分の子か（`waitid(WNOWAIT)`）を確かめる（番号の使い回しで別のプロセスに送らないため。グループの一覧を `sysctl` で取れない時は、先頭が生きていれば残っているとみなして手順を続ける）。
       **開発サーバーはルームではなくプロジェクト（サイトのフォルダ）に付く**ので、ルームを閉じても止めない。止めるのは停止ボタン・アプリの終了
@@ -556,13 +614,13 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     `~/Library/Caches/claude-deck/site-thumbs/`（0700 / 0600。名前はサイトと `out/index.html` の更新時刻から）に置く。更新時刻が変わった時だけ撮り直し、
     同じサイトの古いものは消す。撮るのは 1 つずつ。書き出しが無ければ出さない。撮れなかった書き出しは（更新時刻ごとに）撮り直さず、詳細の「再読み込み」からは間引き（30 秒）と
     その記録を飛ばして撮り直す。設定からプロジェクトを消すと、そのサムネイル（画面の分と保存した画像）を片付ける。
-  - 中央の出し分けは `ChatModel.center`（ルームを選べば会話、ディレクトリを選べば詳細）。詳細を出している間も選択中のルームは残し、
+  - 中央の出し分けは `ChatModel.center`（ルームを選べば会話、ディレクトリを選べば詳細、「リンク」の固定行を押せば横断のリンク一覧 `.links`）。詳細・リンク一覧を出している間も選択中のルームは残し、
     ステージパネルはそのルーム（無ければ空のプレースホルダー）のまま。会話を出していない間は既読にしない。設定から外されたプロジェクトの詳細は案内に替える。
 - 各行: ドット絵キャラのアイコン・名前・ブランチ・状態ラベル + 直近の一行・時刻・未読数
   （開いていない間に届いた応答の数）。アプリの外で動いているセッションには「外部」タグ（伝言・引き継ぎは下記「外部セッション」）。
   - キャラはステージの 3D と同じ絵と配色（`packages/DeckCore/Sources/DeckCore/Pixel/PixelCharacter.swift`。マークの大きさ・位置・跳ね幅だけは小さいアイコンで読めるよう変えている）。稼働中=立ち・緑で跳ねる / 権限待ち=立ち・amber で「!」が点滅 / 入力待ち=立ち・青で「?」が点滅 / エラー=うずくまり・赤 / 待機=座り・灰で Zz が浮き沈み / 終了=座り・暗い灰 / 状態不明=座り・灰（マーク無し）
   - SwiftUI の Canvas で整数ポイントのマスを補間なしに塗る。動く状態だけ、画面に出ている間だけ `TimelineView(.periodic)` で 4fps で描き直す（起点を固定時刻にして全行が同じ境目でコマを切り替える）。「動きを減らす」設定では止める。行と見出しでは状態名を隣の文字が読むので、アイコン自体は読み上げない
-  - 会話の見出しのアイコンも同じキャラ。「+」のプロジェクト一覧はセッションを持たないので頭文字アイコンのまま
+  - 会話の見出しのアイコンも同じキャラ（iPhone アプリも同じ絵）。「+」のプロジェクト一覧はセッションを持たないので、ディレクトリと同じプロジェクトの印
 - 上部: 検索（名前・ブランチ・タイトル・直近の一行。空白区切りで AND）と **「+」**（プロジェクト一覧から選んで `claude` を起動 = 新しいルーム。
   一覧の追加・削除・取り込みもここ）。右クリック → 「ルームを閉じる（claude を終了）」。
 - 検索欄の下: 監視の開始中はその旨、フックの受け口（:8766）を開けない時（別のプロセスが使用中）はフックが届かない旨を出す。
@@ -608,7 +666,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 ### 会話（中央）
 
 - 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」。表示の切替は無く、どのルームも常にチャット。
-  「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層）。「閉じる」は確認ダイアログの後、
+  見出しのボタンはアイコンだけで、ホバーで名前と開く先を出す。「VS Code」は常に出す。
+  「Xcode」「閉じる」はプロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリを含む）に `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層。
+  SPM だけのもの（claude-deck 自身等）では出さない）。「Xcode」は `NSWorkspace.open` で Xcode の GUI を開く（実行＝Cmd+R はユーザー操作。ワンクリックでのシミュレータ実行（`xcodebuild` / `simctl`）は将来）。「閉じる」は確認ダイアログの後、
   AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
   （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。ホスト中のルームでも使える。
   結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。
@@ -618,18 +678,21 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   ボードは owner の種類を `https://api.github.com/users/<owner>` の `type` で引いて `users/` か `orgs/` の URL にする
   （認証なし・3 秒で諦める・owner ごとにアプリが動いている間だけ覚える・取れなければ `users/`）。判定と URL は `Sources/MonitorKit/Projects/GitHubLinks.swift`。
   「リンク」は、同じ照合で紐づいたプロジェクトに `links`（LP 等の名前と URL・種類）がある時だけ「GitHub」の隣に出す。1 つならそのまま既定のブラウザで開き、
-  複数なら名前のメニュー（種類のアイコン付き。種類が 2 つ以上なら種類ごとに区切る）で選ぶ。開く直前にも URL を確かめ、http / https で host のあるものだけ開く（`javascript:` や `file:` は開かず理由を出す）。
-  設定で不正なリンク（名前が空・URL の形）はボタンに含めない。設定の変更はすぐ映る。判定は `Sources/MonitorKit/Projects/ProjectLinks.swift`。
-  `pinned` のリンクは種類のアイコンの単独ボタンとして「リンク」の左に出す（設定の順に最大 3 つ。4 つ目以降はメニューの中だけ。ホバーで名前と URL）。
-  入りきらない時は「リンク」と同じ優先度の段でピンから先に（右から）「…」へ回り、次に「リンク」が回る（`HeaderOverflow` の subpriority。テストあり）。
-  確認の日を過ぎてまだ開いていないピンはアイコンの右上に小さな黄色の点。どの経路で開いても `EditorLauncher.openLink` を通り、開けた時だけ最終確認日を記録する（下の「設定（settings.json）」の `link-visits.json`）。
+  複数なら名前のメニュー（種類のアイコン付き。種類が 2 つ以上なら種類ごとに `Section` で区切る。`ProjectLinks.grouped`・`ProjectLinkMenuItems`。会話と詳細の見出しで同じ部品）で選ぶ。
+  開く直前にも URL を確かめ、http / https で host のあるものだけ開く（`javascript:`・`file:`・`user:pass@` 付きは開かず理由を出す）。
+  設定で不正なリンク（名前が空・URL の形）はボタンに含めず、同じ名前（空白を除く）が重なれば先のものだけ出す。設定の変更はすぐ映る。判定は `Sources/MonitorKit/Projects/ProjectLinks.swift`（テストあり）。
+  種類（`ProjectLinkKind`）のアイコンは 請求 `creditcard` / ダッシュボード `gauge` / ストア `storefront` / ドキュメント `book` / その他 `link`。リンクは iPhone 側（DeckCore / Remote API）には出していない。
+  `pinned` のリンクは種類のアイコンの単独ボタンとして「リンク」の左に出す（設定の順に最大 3 つ。`ProjectLinks.pinned`・`ProjectLinks.pinLimit`。4 つ目以降はメニューの中だけ。ホバーで名前と URL。`id` は `pin:<url>`）。
+  入りきらない時は「リンク」と同じ優先度の段でピンから先に（同じ段の中では `HeaderAction.subpriority` が低いものから・ピン同士は右から）「…」へ回り、次に「リンク」が回る（`HeaderOverflow` の `subpriorities`。テストあり）。
+  確認の日を過ぎてまだ開いていないピンはアイコンの右上に小さな黄色の点（`HeaderButtonLabel.dot`）。どの経路で開いても `EditorLauncher.openLink` を通り、開けた時だけ最終確認日を記録する（下の「設定（settings.json）」の `link-visits.json`）。
   ルームを移っても各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
+  選択中のルームが一覧から消えても別のルームへ自動では移らない（自動で選ぶのは未選択の時だけ）。
 - 端末ビュー（`ClaudeTerminalView`）は画面に載せない。PTY の受信は main キューで端末バッファに流れ、状態・権限プロンプト・選択待ち・上限表示は
   0.3 秒ごとのタイマーと受信時にバッファ末尾の `rows` 行を読むので、ビュー階層に無くても動く。桁数は作成時の 960×640pt のまま固定。
 - 会話はアプリ内の `TranscriptStore` から組み立てる。ルームを開いた時に、直近に開いた 4 ルームを対象に追記の購読を張り直してから
   `fetchTranscript` で全件、以降は追記を id で重複除去して足す（それより前に開いたルームの会話は手放し、開き直した時に取り直す）。
   監視を始め直した（`connectionEpoch` の増加）後は**全件を取り直して置き換える**。最初の発話前でログが無い時は空のまま追記を待つ。
-- 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し。Claude の応答は Markdown を描く（見出し・表・箇条書き / 番号付きリスト（入れ子）・引用・区切り線・コードブロック、インラインの太字・斜体・コード・リンク）。リンクは http / https だけ開き、`file://` やカスタムスキームは開かない（会話ビュー全体で判定は `ChatMarkdown.isOpenableLink`）。コードブロック内のタブはそのまま保つ。表は寄せ指定に従い、列幅は中身に合わせて長いセルは折り返し、吹き出しより広い時だけ横スクロール。解析は自前（`ChatMarkdown`・外部ライブラリなし）で本文ごとにキャッシュし、描画は `Chat/MarkdownView.swift`。自分の発話と伝言はインライン装飾のみ。
+- 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し。Claude の応答は Markdown を描く（見出し・表・箇条書き / 番号付きリスト（入れ子）・引用・区切り線・コードブロック、インラインの太字・斜体・コード・リンク）。リンクは http / https だけ開き、`file://` やカスタムスキームは開かない（会話ビュー全体で判定は `ChatMarkdown.isOpenableLink`）。コードブロック内のタブはそのまま保つ。表は寄せ指定に従い、列幅は中身に合わせて長いセルは折り返し、吹き出しより広い時だけ横スクロール。解析は自前（`ChatMarkdown`・外部ライブラリなし）で本文ごとにキャッシュし、描画は `Chat/Views/MarkdownView.swift`。自分の発話と伝言はインライン装飾のみ。
   ツール呼び出しは直前の発話の下に「ツール N件 ▸」の 1 行に畳み、開くとツール名と対象を並べる。実行中のものは緑で強調。
   新着で末尾へ自動スクロールし、上に遡っている間は止める（macOS 15 以降）。
 - 作業中に送った指示は Claude Code 側でキューに入り、ログに「ユーザーの発話」として残らないため吹き出しには出ない（応答には反映される）。
@@ -652,14 +715,30 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   送信は止めない（返答本文が「Do you want to proceed …?」で終わるだけの画面で送れなくならないように）。入力欄は同じ条件で無効にし、
   権限なら「権限の確認に答えると送れます」、それ以外は「上の選択肢に答えると送れます」と出す。
   権限プロンプトには権限カード、plan の承認・AskUserQuestion・trust 確認などのメニューには選択肢カードで答える（下記）。
+- **入力欄の上に重なるダイアログ**: TUI v2.1.288 の fullscreen では申し出（「Teach auto mode about your environment?」等）のダイアログが入力欄の真上に重なって出る
+  （入力欄の ❯ と罫線は下に残る）。入力欄の上の罫線の直上（空行を除き 3 行以内）に案内行があれば、その上の罫線までを重ね表示のメニューとして送信を止める
+  （会話中の案内行風の文字を拾わないよう、罫線に接し、上端の罫線があり、その間に `⏺` / `✻` の行が無い時だけ）。案内行は行頭の文言か、「·」で区切った各部分が
+  キーの案内（`↑/↓ to navigate` 等）で `Enter to …` と `Esc to …` を含む行。
+- **セッションファイルの待ち**: 監視と同じ `~/.claude/sessions/<pid>.json` が `status:"waiting"` で `waitingFor` がダイアログ系（`dialog open`・`sandbox request`・
+  `goal proposal`。v2.1.288 のバイナリで確認）の間も送らず、Esc だけのカード（「ダイアログ」）を出す（`SessionWaiting`）。ただし `waitingFor` は閉じた後も古いまま
+  残りうるので、通常の空の入力欄（空で、最後の `⏺` / `✻` の行との間に罫線が無い。`InputBox.isPlainEmpty`）が見えている時は、`statusUpdatedAt` が端末の最後の出力より後
+  （1 秒の幅）の時だけ信じる。
 - 判定は**貼り付けの前**と、**Enter の直前**の 2 回。貼り付けた後に止めた場合は本文が Claude Code の入力欄に残る
   （安全に消すキーが無い。Esc はメニューの取り消しになる）ので、その旨を知らせ、チャット欄の下書きには戻さない（送り直しで二重にしない）。
   取りやめが起きたセッションでは、次の送信の前に端末の入力欄（罫線の間の ❯ 行）が空かを画面から確かめ、残っていれば送らずに
   「端末側の入力欄に前回の本文が残っているようです」と知らせる（前回の本文にくっつけないため）。警告は 1 回だけで、
   もう一度送ると送れる（未知の薄字表示を本文と誤認しても、チャットから送れないまま固まらないため）。
   空欄の時に薄字で出る例文（`Try "…"`）は空とみなす。
+- **貼り付けが入ったかの確認**: 貼り付けの後は端末の入力欄が空でない・貼る前から変わったことを確かめてから Enter を送る（長文は `[Pasted text #1 …]` に畳まれるので
+  一致では見ない。`PasteCheck`）。約 1 秒（長文ほど延ばし最大 4 秒）待っても入らなければ Enter を送らず、本文と添付を入力欄に戻して「端末の入力欄に入りませんでした」と出す
+  （入力欄が読めない時と、本文が例文と同じ `Try "…"` の形の 1 行の時は従来どおり送る）。この後は、遅れて入った本文と戻した本文が二重にならないよう、
+  入力欄が貼る前と同じか空と確かめられるまで何度でも送らない（`LeftoverCheck`。上の「1 回だけの警告」とは別）。
 - 判定は SwiftTerm の表示位置 `yDisp` ではなく、バッファ末尾の `rows` 行（= 実画面）を読む。
 - 本文からは改行・タブ以外の制御文字（C0・DEL・C1）を落としてから送る（ESC や Ctrl-C が端末操作として効かないように）。
+- 書きかけはルームごとに `ChatOutbox.drafts` に持つ。日本語の変換中（marked text）は確定前の文字が下書きに入らないため、再描画で入力欄へ書き戻すのは
+  送信後の空など本当の外部変更の時だけ（`Sources/MonitorKit/Chat/ComposerSync.swift`・テストあり）。変換中は送信ボタンも効かない。
+  空欄の案内（プレースホルダー）は下書きではなく端末ビュー（`SubmitTextView`）が表示内容で出し分けて自前で描くので、変換中も確定前の文字に重ならず、
+  取り消して空に戻れば出直す（`Sources/MonitorKit/Chat/ComposerPlaceholder.swift`・テストあり）。
 
 #### 添付（画像・ファイル）
 
@@ -693,13 +772,14 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - 外部セッション（伝言）: 画像も含めて本文の末尾にパスの一覧を添える（受け手が Read で開く）。点線の吹き出しにも一覧と、添えた画像（手元の一時ファイル）が出る。
 - 会話の吹き出し: transcript の発話の `images`（監視の画像の目録）があれば、吹き出しの上に画像のサムネイル（最大 3 列・角丸・1 枚なら 200pt 角、
   複数なら 120pt 角。枠の大きさは枚数だけで決め、読み込みの前後でスクロール位置を揺らさない）を出し、本文の `[画像]` の印はその枚数ぶん外す。
-  クリックで拡大表示（シート・Esc で閉じる）。画像は表示された時にだけ `GET /api/sessions/:id/transcript/:itemId/images/:n` で取り、
+  クリックで拡大表示（シート・Esc で閉じる）。画像は表示された時にだけ `MonitorStore.imageSource`（行の位置を覚えて読み直す）で取り出し、
   縮小（長辺 480px）してから `NSCache`（300 枚・128MB）に持つ。同じ画像の同時の読み込みは 1 回にまとめる。VS Code 等から送った画像付きの発話も同じく出る。
   アプリから画像を添えて送った発話は、transcript に載るまでの間も端末へ画像として貼った分（手元の一時ファイル）を薄い吹き出しで出す
   （`ChatOutbox.sentImages`）。パスとして本文に回った画像（貼り付けモードでない端末・貼れない形のパス）だけなら記録に画像が付かないので出さない。
   送信後の本人の発話で、画像の枚数と本文（`[Image #N]`・`[画像]` の印と空白を除いたもの）が一致するものが transcript に載ったら消す
   （1 件の発話は 1 通にだけ対応・時計のずれ 5 秒まで許す。ターミナルから直接送った別の画像付き発話では消さない）。
   Enter まで届かなかった送信は出さず、3 分経っても載らなければ（キューの取り下げ・捨てられた Enter 等）下げる。
+  画面は `Chat/Views/ChatImageViews.swift`、突き合わせは `packages/DeckCore/Sources/DeckCore/Chat/ChatImages.swift`（テストあり）。
   ファイルは本文のパス一覧がそのまま出る。TUI の Ctrl+V（クリップボードを osascript / Bun で読む）は使わない（アプリがクリップボードを介さずに済むため）。
 
 ### 権限カード
@@ -765,7 +845,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   **直近 5 件だけ**残す（`MenuScreenLog`。会話の本文が入りうるので 0600・一時ファイルからの置き換え・外へは送らない）。
 - 文字入力の行をまたがないと届かない選択肢では、通り抜ける途中で画面が選択肢として読めなくなる・選択肢の並びが変わって見えると、
   Enter を押さずに止まる旨をカードに出す。
-- 中身を読み取れないメニューは、その旨と「キャンセル（Esc）」だけのカードを出す。押した時のカードと今の画面が同じ「読めないメニュー」
+- 入力欄の上に重なったメニュー（上の「入力欄の上に重なるダイアログ」）はその範囲だけを読み、番号付きの選択肢が読めれば通常のカードにする。
+- 中身を読み取れないメニュー（`/auto-mode-setup` のウィザード等）は、その旨と「キャンセル（Esc）」だけのカードを出す。押した時のカードと今の画面が同じ「読めないメニュー」
   （メニューの範囲の行の写し `UnreadableMenu`）の時だけ送る。Esc が終了になるメニューでは同じく確認を挟む。
 - 押してから結果が出るまではカードのボタンを無効にして二度押しを防ぐ（端末ビューが途中で無くなっても送信中の印は外す）。外部セッションは対象外。
 
@@ -922,6 +1003,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 **設定画面**（メニュー「claude-deck → 設定…」⌘,。ウィンドウは 1 つ）のタブ:
 - **プロジェクト**: 一覧（ドラッグ・「上へ / 下へ」で並べ替え）、「+」でフォルダを追加、「−」/右クリックで削除（確認あり）、名前・状態・メモの編集。
+  「アイコンと色」の節で今の印のプレビューと、色のスウォッチ（11 色 + 「自動」）・アイコンのグリッド（`ProjectBadge.symbolChoices` の 40 個。既定の `folder` を押すか
+  「既定に戻す」で `icon` を消す）から選ぶと即時に保存する（`ProjectBadgeEditor`）。
   「リンク」の節で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
   全行が正しい間だけ保存し、途中の行がある間はファイルは前の内容のまま（行ごとに理由を赤で出す）。名前と URL が両方空の行は画面に残すだけで保存しない。
   開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
@@ -929,7 +1012,16 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   正しい相対パスの間だけ保存し、検出の結果（指定 / 自動で検出・書き出しの有無）を出す。
 - **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号と、リポジトリに紐づかないボードの追加・編集・削除。
   owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
-- **iPhone 連携**: 下記「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）。
+- **iPhone 連携**: 上の「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）と、「iPhone への通知」の入り切り・状態。
+- **キャラクター**: 2D のドット絵を全状態ぶんルーム一覧と同じ動きで並べ、3D はステージと同じ組み立てで見本のセッションを、状態・サブエージェントの職業の組・持ち物を選んで描く。
+  見るだけで、タブが見えている間だけ動き、「動きを減らす」設定では止まる。見本は `Sources/MonitorKit/Stage/CharacterGallery.swift`（テストあり）。
+- **起動と終了**: 「起動時に前回のセッションを再開する」「作業中だったものに続きを頼む」（上の「終了と次の起動」）。
+- **外観**: カラーテーマ「ナイト」（既定・従来の暗い配色）/「ライト」を選ぶ。UserDefaults に保存し、アプリの外観（`NSApp.appearance`）を差し替えて再起動なしで全画面に映す。
+  システムの外観には追従しない。ライトは面が白で、段差はサイドバー・入力欄・コード面のごく薄いグレー、区切りは薄いグレーの線だけ。
+  色はパステルの赤・青・緑・黄の 4 色だけを役割で使い分ける（青＝選択行・自分の吹き出し・切り替えバーの選択・入力待ち・リンク、緑＝稼働中・許可 / 送信・未読、
+  黄＝権限待ち・権限 / 選択肢カード・ツール、赤＝エラー・拒否 / キャンセル。塗りは淡いパステル、文字に使う状態色は同じ色相の濃い版）。
+  プロジェクトの印の色だけは利用者が選ぶ 11 色相で、ライトではナイトと同じ色相の濃い版（`ThemePalette.avatarPalette`）。Claude の吹き出しは白地に薄いグレーの枠。
+  ステージの床・段・霧も白いパネルに馴染むグレー。色の組は `Sources/MonitorKit/Theme/DeckTheme.swift`・ステージの背景側は `StageBackdrop`（テストあり）。
 - **書き出し・読み込み**: settings.json と同じ形で書き出す。読み込みは中身から形式を判断して、足りないものだけを足す（既にあるものは上書きしない）。
   - registry.tsv 形式（name / path / status / note。`#` の行と空行は無視）: 同じパスのプロジェクトは足さない。
   - github-projects.tsv 形式（name / owner / number / repo / url）: repo が `-`（または空）ならボードへ（owner + 番号が同じものは足さない）。
@@ -947,7 +1039,11 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 cd /Users/shinjo/project/ai-manager/mac
 swift build          # ビルド
 swift run            # 起動（ウィンドウが開く）
+swift test           # テスト
 ```
+
+- Swift 6.3 / Xcode 26.5 で確認済み。Swift 6.4 / Xcode 27 では `swift build --build-system native` / `swift test --build-system native` で確認している
+  （Metal Toolchain が無い環境では通常ビルドが SwiftTerm のシェーダーで失敗するため。下の「`.app` として起動する」）。
 
 ### 署名・識別子（`config/`）
 
@@ -1000,8 +1096,8 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - `.app` は Apple Development / ad-hoc 署名のローカル起動のみ。配布時は Developer ID 署名・公証を検討。
 - iCloud 経由の通知は実機（登録済みのコンテナ・プロファイル）では未確認。
 - 上限到達の画面表示は実際の上限で出たものを未確認（文言はバイナリから、`⎿` の位置は TUI の描画コードから推定）。表示の形が違えば補助経路だけ効かない（主経路の残量判定は効く）。
-- 追加時の表示名はフォルダ名固定（リネーム UI は未実装）。
-- ホスト中のルームはアプリを終了すると claude ごと終わる（ルームの保存・復元は未実装）。
+- ホスト中のルームはアプリを終了すると claude ごと終わる（次の起動で `--resume` で再開するが、作業は一度止まる。アプリを閉じても動かし続ける常駐プロセスの設計は `docs/pty-daemon.md`・未実装）。
+- アプリが強制終了・クラッシュした時は、サイトの開発サーバー（`npm run dev`）が残りうる。
 - 権限プロンプト・選択メニューの読み取りは端末画面の文言（`Do you want to …?` と `1. Yes`、`❯ n.` の選択肢、`Enter to confirm` 等の操作案内）に依る。
   **Claude Code の TUI の更新で判定を見直す必要がある**: `PTYInput.swift` の `InputBlock` / `ChoiceMenu` / `PermissionPrompt` / `InputBox`、`MenuPrompt.swift`
   （v2.1.286 の trust 確認・AskUserQuestion・plan 承認・入力欄の例文と NBSP で確認）。文言・配置（罫線と ❯ の位置関係、操作案内の有無）に依存している。
