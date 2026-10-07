@@ -5,6 +5,8 @@ import MonitorKit
 struct DirectoryRow: View, Equatable {
     let directory: ProjectDirectory
     let selected: Bool
+    /// 確認の日を過ぎてまだ開いていないリンクがあるか（要対応のバッジとは別の控えめな印）。
+    let dueLinks: Bool
 
     var body: some View {
         let project = directory.project
@@ -19,6 +21,13 @@ struct DirectoryRow: View, Equatable {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(ChatTheme.text)
                         .lineLimit(1)
+                    if dueLinks {
+                        Circle()
+                            .fill(ChatTheme.permission)
+                            .frame(width: 6, height: 6)
+                            .help("確認が必要なリンクがあります")
+                            .accessibilityHidden(true)
+                    }
                     Spacer(minLength: 4)
                     if directory.liveCount > 0 {
                         Text("\(directory.liveCount)")
@@ -53,6 +62,7 @@ struct DirectoryRow: View, Equatable {
         var parts = [directory.project.name, directory.project.path]
         if !directory.isActive { parts.append(directory.project.status.label) }
         if let status = directory.urgentStatus { parts.append("\(ChatTheme.label(for: status))・\(directory.liveCount) 件") }
+        if dueLinks { parts.append("確認が必要なリンクあり") }
         return parts.joined(separator: "、")
     }
 }

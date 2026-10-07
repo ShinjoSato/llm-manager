@@ -106,8 +106,19 @@ final class EditorLauncher {
         return ProjectLinks.openable(project.links)
     }
 
-    /// 設定が外で書き換わっていても開く直前に URL を確かめる。
-    func openLink(_ link: ProjectLink, for target: EditorTarget) {
+    /// 見出しに単独のボタンで出すピン留めのリンク（描画の中で毎回引く）。
+    func pinnedLinks(for target: EditorTarget) -> [ProjectLink] {
+        guard let project = ProjectMatcher.project(for: target.cwd, in: SettingsStore.shared.projects) else { return [] }
+        return ProjectLinks.pinned(project.links)
+    }
+
+    /// 紐づいたプロジェクトの id（最終確認日の記録に使う）。
+    func projectID(for target: EditorTarget) -> UUID? {
+        ProjectMatcher.project(for: target.cwd, in: SettingsStore.shared.projects)?.id
+    }
+
+    /// 設定が外で書き換わっていても開く直前に URL を確かめる。開けた時だけ最終確認日を記録する（どの経路から開いてもここを通る）。
+    func openLink(_ link: ProjectLink, for target: EditorTarget, projectID: UUID? = nil) {
         guard let url = ProjectLinks.url(from: link.url) else {
             showNote(.failed("「\(link.name)」の URL が開ける形ではありません（http / https のアドレスにしてください）"), for: target.key)
             return
@@ -115,6 +126,9 @@ final class EditorLauncher {
         guard NSWorkspace.shared.open(url) else {
             showNote(.failed("ブラウザで開けませんでした: \(url.absoluteString)"), for: target.key)
             return
+        }
+        if let projectID = projectID ?? self.projectID(for: target) {
+            LinkVisitStore.shared.record(projectID: projectID, link: link)
         }
         showNote(.opened, for: target.key)
     }

@@ -85,10 +85,13 @@ struct DirectoryDetailView: View {
         let target = project.editorTarget
         return DetailSection(title: "リンク") {
             if links.isEmpty { emptyText("なし") }
+            if let error = LinkVisitStore.shared.saveError {
+                Text(error).font(ChatTheme.caption).foregroundStyle(ChatTheme.error)
+            }
             ForEach(Array(links.enumerated()), id: \.offset) { index, link in
                 ProjectLinkRow(projectID: project.id, index: index, count: links.count, link: link,
                                problems: problems.indices.contains(index) ? problems[index] : []) {
-                    model.editors.openLink(link, for: target)
+                    model.editors.openLink(link, for: target, projectID: project.id)
                 }
             }
             ProjectLinkAddButton(projectID: project.id)
@@ -179,7 +182,7 @@ private struct DirectoryDetailHeader: View {
         .zIndex(1)
     }
 
-    /// priority の小さいものから「…」に隠れる（設定で編集 → 閉じる → Finder → リンク → GitHub → Xcode → VS Code → 起動）。
+    /// priority の小さいものから「…」に隠れる（設定で編集 → 閉じる → Finder → ピン → リンク → GitHub → Xcode → VS Code → 起動）。
     private func actions(editors: EditorLauncher, target: EditorTarget, running: Bool, xcodeProject: URL?) -> [HeaderAction] {
         let project = project
         var actions: [HeaderAction] = [
@@ -194,6 +197,7 @@ private struct DirectoryDetailHeader: View {
                     detail: "Finder で表示: \(project.path)") { editors.revealInFinder(target) },
         ]
         if let github = HeaderAction.github(priority: 5, editors: editors, target: target) { actions.append(github) }
+        actions += HeaderAction.pins(priority: 4, editors: editors, target: target)
         if let links = HeaderAction.links(priority: 4, editors: editors, target: target) { actions.append(links) }
         if let xcodeProject {
             let closing = editors.closingXcode.contains(target.key)

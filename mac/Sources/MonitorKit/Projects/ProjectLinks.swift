@@ -22,6 +22,27 @@ public enum ProjectLinks {
         }
     }
 
+    /// 見出しに単独のボタンで出す数の上限（それより後ろのピンはメニューの中だけ）。
+    public static let pinLimit = 3
+
+    /// 見出しに単独のボタンで出すリンク（開けるもののうちピン留めしたもの。並びは設定の順・`pinLimit` まで）。
+    public static func pinned(_ links: [ProjectLink], limit: Int = pinLimit) -> [ProjectLink] {
+        Array(openable(links).filter(\.isPinned).prefix(max(limit, 0)))
+    }
+
+    /// 保存するメモ（前後の空白を落とし、空なら無し）。
+    public static func noteToSave(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// 「前回: M/D」の表示（未記録は「未確認」）。
+    public static func lastOpenedLabel(_ date: Date?, calendar: Calendar = .current) -> String {
+        guard let date else { return "未確認" }
+        let parts = calendar.dateComponents([.month, .day], from: date)
+        return "前回: \(parts.month ?? 0)/\(parts.day ?? 0)"
+    }
+
     /// 保存する種類。利用者が選んだか提案が入った時はその値、どちらも無ければ元の値（無ければ無いまま。`other` を書き足さない）。
     public static func kindToSave(selected: ProjectLinkKind, touched: Bool, suggested: Bool, original: ProjectLinkKind?) -> ProjectLinkKind? {
         touched || suggested ? selected : original
