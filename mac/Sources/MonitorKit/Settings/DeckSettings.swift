@@ -145,10 +145,61 @@ public struct GitHubLink: Codable, Equatable, Sendable {
 public struct ProjectLink: Codable, Equatable, Sendable {
     public var name: String
     public var url: String
+    /// 種類（無ければ「その他」として扱う）。
+    public var kind: ProjectLinkKind?
 
-    public init(name: String, url: String) {
+    public init(name: String, url: String, kind: ProjectLinkKind? = nil) {
         self.name = name
         self.url = url
+        self.kind = kind
+    }
+
+    /// 画面で使う種類（無ければその他）。
+    public var resolvedKind: ProjectLinkKind { kind ?? .other }
+
+    private enum CodingKeys: String, CodingKey { case name, url, kind }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        url = try c.decode(String.self, forKey: .url)
+        kind = try c.decodeIfPresent(ProjectLinkKind.self, forKey: .kind)
+    }
+
+    /// `kind` は無い時だけ出さない（手で書いたファイルの形を変えないため）。
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(url, forKey: .url)
+        try c.encodeIfPresent(kind, forKey: .kind)
+    }
+}
+
+/// リンクの種類。アイコンで見分け、メニューを区切る。知らない値は「その他」として読む。
+public enum ProjectLinkKind: String, LenientStringEnum, CaseIterable {
+    case billing, dashboard, store, docs, other
+
+    public static let unknownCase = ProjectLinkKind.other
+
+    public var label: String {
+        switch self {
+        case .billing: return "請求"
+        case .dashboard: return "ダッシュボード"
+        case .store: return "ストア"
+        case .docs: return "ドキュメント"
+        case .other: return "その他"
+        }
+    }
+
+    /// SF Symbol の名前。
+    public var symbol: String {
+        switch self {
+        case .billing: return "creditcard"
+        case .dashboard: return "gauge"
+        case .store: return "storefront"
+        case .docs: return "book"
+        case .other: return "link"
+        }
     }
 }
 

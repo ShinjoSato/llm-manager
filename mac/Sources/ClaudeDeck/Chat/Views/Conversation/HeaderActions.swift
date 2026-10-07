@@ -54,13 +54,11 @@ struct HeaderAction: Identifiable {
         guard !links.isEmpty else { return nil }
         let menu: AnyView
         if links.count == 1, let only = links.first {
-            menu = AnyView(HeaderMenuItem(symbol: ProjectLinkButton.symbol, name: "\(ProjectLinkButton.name): \(only.name)",
+            menu = AnyView(HeaderMenuItem(symbol: only.resolvedKind.symbol, name: "\(ProjectLinkButton.name): \(only.name)",
                                           busyStatus: nil) { editors.openLink(only, for: target) })
         } else {
             menu = AnyView(Menu {
-                ForEach(Array(links.enumerated()), id: \.offset) { _, link in
-                    Button(link.name) { editors.openLink(link, for: target) }
-                }
+                ProjectLinkMenuItems(links: links) { editors.openLink($0, for: target) }
             } label: {
                 Label(ProjectLinkButton.name, systemImage: ProjectLinkButton.symbol)
             })

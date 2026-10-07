@@ -78,28 +78,20 @@ struct DirectoryDetailView: View {
         }
     }
 
+    /// 設定の `links` を全部出す（開けないものは理由付きで薄く）。追加・編集・並べ替え・削除はここから設定ファイルに書く。
     private var links: some View {
-        let openable = ProjectLinks.openable(project.links)
+        let links = project.links
+        let problems = SettingsValidation.projectLinkRowProblems(links)
         let target = project.editorTarget
         return DetailSection(title: "リンク") {
-            if openable.isEmpty { emptyText("なし") }
-            ForEach(Array(openable.enumerated()), id: \.offset) { _, link in
-                Button { model.editors.openLink(link, for: target) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "link").font(.system(size: 11)).foregroundStyle(ChatTheme.link)
-                        Text(link.name).font(ChatTheme.body).foregroundStyle(ChatTheme.text).lineLimit(1)
-                        Text(link.url).font(ChatTheme.caption).foregroundStyle(ChatTheme.tertiary)
-                            .lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 0)
-                    }
-                    .contentShape(Rectangle())
+            if links.isEmpty { emptyText("なし") }
+            ForEach(Array(links.enumerated()), id: \.offset) { index, link in
+                ProjectLinkRow(projectID: project.id, index: index, count: links.count, link: link,
+                               problems: problems.indices.contains(index) ? problems[index] : []) {
+                    model.editors.openLink(link, for: target)
                 }
-                .buttonStyle(.plain)
-                .help(ProjectLinks.help(for: link))
             }
-            if project.links.count > openable.count {
-                emptyText("開けない形・名前が重なるリンク \(project.links.count - openable.count) 件は出していません")
-            }
+            ProjectLinkAddButton(projectID: project.id)
         }
     }
 

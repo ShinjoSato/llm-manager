@@ -178,9 +178,7 @@ struct ProjectLinkButton: View {
             HeaderButton(symbol: Self.symbol, name: Self.name, detail: ProjectLinks.help(for: only)) { editors.openLink(only, for: target) }
         } else if links.count > 1 {
             Menu {
-                ForEach(Array(links.enumerated()), id: \.offset) { _, link in
-                    Button(link.name) { editors.openLink(link, for: target) }
-                }
+                ProjectLinkMenuItems(links: links) { editors.openLink($0, for: target) }
             } label: {
                 HeaderButtonLabel(symbol: Self.symbol, busy: false, disabled: false, hovering: hovering, showsMenu: true)
             }
@@ -190,6 +188,29 @@ struct ProjectLinkButton: View {
             .fixedSize()
             .headerButtonHelp(name: Self.name, detail: links.map(ProjectLinks.help(for:)).joined(separator: "\n"), busyStatus: nil)
             .trackHover($hovering)
+        }
+    }
+}
+
+/// 「リンク」のメニューの項目。種類のアイコンを添え、種類が 2 つ以上あれば種類ごとに区切る。
+struct ProjectLinkMenuItems: View {
+    let links: [ProjectLink]
+    let open: (ProjectLink) -> Void
+
+    var body: some View {
+        let groups = ProjectLinks.grouped(links)
+        if groups.count <= 1 {
+            items(links)
+        } else {
+            ForEach(groups, id: \.kind) { group in
+                Section(group.kind.label) { items(group.links) }
+            }
+        }
+    }
+
+    private func items(_ links: [ProjectLink]) -> some View {
+        ForEach(Array(links.enumerated()), id: \.offset) { _, link in
+            Button { open(link) } label: { Label(link.name, systemImage: link.resolvedKind.symbol) }
         }
     }
 }

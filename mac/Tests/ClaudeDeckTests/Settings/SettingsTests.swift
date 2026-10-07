@@ -100,6 +100,36 @@ final class SettingsFileTests: XCTestCase {
         XCTAssertEqual(loaded.projects[0].links, [])
     }
 
+    /// `kind` は無ければ書かず、あれば往復で保たれる。知らない値は「その他」として読む。
+    func testLinkKindRoundTrip() throws {
+        // kind の無い従来の形は、読んで書き戻しても kind が増えない。
+        let legacy = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active","links":[{"name":"LP","url":"https://example.com/lp"}]}]}"#
+        guard case .loaded(let loaded) = SettingsFile.decode(Data(legacy.utf8)) else { return XCTFail() }
+        XCTAssertNil(loaded.projects[0].links[0].kind)
+        XCTAssertEqual(loaded.projects[0].links[0].resolvedKind, .other)
+        try file.save(loaded)
+        let legacyObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        let legacyLinks = try XCTUnwrap((legacyObject["projects"] as? [[String: Any]])?[0]["links"] as? [[String: Any]])
+        XCTAssertEqual(legacyLinks[0].keys.sorted(), ["name", "url"])
+
+        // kind 付きは往復で保たれる。
+        var settings = sample()
+        settings.projects[0].links = [ProjectLink(name: "Stripe", url: "https://dashboard.stripe.com", kind: .billing),
+                                      ProjectLink(name: "LP", url: "https://example.com/lp"),
+                                      ProjectLink(name: "Docs", url: "https://docs.example.com", kind: .other)]
+        try file.save(settings)
+        XCTAssertEqual(file.load(), .loaded(settings))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        let links = try XCTUnwrap((object["projects"] as? [[String: Any]])?[0]["links"] as? [[String: Any]])
+        XCTAssertEqual(links.map { $0["kind"] as? String }, ["billing", nil, "other"])
+
+        // 知らない値・null は「その他」/ 無しとして読み、全体は読める。
+        let unknown = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active","links":[{"name":"A","url":"https://a.example","kind":"wallet"},{"name":"B","url":"https://b.example","kind":null}]}]}"#
+        guard case .loaded(let lenient) = SettingsFile.decode(Data(unknown.utf8)) else { return XCTFail() }
+        XCTAssertEqual(lenient.projects[0].links.map(\.kind), [.other, nil])
+        XCTAssertEqual(SettingsValidation.warnings(lenient), [])
+    }
+
     func testBadLinksStillLoadAsWarnings() {
         let json = #"{"version":1,"projects":[{"id":"\#(UUID().uuidString)","name":"a","path":"/a","status":"active","links":[{"name":"","url":"ftp://x"},{"name":"LP","url":"https://example.com"},{"name":"LP","url":"https://example.org"}]}]}"#
         guard case .loaded(let settings) = SettingsFile.decode(Data(json.utf8)) else { return XCTFail() }
@@ -858,6 +888,25 @@ final class SettingsImportTests: XCTestCase {
         XCTAssertEqual(summary.invalidLinks, 0)
         XCTAssertTrue(summary.message.contains("リンク 1 件"))
         XCTAssertFalse(summary.message.contains("不正"))
+    }
+
+    /// 取り込んだリンクは種類も保つ（手元にある同じ名前の種類は変えない）。
+    func testSettingsImportKeepsLinkKinds() throws {
+        let incoming = DeckSettings(projects: [
+            ManagedProject(name: "a", path: "/p/a", links: [ProjectLink(name: "LP", url: "https://incoming.example/lp", kind: .docs),
+                                                           ProjectLink(name: "Stripe", url: "https://dashboard.stripe.com", kind: .billing)]),
+            ManagedProject(name: "b", path: "/p/b", links: [ProjectLink(name: "Store", url: "https://apps.apple.com/x", kind: .store)]),
+        ])
+        let existing = DeckSettings(projects: [
+            ManagedProject(name: "a-local", path: "/p/a", links: [ProjectLink(name: "LP", url: "https://local.example/lp")]),
+        ])
+        let (settings, summary) = try SettingsImport.merge(try incoming.encoded(), into: existing)
+        XCTAssertEqual(settings.projects[0].links, [ProjectLink(name: "LP", url: "https://local.example/lp"),
+                                                    ProjectLink(name: "Stripe", url: "https://dashboard.stripe.com", kind: .billing)])
+        XCTAssertEqual(settings.projects[1].links, incoming.projects[1].links)
+        // 新しく足したプロジェクトのリンクはプロジェクトとして数える。
+        XCTAssertEqual(summary.addedLinks, 1)
+        XCTAssertEqual(summary.addedProjects, 1)
     }
 
     func testSettingsImportComparesLinkNamesWithoutSurroundingSpaces() throws {

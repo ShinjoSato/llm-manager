@@ -611,8 +611,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   そのプロジェクトに GitHub の紐づけがある時だけ出す。Project 番号とリポジトリの両方があればメニューで選び、片方ならそのまま既定のブラウザで開く。
   ボードは owner の種類を `https://api.github.com/users/<owner>` の `type` で引いて `users/` か `orgs/` の URL にする
   （認証なし・3 秒で諦める・owner ごとにアプリが動いている間だけ覚える・取れなければ `users/`）。判定と URL は `Sources/MonitorKit/Projects/GitHubLinks.swift`。
-  「リンク」は、同じ照合で紐づいたプロジェクトに `links`（LP 等の名前と URL）がある時だけ「GitHub」の隣に出す。1 つならそのまま既定のブラウザで開き、
-  複数なら名前のメニューで選ぶ。開く直前にも URL を確かめ、http / https で host のあるものだけ開く（`javascript:` や `file:` は開かず理由を出す）。
+  「リンク」は、同じ照合で紐づいたプロジェクトに `links`（LP 等の名前と URL・種類）がある時だけ「GitHub」の隣に出す。1 つならそのまま既定のブラウザで開き、
+  複数なら名前のメニュー（種類のアイコン付き。種類が 2 つ以上なら種類ごとに区切る）で選ぶ。開く直前にも URL を確かめ、http / https で host のあるものだけ開く（`javascript:` や `file:` は開かず理由を出す）。
   設定で不正なリンク（名前が空・URL の形）はボタンに含めない。設定の変更はすぐ映る。判定は `Sources/MonitorKit/Projects/ProjectLinks.swift`。
   ルームを移っても各ルームの PTY と claude は生きたまま。claude が終了したルームも、最後に分かった sessionId で会話を出し続ける。
 - 端末ビュー（`ClaudeTerminalView`）は画面に載せない。PTY の受信は main キューで端末バッファに流れ、状態・権限プロンプト・選択待ち・上限表示は
@@ -850,14 +850,18 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   "projects": [ { "id": "<UUID>", "name": "mirio", "path": "/abs/path", "status": "active", "note": "…",
                   "github": { "owner": "ShinjoSato", "repo": "ailovei", "projectNumber": 4 },
                   "links": [ { "name": "LP", "url": "https://example.com/lp" },
+                             { "name": "Stripe", "url": "https://dashboard.stripe.com/invoices", "kind": "billing" },
                              { "name": "Figma", "url": "https://www.figma.com/file/…" } ],
                   "site": { "path": "site" } } ],
   "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
 ```
 
 - `status` は `active` / `paused` / `archived`。`github` は省略でき、その中の `repo` / `projectNumber` もどちらか片方だけでよい。
-  `links` は会話の見出しの「リンク」から開くもの（LP・デザイン等）で、省略できる（空ならアプリも書かない）。並びは配列の順。
+  `links` は会話の見出しの「リンク」から開くもの（LP・デザイン・請求ページ等）で、省略できる（空ならアプリも書かない）。並びは配列の順。
   `url` は http / https で host のあるものだけ（それ以外や `user:pass@` 付きは警告として読み込み、ボタンには出さない）。`name` は同じプロジェクトの中で重ねない（重なれば先のものだけボタンに出す）。
+  `kind` は種類で `billing`（請求）/ `dashboard`（ダッシュボード）/ `store`（ストア）/ `docs`（ドキュメント）/ `other`（その他）。省略できる（無ければその他として扱い、アプリも書かない）。知らない値はその他として読む。
+  種類はアイコンで見分け、「リンク」のメニューを種類ごとに区切る。ディレクトリの詳細の「リンク」の節から追加・編集・並べ替え・削除ができ（設定画面のプロジェクトタブでも同じ）、
+  「+ 追加」はクリップボードの http / https のアドレスを初期値にして種類と名前（host の主要部分。加えてページの `<title>` を 3 秒以内に取れれば、名前を触っていない時だけ置き換える）を提案する。
   `links` の形が崩れている（配列でない・要素に `name` か `url` の文字列が無い）ファイルは読めない扱いになる。
   **リンクを使い始めたら、`links` を知らない前のビルドで設定を保存しない**（`links` を落として書くため）。
   `site` はディレクトリの詳細の「サイト」でプレビューする LP の場所で、省略できる（省略なら自動で探す。空ならアプリも書かない）。
