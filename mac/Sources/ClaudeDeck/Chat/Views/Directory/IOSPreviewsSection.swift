@@ -10,7 +10,6 @@ struct IOSPreviewsSection: View {
 
     @State private var list = IOSPreviewList()
     @State private var opened: IOSPreviewTarget?
-    @State private var collapsedFiles: Set<String> = []
     @State private var reloadToken = 0
     @State private var scanned: ScanRequest?
     @State private var xcodeRunning = true
@@ -169,41 +168,9 @@ struct IOSPreviewsSection: View {
             if scan.files.isEmpty {
                 emptyText("#Preview なし（\(root) の下の Swift ファイル）")
             }
-            ForEach(scan.files) { file in
-                fileView(file)
-            }
-            if scan.truncated {
-                emptyText("Swift ファイルが \(SwiftPreviews.maxFiles) 件かフォルダが \(SwiftPreviews.maxDirectories) 個を超えたため、浅いフォルダから読んだ分だけを出しています")
-            }
-        } else {
-            ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 40)
-        }
-    }
-
-    private func fileView(_ file: SwiftPreviewFile) -> some View {
-        let isCollapsed = collapsedFiles.contains(file.id)
-        return VStack(alignment: .leading, spacing: 8) {
-            Button {
-                if isCollapsed { collapsedFiles.remove(file.id) } else { collapsedFiles.insert(file.id) }
-            } label: {
-                HStack(spacing: 6) {
-                    DisclosureChevron(collapsed: isCollapsed)
-                    Text(file.relativePath)
-                        .font(ChatTheme.mono)
-                        .foregroundStyle(ChatTheme.text)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text("\(file.previews.count)")
-                        .font(ChatTheme.caption)
-                        .foregroundStyle(ChatTheme.tertiary)
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(file.path)
-            if !isCollapsed {
-                LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 12) {
+            // ファイルの区切りは付けず、全部を 1 つのグリッドに並べる（ファイル名は各枠に出す）。
+            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 12) {
+                ForEach(scan.files) { file in
                     ForEach(file.previews, id: \.index) { preview in
                         let target = IOSPreviewTarget(projectId: project.id, projectName: project.name,
                                                       xcodeProject: xcodeProject.path, file: file, preview: preview)
@@ -211,6 +178,11 @@ struct IOSPreviewsSection: View {
                     }
                 }
             }
+            if scan.truncated {
+                emptyText("Swift ファイルが \(SwiftPreviews.maxFiles) 件かフォルダが \(SwiftPreviews.maxDirectories) 個を超えたため、浅いフォルダから読んだ分だけを出しています")
+            }
+        } else {
+            ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 40)
         }
     }
 
@@ -257,10 +229,12 @@ private struct IOSPreviewCell: View {
                 .foregroundStyle(ChatTheme.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Text("\(target.preview.line) 行")
+            Text("\(target.file.name) · \(target.preview.line) 行")
                 .font(.system(size: 10))
                 .foregroundStyle(ChatTheme.tertiary)
                 .lineLimit(1)
+                .truncationMode(.middle)
+                .help(target.file.relativePath)
             if let shown, shown.info.lineMismatch(expected: target.preview.line) {
                 LineMismatchLabel(info: shown.info, expected: target.preview.line)
             }

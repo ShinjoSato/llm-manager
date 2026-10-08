@@ -70,7 +70,7 @@ mac/
         Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・画像・iPhone のプレビュー・GitHub・リンク・スレッド）
           ProjectLinkEditor.swift     「リンク」の節の追加・編集のポップオーバー（種類と名前の提案・<title> の取得）
           ProjectImagesSection.swift  「画像」: フォルダごとのサムネイルのグリッド・拡大のシート
-          IOSPreviewsSection.swift    「iPhone のプレビュー」: ファイルごとの #Preview のグリッド・すべて描く・拡大して切り替えて描き直すシート
+          IOSPreviewsSection.swift    「iPhone のプレビュー」: 全ファイルの #Preview を 1 つのグリッド（枠にファイル名と行）・すべて描く・拡大して切り替えて描き直すシート
           SitePreviewSection.swift    「サイト」: 見る元（開発サーバー / 書き出し / 公開 URL）・表示幅・再読み込み・ブラウザで開く・書き出しの更新時刻
           SitePreviewParts.swift      サイトの欄とステージパネルのプレビューで共有する部品（場所の読み込み・表示幅の切り替え・縮める枠・開発サーバーの操作と出力）
           SiteWebView.swift           プレビューの WKWebView（pageZoom で縮めて表示幅ぶんを収める・file: / javascript: へは遷移しない）
