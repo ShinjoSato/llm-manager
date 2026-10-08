@@ -169,13 +169,10 @@ struct IOSPreviewsSection: View {
                 emptyText("#Preview なし（\(root) の下の Swift ファイル）")
             }
             // ファイルの区切りは付けず、全部を 1 つのグリッドに並べる（ファイル名は各枠に出す）。
+            // 番号はファイルごとに 0 から振るので、グリッドの id はファイルと番号の組にする（重なると並びが崩れてちらつく）。
             LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 12) {
-                ForEach(scan.files) { file in
-                    ForEach(file.previews, id: \.index) { preview in
-                        let target = IOSPreviewTarget(projectId: project.id, projectName: project.name,
-                                                      xcodeProject: xcodeProject.path, file: file, preview: preview)
-                        IOSPreviewCell(target: target) { opened = target }
-                    }
+                ForEach(targets) { target in
+                    IOSPreviewCell(target: target) { opened = target }
                 }
             }
             if scan.truncated {
