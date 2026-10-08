@@ -2,8 +2,7 @@ import Foundation
 
 /// 見出しのボタンが入りきらない時に「…」のメニューへ回すものを決める。
 public enum HeaderOverflow {
-    /// 優先度の低いものから `hiddenCount` 個を回した時に残す位置（並びは元のまま）。
-    /// 同じ優先度なら `subpriorities` の低いもの、それも同じなら右のものから回す。
+    /// 優先度（同じなら `subpriorities`、それも同じなら右）の低いものから `hiddenCount` 個を回した時に残す位置（並びは元のまま）。
     public static func visibleIndices(priorities: [Int], subpriorities: [Int]? = nil, hiddenCount: Int) -> [Int] {
         let hidden = Set(hiddenIndices(priorities: priorities, subpriorities: subpriorities, hiddenCount: hiddenCount))
         return priorities.indices.filter { !hidden.contains($0) }

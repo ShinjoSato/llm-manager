@@ -1,8 +1,7 @@
 import Foundation
 import Network
 
-/// iPhone 向けの口（`/v1/...`）の振り分け。仕様は mac/docs/remote-api.md。
-/// フック・チャネルの口（`/hook` 等）はここには無い（LAN に出さない）。
+/// iPhone 向けの口（`/v1/...`。仕様は mac/docs/remote-api.md）。フック・チャネルの口は LAN に出さないのでここには無い。
 public struct RemoteRoutes: Sendable {
     public let pairing: RemotePairingStore
     public let throttle: RemoteAuthThrottle

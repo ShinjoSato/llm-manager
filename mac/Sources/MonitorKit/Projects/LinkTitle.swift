@@ -11,7 +11,7 @@ public enum LinkTitle {
         return parse(html: html)
     }
 
-    /// 途中で切った本文を文字にする。UTF-8 の末尾の切れ端は落とし、`<meta charset>` の宣言があればその文字集合で読み（読めなければ nil）、無宣言は読めない所を置換した UTF-8。
+    /// 途中で切った本文を文字にする（末尾の切れた UTF-8 は落とし、`<meta charset>` があればその文字集合で読み、読めなければ nil。宣言が無ければ置換文字を入れた UTF-8）。
     static func decode(_ data: Data) -> String? {
         let trimmed = trimmingIncompleteUTF8(data)
         if let utf8 = String(data: trimmed, encoding: .utf8) { return utf8 }

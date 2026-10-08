@@ -71,7 +71,7 @@ public enum ProjectImages {
                             fileManager: FileManager = .default) -> ProjectImageScan {
         var images: [ProjectImage] = []
         var truncated = false
-        let realProject = SiteLocator.realPath(projectPath)
+        let realProject = FilePaths.realPath(projectPath)
         var queue: [(relative: String, depth: Int)] = [(".", 0)]
         var head = 0
         scanning: while head < queue.count {
@@ -99,7 +99,7 @@ public enum ProjectImages {
                     found = isImage(name) ? image(childRelative, path: child, attrs: attrs) : nil
                 case .typeSymbolicLink:
                     // フォルダのリンクは循環しうるので辿らない。ファイルのリンクは実体がプロジェクトの中にある時だけ数える。
-                    guard isImage(name), let realProject, let real = SiteLocator.realPath(child),
+                    guard isImage(name), let realProject, let real = FilePaths.realPath(child),
                           real.hasPrefix(realProject + "/"),
                           let realAttrs = try? fileManager.attributesOfItem(atPath: real),
                           realAttrs[.type] as? FileAttributeType == .typeRegular else { continue }

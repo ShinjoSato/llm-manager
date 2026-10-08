@@ -37,7 +37,7 @@ public struct HostedSessionsSnapshot: Codable, Sendable, Equatable {
         self.restoredAt = restoredAt
     }
 
-    public var restoredDate: Date? { restoredAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
+    public var restoredDate: Date? { restoredAt.map(Date.init(epochMillis:)) }
 }
 
 /// `hosted-sessions.json` の読み書き。強制終了・クラッシュでも直前の記録が残るよう、置き換えで書く。
@@ -50,22 +50,17 @@ public struct HostedSessionsFile: Sendable {
 
     public init(url: URL, restrictsDirectory: Bool? = nil) {
         self.url = url
-        self.restrictsDirectory = restrictsDirectory
-            ?? (url.deletingLastPathComponent().standardizedFileURL.path == DeckPaths.applicationSupport.standardizedFileURL.path)
+        self.restrictsDirectory = restrictsDirectory ?? DeckPaths.isInApplicationSupport(url)
     }
 
     /// 既定の場所（`CLAUDE_DECK_HOSTED_SESSIONS` があればそちら）。
     public static func defaultURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-        if let path = environment[environmentKey], !path.isEmpty {
-            return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        }
-        return DeckPaths.applicationSupport.appendingPathComponent("hosted-sessions.json")
+        DeckPaths.file("hosted-sessions.json", overriddenBy: environmentKey, environment: environment)
     }
 
     /// 記録を読む。無い・壊れた・知らない版は nil（再開できないだけで、次の保存で書き直す）。
     public func loadSnapshot() -> HostedSessionsSnapshot? {
-        guard let data = try? Data(contentsOf: url),
-              let snapshot = try? JSONDecoder().decode(HostedSessionsSnapshot.self, from: data),
+        guard let snapshot = JSONFile.read(HostedSessionsSnapshot.self, from: url),
               snapshot.version == HostedSessionsSnapshot.currentVersion else { return nil }
         return snapshot
     }
@@ -77,9 +72,7 @@ public struct HostedSessionsFile: Sendable {
     public func save(_ sessions: [HostedSessionRecord], restoredAt: Date? = nil, now: Date = Date()) throws {
         let snapshot = HostedSessionsSnapshot(savedAt: now.timeIntervalSince1970 * 1000, sessions: sessions,
                                               restoredAt: restoredAt.map { $0.timeIntervalSince1970 * 1000 })
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try SecureFile.write(try encoder.encode(snapshot), to: url, restrictDirectory: restrictsDirectory)
+        try SecureFile.writeJSON(snapshot, to: url, restrictDirectory: restrictsDirectory)
     }
 }
 
@@ -316,7 +309,7 @@ public enum QuitConfirmation {
     /// 稼働中と権限待ちを分けて名前を 3 件まで並べ、待ちの扱いも書く。
     public static func message(busy rooms: [Room], resumesOnLaunch: Bool) -> String {
         var groups: [String] = []
-        let working = rooms.filter { $0.status == .working }
+        let working = Self.working(rooms)
         let permission = rooms.filter { $0.status == .permission }
         if !working.isEmpty { groups.append("稼働中 \(working.count) 件（\(names(working))）") }
         if !permission.isEmpty { groups.append("権限待ち \(permission.count) 件（\(names(permission))）") }

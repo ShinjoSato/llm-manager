@@ -1,7 +1,6 @@
 import Foundation
 
-/// 在庫層。レジストリ（`~/.claude/sessions/<pid>.json`）と kill(pid,0) から今の一覧を出し、既知の State に当てる。
-/// 辞書は書かず、作った State と捨てる State を返す（辞書の出し入れは SessionHub が行う）。
+/// 在庫層。レジストリと kill(pid,0) から今の一覧を出し、作った State と捨てる State を返す（辞書の出し入れは SessionHub）。
 struct InventoryScanner {
     /// 終了したセッションを一覧に残す時間。消えた理由を追えるようにする。
     static let stoppedRetention: Double = 5 * 60_000
@@ -26,8 +25,7 @@ struct InventoryScanner {
         self.isAlive = isAlive
     }
 
-    /// レジストリを走査して既知の一覧に当てる。既知の State の在庫の欄（raw・endedAt・socketPath）はここで書く。
-    /// `clock` は初めて見つけた時点で止まっていたセッションの終了時刻に使う（走査の頭の `now` ではなく、その場の時刻）。
+    /// 既知の State の在庫の欄（raw・endedAt・socketPath）を書く。`clock` は初めて見つけた時に止まっていたセッションの終了時刻に使う。
     mutating func scan(known sessions: [String: SessionState], now: Double, clock: () -> Double) -> Outcome {
         var outcome = Outcome()
         var seen = Set<String>()

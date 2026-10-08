@@ -10,16 +10,18 @@ open class AttachmentPasteTextView: NSTextView {
         #selector(NSText.paste(_:)), #selector(NSTextView.pasteAsPlainText(_:)), #selector(NSTextView.pasteAsRichText(_:)),
     ]
 
-    /// 文字用の NSTextView は読める型（文字列・RTF・ファイル名）が無いとペーストを無効にし、⌘V のメニューごと効かなくなる。
-    /// 画像だけのクリップボード（スクリーンショット等）でも押せるよう、添付にできる時は有効にする。
+    /// 文字用の NSTextView は画像だけのクリップボードでペーストを無効にするので、添付にできる時は有効にする。
     open override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
-        if let action = item.action, Self.pasteActions.contains(action), canAttachPaste { return true }
-        return super.validateUserInterfaceItem(item)
+        enablesAttachPaste(item.action) || super.validateUserInterfaceItem(item)
     }
 
     open override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if let action = menuItem.action, Self.pasteActions.contains(action), canAttachPaste { return true }
-        return super.validateMenuItem(menuItem)
+        enablesAttachPaste(menuItem.action) || super.validateMenuItem(menuItem)
+    }
+
+    private func enablesAttachPaste(_ action: Selector?) -> Bool {
+        guard let action, Self.pasteActions.contains(action) else { return false }
+        return canAttachPaste
     }
 
     /// 今のクリップボードを添付にできるか（型だけで見る）。
@@ -53,13 +55,15 @@ open class AttachmentPasteTextView: NSTextView {
     }
 
     open override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if isEditable, AttachmentPasteboard.canAttach(sender.draggingPasteboard) { return .copy }
-        return super.draggingEntered(sender)
+        canAttachDrop(sender) ? .copy : super.draggingEntered(sender)
     }
 
     open override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if isEditable, AttachmentPasteboard.canAttach(sender.draggingPasteboard) { return .copy }
-        return super.draggingUpdated(sender)
+        canAttachDrop(sender) ? .copy : super.draggingUpdated(sender)
+    }
+
+    private func canAttachDrop(_ sender: NSDraggingInfo) -> Bool {
+        isEditable && AttachmentPasteboard.canAttach(sender.draggingPasteboard)
     }
 
     /// 文字欄に落としたファイルもパスの文字ではなく添付にする。

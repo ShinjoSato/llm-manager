@@ -1,7 +1,6 @@
 import Foundation
 
-// 実況層。jsonl の末尾差分から「今なにをしているか」を取り出す。
-// ログの単位はターン／ツール呼び出しで、トークン単位ではない。
+// 実況層。jsonl の末尾差分から「今なにをしているか」を取り出す（ログの単位はターン／ツール呼び出し）。
 
 /// ツール呼び出しの中身。キャラの持ち物と一言に使う。
 public struct ToolDetail: Sendable, Equatable {
@@ -56,6 +55,11 @@ public enum TranscriptTail {
         return !userTags.contains(tag)
     }
 
+    /// user 行の content が tool_result を含むか。
+    static func isToolResult(_ content: Any?) -> Bool {
+        (content as? [Any])?.contains { ($0 as? [String: Any]).flatMap { JSONLoose.string($0["type"]) } == "tool_result" } ?? false
+    }
+
     /// `^\s*<([a-zA-Z][\w-]*)` のタグ名。
     static func leadingTag(_ text: String) -> String? {
         var scalars = Substring(text).unicodeScalars[...]
@@ -94,8 +98,7 @@ public enum TranscriptTail {
 
         if type == "user", let message = o["message"] as? [String: Any] {
             let content = message["content"]
-            let isResult = (content as? [Any])?.contains { ($0 as? [String: Any]).flatMap { JSONLoose.string($0["type"]) } == "tool_result" } ?? false
-            ev.userKind = isResult || JSONLoose.isTrue(o["isMeta"]) || isInjected(content) ? .toolResult : .prompt
+            ev.userKind = isToolResult(content) || JSONLoose.isTrue(o["isMeta"]) || isInjected(content) ? .toolResult : .prompt
         }
 
         if type == "assistant", let message = o["message"] as? [String: Any] {

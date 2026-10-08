@@ -9,8 +9,7 @@ struct FeedLine: Equatable {
     var local = false
 }
 
-/// 監視が持つセッションごとの可変状態。SessionHub の actor の上でだけ触り、辞書への出し入れは SessionHub だけが行う。
-/// フィールドは書く層ごとに分け、他の層は読むだけ（例外は節の中に書く）。
+/// セッションごとの可変状態。SessionHub の actor の上でだけ触り、欄は書く層ごとに分けて他の層は読むだけ（例外は節の中に書く）。
 final class SessionState {
     /// ログの終わり方。busy はモデルの番（ツール実行中・長考中）で、無音でも動いている。
     enum TurnState { case busy, settled }
@@ -84,9 +83,14 @@ enum HubText {
         return trimmed.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? String(trimmed)
     }
 
+    /// 空白をつめて 1 行にし、長ければ切る。
     static func truncate(_ text: String, _ max: Int) -> String {
-        let flat = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        guard flat.utf16.count > max else { return flat }
-        return String(decoding: Array(flat.utf16.prefix(max)), as: UTF16.self) + "…"
+        clip(text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "), max)
+    }
+
+    /// UTF-16 単位で `max` を超えたら切って「…」を付ける。
+    static func clip(_ text: String, _ max: Int) -> String {
+        guard text.utf16.count > max else { return text }
+        return String(decoding: Array(text.utf16.prefix(max)), as: UTF16.self) + "…"
     }
 }

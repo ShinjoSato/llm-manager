@@ -84,20 +84,20 @@ public enum GitHubDestination: Equatable, Sendable {
 /// GitHub の URL の組み立て。値が不正なら nil（開かない）。
 public enum GitHubURLs {
     public static func board(owner: String, number: Int, kind: GitHubOwnerKind) -> URL? {
-        guard number > 0, SettingsValidation.ownerProblem(owner) == nil, let owner = segment(owner) else { return nil }
+        guard number > 0, SettingsValidation.ownerProblem(owner) == nil, let owner = URLPath.segment(owner) else { return nil }
         let scope = kind == .organization ? "orgs" : "users"
         return URL(string: "https://github.com/\(scope)/\(owner)/projects/\(number)")
     }
 
     public static func repository(owner: String, repo: String) -> URL? {
         guard SettingsValidation.ownerProblem(owner) == nil, SettingsValidation.repoProblem(repo) == nil,
-              let owner = segment(owner), let repo = segment(repo) else { return nil }
+              let owner = URLPath.segment(owner), let repo = URLPath.segment(repo) else { return nil }
         return URL(string: "https://github.com/\(owner)/\(repo)")
     }
 
     /// owner の種類を引く公開 API（認証なし）。
     public static func userAPI(owner: String) -> URL? {
-        guard SettingsValidation.ownerProblem(owner) == nil, let owner = segment(owner) else { return nil }
+        guard SettingsValidation.ownerProblem(owner) == nil, let owner = URLPath.segment(owner) else { return nil }
         return URL(string: "https://api.github.com/users/\(owner)")
     }
 
@@ -107,14 +107,6 @@ public enum GitHubURLs {
               let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let type = object["type"] as? String else { return nil }
         return GitHubOwnerKind(rawValue: type)
-    }
-
-    /// 検証済みでも区切りや `?` `#` が混ざらないよう、1 区間としてエンコードする。
-    static func segment(_ value: String) -> String? {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/;?#")
-        guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed), !encoded.isEmpty else { return nil }
-        return encoded
     }
 }
 
@@ -162,13 +154,14 @@ public final class GitHubOwnerKindResolver {
     nonisolated static func race(timeout: Duration,
                                  _ operation: @escaping @Sendable () async -> GitHubOwnerKind?) async -> GitHubOwnerKind? {
         await withCheckedContinuation { continuation in
-            let once = ResumeOnce(continuation)
+            let once = OnceFlag()
             let timer = Task {
                 try? await Task.sleep(for: timeout)
-                once.resume(nil)
+                if once.claim() { continuation.resume(returning: nil) }
             }
             let work = Task {
-                once.resume(await operation())
+                let kind = await operation()
+                if once.claim() { continuation.resume(returning: kind) }
                 timer.cancel()
             }
             // 時間切れの後も取得を走らせ続けない。
@@ -192,20 +185,5 @@ public final class GitHubOwnerKindResolver {
         request.setValue("claude-deck", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
-    }
-}
-
-private final class ResumeOnce: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<GitHubOwnerKind?, Never>?
-
-    init(_ continuation: CheckedContinuation<GitHubOwnerKind?, Never>) { self.continuation = continuation }
-
-    func resume(_ value: GitHubOwnerKind?) {
-        let pending = lock.withLock { () -> CheckedContinuation<GitHubOwnerKind?, Never>? in
-            defer { continuation = nil }
-            return continuation
-        }
-        pending?.resume(returning: value)
     }
 }

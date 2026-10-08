@@ -39,19 +39,13 @@ public enum XcodeFinder {
             }
         }
         // Xcode が返すのは実パスなので、symlink 配下だと未解決のままでは比較が外れる。
-        return best.map { realPath($0.path) }
+        return best.map { FilePaths.realPath($0.path) ?? $0.path }
     }
 
     private static func isDirectoryNoFollow(_ path: String) -> Bool {
         var st = stat()
         guard lstat(path, &st) == 0 else { return false }
         return (st.st_mode & S_IFMT) == S_IFDIR
-    }
-
-    private static func realPath(_ path: String) -> String {
-        guard let resolved = realpath(path, nil) else { return path }
-        defer { free(resolved) }
-        return String(cString: resolved)
     }
 
     private static func better(_ best: Candidate?, depth: Int, workspace: Bool) -> Bool {

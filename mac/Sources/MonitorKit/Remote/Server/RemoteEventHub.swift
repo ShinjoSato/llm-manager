@@ -172,19 +172,13 @@ public final class RemoteEventHub {
 
     private func startLoop() {
         guard loop == nil else { return }
-        let interval = pollInterval
-        loop = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
-                guard let self, !Task.isCancelled else { return }
-                self.tick()
-            }
-        }
+        loop = repeatingTask(every: pollInterval, owner: self) { hub in await hub.tick() }
     }
 
     /// 状態が変わっていれば全員へ送る。しばらく何も送っていなければ生存確認のコメントを送る（切れた相手を早く見つけるため）。
     func tick() {
-        guard !clients.isEmpty else { return }
+        // 取り消した直後の周回が MainActor へ移ってから走らないよう、ループが今もあるかも見る。
+        guard loop != nil, !clients.isEmpty else { return }
         if let state = controlRef.state(), state != lastState {
             lastState = state
             broadcast(Self.event(.state, state))

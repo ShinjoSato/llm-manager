@@ -198,10 +198,3 @@ public actor SitePreviewServers {
 
     static func url(port: Int) -> URL { URL(string: "http://127.0.0.1:\(port)/")! }
 }
-
-private final class OnceFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var used = false
-
-    func claim() -> Bool { lock.withLock { defer { used = true }; return !used } }
-}

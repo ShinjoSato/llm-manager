@@ -65,8 +65,7 @@ public enum LimitGuard {
     /// 入力欄が無い時（メニュー表示中）に下から見る行数（空行を除く）。
     static let menuLines = 15
 
-    /// 端末の実画面（上から順の行）の末尾に上限表示が出ていれば、その行を返す。
-    /// 会話本文は見ない。見るのは入力欄より下（フッター）、入力欄直上の最後の `⎿` 行（エラー表示）、メニュー表示中の選択肢だけ。
+    /// 画面の末尾の上限表示の行。会話本文は見ず、フッター・入力欄直上の最後の `⎿` 行・メニューの選択肢だけを見る。
     public static func screenLimitLine(_ screen: [String]) -> String? {
         let lines = TerminalScreen.droppingTrailingBlankLines(screen)
         guard let boxTop = inputBoxTop(lines) else {
@@ -75,7 +74,7 @@ public enum LimitGuard {
             guard tail.contains(where: isMenuHint) else { return nil }
             return menuLine(tail)
         }
-        let boxBottom = lines[(boxTop + 2)...].firstIndex(where: isRule)
+        let boxBottom = lines[(boxTop + 2)...].firstIndex(where: PermissionPrompt.isSeparator)
         if let boxBottom {
             let footer = lines[(boxBottom + 1)...]
             for line in footer {
@@ -124,8 +123,7 @@ public enum LimitGuard {
     /// 「❯ 1. Stop and wait for limit to reset」のような選択肢の行。
     static func menuLine<C: Collection>(_ lines: C) -> String? where C.Element == String {
         lines.first { line in
-            var t = Substring(line.trimmed)
-            if t.hasPrefix("❯") { t = t.dropFirst().drop(while: { $0.isWhitespace }) }
+            var t = ChoiceMenu.strippingCursor(line).text
             let digits = t.prefix(while: { $0.isASCII && $0.isNumber })
             guard !digits.isEmpty, digits.count <= 2 else { return false }
             t = t.dropFirst(digits.count)
@@ -137,7 +135,7 @@ public enum LimitGuard {
     /// 入力欄の上の罫線の位置（罫線の直下が `❯` で始まり、選択肢ではない行）。
     static func inputBoxTop(_ lines: [String]) -> Int? {
         lines.indices.last { index in
-            guard index + 1 < lines.count, isRule(lines[index]) else { return false }
+            guard index + 1 < lines.count, PermissionPrompt.isSeparator(lines[index]) else { return false }
             let next = lines[index + 1].trimmed
             return next.hasPrefix("❯") && !isNumberedChoice(next)
         }
@@ -147,11 +145,6 @@ public enum LimitGuard {
         let rest = line.dropFirst().drop(while: { $0.isWhitespace })
         let digits = rest.prefix(while: { $0.isASCII && $0.isNumber })
         return !digits.isEmpty && rest.dropFirst(digits.count).hasPrefix(".")
-    }
-
-    static func isRule(_ line: String) -> Bool {
-        let t = line.trimmed
-        return t.count >= 8 && (t.allSatisfy { $0 == "─" } || t.allSatisfy { $0 == "━" })
     }
 
     /// フッターは左右に複数の表示が空白で並ぶので、2 つ以上の空白で区切る。
@@ -190,8 +183,4 @@ public struct UsageLimitLatch: Sendable, Equatable {
         }
         return until != nil
     }
-}
-
-private extension StringProtocol {
-    var trimmed: String { trimmingCharacters(in: .whitespaces) }
 }

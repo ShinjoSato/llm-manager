@@ -15,8 +15,7 @@ public struct RoomRedirects<Room: Hashable & Sendable, Job: Hashable & Sendable>
         for job in jobs { destinations[job] = room }
     }
 
-    /// `room` 宛てに届いた `job` の結果の届け先。付け替えが無ければ `room` のまま。
-    /// 1 件の結果は 1 回しか届かないので、表からは消す。
+    /// `room` 宛てに届いた結果の届け先（付け替えが無ければ `room`）。結果は 1 回しか届かないので表からは消す。
     public mutating func resolve(_ job: Job, arrivedAt room: Room) -> Room {
         destinations.removeValue(forKey: job) ?? room
     }

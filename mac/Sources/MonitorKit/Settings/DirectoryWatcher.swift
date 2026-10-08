@@ -1,7 +1,6 @@
 import Foundation
 
-/// ディレクトリの中の変化（作成・置き換え・削除）と、指定したファイル自体の書き換えを知らせる。
-/// 続けて来る通知は少し待ってから 1 回にまとめる。
+/// ディレクトリの中の変化と指定したファイル自体の書き換えを、少し待って 1 回にまとめて知らせる。
 @MainActor
 final class DirectoryWatcher {
     private let directory: URL

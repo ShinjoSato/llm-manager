@@ -71,23 +71,16 @@ public enum PermissionRelay {
         let cwd = JSONLoose.string(o["cwd"]).flatMap { $0.isEmpty ? nil : $0 }
         return PermissionRequestInput(
             requestId: requestId,
-            toolName: clip(toolName, maxToolName),
-            description: clip(JSONLoose.string(o["description"]) ?? "", maxDescription),
-            inputPreview: clip(JSONLoose.string(o["inputPreview"]) ?? "", maxInputPreview),
+            // 表示だけに使う文字列なので、画面を守れる長さで切る。
+            toolName: HubText.clip(toolName, maxToolName),
+            description: HubText.clip(JSONLoose.string(o["description"]) ?? "", maxDescription),
+            inputPreview: HubText.clip(JSONLoose.string(o["inputPreview"]) ?? "", maxInputPreview),
             pid: pid,
             cwd: cwd
         )
     }
 
-    /// 表示だけに使う文字列なので、画面を守れる長さで切る（UTF-16 単位で数える）。
-    static func clip(_ text: String, _ max: Int) -> String {
-        guard text.utf16.count > max else { return text }
-        let cut = String(decoding: Array(text.utf16.prefix(max)), as: UTF16.self)
-        return cut + "…"
-    }
-
-    /// 申請元のセッション。チャネルは Claude Code の子プロセスなので親 PID で一意に引ける。
-    /// cwd では引かない（同じ場所の別セッションに付け替わると、見ていない確認を許可させる）。
+    /// 申請元のセッションは親 PID で引く（cwd で引くと同じ場所の別セッションに付け替わり、見ていない確認を許可させる）。
     public static func matchSession(pid: Int32?, sessions: [RawSession]) -> String? {
         guard let pid else { return nil }
         return sessions.first { $0.alive && $0.pid == pid }?.sessionId
@@ -166,13 +159,16 @@ final class PermissionRegistry {
     private func evictOverflow() -> [PendingPermission] {
         guard entries.count > PermissionRelay.maxPending else { return [] }
         let oldest = entries.sorted { $0.value.pending.askedAt < $1.value.pending.askedAt }
-        var evicted: [PendingPermission] = []
-        for (key, entry) in oldest.prefix(entries.count - PermissionRelay.maxPending) {
-            entries[key] = nil
+        return drop(oldest.prefix(entries.count - PermissionRelay.maxPending).map(\.key))
+    }
+
+    /// 保留を外し、残っている待ち手には dropped を返す（並びは `keys` のまま）。
+    private func drop(_ keys: [String]) -> [PendingPermission] {
+        keys.compactMap { key in
+            guard let entry = entries.removeValue(forKey: key) else { return nil }
             entry.waiters.forEach { $0.fn(.dropped) }
-            evicted.append(entry.pending)
+            return entry.pending
         }
-        return evicted
     }
 
     /// 待ち手を登録する。保留が無ければ nil（呼び出し側は dropped を返す）。
@@ -209,26 +205,14 @@ final class PermissionRegistry {
 
     /// 端末側で先に答えられた分を落とす。預かった後に書かれたログ行があれば、その確認はもう終わっている。
     func dropResolved(sessionId: String, lastActivityAt: Double) -> [PendingPermission] {
-        var dropped: [PendingPermission] = []
-        for (key, entry) in entries where entry.pending.sessionId == sessionId && lastActivityAt > entry.pending.askedAt {
-            entries[key] = nil
-            entry.waiters.forEach { $0.fn(.dropped) }
-            dropped.append(entry.pending)
-        }
-        return dropped
+        drop(entries.filter { $0.value.pending.sessionId == sessionId && lastActivityAt > $0.value.pending.askedAt }.map(\.key))
     }
 
     /// 取りに来なくなった分と、古すぎる分を捨てる。
     func sweep(now: Double) -> [PendingPermission] {
-        var dropped: [PendingPermission] = []
-        for (key, entry) in entries {
-            if now - entry.seenAt < PermissionRelay.pendingTTL && now - entry.pending.askedAt < PermissionRelay.pendingMaxAge {
-                continue
-            }
-            entries[key] = nil
-            entry.waiters.forEach { $0.fn(.dropped) }
-            dropped.append(entry.pending)
-        }
+        let dropped = drop(entries.filter { _, entry in
+            now - entry.seenAt >= PermissionRelay.pendingTTL || now - entry.pending.askedAt >= PermissionRelay.pendingMaxAge
+        }.map(\.key))
         for (key, hit) in decided where now - hit.at >= PermissionRelay.decidedTTL { decided[key] = nil }
         return dropped
     }

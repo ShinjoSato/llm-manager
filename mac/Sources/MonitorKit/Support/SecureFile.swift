@@ -1,10 +1,17 @@
 import Foundation
 
 /// 自分だけが読めるファイル（ディレクトリ 0700・ファイル 0600）。途中で落ちても壊れた中身を残さないよう置き換えで書く。
-/// `restrictDirectory` が false なら、ディレクトリは既定の権限で作るだけで締め直さない（人が選んだ場所の権限を変えないため）。
+/// `restrictDirectory` が false ならディレクトリは締め直さない（人が選んだ場所の権限を変えないため）。
 enum SecureFile {
     enum Failure: Error, Equatable {
         case writeFailed(String)
+    }
+
+    static func writeJSON<T: Encodable>(_ value: T, to url: URL, restrictDirectory: Bool,
+                                        formatting: JSONEncoder.OutputFormatting = [.prettyPrinted, .sortedKeys]) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = formatting
+        try write(try encoder.encode(value), to: url, restrictDirectory: restrictDirectory)
     }
 
     static func write(_ data: Data, to url: URL, restrictDirectory: Bool = true) throws {
@@ -36,5 +43,13 @@ enum SecureFile {
             unlink(temp.path)
             throw failed
         }
+    }
+}
+
+enum JSONFile {
+    /// 無い・読めない・形が違えば nil。
+    static func read<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
     }
 }

@@ -126,8 +126,7 @@ public enum DevServerRules {
         return nil
     }
 
-    /// 新しく揃った行から、つなぐアドレスを決める。`Local:` の行のものを優先し、無ければ最初の手元のアドレス。
-    /// `Local:` の行から決めた後は替えない（後の出力の別の URL に引きずられないため）。
+    /// つなぐアドレス。`Local:` の行を優先し、そこから決めた後は替えない（後の出力の別の URL に引きずられないため）。
     public static func nextAddress(current: DevServerAddress?, newLines: [String]) -> DevServerAddress? {
         if current?.fromLocalLine == true { return current }
         let found = newLines.lazy.compactMap(addressMatch(in:)).filter { isLocalAddress($0.url) }

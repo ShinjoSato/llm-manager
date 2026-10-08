@@ -19,8 +19,7 @@ struct StoredDevice: Codable, Sendable, Equatable {
     var publicValue: RemoteDevice { RemoteDevice(id: id, name: name, pairedAt: pairedAt, lastUsedAt: lastUsedAt) }
 }
 
-/// ペアリング（一時トークン → 端末ごとの長期トークン）と端末一覧。どのスレッドからでも呼べる。
-/// 一覧は `devices.json`（0600）に置く。
+/// ペアリング（一時トークン → 端末ごとの長期トークン）と端末一覧（`devices.json`・0600）。どのスレッドからでも呼べる。
 public final class RemotePairingStore: @unchecked Sendable {
     /// 一時トークンの寿命。
     public static let ticketLifetime: TimeInterval = 5 * 60
@@ -43,7 +42,7 @@ public final class RemotePairingStore: @unchecked Sendable {
     public init(directory: URL, now: @escaping @Sendable () -> Date = { Date() }) {
         fileURL = directory.appendingPathComponent("devices.json")
         self.now = now
-        if let data = try? Data(contentsOf: fileURL), let list = try? JSONDecoder().decode([StoredDevice].self, from: data) {
+        if let list = JSONFile.read([StoredDevice].self, from: fileURL) {
             devicesById = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         }
     }
@@ -174,8 +173,7 @@ public final class RemotePairingStore: @unchecked Sendable {
     private func persistLocked() throws {
         let list = devicesById.values.sorted { $0.pairedAt < $1.pairedAt }
         do {
-            let data = try JSONEncoder().encode(list)
-            try SecureFile.write(data, to: fileURL)
+            try SecureFile.writeJSON(list, to: fileURL, restrictDirectory: true, formatting: [])
             writeFailure = nil
             lastWrite = now()
         } catch {

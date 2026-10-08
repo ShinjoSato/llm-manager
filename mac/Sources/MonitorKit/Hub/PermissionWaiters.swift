@@ -11,9 +11,7 @@ final class WaiterTicket: @unchecked Sendable {
     }
 }
 
-/// 権限の待ち合わせ。チャネルから預かった確認の保留・待ち手の登録と期限切れ・画面からの判断を扱う。
-/// 呼び出しはすべて SessionHub の actor の上で行い、待ち手を起こす continuation と時間切れの予約は SessionHub が持つ。
-/// フィードは配らずに返す。
+/// 権限の待ち合わせ（保留・待ち手・期限切れ・画面からの判断）。SessionHub の actor の上でだけ呼び、フィードは配らずに返す。
 final class PermissionWaiters {
     private let registry = PermissionRegistry()
 

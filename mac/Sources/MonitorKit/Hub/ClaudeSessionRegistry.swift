@@ -54,8 +54,7 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
     }
 }
 
-/// Claude Code のセッションレジストリを pid から引く。
-/// アプリが PTY で起動した claude は `exec` で zsh を置き換えるので、PTY の子 pid がそのまま claude の pid になる。
+/// セッションレジストリを pid から引く（PTY で起動した claude は `exec` で zsh を置き換えるので、子 pid がそのまま claude の pid）。
 public struct ClaudeSessionRegistry: Sendable {
     public var directory: URL
 
@@ -69,9 +68,7 @@ public struct ClaudeSessionRegistry: Sendable {
 
     /// pid のレコードを読む。`/clear` 等で sessionId は差し替わるので、キャッシュせず毎回読む。
     public func record(forPid pid: Int32) -> ClaudeSessionRecord? {
-        let url = directory.appendingPathComponent("\(pid).json")
-        guard let data = try? Data(contentsOf: url),
-              let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data),
+        guard let record = JSONFile.read(ClaudeSessionRecord.self, from: directory.appendingPathComponent("\(pid).json")),
               record.pid == pid, !record.sessionId.isEmpty else { return nil }
         return record
     }
@@ -80,9 +77,7 @@ public struct ClaudeSessionRegistry: Sendable {
     public func allRecords() -> [ClaudeSessionRecord] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         return urls.filter { $0.pathExtension == "json" }.compactMap { url in
-            guard let data = try? Data(contentsOf: url),
-                  let record = try? JSONDecoder().decode(ClaudeSessionRecord.self, from: data),
-                  !record.sessionId.isEmpty else { return nil }
+            guard let record = JSONFile.read(ClaudeSessionRecord.self, from: url), !record.sessionId.isEmpty else { return nil }
             return record
         }
     }

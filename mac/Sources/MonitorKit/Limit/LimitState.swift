@@ -16,7 +16,7 @@ public struct LimitStateRecord: Codable, Sendable, Equatable {
         self.reason = reason
     }
 
-    public var untilDate: Date { Date(timeIntervalSince1970: until / 1000) }
+    public var untilDate: Date { Date(epochMillis: until) }
 }
 
 /// `limit-state.json` の読み書き（0600・置き換えで書く）。
@@ -28,21 +28,16 @@ public struct LimitStateFile: Sendable {
 
     public init(url: URL, restrictsDirectory: Bool? = nil) {
         self.url = url
-        self.restrictsDirectory = restrictsDirectory
-            ?? (url.deletingLastPathComponent().standardizedFileURL.path == DeckPaths.applicationSupport.standardizedFileURL.path)
+        self.restrictsDirectory = restrictsDirectory ?? DeckPaths.isInApplicationSupport(url)
     }
 
     public static func defaultURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-        if let path = environment[environmentKey], !path.isEmpty {
-            return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        }
-        return DeckPaths.applicationSupport.appendingPathComponent("limit-state.json")
+        DeckPaths.file("limit-state.json", overriddenBy: environmentKey, environment: environment)
     }
 
     /// 無い・壊れた・知らない版・既に解けた記録は nil。
     public func load(now: Date = Date()) -> LimitStateRecord? {
-        guard let data = try? Data(contentsOf: url),
-              let record = try? JSONDecoder().decode(LimitStateRecord.self, from: data),
+        guard let record = JSONFile.read(LimitStateRecord.self, from: url),
               record.version == LimitStateRecord.currentVersion,
               record.untilDate > now else { return nil }
         return record
@@ -54,9 +49,7 @@ public struct LimitStateFile: Sendable {
             if unlink(url.path) != 0, errno != ENOENT { throw SecureFile.Failure.writeFailed(url.lastPathComponent) }
             return
         }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try SecureFile.write(try encoder.encode(record), to: url, restrictDirectory: restrictsDirectory)
+        try SecureFile.writeJSON(record, to: url, restrictDirectory: restrictsDirectory)
     }
 }
 

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 伝言・エディタ操作の失敗。`code` は画面の言い換えに使う（not_found / not_alive / no_socket / unreachable / no_project / failed）。
+/// 伝言・確認への返答の失敗。`code` は画面の言い換えに使う（not_found / not_alive / no_socket / unreachable）。
 public struct HubFailure: Error, Sendable, Equatable, LocalizedError {
     public var code: String
     public var message: String
@@ -13,9 +13,8 @@ public struct HubFailure: Error, Sendable, Equatable, LocalizedError {
     public var errorDescription: String? { message }
 }
 
-/// 監視の窓口。在庫層（InventoryScanner）・実況層（TranscriptPoller）・フック層（HookIntake / HookInbox）・権限の待ち合わせ（PermissionWaiters）・
-/// 使用量（UsagePoller）を 1 つの actor の上で順に回し、変化を `MonitorEvent` の流れとして受け手へ渡す。
-/// セッションの辞書と配信（フィードの番号・スナップショット）はここだけが持ち、各層は渡された `SessionState` の自分の欄を書いて結果を返す。
+/// 監視の窓口。各層（在庫・実況・フック・権限・使用量）を 1 つの actor の上で順に回し、変化を `MonitorEvent` で渡す。
+/// セッションの辞書と配信はここだけが持ち、各層は渡された `SessionState` の自分の欄を書いて結果を返す。
 public actor SessionHub {
     /// ログが「モデルの番」で終わったまま、この時間を超えて無音なら稼働中とみなさない（中断やクラッシュの保険）。
     static let staleBusy: Double = 10 * 60_000
@@ -124,12 +123,12 @@ public actor SessionHub {
         pollTranscripts()
         pollUsage()
         emitUpdate()
-        tasks.append(loop(every: Self.inventoryInterval) { hub in
+        tasks.append(repeatingTask(every: Self.inventoryInterval, owner: self) { hub in
             await hub.scanInventory()
             await hub.pollUsage()
         })
-        tasks.append(loop(every: Self.transcriptInterval) { hub in await hub.pollTranscripts() })
-        tasks.append(loop(every: Self.snapshotInterval) { hub in await hub.emitUpdate() })
+        tasks.append(repeatingTask(every: Self.transcriptInterval, owner: self) { hub in await hub.pollTranscripts() })
+        tasks.append(repeatingTask(every: Self.snapshotInterval, owner: self) { hub in await hub.emitUpdate() })
     }
 
     /// 試験用: 回っているループの数。
@@ -139,16 +138,6 @@ public actor SessionHub {
         wantsRunning = false
         tasks.forEach { $0.cancel() }
         tasks = []
-    }
-
-    private func loop(every interval: Duration, _ body: @escaping @Sendable (SessionHub) async -> Void) -> Task<Void, Never> {
-        Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
-                guard let self, !Task.isCancelled else { return }
-                await body(self)
-            }
-        }
     }
 
     // MARK: - 在庫層
@@ -225,8 +214,7 @@ public actor SessionHub {
             for line in outcome.feed { push(id, line) }
             if outcome.changed { changed = true }
 
-            // 預かった後に書かれた親ログの行があれば、その確認は端末側で答えられている（フック側の「答え済み」判定と同じ基準）。
-            // 親が確認で止まっている間もサブエージェントは書き続けるので、その活動で保留を落とすと答える口が消える。
+            // 預かった後の親ログの行があれば端末側で答え済み。サブエージェントは親の確認中も書き続けるので数えない。
             if outcome.readLines && waiters.count > 0 {
                 let dropped = waiters.dropResolved(sessionId: id, lastActivityAt: state.lastActivityAt ?? 0)
                 for line in dropped { push(id, line) }
@@ -246,8 +234,7 @@ public actor SessionHub {
 
     // MARK: - フック層
 
-    /// Claude Code のフックから届いた状態遷移を反映する。ログには残らない情報はここでしか取れない。
-    /// `receivedAt` は受け口に届いた時刻（省略時は今）。
+    /// フックの状態遷移を反映する（ログに残らない情報はここでしか取れない）。`receivedAt` は受け口に届いた時刻。
     @discardableResult
     public func applyHook(_ payload: HookPayload, receivedAt: Double? = nil) async -> Bool {
         guard let id = payload.sessionId, !id.isEmpty else { return false }

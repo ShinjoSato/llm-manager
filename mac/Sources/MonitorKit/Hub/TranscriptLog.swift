@@ -58,7 +58,7 @@ public enum TranscriptFormat {
     }
 
     static func clip(_ text: String, _ max: Int = maxSummaryChars) -> String {
-        PermissionRelay.clip(text, max)
+        HubText.clip(text, max)
     }
 
     private static func str(_ v: Any?) -> String? {
@@ -127,8 +127,7 @@ public enum TranscriptFormat {
         let type = JSONLoose.string(o["type"])
 
         if type == "user" {
-            let isResult = (content as? [Any])?.contains { ($0 as? [String: Any]).flatMap { JSONLoose.string($0["type"]) } == "tool_result" } ?? false
-            if isResult || TranscriptTail.isInjected(content) { return [] }
+            if TranscriptTail.isToolResult(content) || TranscriptTail.isInjected(content) { return [] }
             guard let text = promptText(content) else { return [] }
             let id = "\(base):0"
             parentId = id

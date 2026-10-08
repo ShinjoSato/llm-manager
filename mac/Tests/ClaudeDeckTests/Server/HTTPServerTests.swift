@@ -281,9 +281,7 @@ final class HTTPServerTests: XCTestCase {
 
     func testNonLoopbackActorIsHidden() async {
         let request = HTTPRequest(method: "GET", path: "/api/health", headers: ["host": "127.0.0.1:8766"], remoteAddress: "192.168.0.11")
-        let hub = hub!
-        let response = await HookServerRoutes.guarded(request, port: 8766) { await HookServerRoutes.handle($0, hub: hub) }
-        XCTAssertEqual(response.status, 404, "ループバック以外には存在ごと伏せる")
+        XCTAssertEqual(HookServerRoutes.rejection(request, port: 8766)?.status, 404, "ループバック以外には存在ごと伏せる")
     }
 
     /// ポートが使われていれば奪わずに「使用中」を返す。

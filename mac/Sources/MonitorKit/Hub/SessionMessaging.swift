@@ -1,7 +1,6 @@
 import Foundation
 
-/// セッションの受信箱ソケット（公式の cross-session messaging）へ行区切りの JSON を書く。
-/// 届いたテキストは「別セッションからのメッセージ」として扱われ、本人の指示・権限承認にはならない。
+/// 受信箱ソケット（公式の cross-session messaging）へ書く。届いた文は別セッションからのメッセージで、本人の指示・権限承認にはならない。
 public enum SessionMessaging {
     /// 無通信がこれだけ続いたら諦める。受信側は 30 秒で切る。
     static let idleTimeout: TimeInterval = 5

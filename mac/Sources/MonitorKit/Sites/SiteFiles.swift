@@ -20,13 +20,13 @@ public enum SiteFiles {
         if parts.contains(where: { $0 == "." || $0 == ".." }) { return .forbidden }
         // .git・.env 等を書き出しに紛れ込ませても出さない。
         if parts.contains(where: { $0.hasPrefix(".") }) { return .notFound }
-        guard let realRoot = SiteLocator.realPath(root), isDirectory(realRoot, fileManager),
+        guard let realRoot = FilePaths.realPath(root), FilePaths.isDirectory(realRoot, fileManager: fileManager),
               SiteLocator.isExportInside(exportDir: root) else { return .notFound }
         let trailingSlash = decoded.hasSuffix("/")
         let candidate = parts.isEmpty ? realRoot : (realRoot as NSString).appendingPathComponent(parts.joined(separator: "/"))
 
         if let real = inside(candidate, realRoot: realRoot) {
-            if isDirectory(real, fileManager) {
+            if FilePaths.isDirectory(real, fileManager: fileManager) {
                 let index = (real as NSString).appendingPathComponent("index.html")
                 let indexFile = inside(index, realRoot: realRoot).flatMap { isRegularFile($0, fileManager) ? $0 : nil }
                 if !parts.isEmpty && !trailingSlash {
@@ -42,7 +42,7 @@ public enum SiteFiles {
             if isRegularFile(real, fileManager) { return .file(real) }
             return .notFound
         }
-        if fileManager.fileExists(atPath: candidate) || isSymlink(candidate, fileManager) { return .forbidden }
+        if fileManager.fileExists(atPath: candidate) || FilePaths.fileType(candidate, fileManager: fileManager) == .typeSymbolicLink { return .forbidden }
         // `trailingSlash: false` の書き出しは `/about` → `about.html` の形になる。
         if !trailingSlash, let last = parts.last, (last as NSString).pathExtension.isEmpty {
             if let file = inside(candidate + ".html", realRoot: realRoot), isRegularFile(file, fileManager) { return .file(file) }
@@ -52,14 +52,12 @@ public enum SiteFiles {
 
     /// 転送先は分けた部分から組み直す（`//host` の形にして別のサイトへ飛ばさせない）。
     static func location(_ parts: [String]) -> String {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/;?#")
-        return "/" + parts.map { $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? $0 }.joined(separator: "/")
+        "/" + parts.map { URLPath.segment($0) ?? $0 }.joined(separator: "/")
     }
 
     /// 書き出しに 404.html があればそれ。
     public static func notFoundPage(root: String, fileManager: FileManager = .default) -> String? {
-        guard let realRoot = SiteLocator.realPath(root), SiteLocator.isExportInside(exportDir: root) else { return nil }
+        guard let realRoot = FilePaths.realPath(root), SiteLocator.isExportInside(exportDir: root) else { return nil }
         let page = (realRoot as NSString).appendingPathComponent("404.html")
         guard let file = inside(page, realRoot: realRoot), isRegularFile(file, fileManager) else { return nil }
         return file
@@ -67,7 +65,7 @@ public enum SiteFiles {
 
     /// 実体が書き出しのフォルダの中にあればその実体のパス。無い・外・隠しファイルを指すなら nil。
     static func inside(_ path: String, realRoot: String) -> String? {
-        guard let real = SiteLocator.realPath(path) else { return nil }
+        guard let real = FilePaths.realPath(path) else { return nil }
         if real == realRoot { return real }
         guard real.hasPrefix(realRoot + "/") else { return nil }
         // 隠しでない名前のリンクから .env 等の実体を返さない。
@@ -75,17 +73,8 @@ public enum SiteFiles {
         return rest.contains(where: { $0.hasPrefix(".") }) ? nil : real
     }
 
-    private static func isDirectory(_ path: String, _ fileManager: FileManager) -> Bool {
-        var isDir: ObjCBool = false
-        return fileManager.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
-    }
-
     private static func isRegularFile(_ path: String, _ fileManager: FileManager) -> Bool {
-        (try? fileManager.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeRegular
-    }
-
-    private static func isSymlink(_ path: String, _ fileManager: FileManager) -> Bool {
-        (try? fileManager.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeSymbolicLink
+        FilePaths.fileType(path, fileManager: fileManager) == .typeRegular
     }
 
     // MARK: - Content-Type

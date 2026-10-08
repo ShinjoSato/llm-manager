@@ -51,8 +51,7 @@ public enum XcodeClose {
         "end run",
     ]
 
-    /// パスはスクリプトに埋め込まず argv で渡す（`"` や `\` を含むパスで壊れないため）。
-    /// 相対パスは弾く（`-` で始まると osascript のオプションとして解釈される）。
+    /// パスは argv で渡し（`"` や `\` で壊れないため）、相対パスは弾く（`-` で始まると osascript のオプションになる）。
     public static func arguments(for path: String) -> [String]? {
         guard path.hasPrefix("/") else { return nil }
         return scriptLines.flatMap { ["-e", $0] } + [path]

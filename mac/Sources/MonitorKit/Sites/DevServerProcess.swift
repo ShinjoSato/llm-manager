@@ -1,7 +1,7 @@
 import Foundation
 
-/// 新しいプロセスグループで起動した子（開発サーバー）。出力と終了を知らせ、止める時はグループごと止める。
-/// 先頭のプロセスはグループが止まり切るまで刈り取らない（番号が使い回されず、グループが自分の子のものだと言い切れるため）。
+/// 新しいプロセスグループで起動した開発サーバー。止める時はグループごと止め、先頭のプロセスは止まり切るまで刈り取らない
+/// （番号が使い回されず、グループが自分の子のものだと言い切れるため）。
 public final class DevServerProcess: @unchecked Sendable {
     public let pid: pid_t
     /// 受け手が詰まっている間にため込む出力の上限（超えたら古い方から捨てる）。
@@ -30,8 +30,7 @@ public final class DevServerProcess: @unchecked Sendable {
         self.onExit = onExit
     }
 
-    /// 起動する。stdin は /dev/null、stdout と stderr は 1 本にまとめて `onOutput` へ。
-    /// `onOutput` と `onExit` は `deliveryQueue`（直列のキュー）で、届いた順に呼ぶ。
+    /// stdin は /dev/null、stdout と stderr は 1 本にまとめる。`onOutput` と `onExit` は `deliveryQueue` で届いた順に呼ぶ。
     public static func spawn(executable: String, arguments: [String], environment: [String: String], directory: String,
                              deliveryQueue: DispatchQueue = .main,
                              onOutput: @escaping @Sendable (Data) -> Void,

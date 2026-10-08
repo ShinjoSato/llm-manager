@@ -18,8 +18,7 @@ public enum AttentionNoticeSource {
         return AttentionCandidate(roomId: roomId, sessionId: sessionId, roomName: name, kind: kind, toolName: tool)
     }
 
-    /// 通知に載せるルーム名。ホスト中のルームは登録したプロジェクト名、外部セッションはフォルダ名だけ。
-    /// セッション名（`~/.claude/sessions/<pid>.json` の name）は会話から付くことがあるので使わない。
+    /// 通知に載せるルーム名（プロジェクト名かフォルダ名）。セッション名は会話から付くことがあるので使わない。
     public static func roomName(hostedProjectName: String?, project: String?, cwd: String) -> String {
         if let hostedProjectName, !hostedProjectName.isEmpty { return hostedProjectName }
         if let project, !project.isEmpty { return project }

@@ -10,16 +10,12 @@ public struct SettingsFile: Sendable {
 
     public init(url: URL, restrictsDirectory: Bool? = nil) {
         self.url = url
-        self.restrictsDirectory = restrictsDirectory
-            ?? (url.deletingLastPathComponent().standardizedFileURL.path == DeckPaths.applicationSupport.standardizedFileURL.path)
+        self.restrictsDirectory = restrictsDirectory ?? DeckPaths.isInApplicationSupport(url)
     }
 
     /// 既定の場所（`CLAUDE_DECK_SETTINGS` があればそちら）。
     public static func defaultURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-        if let path = environment[environmentKey], !path.isEmpty {
-            return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        }
-        return DeckPaths.applicationSupport.appendingPathComponent("settings.json")
+        DeckPaths.file("settings.json", overriddenBy: environmentKey, environment: environment)
     }
 
     /// 以前の版のプロジェクト一覧（設定と同じ場所の `projects.json`）。
