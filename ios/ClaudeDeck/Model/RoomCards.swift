@@ -43,6 +43,11 @@ struct PairingOffer: Identifiable, Equatable {
         return .success(PairingOffer(payload: payload, source: source))
     }
 
+    /// 送る前に断る理由（LAN の外・版違い・期限切れ）。無ければ nil。
+    func problem(now: Date = Date()) -> String? {
+        payload.addressProblem ?? payload.problem(now: now.timeIntervalSince1970 * 1000)
+    }
+
     /// カメラで読んだもの以外は出どころを確かめられないので、確認画面で注意を出す。
     var originWarning: String? {
         switch source {

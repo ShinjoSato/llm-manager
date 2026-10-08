@@ -72,7 +72,7 @@ struct RoomListScreen: View {
                 let groups = Self.groups(model.rooms)
                 if groups.isEmpty { emptyState }
                 ForEach(groups, id: \.phase) { group in
-                    Text("\(DeckTheme.title(for: group.phase))  \(group.rooms.count)")
+                    Text("\(group.phase.title)  \(group.rooms.count)")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(DeckTheme.tertiary)
                         .padding(.horizontal, 12)
@@ -112,10 +112,9 @@ struct RoomListScreen: View {
     }
 
     /// mac が並べた順（要対応 → 稼働中 → 待機・新しく動いた順）のままグループに分ける。
-    static func groups(_ rooms: [RemoteRoom]) -> [(phase: RemoteRoomPhase, rooms: [RemoteRoom])] {
-        let order: [RemoteRoomPhase] = [.attention, .active, .idle]
-        return order.compactMap { phase in
-            let members = rooms.filter { ($0.phase == .unknown ? .idle : $0.phase) == phase }
+    static func groups(_ rooms: [RemoteRoom]) -> [(phase: RoomPhase, rooms: [RemoteRoom])] {
+        RoomPhase.allCases.compactMap { phase in
+            let members = rooms.filter { RoomPhase($0.phase) == phase }
             return members.isEmpty ? nil : (phase, members)
         }
     }
@@ -135,7 +134,7 @@ struct RoomRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            PixelAvatar(status: room.status, size: 40, hidesFromAccessibility: true)
+            PixelAvatar(status: room.status, size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(room.name)
@@ -200,7 +199,6 @@ struct RoomRow: View {
 struct InlineNotice: View {
     let symbol: String
     let text: String
-    var color: Color = DeckTheme.permission
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -208,7 +206,7 @@ struct InlineNotice: View {
             Text(text).fixedSize(horizontal: false, vertical: true)
         }
         .font(DeckTheme.caption)
-        .foregroundStyle(color)
+        .foregroundStyle(DeckTheme.permission)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.vertical, 6)

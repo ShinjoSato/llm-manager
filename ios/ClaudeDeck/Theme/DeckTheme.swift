@@ -56,14 +56,6 @@ enum DeckTheme {
         case .unknown: return "不明"
         }
     }
-
-    static func title(for phase: RemoteRoomPhase) -> String {
-        switch phase {
-        case .attention: return "要対応"
-        case .active: return "稼働中"
-        case .idle, .unknown: return "待機"
-        }
-    }
 }
 
 extension Color {

@@ -78,7 +78,6 @@ final class AppModel {
     struct Notice: Equatable {
         var text: String
         var isError: Bool
-        var at: Date
     }
 
     private let keychain: PairingKeychain
@@ -308,7 +307,7 @@ final class AppModel {
     /// 確認画面で「ペアリングする」を押した時だけ呼ぶ。
     func confirmPairing(_ offer: PairingOffer) async {
         let payload = offer.payload
-        if let problem = payload.addressProblem ?? payload.problem(now: Date().timeIntervalSince1970 * 1000) {
+        if let problem = offer.problem() {
             pairingError = PairingError(problem)
             return
         }
@@ -333,10 +332,7 @@ final class AppModel {
     private func adopt(_ pairing: RemotePairing) {
         stopStream()
         self.pairing = pairing
-        state = nil
-        stateUpdatedAt = nil
-        transcripts = [:]
-        recentSessions = []
+        clearRoomData()
         unread = [:]
         relayNotes = [:]
         notices = [:]
@@ -364,11 +360,16 @@ final class AppModel {
         client = nil
         keychain.delete()
         pairing = nil
+        clearRoomData()
+        connection = .unpaired
+    }
+
+    /// 前の Mac の一覧と会話を捨てる。
+    private func clearRoomData() {
         state = nil
         stateUpdatedAt = nil
         transcripts = [:]
         recentSessions = []
-        connection = .unpaired
     }
 
     // MARK: - 会話
@@ -454,9 +455,14 @@ final class AppModel {
         }
     }
 
+    /// 送る本文（入力欄の前後の空白を除いたもの）。
+    func draftText(_ roomId: String) -> String {
+        (drafts[roomId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 送れたら（mac が受け付けたら）入力欄を空にする。
     func send(_ room: RemoteRoom) {
-        let text = (drafts[room.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = draftText(room.id)
         // 送っている最中は送らない（メモだけ残って送信中のままにならないよう、メモを作る前に確かめる）。
         guard !text.isEmpty, !inFlight.contains(room.id) else { return }
         let relay = room.send.mode == .relay
@@ -466,7 +472,7 @@ final class AppModel {
             try await client.sendMessage(roomId: room.id, text: text)
         } completion: { [weak self] result in
             guard let self else { return }
-            if result?.ok == true, self.drafts[room.id]?.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            if result?.ok == true, self.draftText(room.id) == text {
                 self.drafts[room.id] = ""
             }
             guard relay, let sid = room.sessionId, let index = self.relayNotes[sid]?.firstIndex(where: { $0.id == note.id }) else { return }
@@ -484,7 +490,7 @@ final class AppModel {
                          completion: ((RemoteActionResult?) -> Void)? = nil) {
         guard !inFlight.contains(room.id) else { return }
         guard let client, connection == .connected else {
-            notices[room.id] = Notice(text: "Mac につながっていないので送れません。", isError: true, at: Date())
+            notices[room.id] = Notice(text: "Mac につながっていないので送れません。", isError: true)
             completion?(nil)
             return
         }
@@ -495,12 +501,12 @@ final class AppModel {
             do {
                 let result = try await call(client)
                 if let text = RemoteResultText.text(for: result, operation: operation) {
-                    notices[room.id] = Notice(text: text, isError: !result.ok, at: Date())
+                    notices[room.id] = Notice(text: text, isError: !result.ok)
                 }
                 completion?(result)
             } catch {
                 let issue = RemoteIssue.from(error)
-                notices[room.id] = Notice(text: "\(issue.title)。届いたかどうか分からないので、画面の様子を確かめてください。", isError: true, at: Date())
+                notices[room.id] = Notice(text: "\(issue.title)。届いたかどうか分からないので、画面の様子を確かめてください。", isError: true)
                 completion?(nil)
             }
         }

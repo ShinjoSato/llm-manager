@@ -1,7 +1,6 @@
 import Foundation
 
-// 監視のドメイン型。
-// 時刻は epoch ミリ秒のまま持ち、Date が要る所では *Date の計算プロパティを使う。
+// 監視のドメイン型。時刻は epoch ミリ秒のまま持ち、Date は *Date の計算プロパティで出す。
 
 /// 未知の値が来てもデコード全体を落とさないための文字列 enum の共通処理。
 public protocol LenientStringEnum: RawRepresentable, Codable, Sendable, Hashable where RawValue == String {

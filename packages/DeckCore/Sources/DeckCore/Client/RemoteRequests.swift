@@ -107,9 +107,9 @@ public struct RemoteRequestBuilder: Sendable {
     /// 端末トークン（ペアリング前は nil）。
     public var token: String?
     /// 操作の待ち時間。mac での操作は最大 30 秒かかるので、それより長く待つ。
-    public var actionTimeout: TimeInterval = 40
+    static let actionTimeout: TimeInterval = 40
     /// ストリームの無通信の許容（mac は 15 秒ごとに ping を送る）。
-    public var streamIdleTimeout: TimeInterval = 40
+    static let streamIdleTimeout: TimeInterval = 40
 
     public init(host: String, port: Int, token: String?) {
         self.host = host
@@ -143,7 +143,7 @@ public struct RemoteRequestBuilder: Sendable {
         guard let url = url(segments, query: query) else { throw RemoteClientError.invalidAddress }
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.timeoutInterval = timeout ?? actionTimeout
+        req.timeoutInterval = timeout ?? Self.actionTimeout
         req.cachePolicy = .reloadIgnoringLocalCacheData
         if authorized, let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         return req
@@ -174,7 +174,7 @@ public struct RemoteRequestBuilder: Sendable {
     /// `transcripts` が nil なら会話を購読しない。`["*"]` は全部。
     public func events(transcripts: [String]?) throws -> URLRequest {
         let query = transcripts.map { [URLQueryItem(name: "transcripts", value: $0.joined(separator: ","))] } ?? []
-        var req = try request("GET", ["events"], query: query, timeout: streamIdleTimeout)
+        var req = try request("GET", ["events"], query: query, timeout: Self.streamIdleTimeout)
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         return req
     }

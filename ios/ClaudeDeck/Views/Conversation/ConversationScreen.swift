@@ -48,7 +48,7 @@ private struct ConversationTitle: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            PixelAvatar(status: room.status, size: 30, hidesFromAccessibility: true)
+            PixelAvatar(status: room.status, size: 30)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(room.name)
@@ -235,6 +235,17 @@ private struct EntryView: View {
     }
 }
 
+/// 吹き出しの形（送った側は右下、Claude は左下の角を小さくする）。
+private enum BubbleShape {
+    static var outgoing: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16, bottomTrailingRadius: 4, topTrailingRadius: 16)
+    }
+
+    static var incoming: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 4, bottomTrailingRadius: 16, topTrailingRadius: 16)
+    }
+}
+
 private struct UserBubble: View {
     let text: String
     let images: [RemoteImageRef]
@@ -250,9 +261,7 @@ private struct UserBubble: View {
                     .lineSpacing(3)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
-                                                       bottomTrailingRadius: 4, topTrailingRadius: 16)
-                        .fill(DeckTheme.userBubble))
+                    .background(BubbleShape.outgoing.fill(DeckTheme.userBubble))
             }
         }
     }
@@ -263,8 +272,7 @@ private struct ClaudeBubble: View {
     let images: [RemoteImageRef]
 
     var body: some View {
-        let shape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 4,
-                                           bottomTrailingRadius: 16, topTrailingRadius: 16)
+        let shape = BubbleShape.incoming
         VStack(alignment: .leading, spacing: 6) {
             if !images.isEmpty { RemoteImageGrid(images: images) }
             if !text.isEmpty {
@@ -285,8 +293,7 @@ private struct RelayBubble: View {
     let state: RelayNote.State
 
     var body: some View {
-        let shape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
-                                           bottomTrailingRadius: 4, topTrailingRadius: 16)
+        let shape = BubbleShape.outgoing
         VStack(alignment: .trailing, spacing: 4) {
             Label("伝言", systemImage: "envelope")
                 .font(.system(size: 11, weight: .semibold))

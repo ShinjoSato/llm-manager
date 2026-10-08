@@ -58,6 +58,10 @@ final class RoomGroupingTests: XCTestCase {
         XCTAssertEqual(after[1].id, before[3].id)
     }
 
+    func testRemotePhaseMapsToGroup() {
+        XCTAssertEqual([RemoteRoomPhase.attention, .active, .idle, .unknown].map(RoomPhase.init), [.attention, .active, .idle, .idle])
+    }
+
     func testSameTimeSortsByName() {
         let groups = RoomGrouping.group([room("b", .idle, at: 1), room("a", .idle, at: 1)])
         XCTAssertEqual(groups[0].ids, ["a", "b"])

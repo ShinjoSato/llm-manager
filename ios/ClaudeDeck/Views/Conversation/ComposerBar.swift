@@ -12,7 +12,7 @@ struct ComposerBar: View {
         let reason = disabledReason
         let text = Binding(get: { model.drafts[room.id] ?? "" }, set: { model.drafts[room.id] = $0 })
         let sending = model.inFlight.contains(room.id)
-        let canSend = reason == nil && !sending && !text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let canSend = reason == nil && !sending && !model.draftText(room.id).isEmpty
         VStack(alignment: .leading, spacing: 6) {
             if relay {
                 HStack(spacing: 6) {

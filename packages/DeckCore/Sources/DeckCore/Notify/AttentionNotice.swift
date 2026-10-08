@@ -1,7 +1,6 @@
 import Foundation
 
-// 要対応を iCloud（CloudKit のプライベート DB）経由で iPhone に知らせるための共有の形。
-// iCloud に載せるのはルーム名・何を待っているかの定型文・時刻・識別子だけで、会話の本文やツールの入力は持たない。
+// 要対応を iCloud 経由で iPhone に知らせる形。載せるのは名前・定型文・時刻・識別子だけで、会話の本文やツールの入力は持たない。
 
 /// 何を待っているか。
 public enum AttentionKind: String, Codable, Sendable, CaseIterable {
@@ -152,8 +151,7 @@ public enum AttentionNoticeText {
         return raw
     }
 
-    /// 権限待ちの通知文（`Claude needs your permission to use Bash.`）の形の時だけ、ツール名を取り出す。
-    /// 他の形（エラー文・説明文・ファイル名）はツール名と見分けられないので拾わない。
+    /// `… permission to use Bash.` の形の時だけツール名を取り出す（他の形はツール名と見分けられない）。
     public static func toolName(fromDetail detail: String?) -> String? {
         guard let detail, let head = detail.split(separator: ":", maxSplits: 1).first,
               let range = head.range(of: #"permission to use [A-Za-z][A-Za-z0-9_.-]*[.!?。\s]*$"#,

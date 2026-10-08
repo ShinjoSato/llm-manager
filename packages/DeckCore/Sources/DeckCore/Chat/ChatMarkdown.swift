@@ -1,7 +1,6 @@
 import Foundation
 
-/// 吹き出しで扱う Markdown。ブロック（見出し・表・リスト・引用・区切り線・段落・コードブロック）は自前で解析し、
-/// 段落内のインライン装飾は `inline(_:)` に任せる。
+/// 吹き出しの Markdown。ブロックは自前で解析し、段落内の装飾は `inline(_:)`（AttributedString）に任せる。
 public enum ChatMarkdown {
     public enum Alignment: Sendable, Equatable {
         case leading, center, trailing

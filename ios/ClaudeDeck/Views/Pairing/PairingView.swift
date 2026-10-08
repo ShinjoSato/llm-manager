@@ -11,7 +11,7 @@ struct PairingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(spacing: 14) {
-                    PixelAvatar(status: .waiting, size: 64, hidesFromAccessibility: true)
+                    PixelAvatar(status: .waiting, size: 64)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("claude-deck")
                             .font(.system(size: 26, weight: .bold))
@@ -36,11 +36,7 @@ struct PairingView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(DeckTheme.border))
 
                 Button { scanning = true } label: {
-                    Label("QR を読み取る", systemImage: "qrcode.viewfinder")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(DeckTheme.onAccent)
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(DeckTheme.accent))
+                    Label("QR を読み取る", systemImage: "qrcode.viewfinder").primaryButtonFace()
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("scan-qr")
@@ -115,17 +111,9 @@ struct ErrorNote: View {
                     .foregroundStyle(DeckTheme.text)
                     .fixedSize(horizontal: false, vertical: true)
                 if opensSettings {
-                    Button { ConnectionBanner.openSettings() } label: {
-                        Text("設定を開く")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(DeckTheme.text)
-                            .padding(.horizontal, 12)
-                            .frame(height: 32)
-                            .background(RoundedRectangle(cornerRadius: 9).fill(DeckTheme.inputSurface))
-                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(DeckTheme.inputBorder))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("open-settings")
+                    Button { UIApplication.openAppSettings() } label: { ActionButtonLabel(title: "設定を開く") }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("open-settings")
                 }
             }
         }
@@ -144,7 +132,7 @@ struct PairingConfirmView: View {
 
     var body: some View {
         let payload = offer.payload
-        let problem = payload.addressProblem ?? payload.problem(now: Date().timeIntervalSince1970 * 1000)
+        let problem = offer.problem()
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -183,10 +171,7 @@ struct PairingConfirmView: View {
                             if model.pairingInProgress { ProgressView().tint(DeckTheme.onAccent) }
                             Text(model.pairingInProgress ? "ペアリングしています…" : "ペアリングする")
                         }
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(DeckTheme.onAccent)
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(DeckTheme.accent))
+                        .primaryButtonFace()
                     }
                     .buttonStyle(.plain)
                     .disabled(problem != nil || model.pairingInProgress)
@@ -222,5 +207,15 @@ struct PairingConfirmView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 10).fill(DeckTheme.inputSurface))
+    }
+}
+
+private extension View {
+    /// ペアリングの画面の主ボタン（緑の地）。
+    func primaryButtonFace() -> some View {
+        font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(DeckTheme.onAccent)
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .background(RoundedRectangle(cornerRadius: 12).fill(DeckTheme.accent))
     }
 }

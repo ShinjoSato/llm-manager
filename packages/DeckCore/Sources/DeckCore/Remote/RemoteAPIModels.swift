@@ -1,7 +1,6 @@
 import Foundation
 
-// iPhone アプリと共有する API の型（仕様は mac/docs/remote-api.md）。共有パッケージへ切り出せるよう、
-// Remote/API と MonitorModels.swift は Foundation / Security / CryptoKit だけに依存させる。
+// mac と iPhone で共有する Remote API の型（仕様は mac/docs/remote-api.md）。
 
 /// API の版。互換の無い変更をしたら上げ、パスの `/v1` も替える。
 public enum RemoteAPI {

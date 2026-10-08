@@ -3,8 +3,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-// アプリアイコン（1024px・透過なし）を DeckCore のドット絵から描く。
-// 使い方: ios/scripts/make-app-icon.sh
+// アプリアイコン（1024px・透過なし）を DeckCore のドット絵から描く（ios/scripts/make-app-icon.sh から呼ぶ）。
 
 let size = 1024
 let output = CommandLine.arguments.dropFirst().first ?? "AppIcon.png"

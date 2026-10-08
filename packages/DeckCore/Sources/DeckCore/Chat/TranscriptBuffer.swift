@@ -1,7 +1,7 @@
 import Foundation
 
-/// 1 セッション分の会話履歴。取得（全件 / `after`）と追記の購読を id で重複除去して 1 本に並べる。
-/// 使い方: 購読を始めた後に `beginFetch()` → 取得 → `apply(_:fullReplace:)`。その間に届いた追記は `append(_:)`。
+/// 1 セッション分の会話履歴。取得と追記を id で重ねて 1 本に並べる。
+/// 順序: 購読を始めてから `beginFetch()` → 取得 → `apply(_:fullReplace:)`（その間の追記は `append(_:)`）。
 public struct TranscriptBuffer: Sendable, Equatable {
     public private(set) var items: [TranscriptItem] = []
     private var ids: Set<String> = []
@@ -9,8 +9,6 @@ public struct TranscriptBuffer: Sendable, Equatable {
     private var liveIds: Set<String> = []
 
     public init() {}
-
-    public var isEmpty: Bool { items.isEmpty }
 
     /// GET を投げる直前に呼ぶ。
     public mutating func beginFetch() {

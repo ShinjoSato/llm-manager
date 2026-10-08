@@ -2,8 +2,7 @@ import CryptoKit
 import Foundation
 import Security
 
-/// 自己署名の証明書を QR の指紋でピン留めする（iPhone 側の検証にも使う）。
-/// CA の検証はしない（自己署名なので通らない）。指紋が一致した時だけ信頼する。
+/// 自己署名の証明書を QR の指紋でピン留めする。CA の検証は通らないのでせず、指紋が一致した時だけ信頼する。
 public enum RemotePinning {
     /// 証明書（DER）の SHA-256 を小文字 16 進で。
     public static func fingerprint(of certificateDER: Data) -> String {

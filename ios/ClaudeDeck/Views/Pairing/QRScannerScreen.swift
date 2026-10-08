@@ -58,9 +58,7 @@ struct QRScannerScreen: View {
             case .denied, .restricted:
                 Text("カメラの使用が許可されていません。設定でカメラを許可するか、QR の内容を貼り付けてください。")
                     .multilineTextAlignment(.center)
-                Button("設定を開く") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-                }
+                Button("設定を開く") { UIApplication.openAppSettings() }
                 .foregroundStyle(DeckTheme.accent)
             case .notDetermined:
                 ProgressView()
