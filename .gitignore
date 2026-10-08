@@ -5,9 +5,13 @@ config/Local.xcconfig
 # mac アプリの署名に使うプロビジョニングプロファイル（各自の手元のもの）。
 mac/Resources/*.provisionprofile
 
-# Swift Package Manager（どの階層でも）
+# Swift Package Manager（どの階層でも）と、Package.swift から生成した Xcode プロジェクト
 .build/
 .swiftpm/
+mac/*.xcodeproj/
+
+# サイトの開発サーバー等で誤って npm i した時の保険
+node_modules/
 
 # Claude Code の個人設定と作業用（agent の隔離 worktree）
 .claude/settings.local.json
