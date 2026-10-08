@@ -1,7 +1,7 @@
 import Foundation
 
 /// 要対応のルームの移り変わりから、iCloud に書く・消す知らせを決める（副作用なし）。同じ要対応は種類が変わっても 1 回だけ。
-/// `settle` 秒続いたものの一番新しいものを見出しに、その時に待っている他のルームも 1 件にまとめ、`cooldown` 秒は次を出さない。
+/// mac の前ですぐ答えたものは送らないよう `settle` 秒続いたものだけを見出しにし、待っている他のルーム（未 settle を含む）は「ほか N 件」にまとめ、`cooldown` 秒は次を出さない。
 /// 解消は `resolve` 秒続けて外れてから確定し、まとめたルームが全て解消したら知らせを消す。
 public struct AttentionNoticePlanner: Sendable {
     public struct Config: Sendable, Equatable {

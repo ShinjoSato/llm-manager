@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 /// ペアリング（接続先・ピン留めした指紋・端末トークン）をキーチェーンに置く。
-/// この端末だけ・初回のロック解除後なら読める（画面ロック中でも張り直せ、iCloud やバックアップで他の端末へ渡らない）。
+/// この端末だけ・起動後の初回のロック解除後なら読める（画面ロック中でも張り直せ、iCloud やバックアップで他の端末へ渡らない）。
 struct PairingKeychain {
     var service = PairingKeychain.serviceName(suffix: "pairing")
     var account = "default"

@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 /// 証明書を指紋でピン留めし（CA の検証はしない）、リダイレクトは追わない URLSession の delegate。
-/// 要求ごと（`data(for:delegate:)`）に付けると、その要求での不一致だけが分かる。
+/// セッションにも要求ごと（`data(for:delegate:)`）にも付けられ、要求ごとならその要求での不一致だけが分かる。
 public final class RemotePinnedSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     public let pin: String
     private let lock = NSLock()
