@@ -90,7 +90,9 @@ public enum XcodeBridgeFailure: Error, Equatable, Sendable {
         let lines = text.split(whereSeparator: \.isNewline).map { line in
             String(line.drop(while: { $0 == "|" || $0 == " " || $0 == "\t" }))
         }
-        let errors = lines.filter { $0.contains("error:") }
+        // 診断は「場所: error: …」の行と、その下の注記（`- error: …）で同じ文言が二度出るので、場所付きの行だけを重複なく拾う。
+        var seen = Set<String>()
+        let errors = lines.filter { $0.contains("error:") && !$0.hasPrefix("`-") && seen.insert($0).inserted }
         return errors.isEmpty ? nil : summary(errors.prefix(limit).joined(separator: "\n"))
     }
 

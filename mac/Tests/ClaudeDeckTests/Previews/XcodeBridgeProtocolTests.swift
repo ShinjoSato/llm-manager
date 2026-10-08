@@ -215,4 +215,16 @@ final class XcodeBridgeProtocolTests: XCTestCase {
         XCTAssertEqual(PreviewVariantLabels.ordered(["Orientation", "Zeta", "Color Scheme", "Alpha", "Dynamic Type"]),
                        ["Color Scheme", "Dynamic Type", "Orientation", "Alpha", "Zeta"])
     }
+
+    func testBuildErrorsSkipDiagnosticNotesAndDuplicates() {
+        let log = """
+        |  SchemeBuildError: Failed to build the scheme “ailovei”
+        |  |  /x/PaywallColor.swift:57:12: error: invalid redeclaration
+        |  |      |            `- error: invalid redeclaration
+        |  |  /x/PaywallColor.swift:57:12: error: invalid redeclaration
+        |  |  /x/PaywallColor.swift:260:18: error: ambiguous use of 'init'
+        """
+        XCTAssertEqual(XcodeBridgeFailure.classify(log),
+                       .buildFailed("/x/PaywallColor.swift:57:12: error: invalid redeclaration\n/x/PaywallColor.swift:260:18: error: ambiguous use of 'init'"))
+    }
 }
