@@ -93,8 +93,7 @@ public enum SiteLocator {
             return SiteLookup(location: nil, candidates: found, problem: reason)
         case .success(let relative):
             let root = absolute(relative, in: projectPath)
-            var isDir: ObjCBool = false
-            guard fileManager.fileExists(atPath: root, isDirectory: &isDir), isDir.boolValue else {
+            guard FilePaths.isDirectory(root, fileManager: fileManager) else {
                 return SiteLookup(location: nil, candidates: found, problem: "指定のフォルダ（\(relative)）が見つかりません")
             }
             // シンボリックリンクでプロジェクトの外へ出ていないかを実体で確かめる。
@@ -123,8 +122,7 @@ public enum SiteLocator {
             for name in names.sorted() where !name.hasPrefix(".") && !skipped.contains(name) {
                 let child = (dir as NSString).appendingPathComponent(name)
                 // シンボリックリンクのフォルダは辿らない（外へ出たり循環したりしないため）。
-                guard let attrs = try? fileManager.attributesOfItem(atPath: child),
-                      attrs[.type] as? FileAttributeType == .typeDirectory else { continue }
+                guard FilePaths.fileType(child, fileManager: fileManager) == .typeDirectory else { continue }
                 queue.append((relative == "." ? name : "\(relative)/\(name)", depth + 1))
             }
         }

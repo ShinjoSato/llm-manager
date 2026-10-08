@@ -7,6 +7,17 @@ enum FilePaths {
         defer { free(resolved) }
         return String(cString: resolved)
     }
+
+    /// 辿った先がフォルダか。
+    static func isDirectory(_ path: String, fileManager: FileManager = .default) -> Bool {
+        var isDir: ObjCBool = false
+        return fileManager.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    /// リンクを辿らない種類（無ければ nil）。
+    static func fileType(_ path: String, fileManager: FileManager = .default) -> FileAttributeType? {
+        (try? fileManager.attributesOfItem(atPath: path))?[.type] as? FileAttributeType
+    }
 }
 
 enum URLPath {

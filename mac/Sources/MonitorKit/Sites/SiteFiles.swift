@@ -20,13 +20,13 @@ public enum SiteFiles {
         if parts.contains(where: { $0 == "." || $0 == ".." }) { return .forbidden }
         // .git・.env 等を書き出しに紛れ込ませても出さない。
         if parts.contains(where: { $0.hasPrefix(".") }) { return .notFound }
-        guard let realRoot = FilePaths.realPath(root), isDirectory(realRoot, fileManager),
+        guard let realRoot = FilePaths.realPath(root), FilePaths.isDirectory(realRoot, fileManager: fileManager),
               SiteLocator.isExportInside(exportDir: root) else { return .notFound }
         let trailingSlash = decoded.hasSuffix("/")
         let candidate = parts.isEmpty ? realRoot : (realRoot as NSString).appendingPathComponent(parts.joined(separator: "/"))
 
         if let real = inside(candidate, realRoot: realRoot) {
-            if isDirectory(real, fileManager) {
+            if FilePaths.isDirectory(real, fileManager: fileManager) {
                 let index = (real as NSString).appendingPathComponent("index.html")
                 let indexFile = inside(index, realRoot: realRoot).flatMap { isRegularFile($0, fileManager) ? $0 : nil }
                 if !parts.isEmpty && !trailingSlash {
@@ -42,7 +42,7 @@ public enum SiteFiles {
             if isRegularFile(real, fileManager) { return .file(real) }
             return .notFound
         }
-        if fileManager.fileExists(atPath: candidate) || isSymlink(candidate, fileManager) { return .forbidden }
+        if fileManager.fileExists(atPath: candidate) || FilePaths.fileType(candidate, fileManager: fileManager) == .typeSymbolicLink { return .forbidden }
         // `trailingSlash: false` の書き出しは `/about` → `about.html` の形になる。
         if !trailingSlash, let last = parts.last, (last as NSString).pathExtension.isEmpty {
             if let file = inside(candidate + ".html", realRoot: realRoot), isRegularFile(file, fileManager) { return .file(file) }
@@ -73,17 +73,8 @@ public enum SiteFiles {
         return rest.contains(where: { $0.hasPrefix(".") }) ? nil : real
     }
 
-    private static func isDirectory(_ path: String, _ fileManager: FileManager) -> Bool {
-        var isDir: ObjCBool = false
-        return fileManager.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
-    }
-
     private static func isRegularFile(_ path: String, _ fileManager: FileManager) -> Bool {
-        (try? fileManager.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeRegular
-    }
-
-    private static func isSymlink(_ path: String, _ fileManager: FileManager) -> Bool {
-        (try? fileManager.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeSymbolicLink
+        FilePaths.fileType(path, fileManager: fileManager) == .typeRegular
     }
 
     // MARK: - Content-Type
