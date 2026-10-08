@@ -188,7 +188,7 @@ public struct HTTPServerOptions: Sendable {
     public static let loopback = HTTPServerOptions()
 }
 
-/// 最小の HTTP/1.1 サーバー（1 接続 1 リクエスト・Content-Length のみ）。既定は 127.0.0.1 だけで待ち受ける。
+/// 外部ライブラリを使わない最小の HTTP/1.1 サーバー（1 接続 1 リクエスト・Content-Length のみ）。既定は 127.0.0.1 だけで待ち受ける。
 public final class HTTPServer: @unchecked Sendable {
     public typealias Handler = @Sendable (HTTPRequest) async -> HTTPResponse
 
