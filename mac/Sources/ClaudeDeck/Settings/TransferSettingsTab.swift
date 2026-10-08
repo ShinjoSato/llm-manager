@@ -21,9 +21,7 @@ struct TransferSettingsTab: View {
                 }
                 HStack {
                     Spacer()
-                    Button("Finder で表示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([store.file.url])
-                    }
+                    Button("Finder で表示") { SystemActions.revealInFinder(store.file.url) }
                 }
                 if let error = store.saveError {
                     Text(error).font(.caption).foregroundStyle(.red)
@@ -81,12 +79,7 @@ struct TransferSettingsTab: View {
     }
 
     private func importFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "読み込む"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = SystemActions.choose(folders: false, multiple: false, prompt: "読み込む").first else { return }
         importFailed = true
         guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= Self.maxImportBytes,
               let data = try? Data(contentsOf: url) else {

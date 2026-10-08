@@ -42,8 +42,7 @@ private struct ThemePreview: View {
                     .foregroundStyle(ChatTheme.text)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(ChatTheme.claudeBubble))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(ChatTheme.claudeBubbleBorder))
+                    .roundedSurface(10, fill: ChatTheme.claudeBubble, stroke: ChatTheme.claudeBubbleBorder)
                 Spacer()
                 Text("あなたの発言")
                     .font(ChatTheme.caption)
@@ -64,8 +63,7 @@ private struct ThemePreview: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(ChatTheme.background))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(ChatTheme.border))
+        .roundedSurface(10, fill: ChatTheme.background, stroke: ChatTheme.border)
         .environment(\.colorScheme, ChatTheme.colorScheme(for: theme))
         .accessibilityHidden(true)
     }

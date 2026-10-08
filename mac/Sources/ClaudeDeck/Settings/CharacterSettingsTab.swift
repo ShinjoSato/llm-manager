@@ -31,7 +31,7 @@ struct CharacterSettingsTab: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 12)], spacing: 14) {
                 ForEach(CharacterGallery.statuses, id: \.self) { status in
                     VStack(spacing: 6) {
-                        PixelAvatar(status: status, size: 56, hidesFromAccessibility: true)
+                        PixelAvatar(status: status, size: 56)
                         Text(ChatTheme.label(for: status))
                             .font(ChatTheme.caption)
                             .foregroundStyle(ChatTheme.text)

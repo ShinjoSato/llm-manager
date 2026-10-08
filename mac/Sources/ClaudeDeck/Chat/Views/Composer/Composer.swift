@@ -131,13 +131,8 @@ struct Composer: View {
     }
 
     private func chooseFiles() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-        panel.prompt = "添付"
-        panel.message = "添付する画像・ファイルを選んでください"
-        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
-        onAttach(panel.urls.map { .file($0) })
+        let urls = SystemActions.choose(folders: false, multiple: true, prompt: "添付", message: "添付する画像・ファイルを選んでください")
+        guard !urls.isEmpty else { return }
+        onAttach(urls.map { .file($0) })
     }
 }

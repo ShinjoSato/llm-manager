@@ -18,19 +18,13 @@ extension ChatModel: RemoteControl {
         let cards: RemoteRoomCards
         var busy = permissions.contains { prompts.busyKeys.contains($0.key) }
         let send: RemoteSendState
-        var ended: String?
+        let ended = room.hosted?.end?.remoteCode
         if let session = room.hosted {
             cards = RemoteRoomCards(channelsPending: !permissions.isEmpty, card: session.terminalCard,
                                     generation: session.promptTracker.generation)
             busy = busy || prompts.busyKeys.contains(PromptResponder.ptyPermissionKey(session))
                 || prompts.busyKeys.contains(PromptResponder.ptyMenuKey(session))
             send = RemoteSendState(mode: .input, disabledReason: ChatOutbox.inputDisabledReason(for: room) ?? (session.isSending ? "送信中…" : nil))
-            switch session.end {
-            case .exited: ended = "exited"
-            case .limitReached: ended = "limitReached"
-            case .launchFailed: ended = "launchFailed"
-            case nil: ended = nil
-            }
         } else {
             cards = RemoteRoomCards(channelsPending: false, card: nil, generation: 0)
             send = RemoteSendState(mode: .relay, disabledReason: outbox.inputDisabledReason(for: room))
@@ -46,6 +40,14 @@ extension ChatModel: RemoteControl {
     private func room(_ roomId: String) -> Room? {
         guard let id = RemoteRoomID(roomId) else { return nil }
         return rooms.first { $0.id == id }
+    }
+
+    /// ホスト中のルームの端末を操作する。ルームが無い・外部セッションならその失敗を返す。
+    private func withHostedRoom(_ roomId: String,
+                                _ body: (Room, HostedSession) async -> RemoteActionResult) async -> RemoteActionResult {
+        guard let room = room(roomId) else { return Self.roomNotFound }
+        guard let session = room.hosted else { return Self.notHosted }
+        return await body(room, session)
     }
 
     /// 照合に使う今の端末の様子（一覧のカードと同じ組み立て）。
@@ -64,54 +66,54 @@ extension ChatModel: RemoteControl {
     }
 
     func remoteAnswerTerminalPermission(roomId: String, promptId: String, decision: PermissionDecision) async -> RemoteActionResult {
-        guard let room = room(roomId) else { return Self.roomNotFound }
-        guard let session = room.hosted else { return Self.notHosted }
-        switch RemoteChecks.terminalPermission(promptId: promptId, in: terminalContext(room, session)) {
-        case .failure(let result): return result
-        case .success(let prompt): return prompts.answerOnTerminal(session, prompt: prompt, allow: decision == .allow, report: false)
+        await withHostedRoom(roomId) { room, session in
+            switch RemoteChecks.terminalPermission(promptId: promptId, in: terminalContext(room, session)) {
+            case .failure(let result): return result
+            case .success(let prompt): return prompts.answerOnTerminal(session, prompt: prompt, allow: decision == .allow, report: false)
+            }
         }
     }
 
     // MARK: - 選択肢
 
     func remoteAnswerMenu(roomId: String, request: RemoteMenuAnswerRequest) async -> RemoteActionResult {
-        guard let room = room(roomId) else { return Self.roomNotFound }
-        guard let session = room.hosted else { return Self.notHosted }
-        switch RemoteChecks.menuAnswer(request, in: terminalContext(room, session)) {
-        case .failure(let result):
-            return result
-        case .success(let (menu, action)):
-            let choice: Int?
-            switch action {
-            case .choose(let index): choice = index
-            case .cancel: choice = nil
-            }
-            return await RemoteOperationWait.wait { done in
-                prompts.answerMenu(session, menu: menu, choice: choice, report: false) { done($0) }
+        await withHostedRoom(roomId) { room, session in
+            switch RemoteChecks.menuAnswer(request, in: terminalContext(room, session)) {
+            case .failure(let result):
+                return result
+            case .success(let (menu, action)):
+                let choice: Int?
+                switch action {
+                case .choose(let index): choice = index
+                case .cancel: choice = nil
+                }
+                return await RemoteOperationWait.wait { done in
+                    prompts.answerMenu(session, menu: menu, choice: choice, report: false) { done($0) }
+                }
             }
         }
     }
 
     func remoteMoveMenuTab(roomId: String, request: RemoteMenuTabRequest) async -> RemoteActionResult {
-        guard let room = room(roomId) else { return Self.roomNotFound }
-        guard let session = room.hosted else { return Self.notHosted }
-        switch RemoteChecks.menuTab(request, in: terminalContext(room, session)) {
-        case .failure(let result):
-            return result
-        case .success(let menu):
-            let direction: MenuTabMover.Direction = request.direction == .next ? .next : .previous
-            return await RemoteOperationWait.wait { done in
-                prompts.moveMenuTab(session, menu: menu, direction: direction, report: false) { done($0) }
+        await withHostedRoom(roomId) { room, session in
+            switch RemoteChecks.menuTab(request, in: terminalContext(room, session)) {
+            case .failure(let result):
+                return result
+            case .success(let menu):
+                let direction: MenuTabMover.Direction = request.direction == .next ? .next : .previous
+                return await RemoteOperationWait.wait { done in
+                    prompts.moveMenuTab(session, menu: menu, direction: direction, report: false) { done($0) }
+                }
             }
         }
     }
 
     func remoteDismissMenu(roomId: String, request: RemoteMenuDismissRequest) async -> RemoteActionResult {
-        guard let room = room(roomId) else { return Self.roomNotFound }
-        guard let session = room.hosted else { return Self.notHosted }
-        switch RemoteChecks.menuDismiss(request, in: terminalContext(room, session)) {
-        case .failure(let result): return result
-        case .success(let menu): return prompts.cancelUnreadableMenu(session, menu: menu, report: false)
+        await withHostedRoom(roomId) { room, session in
+            switch RemoteChecks.menuDismiss(request, in: terminalContext(room, session)) {
+            case .failure(let result): return result
+            case .success(let menu): return prompts.cancelUnreadableMenu(session, menu: menu, report: false)
+            }
         }
     }
 

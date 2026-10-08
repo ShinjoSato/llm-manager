@@ -96,13 +96,8 @@ struct ProjectSiteEditor: View {
     }
 
     private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = URL(fileURLWithPath: project.path, isDirectory: true)
-        panel.prompt = "選ぶ"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = SystemActions.choose(folders: true, multiple: false, prompt: "選ぶ",
+                                             directory: URL(fileURLWithPath: project.path, isDirectory: true)).first else { return }
         guard let relative = SiteLocator.relativePath(of: url.path, in: project.path) else {
             NSSound.beep()
             text = url.path

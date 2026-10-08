@@ -12,11 +12,28 @@ final class HostedSession: Identifiable {
         case limitReached
         /// claude を起動できなかった（PTY の子プロセスが取れない）。
         case launchFailed
+
+        /// 一覧の一行と入力欄に出す文言。
+        var message: String {
+            switch self {
+            case .limitReached: return "上限に達したため終了しました"
+            case .exited: return "claude は終了しました"
+            case .launchFailed: return "claude を起動できませんでした"
+            }
+        }
+
+        /// iPhone の API に載せる印。
+        var remoteCode: String {
+            switch self {
+            case .exited: return "exited"
+            case .limitReached: return "limitReached"
+            case .launchFailed: return "launchFailed"
+            }
+        }
     }
 
     let id = UUID()
     let project: ManagedProject
-    let startedAt = Date()
     @ObservationIgnored let terminal: ClaudeTerminalView
     @ObservationIgnored private let observer = TerminalProcessObserver()
 

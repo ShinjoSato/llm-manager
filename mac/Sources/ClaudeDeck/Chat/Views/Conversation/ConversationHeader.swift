@@ -7,7 +7,7 @@ struct ConversationHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            PixelAvatar(status: room.status, size: 38, hidesFromAccessibility: true)
+            PixelAvatar(status: room.status, size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(room.name)
@@ -34,12 +34,7 @@ struct ConversationHeader: View {
             // 名前を最小幅まで縮めてからボタンを「…」に回す。
             EditorButtons(model: model, room: room).layoutPriority(1)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 64)
-        // 下線は背景側に置き、ボタンの吹き出しが線の下に潜らないようにする。
-        .background {
-            ChatTheme.background.overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
-        }
+        .centerHeaderBar()
     }
 }
 
@@ -52,11 +47,7 @@ struct StatusBadge: View {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(ChatTheme.label(for: status))
         }
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(color.opacity(0.14)))
+        .statusCapsule(color)
     }
 }
 
@@ -70,32 +61,17 @@ struct EditorButtons: View {
         let editors = model.editors
         let target = room.editorTarget
         let xcodeProject = editors.xcodeProject(for: target)
-        let closing = editors.closingXcode.contains(target.key)
-        var actions: [HeaderAction] = [
-            .button(id: "vscode", priority: 5, symbol: VSCodeButton.symbol, name: VSCodeButton.name,
-                    detail: VSCodeButton.detail(target)) { editors.openInVSCode(target) },
-        ]
+        var actions: [HeaderAction] = [HeaderAction.vscode(priority: 5, editors: editors, target: target)]
         if let github = HeaderAction.github(priority: 3, editors: editors, target: target) { actions.append(github) }
         actions += HeaderAction.pins(priority: 2, editors: editors, target: target)
         if let links = HeaderAction.links(priority: 2, editors: editors, target: target) { actions.append(links) }
-        if let xcodeProject {
-            actions.append(.button(id: "xcode", priority: 4, symbol: "hammer", name: "Xcode",
-                                   detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(target) })
-            actions.append(.button(id: "xcode-close", priority: 1, symbol: "xmark.rectangle", name: "閉じる",
-                                   detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
-                                   busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true })
-        }
+        actions += HeaderAction.xcode(openPriority: 4, closePriority: 1, editors: editors, target: target,
+                                      project: xcodeProject) { confirmingClose = true }
         return HStack(spacing: 6) {
             EditorNoteText(note: editors.notes[target.key])
             HeaderActionRow(actions: actions).layoutPriority(1)
         }
-        // メニューから押しても確認を出せるよう、ボタンではなく列に付ける。
-        .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
-            Button("閉じる", role: .destructive) { editors.closeInXcode(target) }
-            Button("やめる", role: .cancel) {}
-        } message: {
-            Text("\(xcodeProject?.lastPathComponent ?? "ワークスペース") を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
-        }
+        .xcodeCloseConfirmation(isPresented: $confirmingClose, editors: editors, target: target, project: xcodeProject)
     }
 }
 
@@ -116,26 +92,12 @@ struct EditorNoteText: View {
     }
 }
 
-struct VSCodeButton: View {
-    let editors: EditorLauncher
-    let target: EditorTarget
-
-    static let symbol = "chevron.left.forwardslash.chevron.right"
-    static let name = "VS Code"
-    static func detail(_ target: EditorTarget) -> String { "VS Code で開く: \(target.cwd)" }
-
-    var body: some View {
-        HeaderButton(symbol: Self.symbol, name: Self.name, detail: Self.detail(target)) { editors.openInVSCode(target) }
-    }
-}
-
 /// 開く先が 1 つならそのまま開き、ボードとリポジトリの両方ならメニューで選ぶ。
 struct GitHubButton: View {
     let editors: EditorLauncher
     let target: EditorTarget
     let destinations: [GitHubDestination]
     let opening: Bool
-    @State private var hovering = false
 
     static let symbol = "rectangle.3.group"
     static let name = "GitHub"
@@ -146,20 +108,12 @@ struct GitHubButton: View {
         if destinations.count == 1, let only = destinations.first {
             HeaderButton(symbol: Self.symbol, name: Self.name, detail: only.help, busyStatus: busyStatus) { editors.openOnGitHub(only, for: target) }
         } else if destinations.count > 1 {
-            Menu {
+            HeaderMenuButton(symbol: Self.symbol, name: Self.name, detail: destinations.map(\.help).joined(separator: "\n"),
+                             busyStatus: busyStatus) {
                 ForEach(Array(destinations.enumerated()), id: \.offset) { _, destination in
                     Button(destination.menuTitle) { editors.openOnGitHub(destination, for: target) }
                 }
-            } label: {
-                HeaderButtonLabel(symbol: Self.symbol, busy: opening, disabled: opening, hovering: hovering, showsMenu: true)
             }
-            .disabled(opening)
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .headerButtonHelp(name: Self.name, detail: destinations.map(\.help).joined(separator: "\n"), busyStatus: busyStatus)
-            .trackHover($hovering)
         }
     }
 }
@@ -169,7 +123,6 @@ struct ProjectLinkButton: View {
     let editors: EditorLauncher
     let target: EditorTarget
     let links: [ProjectLink]
-    @State private var hovering = false
 
     static let symbol = "link"
     static let name = "リンク"
@@ -178,17 +131,9 @@ struct ProjectLinkButton: View {
         if links.count == 1, let only = links.first {
             HeaderButton(symbol: Self.symbol, name: Self.name, detail: ProjectLinks.help(for: only)) { editors.openLink(only, for: target) }
         } else if links.count > 1 {
-            Menu {
+            HeaderMenuButton(symbol: Self.symbol, name: Self.name, detail: links.map(ProjectLinks.help(for:)).joined(separator: "\n")) {
                 ProjectLinkMenuItems(links: links) { editors.openLink($0, for: target) }
-            } label: {
-                HeaderButtonLabel(symbol: Self.symbol, busy: false, disabled: false, hovering: hovering, showsMenu: true)
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .headerButtonHelp(name: Self.name, detail: links.map(ProjectLinks.help(for:)).joined(separator: "\n"), busyStatus: nil)
-            .trackHover($hovering)
         }
     }
 }
@@ -219,8 +164,8 @@ struct ProjectLinkMenuItems: View {
 /// 見出しのアイコンボタンの見た目。名前は出さずホバーの吹き出しと VoiceOver に回す。
 struct HeaderButtonLabel: View {
     let symbol: String
+    /// 処理中は回転の印にして押せない色にする。
     let busy: Bool
-    let disabled: Bool
     let hovering: Bool
     var showsMenu = false
     /// 右上に小さな黄色の点（確認が必要なピン）。
@@ -240,11 +185,10 @@ struct HeaderButtonLabel: View {
             .frame(width: 14, height: 14)
             if showsMenu { Image(systemName: "chevron.down").font(.system(size: 7, weight: .semibold)) }
         }
-        .foregroundStyle(disabled ? ChatTheme.tertiary : ChatTheme.text)
+        .foregroundStyle(busy ? ChatTheme.tertiary : ChatTheme.text)
         .frame(minWidth: Self.side, minHeight: Self.side, maxHeight: Self.side)
         .padding(.horizontal, showsMenu ? 4 : 0)
-        .background(RoundedRectangle(cornerRadius: 9).fill(hovering && !disabled ? ChatTheme.selectedRow : ChatTheme.inputSurface))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.inputBorder))
+        .roundedSurface(9, fill: hovering && !busy ? ChatTheme.selectedRow : ChatTheme.inputSurface, stroke: ChatTheme.inputBorder)
         .overlay(alignment: .topTrailing) {
             if dot {
                 Circle()
@@ -305,8 +249,7 @@ struct HeaderTooltip: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .fixedSize(horizontal: false, vertical: true)
-        .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.claudeBubble))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.claudeBubbleBorder))
+        .roundedSurface(8, fill: ChatTheme.claudeBubble, stroke: ChatTheme.claudeBubbleBorder)
     }
 }
 
@@ -393,6 +336,30 @@ struct HeaderTooltipModifier: ViewModifier {
     }
 }
 
+/// 見出しのメニューのボタン（開く先が複数・入りきらなかった操作）。処理中は押せない。
+struct HeaderMenuButton<Items: View>: View {
+    let symbol: String
+    let name: String
+    let detail: String?
+    var busyStatus: String? = nil
+    var showsChevron = true
+    @ViewBuilder let items: Items
+    @State private var hovering = false
+
+    var body: some View {
+        Menu { items } label: {
+            HeaderButtonLabel(symbol: symbol, busy: busyStatus != nil, hovering: hovering, showsMenu: showsChevron)
+        }
+        .disabled(busyStatus != nil)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .headerButtonHelp(name: name, detail: detail, busyStatus: busyStatus)
+        .trackHover($hovering)
+    }
+}
+
 struct HeaderButton: View {
     let symbol: String
     let name: String
@@ -405,7 +372,7 @@ struct HeaderButton: View {
     var body: some View {
         let busy = busyStatus != nil
         Button(action: action) {
-            HeaderButtonLabel(symbol: symbol, busy: busy, disabled: busy, hovering: hovering, dot: dot)
+            HeaderButtonLabel(symbol: symbol, busy: busy, hovering: hovering, dot: dot)
         }
         .buttonStyle(.plain)
         .disabled(busy)

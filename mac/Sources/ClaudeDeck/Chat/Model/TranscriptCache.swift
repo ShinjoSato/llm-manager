@@ -31,8 +31,7 @@ final class TranscriptCache {
         return buffers[sessionId]?.items ?? []
     }
 
-    /// 選択中のルームの履歴を揃える。未取得・監視の開始し直し後なら、追記の購読を張ってから全件を取得する。
-    /// 取り直しも常に全件で置き換える（止まっていた間の発話は手元の末尾より前に入りうるので `after=` では埋まらない）。
+    /// 選択中のルームの履歴を揃える。取り直しも全件で置き換える（止まっていた間の発話は手元の末尾より前に入りうるので `after=` では埋まらない）。
     func ensure(for sessionId: String?) {
         guard let sessionId, store.connection.isConnected else { return }
         recent.removeAll { $0 == sessionId }
@@ -46,8 +45,7 @@ final class TranscriptCache {
         loading.insert(sessionId)
         forgetOld()
         Task {
-            // 先に購読を張る。取得の後に張ると、その間の追記が既読扱いになって抜ける。
-            // 対象は張る直前に取る（Task が走るまでに他のルームを開閉していることがある）。
+            // 購読を先に張る（後だとその間の追記が抜ける）。対象は張る直前に取る（Task が走るまでにルームを開閉しうる）。
             await store.watchTranscripts(Set(buffers.keys))
             // 最初の発話前はログが無い（nil）。以降は購読で届くので空のまま待つ。
             if let response = await store.fetchTranscript(sessionId: sessionId) {

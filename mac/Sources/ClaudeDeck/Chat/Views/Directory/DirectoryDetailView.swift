@@ -19,9 +19,8 @@ struct DirectoryDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     overview.frame(maxWidth: Self.readableWidth, alignment: .leading)
-                    // 別のプロジェクトへ移ったら見る元と表示中のページを持ち越さない。
+                    // 別のプロジェクトへ移ったら、見る元・表示中のページ・画像の一覧を持ち越さない。
                     SitePreviewSection(project: project, visibleHeight: visibleHeight).id(project.id)
-                    // 別のプロジェクトへ移ったら前の一覧とサムネイルを持ち越さない。
                     ProjectImagesSection(project: project).id(project.id)
                     github.frame(maxWidth: Self.readableWidth, alignment: .leading)
                     links.frame(maxWidth: Self.readableWidth, alignment: .leading)
@@ -141,7 +140,7 @@ private struct DirectoryDetailHeader: View {
         let running = model.runningSession(for: project) != nil
         let xcodeProject = editors.xcodeProject(for: target)
         HStack(spacing: 12) {
-            RoomAvatar(name: project.name, size: 38, badge: ProjectBadge.resolve(project: project))
+            ProjectBadgeView(badge: ProjectBadge.resolve(project: project), size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(project.name)
@@ -165,20 +164,9 @@ private struct DirectoryDetailHeader: View {
             }
             // 名前を最小幅まで縮めてからボタンを「…」に回す。
             .layoutPriority(1)
-            // メニューから押しても確認を出せるよう、ボタンではなく列に付ける。
-            .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
-                Button("閉じる", role: .destructive) { editors.closeInXcode(target) }
-                Button("やめる", role: .cancel) {}
-            } message: {
-                Text("\(xcodeProject?.lastPathComponent ?? "ワークスペース") を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
-            }
+            .xcodeCloseConfirmation(isPresented: $confirmingClose, editors: editors, target: target, project: xcodeProject)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 64)
-        // 下線は背景側に置き、ボタンの吹き出しが線の下に潜らないようにする。
-        .background {
-            ChatTheme.background.overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
-        }
+        .centerHeaderBar()
         .zIndex(1)
     }
 
@@ -191,22 +179,15 @@ private struct DirectoryDetailHeader: View {
                     detail: running ? "このプロジェクトで動いているルームを開く" : "このプロジェクトで claude を起動して新しいルームを開く") {
                 model.launch(project)
             },
-            .button(id: "vscode", priority: 7, symbol: VSCodeButton.symbol, name: VSCodeButton.name,
-                    detail: VSCodeButton.detail(target)) { editors.openInVSCode(target) },
+            HeaderAction.vscode(priority: 7, editors: editors, target: target),
             .button(id: "finder", priority: 3, symbol: "folder", name: "Finder",
                     detail: "Finder で表示: \(project.path)") { editors.revealInFinder(target) },
         ]
         if let github = HeaderAction.github(priority: 5, editors: editors, target: target) { actions.append(github) }
         actions += HeaderAction.pins(priority: 4, editors: editors, target: target)
         if let links = HeaderAction.links(priority: 4, editors: editors, target: target) { actions.append(links) }
-        if let xcodeProject {
-            let closing = editors.closingXcode.contains(target.key)
-            actions.append(.button(id: "xcode", priority: 6, symbol: "hammer", name: "Xcode",
-                                   detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(target) })
-            actions.append(.button(id: "xcode-close", priority: 2, symbol: "xmark.rectangle", name: "閉じる",
-                                   detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
-                                   busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true })
-        }
+        actions += HeaderAction.xcode(openPriority: 6, closePriority: 2, editors: editors, target: target,
+                                      project: xcodeProject) { confirmingClose = true }
         actions.append(.button(id: "settings", priority: 1, symbol: "gearshape", name: "設定で編集",
                                detail: "設定画面のプロジェクトタブで開く") {
             SettingsWindow.show(tab: .projects, project: project.id)
@@ -222,11 +203,7 @@ private struct ProjectStatusTag: View {
     var body: some View {
         let color = status == .active ? ChatTheme.working : ChatTheme.tertiary
         Text(status.label)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.14)))
+            .statusCapsule(color)
     }
 }
 
@@ -237,14 +214,10 @@ private struct DetailSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ChatTheme.tertiary)
+                .sectionLabelStyle()
             content
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.claudeBubble))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.claudeBubbleBorder))
+        .detailCard()
     }
 }
 
@@ -267,15 +240,8 @@ private struct DetailField<Content: View>: View {
 /// 選んだディレクトリが設定から外された時。
 struct DirectoryMissingView: View {
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "folder.badge.questionmark")
-                .font(.system(size: 28))
-                .foregroundStyle(ChatTheme.tertiary)
-            Text("このディレクトリは設定から外されました。左の一覧から選び直してください。")
-                .font(ChatTheme.body)
-                .foregroundStyle(ChatTheme.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(ChatTheme.background)
+        CenterPlaceholder(symbol: "folder.badge.questionmark",
+                          text: "このディレクトリは設定から外されました。左の一覧から選び直してください。")
+            .background(ChatTheme.background)
     }
 }

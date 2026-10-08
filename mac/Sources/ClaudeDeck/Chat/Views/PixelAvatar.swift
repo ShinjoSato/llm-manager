@@ -1,12 +1,10 @@
 import SwiftUI
 import MonitorKit
 
-/// セッションの状態をステージと同じドット絵キャラで出すアイコン。
+/// セッションの状態をステージと同じドット絵キャラで出すアイコン（読み上げは隣の状態名に任せる）。
 struct PixelAvatar: View {
     let status: SessionStatus
     let size: CGFloat
-    /// 状態名を隣の Text やバッジが読む場所では true にして、読み上げを重ねない。
-    var hidesFromAccessibility = false
     /// 表示中の数。遅延スタックで行が移ると onDisappear が後から届くことがあり、真偽値だと止まったまま残る。
     @State private var appearances = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -30,9 +28,7 @@ struct PixelAvatar: View {
         .overlay(RoundedRectangle(cornerRadius: size * 0.28).stroke(ChatTheme.color(for: status).opacity(0.22)))
         .onAppear { appearances += 1 }
         .onDisappear { appearances = max(0, appearances - 1) }
-        .accessibilityElement()
-        .accessibilityLabel(ChatTheme.label(for: status))
-        .accessibilityHidden(hidesFromAccessibility)
+        .accessibilityHidden(true)
     }
 }
 

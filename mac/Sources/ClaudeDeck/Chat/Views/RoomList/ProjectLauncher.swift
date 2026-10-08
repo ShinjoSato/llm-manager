@@ -18,15 +18,14 @@ struct ProjectLauncher: View {
                 .foregroundStyle(ChatTheme.text)
                 .padding(.horizontal, 8)
                 .frame(height: 28)
-                .background(RoundedRectangle(cornerRadius: 8).fill(ChatTheme.inputSurface))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.inputBorder))
+                .inputFieldSurface(8)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(filtered) { project in
                         HStack(spacing: 4) {
                             Button { onPick(project) } label: {
                                 HStack(spacing: 8) {
-                                    RoomAvatar(name: project.name, size: 26, badge: ProjectBadge.resolve(project: project))
+                                    ProjectBadgeView(badge: ProjectBadge.resolve(project: project), size: 26)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(project.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(ChatTheme.text)
                                         Text(project.path).font(.system(size: 11)).foregroundStyle(ChatTheme.tertiary)
@@ -97,9 +96,7 @@ struct ProjectLauncher: View {
 
     @ViewBuilder
     private func actions(for project: ManagedProject) -> some View {
-        Button("Finder で表示") {
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.path)])
-        }
+        Button("Finder で表示") { SystemActions.revealInFinder(path: project.path) }
         Divider()
         Button("一覧から削除", role: .destructive) {
             store.remove(id: project.id)
@@ -115,12 +112,8 @@ struct ProjectLauncher: View {
     }
 
     private func addFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = true
-        panel.prompt = "追加"
-        guard panel.runModal() == .OK else { return }
-        store.add(paths: panel.urls.map(\.path))
+        let urls = SystemActions.choose(folders: true, multiple: true, prompt: "追加")
+        guard !urls.isEmpty else { return }
+        store.add(paths: urls.map(\.path))
     }
 }

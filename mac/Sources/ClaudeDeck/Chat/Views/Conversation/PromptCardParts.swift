@@ -40,8 +40,20 @@ struct CardButtonLabel: View {
             .foregroundStyle(ChatTheme.text)
             .padding(.horizontal, width == nil ? 12 : 0)
             .frame(width: width, height: 30)
-            .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.quietButton))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChatTheme.quietButtonBorder))
+            .roundedSurface(9, fill: ChatTheme.quietButton, stroke: ChatTheme.quietButtonBorder)
+    }
+}
+
+/// 選択肢を閉じる Esc のボタン。Esc が claude の終了になるメニューでは「終了」と出す。
+struct CardEscapeButton: View {
+    let exits: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            CardButtonLabel(title: exits ? "終了（Esc）" : "キャンセル（Esc）")
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -57,12 +69,10 @@ extension View {
     func cardFrame() -> some View {
         padding(14)
             .frame(maxWidth: 640, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.cardFill))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.cardBorder, lineWidth: 1.5))
+            .roundedSurface(12, fill: ChatTheme.cardFill, stroke: ChatTheme.cardBorder, lineWidth: 1.5)
     }
 
-    /// Esc が claude の終了になるメニューで、送る前に確かめる。
-    /// `presenting` は確認を開いた時のメニューで、送る時の照合にはそれを使う。
+    /// Esc が claude の終了になるメニューで送る前に確かめる。照合には確認を開いた時のメニュー（`presenting`）を使う。
     func exitConfirmation<Menu>(presenting: Binding<Menu?>, onExit: @escaping (Menu) -> Void) -> some View {
         let isPresented = Binding(get: { presenting.wrappedValue != nil }, set: { if !$0 { presenting.wrappedValue = nil } })
         return confirmationDialog("claude を終了しますか？", isPresented: isPresented, presenting: presenting.wrappedValue) { menu in

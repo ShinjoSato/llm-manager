@@ -49,8 +49,7 @@ final class ChatAlerts {
     var message: String?
 }
 
-/// チャット画面の状態。監視のストアとアプリがホストするセッションからルーム一覧を組み立て、
-/// 送信・伝言・引き継ぎ・権限の回答・会話・エディタの部品を束ねる（それぞれの状態と処理は部品が持つ）。
+/// チャット画面の状態。監視とホスト中のセッションからルーム一覧を組み立て、送信・伝言・引き継ぎ・回答・会話・エディタの部品を束ねる。
 @MainActor
 @Observable
 final class ChatModel {
@@ -158,15 +157,9 @@ final class ChatModel {
             let sessionId = session.resolveSessionId(store)
             let snapshot = sessionId.flatMap { store.session(id: $0) }
             let status = session.end != nil ? .stopped : liveStatus(of: session, snapshot: snapshot, connected: connected)
-            let line: String
-            switch session.end {
-            case .limitReached: line = "上限に達したため終了しました"
-            case .exited: line = "claude は終了しました"
-            case .launchFailed: line = "claude を起動できませんでした"
-            case nil:
-                line = sessionId.flatMap { latestLine[$0] } ?? snapshot.flatMap(Self.line(of:))
-                    ?? (session.pid == nil ? "起動中…" : "セッション開始")
-            }
+            let line = session.end?.message
+                ?? sessionId.flatMap { latestLine[$0] } ?? snapshot.flatMap(Self.line(of:))
+                ?? (session.pid == nil ? "起動中…" : "セッション開始")
             let activity = snapshot?.lastActivityAt ?? session.lastChangeAt.timeIntervalSince1970 * 1000
             return Room(id: .hosted(session.id), name: session.project.name, branch: snapshot?.branch, status: status,
                         line: line, activityAt: activity, sessionId: sessionId, cwd: session.project.path,
@@ -291,12 +284,9 @@ final class ChatModel {
             select(.hosted(running.id))
             return
         }
-        let session = HostedSession(project: project)
-        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
-        hosted.append(session)
-        session.start()
+        let session = host(project)
         select(.hosted(session.id))
-        saveHostedSoon()
+        restorer.saveNow()
     }
 
     func close(_ session: HostedSession) {
@@ -304,35 +294,32 @@ final class ChatModel {
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         outbox.forgetRoom(.hosted(session.id))
-        saveHostedSoon()
+        restorer.saveNow()
     }
 
     /// 引き継ぎで外部の claude を止められた。同じ会話を `--resume` で起動し、外部ルームの書きかけと添付を引き取る。
     private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
-        let session = HostedSession(project: project, resumeSessionId: sessionId)
-        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
-        hosted.append(session)
-        session.start()
+        let session = host(project, resuming: sessionId)
         outbox.move(from: roomId, to: .hosted(session.id))
         select(.hosted(session.id))
-        saveHostedSoon()
+        restorer.saveNow()
     }
 
     /// 前回アプリが止まった時に動いていたセッションを同じ cwd で `--resume` する。書きかけも戻す。選択は未選択の時だけ移す。
     func resumeRestored(_ record: HostedSessionRecord) -> HostedSession {
-        let project = SettingsStore.shared.projects.first(where: { $0.path == record.cwd })
-            ?? ManagedProject(name: record.name, path: record.cwd)
-        let session = HostedSession(project: project, resumeSessionId: record.sessionId)
-        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
-        hosted.append(session)
-        session.start()
+        let session = host(SettingsStore.shared.project(atPath: record.cwd, orNamed: record.name), resuming: record.sessionId)
         if let draft = record.draft { outbox.drafts[.hosted(session.id)] = draft }
         if selection == nil { select(.hosted(session.id)) }
         return session
     }
 
-    private func saveHostedSoon() {
-        restorer.saveNow()
+    /// claude を起動して一覧に加える（上限で止まった時の知らせも受ける）。
+    private func host(_ project: ManagedProject, resuming sessionId: String? = nil) -> HostedSession {
+        let session = HostedSession(project: project, resumeSessionId: sessionId)
+        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
+        hosted.append(session)
+        session.start()
+        return session
     }
 
     /// 終了の確認に使う、動いているホスト中のルーム。

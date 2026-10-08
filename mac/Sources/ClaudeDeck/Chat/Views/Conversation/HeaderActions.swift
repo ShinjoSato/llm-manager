@@ -6,6 +6,26 @@ enum HeaderLayout {
     static let titleMinWidth: CGFloat = 140
 }
 
+extension View {
+    /// 中央の見出しの帯（会話とディレクトリの詳細で高さと下線をそろえる）。
+    func centerHeaderBar() -> some View {
+        padding(.horizontal, 20)
+            .frame(height: 64)
+            .headerBackground()
+    }
+
+    /// Xcode のワークスペースを閉じる前の確認。メニューから押しても出せるよう、ボタンではなく列に付ける。
+    func xcodeCloseConfirmation(isPresented: Binding<Bool>, editors: EditorLauncher, target: EditorTarget,
+                                project: URL?) -> some View {
+        confirmationDialog("Xcode から閉じますか？", isPresented: isPresented) {
+            Button("閉じる", role: .destructive) { editors.closeInXcode(target) }
+            Button("やめる", role: .cancel) {}
+        } message: {
+            Text("\(project?.lastPathComponent ?? "ワークスペース") を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
+        }
+    }
+}
+
 /// 見出しのボタン 1 つ分。入りきらない時は「…」のメニューに `menuItem` として並ぶ（同じ動作を呼ぶ）。
 @MainActor
 struct HeaderAction: Identifiable {
@@ -24,6 +44,26 @@ struct HeaderAction: Identifiable {
         HeaderAction(id: id, name: name, priority: priority,
                      button: AnyView(HeaderButton(symbol: symbol, name: name, detail: detail, busyStatus: busyStatus, action: action)),
                      menuItem: AnyView(HeaderMenuItem(symbol: symbol, name: name, busyStatus: busyStatus, action: action)))
+    }
+
+    /// 「VS Code」。
+    static func vscode(priority: Int, editors: EditorLauncher, target: EditorTarget) -> HeaderAction {
+        .button(id: "vscode", priority: priority, symbol: "chevron.left.forwardslash.chevron.right", name: "VS Code",
+                detail: "VS Code で開く: \(target.cwd)") { editors.openInVSCode(target) }
+    }
+
+    /// 「Xcode」と「閉じる」（`project` が無ければ出さない）。閉じるは `onClose` で確認を開く。
+    static func xcode(openPriority: Int, closePriority: Int, editors: EditorLauncher, target: EditorTarget,
+                      project: URL?, onClose: @escaping () -> Void) -> [HeaderAction] {
+        guard let project else { return [] }
+        let closing = editors.closingXcode.contains(target.key)
+        return [
+            .button(id: "xcode", priority: openPriority, symbol: "hammer", name: "Xcode",
+                    detail: "Xcode で開く: \(project.path)") { editors.openInXcode(target) },
+            .button(id: "xcode-close", priority: closePriority, symbol: "xmark.rectangle", name: "閉じる",
+                    detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
+                    busyStatus: closing ? "閉じています…" : nil, action: onClose),
+        ]
     }
 
     /// 「GitHub」。開く先が無ければ出さない。
@@ -125,29 +165,14 @@ struct HeaderActionRow: View {
         return HStack(spacing: 6) {
             ForEach(visible, id: \.self) { index in actions[index].button }
             if !hidden.isEmpty {
-                HeaderOverflowMenu(actions: hidden.map { actions[$0] })
+                let overflow = hidden.map { actions[$0] }
+                // 入りきらなかったボタンをまとめた「…」。
+                HeaderMenuButton(symbol: "ellipsis.circle", name: "ほかの操作", detail: overflow.map(\.name).joined(separator: "\n"),
+                                 showsChevron: false) {
+                    ForEach(overflow) { $0.menuItem }
+                }
             }
         }
         .fixedSize()
-    }
-}
-
-/// 入りきらなかったボタンをまとめた「…」。
-private struct HeaderOverflowMenu: View {
-    let actions: [HeaderAction]
-    @State private var hovering = false
-
-    var body: some View {
-        Menu {
-            ForEach(actions) { $0.menuItem }
-        } label: {
-            HeaderButtonLabel(symbol: "ellipsis.circle", busy: false, disabled: false, hovering: hovering)
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .headerButtonHelp(name: "ほかの操作", detail: actions.map(\.name).joined(separator: "\n"), busyStatus: nil)
-        .trackHover($hovering)
     }
 }

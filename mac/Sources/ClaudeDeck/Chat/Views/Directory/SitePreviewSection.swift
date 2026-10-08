@@ -43,17 +43,8 @@ struct SitePreviewSection: View {
             info
             content
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(ChatTheme.claudeBubble))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.claudeBubbleBorder))
-        .task(id: TaskKey(path: project.path, site: project.site?.path, token: reloadToken)) { await refresh() }
-    }
-
-    private struct TaskKey: Hashable {
-        let path: String
-        let site: String?
-        let token: Int
+        .detailCard()
+        .task(id: SiteTaskKey(project: project, token: reloadToken)) { await refresh() }
     }
 
     // MARK: - 見出しの行
@@ -83,8 +74,7 @@ struct SitePreviewSection: View {
     private func toolbarTitle(compact: Bool) -> some View {
         HStack(spacing: 8) {
             Text("サイト")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ChatTheme.tertiary)
+                .sectionLabelStyle()
                 .fixedSize()
             if location != nil || !links.isEmpty {
                 sourcePicker(compact: compact)
@@ -94,19 +84,9 @@ struct SitePreviewSection: View {
 
     private var toolbarControls: some View {
         HStack(spacing: 8) {
-            if targetURL != nil {
-                SiteViewportPicker(raw: $viewportRaw)
-                HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの場所と更新時刻も確かめ直す") {
-                    reloadToken += 1
-                }
-                HeaderButton(symbol: "safari", name: "ブラウザで開く",
-                             detail: (SiteNavigationPolicy.browserURL(preview.currentURL) ?? targetURL)?.absoluteString) {
-                    openInBrowser()
-                }
-            } else if source == .export, hasExport, snapshot?.serverProblem != nil {
-                HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの配信を開き直す") {
-                    reloadToken += 1
-                }
+            SitePreviewControls(viewportRaw: $viewportRaw, preview: preview, targetURL: targetURL,
+                                serverFailed: source == .export && hasExport && snapshot?.serverProblem != nil) {
+                reloadToken += 1
             }
         }
         .fixedSize()
@@ -129,8 +109,7 @@ struct SitePreviewSection: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 7).fill(ChatTheme.inputSurface))
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(ChatTheme.inputBorder))
+            .inputFieldSurface(7)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -284,10 +263,5 @@ struct SitePreviewSection: View {
                 source = location != nil ? .export : links.first.map { .link($0.url) } ?? .export
             }
         }
-    }
-
-    private func openInBrowser() {
-        guard let url = SiteNavigationPolicy.browserURL(preview.currentURL) ?? targetURL else { return }
-        NSWorkspace.shared.open(url)
     }
 }

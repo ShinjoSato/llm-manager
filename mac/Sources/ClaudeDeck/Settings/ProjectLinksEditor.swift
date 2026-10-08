@@ -1,9 +1,7 @@
 import MonitorKit
 import SwiftUI
 
-/// プロジェクトのリンク（LP 等）の追加・編集・削除・並べ替え。
-/// 全行が正しい間だけ保存する（途中の行があればファイルは前の内容のまま）。文字欄は少し間を置いてまとめて書く。
-/// 名前と URL が両方空の行は画面に残すだけで保存の対象にしない（「追加」した直後の行が他の行の保存を止めないため）。
+/// プロジェクトのリンクの編集。全行が正しい間だけ保存し、名前と URL が両方空の行は数えない（追加した直後の行で他の行の保存を止めない）。
 struct ProjectLinksEditor: View {
     let store: SettingsStore
     let project: ManagedProject
@@ -60,8 +58,8 @@ struct ProjectLinksEditor: View {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        field("名前", text: binding(index, \.name)).focused($focused, equals: .name(row.id)).frame(width: 140)
-                        field("https://…", text: binding(index, \.url)).focused($focused, equals: .url(row.id))
+                        field("名前", text: binding(index, \.name, fallback: "")).focused($focused, equals: .name(row.id)).frame(width: 140)
+                        field("https://…", text: binding(index, \.url, fallback: "")).focused($focused, equals: .url(row.id))
                         Picker("種類", selection: kindBinding(index)) {
                             ForEach(ProjectLinkKind.allCases, id: \.self) { Label($0.label, systemImage: $0.symbol).tag($0) }
                         }
@@ -77,12 +75,12 @@ struct ProjectLinksEditor: View {
                     }
                     .buttonStyle(.borderless)
                     HStack(spacing: 8) {
-                        Toggle("ピン", isOn: boolBinding(index, \.pinned)).toggleStyle(.checkbox)
+                        Toggle("ピン", isOn: binding(index, \.pinned, fallback: false)).toggleStyle(.checkbox)
                             .help("会話と詳細の見出しに単独のボタンで出す（設定の順に \(ProjectLinks.pinLimit) つまで）")
-                        field("メモ（1 行）", text: binding(index, \.note)).focused($focused, equals: .note(row.id))
-                        Toggle("毎月", isOn: boolBinding(index, \.remind)).toggleStyle(.checkbox)
-                        Stepper(value: dayBinding(index), in: 1...31) {
-                            TextField("日", value: dayBinding(index), format: .number)
+                        field("メモ（1 行）", text: binding(index, \.note, fallback: "")).focused($focused, equals: .note(row.id))
+                        Toggle("毎月", isOn: binding(index, \.remind, fallback: false)).toggleStyle(.checkbox)
+                        Stepper(value: binding(index, \.day, fallback: 1), in: 1...31) {
+                            TextField("日", value: binding(index, \.day, fallback: 1), format: .number)
                                 .labelsHidden()
                                 .textFieldStyle(.roundedBorder)
                                 .multilineTextAlignment(.trailing)
@@ -94,7 +92,7 @@ struct ProjectLinksEditor: View {
                         Text("日に確認").font(.caption).foregroundStyle(.secondary)
                     }
                     if problems.indices.contains(index) {
-                        ForEach(problems[index], id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
+                        SettingsProblems(problems: problems[index])
                     }
                 }
             }
@@ -122,25 +120,13 @@ struct ProjectLinksEditor: View {
     }
 
     private func field(_ title: String, text: Binding<String>) -> some View {
-        TextField(title, text: text, prompt: Text(title))
-            .labelsHidden()
-            .textFieldStyle(.roundedBorder)
-            .onSubmit { store.flushPending() }
+        TextField(title, text: text, prompt: Text(title)).settingsField { store.flushPending() }
     }
 
-    private func binding(_ index: Int, _ keyPath: WritableKeyPath<Row, String>) -> Binding<String> {
-        Binding(get: { rows.indices.contains(index) ? rows[index][keyPath: keyPath] : "" },
+    /// 行の欄。消した直後の描き直しで添字が外れていれば `fallback` を見せ、書き込みは捨てる。
+    private func binding<Value>(_ index: Int, _ keyPath: WritableKeyPath<Row, Value>, fallback: Value) -> Binding<Value> {
+        Binding(get: { rows.indices.contains(index) ? rows[index][keyPath: keyPath] : fallback },
                 set: { if rows.indices.contains(index) { rows[index][keyPath: keyPath] = $0 } })
-    }
-
-    private func boolBinding(_ index: Int, _ keyPath: WritableKeyPath<Row, Bool>) -> Binding<Bool> {
-        Binding(get: { rows.indices.contains(index) ? rows[index][keyPath: keyPath] : false },
-                set: { if rows.indices.contains(index) { rows[index][keyPath: keyPath] = $0 } })
-    }
-
-    private func dayBinding(_ index: Int) -> Binding<Int> {
-        Binding(get: { rows.indices.contains(index) ? rows[index].day : 1 },
-                set: { if rows.indices.contains(index) { rows[index].day = $0 } })
     }
 
     /// 種類の欄。無い（従来の形）行は「その他」として見せ、選んだ時だけ値を持つ。

@@ -60,8 +60,7 @@ struct RelayBubble: View {
     var imageSource: ChatImageSource?
 
     var body: some View {
-        let shape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
-                                           bottomTrailingRadius: 4, topTrailingRadius: 16)
+        let shape = BubbleShape.outgoing
         VStack(alignment: .trailing, spacing: 4) {
             HStack(spacing: 4) {
                 Image(systemName: "envelope").font(.system(size: 10))

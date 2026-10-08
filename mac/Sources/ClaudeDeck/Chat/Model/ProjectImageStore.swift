@@ -72,7 +72,11 @@ final class ProjectImageStore {
     }
 
     func cachedThumbnail(_ image: ProjectImage) -> LoadedImage? {
-        thumbnails.object(forKey: "\(key(image))|\(Self.thumbnailPixels)" as NSString)
+        thumbnails.object(forKey: cacheKey(image, maxPixels: Self.thumbnailPixels))
+    }
+
+    private func cacheKey(_ image: ProjectImage, maxPixels: Int) -> NSString {
+        "\(key(image))|\(maxPixels)" as NSString
     }
 
     func thumbnail(_ image: ProjectImage) async -> LoadedImage? {
@@ -84,8 +88,8 @@ final class ProjectImageStore {
     }
 
     private func load(_ image: ProjectImage, maxPixels: Int, cache: NSCache<NSString, LoadedImage>) async -> LoadedImage? {
-        let cacheKey = "\(key(image))|\(maxPixels)" as NSString
-        if let cached = cache.object(forKey: cacheKey) { return cached }
+        let entry = cacheKey(image, maxPixels: maxPixels)
+        if let cached = cache.object(forKey: entry) { return cached }
         // 枠が画面から消えたら（取り消し）読まずに返す。
         guard await gate.acquire() else { return nil }
         if Task.isCancelled { await gate.release(); return nil }
@@ -93,9 +97,8 @@ final class ProjectImageStore {
         let decoded = await Task.detached(priority: .userInitiated) { Self.decode(path: path, maxPixels: maxPixels) }.value
         await gate.release()
         guard let decoded else { return nil }
-        let loaded = LoadedImage(image: NSImage(cgImage: decoded.image, size: NSSize(width: decoded.image.width, height: decoded.image.height)),
-                                 pixelSize: decoded.pixelSize)
-        cache.setObject(loaded, forKey: cacheKey, cost: decoded.image.width * decoded.image.height * 4)
+        let loaded = LoadedImage(image: NSImage(pixelSized: decoded.image), pixelSize: decoded.pixelSize)
+        cache.setObject(loaded, forKey: entry, cost: decoded.image.width * decoded.image.height * 4)
         return loaded
     }
 
@@ -104,12 +107,7 @@ final class ProjectImageStore {
         if let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
            CGImageSourceGetCount(source) > 0 {
             let index = frameIndex(of: source, path: path)
-            let options: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixels,
-            ]
-            if let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) {
+            if let thumbnail = ImageDecoding.thumbnail(of: source, at: index, maxPixels: maxPixels) {
                 return DecodedImage(image: thumbnail, pixelSize: pixelSize(of: source, index: index))
             }
         }

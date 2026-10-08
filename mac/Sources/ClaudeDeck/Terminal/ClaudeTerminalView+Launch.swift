@@ -3,8 +3,7 @@ import SwiftTerm
 import MonitorKit
 
 extension ClaudeTerminalView {
-    /// `directory` で `claude` を起動する（ログインシェルで PATH を得て、API キーは環境とシェルの二重で外す）。
-    /// `resumeSessionId` があれば `--resume=<id>` で再開する。不正な id なら起動せず false。
+    /// `directory` で claude を起動する。`resumeSessionId` があれば `--resume=<id>` で再開し、使えない形なら起動せず false。
     func launchClaude(in directory: String, resumeSessionId: String? = nil) -> Bool {
         var command = "\(ChildEnvironment.unsetCommand); exec claude"
         if let resumeSessionId {
@@ -26,7 +25,7 @@ extension ClaudeTerminalView {
         return true
     }
 
-    /// 親プロセスの環境を引き継ぎつつ、課金経路となる API キーを除去した環境を作る。
+    /// 親の環境から課金経路になる API キーと子セッションの印を除いた環境。
     private static func buildSafeEnvironment() -> [String] {
         var dict = ChildEnvironment.sanitized(ProcessInfo.processInfo.environment)
         dict["TERM"] = "xterm-256color"

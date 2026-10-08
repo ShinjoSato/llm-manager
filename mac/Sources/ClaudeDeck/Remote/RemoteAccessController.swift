@@ -3,8 +3,7 @@ import MonitorKit
 import Observation
 import SystemConfiguration
 
-/// iPhone 連携の設定と口の開け閉め。既定は無効で、設定で有効にした時だけ LAN のアドレスで待ち受ける。
-/// 設定は UserDefaults、証明書・端末一覧は `~/Library/Application Support/claude-deck/remote/`（`CLAUDE_DECK_REMOTE_DIR` で差し替え）。
+/// iPhone 連携の口の開け閉め（既定は無効）。設定は UserDefaults、証明書と端末は `remote/`（`CLAUDE_DECK_REMOTE_DIR` で差し替え）。
 @MainActor
 @Observable
 final class RemoteAccessController {

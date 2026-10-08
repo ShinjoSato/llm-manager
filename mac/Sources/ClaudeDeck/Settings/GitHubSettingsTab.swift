@@ -1,8 +1,7 @@
 import MonitorKit
 import SwiftUI
 
-/// GitHub: プロジェクトごとのリポジトリ・Project 番号と、リポジトリに紐づかないボード。
-/// 欄が正しい間だけ保存する（settings.json に不正な値を残さないため）。文字欄は少し間を置いてまとめて書く。
+/// GitHub の紐づけとボード。欄が正しい間だけ保存する（settings.json に不正な値を残さない）。
 struct GitHubSettingsTab: View {
     let store: SettingsStore
 
@@ -58,7 +57,7 @@ private struct GitHubLinkEditor: View {
                 field("リポジトリ", text: $repo).focused($focused, equals: 1)
                 field("Project 番号", text: $number).focused($focused, equals: 2).frame(width: 100)
             }
-            ForEach(problems, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
+            SettingsProblems(problems: problems)
         }
         .padding(.vertical, 2)
         .onAppear { load(project.github) }
@@ -76,10 +75,7 @@ private struct GitHubLinkEditor: View {
     }
 
     private func field(_ title: String, text: Binding<String>) -> some View {
-        TextField(title, text: text, prompt: Text(title))
-            .labelsHidden()
-            .textFieldStyle(.roundedBorder)
-            .onSubmit { store.flushPending() }
+        TextField(title, text: text, prompt: Text(title)).settingsField { store.flushPending() }
     }
 
     /// 欄の今の中身（全部空なら紐づけ無し）。
@@ -128,7 +124,7 @@ private struct BoardEditor: View {
                     .buttonStyle(.borderless)
                     .help("このボードを削除")
             }
-            ForEach(problems, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
+            SettingsProblems(problems: problems)
         }
         .onAppear { load(board) }
         .onChange(of: board) { _, value in
@@ -143,10 +139,7 @@ private struct BoardEditor: View {
         .onDisappear { store.flushPending(force: true) }
     }
 
-    private var draft: GitHubBoard {
-        GitHubBoard(name: name.trimmingCharacters(in: .whitespaces), owner: owner.trimmingCharacters(in: .whitespaces),
-                    number: SettingsValidation.parseNumber(number) ?? 0)
-    }
+    private var draft: GitHubBoard { GitHubBoard.draft(name: name, owner: owner, number: number) }
 
     private func load(_ value: GitHubBoard) {
         name = value.name
@@ -157,10 +150,7 @@ private struct BoardEditor: View {
 
     private func commit() {
         let value = draft
-        problems = SettingsValidation.boardProblems(value)
-        if problems.isEmpty, store.settings.boards.contains(where: { $0.id != board.id && $0.sameBoard(as: value) }) {
-            problems = ["同じボードが既にあります"]
-        }
+        problems = value.problems(among: store.settings.boards, excluding: board.id)
         guard problems.isEmpty else {
             store.cancelPending(key: key)
             return
@@ -176,18 +166,11 @@ private struct NewBoardRow: View {
     @State private var number = ""
     @FocusState private var focused: Int?
 
-    private var draft: GitHubBoard {
-        GitHubBoard(name: name.trimmingCharacters(in: .whitespaces), owner: owner.trimmingCharacters(in: .whitespaces),
-                    number: SettingsValidation.parseNumber(number) ?? 0)
-    }
+    private var draft: GitHubBoard { GitHubBoard.draft(name: name, owner: owner, number: number) }
 
     private var problems: [String] {
         if name.isEmpty && owner.isEmpty && number.isEmpty { return [] }
-        var problems = SettingsValidation.boardProblems(draft)
-        if problems.isEmpty, store.settings.boards.contains(where: { $0.sameBoard(as: draft) }) {
-            problems = ["同じボードが既にあります"]
-        }
-        return problems
+        return draft.problems(among: store.settings.boards, excluding: nil)
     }
 
     var body: some View {
@@ -202,7 +185,7 @@ private struct NewBoardRow: View {
                 }
                 .disabled(name.isEmpty || !problems.isEmpty)
             }
-            ForEach(problems, id: \.self) { Text($0).font(.caption).foregroundStyle(.red) }
+            SettingsProblems(problems: problems)
         }
     }
 }
@@ -215,12 +198,29 @@ private struct BoardFields: View {
     let onSubmit: () -> Void
 
     var body: some View {
-        TextField("名前", text: $name, prompt: Text("名前")).labelsHidden().textFieldStyle(.roundedBorder)
-            .focused(focused, equals: 0).onSubmit(onSubmit)
-        TextField("owner", text: $owner, prompt: Text("owner")).labelsHidden().textFieldStyle(.roundedBorder)
-            .focused(focused, equals: 1).onSubmit(onSubmit)
-        TextField("Project 番号", text: $number, prompt: Text("Project 番号")).labelsHidden().textFieldStyle(.roundedBorder)
-            .focused(focused, equals: 2).onSubmit(onSubmit)
+        TextField("名前", text: $name, prompt: Text("名前")).settingsField(onSubmit: onSubmit)
+            .focused(focused, equals: 0)
+        TextField("owner", text: $owner, prompt: Text("owner")).settingsField(onSubmit: onSubmit)
+            .focused(focused, equals: 1)
+        TextField("Project 番号", text: $number, prompt: Text("Project 番号")).settingsField(onSubmit: onSubmit)
+            .focused(focused, equals: 2)
             .frame(width: 100)
+    }
+}
+
+private extension GitHubBoard {
+    /// 欄の中身から組む（前後の空白は落とし、番号が読めなければ 0）。
+    static func draft(name: String, owner: String, number: String) -> GitHubBoard {
+        GitHubBoard(name: name.trimmingCharacters(in: .whitespaces), owner: owner.trimmingCharacters(in: .whitespaces),
+                    number: SettingsValidation.parseNumber(number) ?? 0)
+    }
+
+    /// 保存できない理由。`id` の行（編集中の自分）を除いて同じボードがあればそれも出す。
+    func problems(among boards: [GitHubBoard], excluding id: UUID?) -> [String] {
+        let problems = SettingsValidation.boardProblems(self)
+        if problems.isEmpty, boards.contains(where: { $0.id != id && $0.sameBoard(as: self) }) {
+            return ["同じボードが既にあります"]
+        }
+        return problems
     }
 }

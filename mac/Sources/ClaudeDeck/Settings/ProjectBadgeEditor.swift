@@ -95,8 +95,7 @@ struct ProjectBadgeEditor: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(selected ? Color.accentColor : .primary)
                 .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accentColor.opacity(0.18) : .clear))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: selected ? 1.5 : 0))
+                .roundedSurface(6, fill: selected ? Color.accentColor.opacity(0.18) : Color.clear, stroke: Color.accentColor, lineWidth: selected ? 1.5 : 0)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -49,8 +49,7 @@ final class PromptResponder {
 
     static func ptyPermissionKey(_ session: HostedSession) -> String { "pty:\(session.id.uuidString)" }
 
-    /// `prompt` はカードに出していたもの。端末の今のプロンプトと違えば何も送らない（別の確認を承認しないため）。
-    /// `report` が false なら mac に警告を出さず、結果だけを返す（iPhone からの操作）。
+    /// `prompt`（カードに出していたもの）が今のプロンプトと違えば送らない（別の確認を承認しない）。`report` が false なら警告を出さない。
     @discardableResult
     func answerOnTerminal(_ session: HostedSession, prompt: PermissionPrompt, allow: Bool, report: Bool = true) -> RemoteActionResult {
         let key = Self.ptyPermissionKey(session)
@@ -91,16 +90,12 @@ final class PromptResponder {
 
     static func ptyMenuKey(_ session: HostedSession) -> String { "menu:\(session.id.uuidString)" }
 
-    /// `menu` はカードに出していたもの。`choice` はその選択肢の位置、nil なら取り消し（Esc）。
-    /// 端末の今のメニューと違えば何も送らない（別の問いに答えないため）。結果は `completion` に 1 回返す。
+    /// `menu`（カードに出していたもの）の `choice` 番目を選ぶ（nil は Esc）。今のメニューと違えば送らず、結果は `completion` に 1 回返す。
     func answerMenu(_ session: HostedSession, menu: MenuPrompt, choice: Int?, report: Bool = true,
                     completion: ((RemoteActionResult) -> Void)? = nil) {
-        let key = Self.ptyMenuKey(session)
-        guard !busyKeys.contains(key) else { completion?(Self.busyResult); return }
-        busyKeys.insert(key)
-        let answeredId = RemoteMenu.menuId(menu, generation: session.promptTracker.generation)
+        guard let (key, answeredId) = beginMenuOperation(session, menu: menu, completion: completion) else { return }
         session.answerMenu(menu, choice: choice) { [weak self, weak session] outcome in
-            guard let self else { completion?(.failure("ended", "アプリが閉じられました。")); return }
+            guard let self else { completion?(Self.appClosed); return }
             if Self.result(of: outcome).ok { session?.markAnswered(answeredId) }
             if outcome == .confirmed, let choice, menu.options[choice].checked != nil {
                 // 複数選択では Enter はチェックの切り替えで、メニューは閉じない。
@@ -117,15 +112,26 @@ final class PromptResponder {
     /// AskUserQuestion の問いのタブを 1 つ移る（→ / ←）。`menu` はカードに出していたもの。
     func moveMenuTab(_ session: HostedSession, menu: MenuPrompt, direction: MenuTabMover.Direction, report: Bool = true,
                      completion: ((RemoteActionResult) -> Void)? = nil) {
-        let key = Self.ptyMenuKey(session)
-        guard !busyKeys.contains(key) else { completion?(Self.busyResult); return }
-        busyKeys.insert(key)
-        let answeredId = RemoteMenu.menuId(menu, generation: session.promptTracker.generation)
+        guard let (key, answeredId) = beginMenuOperation(session, menu: menu, completion: completion) else { return }
         session.moveMenuTab(menu, direction: direction) { [weak self, weak session] outcome in
-            guard let self else { completion?(.failure("ended", "アプリが閉じられました。")); return }
+            guard let self else { completion?(Self.appClosed); return }
             if Self.result(of: outcome).ok { session?.markAnswered(answeredId) }
             completion?(self.finishMenuOperation(key, outcome: outcome, report: report))
         }
+    }
+
+    private static let appClosed = RemoteActionResult.failure("ended", "アプリが閉じられました。")
+
+    /// 選択肢の操作を始める（二度押しなら busy を返して始めない）。押せない間の鍵と、答えた印にする ID を返す。
+    private func beginMenuOperation(_ session: HostedSession, menu: MenuPrompt,
+                                    completion: ((RemoteActionResult) -> Void)?) -> (key: String, answeredId: String)? {
+        let key = Self.ptyMenuKey(session)
+        guard !busyKeys.contains(key) else {
+            completion?(Self.busyResult)
+            return nil
+        }
+        busyKeys.insert(key)
+        return (key, RemoteMenu.menuId(menu, generation: session.promptTracker.generation))
     }
 
     private func showMenuNotice(_ key: String, _ text: String) {
