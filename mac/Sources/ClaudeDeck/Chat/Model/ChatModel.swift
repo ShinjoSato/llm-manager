@@ -42,13 +42,6 @@ enum ChatCenter: Equatable {
     case links
 }
 
-extension SettingsStore {
-    /// そのフォルダの登録プロジェクト。無ければ名前だけの仮のプロジェクト。
-    func project(atPath path: String, orNamed name: String) -> ManagedProject {
-        projects.first { $0.path == path } ?? ManagedProject(name: name, path: path)
-    }
-}
-
 /// 画面に 1 つだけ出す警告。どの部品からでも出せるよう ChatModel と分けて持つ。
 @MainActor
 @Observable

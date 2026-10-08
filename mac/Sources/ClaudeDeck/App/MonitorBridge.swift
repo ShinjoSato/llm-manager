@@ -4,7 +4,7 @@ import MonitorKit
 /// アプリ全体で 1 つだけ持つ監視ストア。セッション監視・会話・フックの受け口（:8766）はアプリの中で動く。
 @MainActor
 enum MonitorBridge {
-    /// 環境変数で差し替える（`CLAUDE_HOME`・`CLAUDE_DECK_SERVER_PORT`・`CLAUDE_DECK_MONITOR_DEBUG=1` 等）。
+    /// 環境変数で差し替える（`CLAUDE_HOME`・`CLAUDE_DECK_SERVER_PORT`・`CLAUDE_DECK_MONITOR_DEBUG=1` 等）。使用量は statusLine が書く usage.json から読む。
     static let configuration = MonitorConfiguration.fromEnvironment()
     static let store = MonitorStore(configuration: configuration)
 

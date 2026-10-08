@@ -1,3 +1,4 @@
+import MonitorKit
 import SwiftUI
 
 /// 欄の下に出す、保存できない理由の一覧。
@@ -15,5 +16,12 @@ extension View {
         labelsHidden()
             .textFieldStyle(.roundedBorder)
             .onSubmit(onSubmit)
+    }
+}
+
+extension SettingsStore {
+    /// そのフォルダの登録プロジェクト。無ければ名前だけの仮のプロジェクト。
+    func project(atPath path: String, orNamed name: String) -> ManagedProject {
+        projects.first { $0.path == path } ?? ManagedProject(name: name, path: path)
     }
 }
