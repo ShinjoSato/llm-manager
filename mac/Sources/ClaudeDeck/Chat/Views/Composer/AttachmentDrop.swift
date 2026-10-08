@@ -7,8 +7,7 @@ enum AttachmentDrop {
     /// ファイルと、画像のデータ表現（JPEG / HEIC / TIFF 等。ブラウザや写真からのドラッグ）。ファイルプロミスは受けない。
     static let types: [UTType] = [.fileURL, .image]
 
-    /// 読み込みは非同期なので、揃ったらメインで `completion` に渡す。受け取れるものが無ければ false。
-    /// 画像のデータは元の形式のまま渡し、変換は取り込み（バックグラウンド）に任せる。
+    /// 揃ったらメインで `completion` に渡す（画像のデータは元の形式のまま、変換は取り込みに任せる）。受け取れるものが無ければ false。
     static func load(_ providers: [NSItemProvider], completion: @escaping @MainActor ([AttachmentSource]) -> Void) -> Bool {
         let usable = providers.filter { provider in types.contains { provider.hasItemConformingToTypeIdentifier($0.identifier) } }
         guard !usable.isEmpty else { return false }

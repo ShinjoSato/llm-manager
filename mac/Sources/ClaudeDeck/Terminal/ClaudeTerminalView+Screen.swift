@@ -78,8 +78,7 @@ extension ClaudeTerminalView {
         TerminalScreen.mainPane(rawScreenLines().map(Self.text(of:)))
     }
 
-    /// 実画面の行（`screenLines` の添字）の各文字に背景色（か反転）が付いているか。タブ行の今のタブを読むのに使う。
-    /// 文字の並びは `screenLines` と同じく全角の後半セルを飛ばして数える。
+    /// 実画面の行の各文字に背景色（か反転）が付いているか（タブ行の今のタブを読む。全角の後半セルは `screenLines` と同じく飛ばす）。
     private func highlightReader() -> (Int) -> [Bool]? {
         let lines = rawScreenLines()
         return { row in

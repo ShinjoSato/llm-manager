@@ -19,8 +19,7 @@ extension ClaudeTerminalView {
         case lateLeftover
     }
 
-    /// 本文を入力欄に貼り付けてから Enter で送る（作業中でも Claude Code がキューに積む）。止める時は何も貼らない。
-    /// `.started` の時だけ、結末（送った・途中でやめた・端末が無くなった）を `completion` に 1 回返す。
+    /// 本文を入力欄に貼ってから Enter で送る（作業中は Claude Code がキューに積む）。`.started` の時だけ結末を `completion` に 1 回返す。
     func sendMessage(_ text: String, attachments: [Attachment] = [], completion: @escaping (SendCompletion) -> Void) -> SendResult {
         guard !isSending else { return .busy }
         let screen = screenLines()
@@ -156,8 +155,7 @@ extension ClaudeTerminalView {
         pendingArrowHold = nil
     }
 
-    /// 選択メニューに答える。`choice` は `expected`（カードに出していたもの）の選択肢の位置、nil なら Esc で取り消す。
-    /// 今の画面のメニューが `expected` と同じ時だけキーを送り、❯ を矢印で 1 行ずつ動かして着いたのを確かめてから Enter を送る。
+    /// 選択メニューに答える（`choice` が nil なら Esc）。今のメニューが `expected` と同じ時だけ、❯ を 1 行ずつ動かして着いたのを確かめてから Enter。
     func answerMenu(_ expected: MenuPrompt, choice: Int?, completion: @escaping (MenuAnswerOutcome) -> Void) {
         guard !isNavigatingMenu else { return completion(.unavailable) }
         guard let choice else {

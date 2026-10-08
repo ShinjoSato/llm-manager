@@ -1,9 +1,7 @@
 import MonitorKit
 import SwiftUI
 
-/// プロジェクトのリンク（LP 等）の追加・編集・削除・並べ替え。
-/// 全行が正しい間だけ保存する（途中の行があればファイルは前の内容のまま）。文字欄は少し間を置いてまとめて書く。
-/// 名前と URL が両方空の行は画面に残すだけで保存の対象にしない（「追加」した直後の行が他の行の保存を止めないため）。
+/// プロジェクトのリンクの編集。全行が正しい間だけ保存し、名前と URL が両方空の行は数えない（追加した直後の行で他の行の保存を止めない）。
 struct ProjectLinksEditor: View {
     let store: SettingsStore
     let project: ManagedProject

@@ -19,9 +19,8 @@ struct DirectoryDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     overview.frame(maxWidth: Self.readableWidth, alignment: .leading)
-                    // 別のプロジェクトへ移ったら見る元と表示中のページを持ち越さない。
+                    // 別のプロジェクトへ移ったら、見る元・表示中のページ・画像の一覧を持ち越さない。
                     SitePreviewSection(project: project, visibleHeight: visibleHeight).id(project.id)
-                    // 別のプロジェクトへ移ったら前の一覧とサムネイルを持ち越さない。
                     ProjectImagesSection(project: project).id(project.id)
                     github.frame(maxWidth: Self.readableWidth, alignment: .leading)
                     links.frame(maxWidth: Self.readableWidth, alignment: .leading)

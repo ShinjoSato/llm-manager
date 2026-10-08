@@ -26,7 +26,7 @@ final class ChatOutbox {
     /// ルーム → 画像を添えて送り、まだ transcript に載っていない発話（載るまで送った画像を吹き出しに出す）。
     private(set) var sentImages: [RoomID: [PendingImageMessage]] = [:]
 
-    // ChatModel・引き継ぎに尋ねること。循環参照を避けるためクロージャで受け、設定し忘れは黙って通さない。
+    // MARK: ChatModel・引き継ぎへの問い合わせ（循環参照を避けてクロージャで受け、設定し忘れは assert で止める）
     /// ホスト中のルームがまだあるか（閉じた後に届いた送信の結末で下書きを戻さないため）。
     @ObservationIgnored var hostedRoomExists: (RoomID) -> Bool = { _ in assertionFailure("hostedRoomExists 未設定"); return false }
     /// その sessionId の会話を出しているルーム。

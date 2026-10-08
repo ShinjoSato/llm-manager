@@ -2,8 +2,7 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// 詳細の「リンク」の 1 行。クリックで開き、ピンは押すと切り替え、ホバーで「編集」「上へ」「下へ」「削除」を出す。
-/// メモ・「毎月 N 日に確認」は 2 行目、最終確認日は右に出し、確認の日を過ぎてまだ開いていなければ先頭に「確認」。
+/// 詳細の「リンク」の 1 行。押すと開き、ピンの切り替えと、ホバーで編集・並べ替え・削除を出す。
 struct ProjectLinkRow: View {
     let projectID: UUID
     let index: Int
@@ -120,8 +119,7 @@ private struct ProjectLinkRowButton: View {
     }
 }
 
-/// 追加・編集のポップオーバー。名前・URL・種類を検証（設定画面と同じ）し、問題が無い時だけ保存できる。
-/// 保存は `links` 全体を 1 回で置き換えて設定ファイルに即時に書く（設定画面を開いていても揃う）。
+/// 追加・編集のポップオーバー。設定画面と同じ検証が通る時だけ、`links` 全体を 1 回で置き換えて即時に書く。
 struct ProjectLinkForm: View {
     let projectID: UUID
     /// 編集なら元の位置（追加なら nil）。

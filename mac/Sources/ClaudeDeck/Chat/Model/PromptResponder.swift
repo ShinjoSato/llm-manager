@@ -49,8 +49,7 @@ final class PromptResponder {
 
     static func ptyPermissionKey(_ session: HostedSession) -> String { "pty:\(session.id.uuidString)" }
 
-    /// `prompt` はカードに出していたもの。端末の今のプロンプトと違えば何も送らない（別の確認を承認しないため）。
-    /// `report` が false なら mac に警告を出さず、結果だけを返す（iPhone からの操作）。
+    /// `prompt`（カードに出していたもの）が今のプロンプトと違えば送らない（別の確認を承認しない）。`report` が false なら警告を出さない。
     @discardableResult
     func answerOnTerminal(_ session: HostedSession, prompt: PermissionPrompt, allow: Bool, report: Bool = true) -> RemoteActionResult {
         let key = Self.ptyPermissionKey(session)
@@ -91,8 +90,7 @@ final class PromptResponder {
 
     static func ptyMenuKey(_ session: HostedSession) -> String { "menu:\(session.id.uuidString)" }
 
-    /// `menu` はカードに出していたもの。`choice` はその選択肢の位置、nil なら取り消し（Esc）。
-    /// 端末の今のメニューと違えば何も送らない（別の問いに答えないため）。結果は `completion` に 1 回返す。
+    /// `menu`（カードに出していたもの）の `choice` 番目を選ぶ（nil は Esc）。今のメニューと違えば送らず、結果は `completion` に 1 回返す。
     func answerMenu(_ session: HostedSession, menu: MenuPrompt, choice: Int?, report: Bool = true,
                     completion: ((RemoteActionResult) -> Void)? = nil) {
         guard let (key, answeredId) = beginMenuOperation(session, menu: menu, completion: completion) else { return }

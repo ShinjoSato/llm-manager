@@ -1,8 +1,7 @@
 import MonitorKit
 import SwiftUI
 
-/// GitHub: プロジェクトごとのリポジトリ・Project 番号と、リポジトリに紐づかないボード。
-/// 欄が正しい間だけ保存する（settings.json に不正な値を残さないため）。文字欄は少し間を置いてまとめて書く。
+/// GitHub の紐づけとボード。欄が正しい間だけ保存する（settings.json に不正な値を残さない）。
 struct GitHubSettingsTab: View {
     let store: SettingsStore
 

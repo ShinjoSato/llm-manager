@@ -81,12 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MonitorBridge.stop()
     }
 
-    // MARK: - メニュー（最小構成: アプリ / 編集）
+    // MARK: - メニュー
 
     private func buildMenu() {
         let mainMenu = NSMenu()
 
-        // アプリメニュー
         let appMenuItem = NSMenuItem()
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
@@ -100,7 +99,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         keyEquivalent: "q")
         appMenuItem.submenu = appMenu
 
-        // ファイルメニュー（スクリーンショット）
         let fileMenuItem = NSMenuItem()
         mainMenu.addItem(fileMenuItem)
         let fileMenu = NSMenu(title: "ファイル")
@@ -109,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                          keyEquivalent: "s")
         fileMenuItem.submenu = fileMenu
 
-        // 編集メニュー（端末の選択コピー/貼り付け用に標準セレクタを配線）
+        // コピー・貼り付けは標準のセレクタで、応答チェーンの先頭（文字欄）に任せる。
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
         let editMenu = NSMenu(title: "編集")
@@ -136,8 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - スクリーンショット
 
-    /// ウィンドウの内容を PNG で撮影し、デスクトップに保存 + クリップボードにコピー + Finder で表示。
-    /// 自前のビュー階層を描画するため、画面収録権限は不要。
+    /// ウィンドウの中身を PNG でデスクトップに保存し、クリップボードにも写す（自前のビューを描くので画面収録の許可は要らない）。
     @MainActor @objc private func captureScreenshot() {
         guard let contentView = window?.contentView else { return }
         let rect = contentView.bounds
@@ -156,13 +153,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // クリップボードへも画像をコピー
         if let image = NSImage(data: data) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.writeObjects([image])
         }
 
-        // Finder で保存先を表示
         SystemActions.revealInFinder(url)
     }
 }

@@ -9,8 +9,8 @@ enum ClaudeStatus: Equatable {
     case idle           // 出力停止 かつ プロンプト無し（待機/完了）
 }
 
-/// Claude Code を PTY でホストする端末ビュー。料金事故をゼロにするため、子の環境から API キーを必ず除き、headless の起動口は設けない。
-/// 上限到達（公式の残量 100% か、画面末尾の上限表示）を検知したらセッションを強制終了する。
+/// Claude Code を PTY でホストする端末ビュー。料金事故ゼロのため子の環境から API キーを必ず除き、headless の起動口は設けない。
+/// 上限到達（公式の残量 100% か画面末尾の上限表示）を検知したら強制終了する。
 final class ClaudeTerminalView: LocalProcessTerminalView {
 
     /// 上限到達を検知したときに呼ばれる（メインスレッド）。
