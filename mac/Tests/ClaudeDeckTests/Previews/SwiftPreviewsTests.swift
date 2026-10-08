@@ -78,6 +78,37 @@ final class SwiftPreviewsTests: XCTestCase {
         ])
     }
 
+    func testPreviewProviderOnlyInTypeDeclarations() {
+        let source = """
+        struct A: SwiftUI.PreviewProvider { }
+        struct G<T: PreviewProvider> { }
+        func f(_ p: PreviewProvider) { }
+        let x: PreviewProvider = y
+        var z: any PreviewProvider
+        extension Box where T: PreviewProvider { }
+        final class C<T>: Base<T>, SwiftUI.View, PreviewProvider { }
+        extension Outer.Inner: PreviewProvider { }
+        @MainActor
+        enum E:
+            PreviewProvider { }
+        protocol P: PreviewProvider { }
+        #Preview("after") { }
+        """
+        // 数えるのは A・C・Outer.Inner・E の 4 つ（制約・注釈・プロトコルは数えない）。
+        XCTAssertEqual(defs(source), [SwiftPreviewDefinition(index: 4, name: "after", line: 13)])
+    }
+
+    func testDeepInterpolationStopsWithoutCrashing() {
+        // 補間の入れ子が深すぎるソースは、そこで読むのをやめる（スタックを使い切らない）。
+        let depth = 5_000
+        let nested = String(repeating: #""\("#, count: depth) + String(repeating: #")""#, count: depth)
+        let source = "#Preview(\"前\") { }\nlet s = \(nested)\n#Preview(\"後\") { }"
+        XCTAssertEqual(defs(source).map(\.name), ["前"])
+        // 上限より浅い入れ子は最後まで読む。
+        let shallow = String(repeating: #""\("#, count: 8) + "1" + String(repeating: #")""#, count: 8)
+        XCTAssertEqual(defs("let s = \(shallow)\n#Preview(\"後\") { }").map(\.name), ["後"])
+    }
+
     func testMultilineStringCountsLines() {
         let source = "let s = \"\"\"\nline\nline\n\"\"\"\n/* a\nb */\n#Preview { }"
         XCTAssertEqual(defs(source), [SwiftPreviewDefinition(index: 0, name: nil, line: 7)])

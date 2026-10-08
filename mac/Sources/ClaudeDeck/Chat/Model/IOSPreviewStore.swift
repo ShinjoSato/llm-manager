@@ -62,6 +62,7 @@ final class IOSPreviewService {
     /// 節が閉じてから mcpbridge を止めるまで。
     static let idleTimeout: Duration = .seconds(180)
     static let xcodeBundleId = "com.apple.dt.Xcode"
+    static let sourceChangedMessage = "描いている間にソースが書き換わりました。「再読み込み」で一覧を読み直すと出ます"
 
     private(set) var states: [IOSPreviewItemKey: ItemState] = [:]
     private(set) var rendered: [IOSPreviewItemKey: IOSPreviewRendered] = [:]
@@ -70,6 +71,8 @@ final class IOSPreviewService {
     private(set) var problems: [UUID: String] = [:]
     /// 描いている・待っている件のあるプロジェクト。
     private(set) var busyProjects: Set<UUID> = []
+    /// どの Xcode につなぐか決められなかった時の案内。
+    private(set) var xcodeNotice: String?
 
     private struct Job {
         let key: IOSPreviewItemKey
@@ -80,6 +83,8 @@ final class IOSPreviewService {
         let projectId: UUID
         let xcodeProject: String
         let identifier: String
+        /// 利用者が自分で開いていたものは閉じない。
+        let openedByUs: Bool
         /// ファイルの絶対パス → Xcode のプロジェクトの中のパス。
         var paths: [String: String] = [:]
     }
@@ -87,8 +92,13 @@ final class IOSPreviewService {
     @ObservationIgnored private var queue: [Job] = []
     @ObservationIgnored private var current: Job?
     @ObservationIgnored private var client: XcodeBridgeClient?
+    /// 今の client がつないでいる Xcode（変わったら client を作り直す）。
+    @ObservationIgnored private var clientTarget: XcodeBridgeTarget?
     @ObservationIgnored private var workspace: OpenedWorkspace?
-    @ObservationIgnored private var openSections = 0
+    /// 自分で開いてまだ閉じていないワークスペース（mcpbridge を起動し直しても自分のものとして閉じるため）。
+    @ObservationIgnored private var ownedWorkspaces: Set<String> = []
+    @ObservationIgnored private var sections = PreviewSectionPresence()
+    @ObservationIgnored private var stalls = PreviewStallCounter()
     @ObservationIgnored private var idleTask: Task<Void, Never>?
     @ObservationIgnored private var shutdownTask: Task<Void, Never>?
     /// 開いているプロジェクトが設定から消えた。描いている 1 件が終わったら止める。
@@ -113,7 +123,7 @@ final class IOSPreviewService {
         runNext()
     }
 
-    /// 既定の指定で、まだ描いていない（キャッシュにも無い）ものを順に足す。
+    /// 既定の指定で、まだ描いていない（今のソースの絵がキャッシュにも無い）ものを順に足す。
     func renderAll(_ targets: [IOSPreviewTarget]) {
         Task {
             let missing = await Task.detached(priority: .utility) {
@@ -123,7 +133,10 @@ final class IOSPreviewService {
                     return PreviewSnapshotCache.lookup(key) == nil
                 }
             }.value
-            for target in missing where rendered[IOSPreviewItemKey(projectId: target.projectId, request: Self.defaultRequest(target))] == nil {
+            for target in missing {
+                let key = IOSPreviewItemKey(projectId: target.projectId, request: Self.defaultRequest(target))
+                // 待つ間に節を閉じたプロジェクトの分は足さない。
+                guard sections.isOpen(target.projectId), current(key, sourceModified: target.file.modified) == nil else { continue }
                 render(target, request: Self.defaultRequest(target))
             }
         }
@@ -131,6 +144,12 @@ final class IOSPreviewService {
 
     nonisolated static func defaultRequest(_ target: IOSPreviewTarget) -> PreviewRenderRequest {
         PreviewRenderRequest(relativePath: target.file.relativePath, index: target.preview.index)
+    }
+
+    /// 描いた絵のうち、今のソース（走査した時の更新時刻）を描いたものだけ。書き換えた後の古い絵は出さない。
+    func current(_ key: IOSPreviewItemKey, sourceModified: Date?) -> IOSPreviewRendered? {
+        guard let shown = rendered[key], shown.info.isCurrent(sourceModified: sourceModified) else { return nil }
+        return shown
     }
 
     /// 待っている分を外す。描いている 1 件は止められないので、終わるまで待つ。
@@ -151,15 +170,16 @@ final class IOSPreviewService {
         problems[projectId] = nil
     }
 
-    /// 節が開いている間は止めない。閉じたら数分後に止める。
-    func sectionOpened() {
-        openSections += 1
+    /// 節が開いている間は止めない。
+    func sectionOpened(_ projectId: UUID) {
+        sections.open(projectId)
         idleTask?.cancel()
         idleTask = nil
     }
 
-    func sectionClosed() {
-        openSections = max(0, openSections - 1)
+    /// そのプロジェクトの節がどこにも開いていなくなったら待っている分を取りやめ、どこにも無ければ数分後に止める。
+    func sectionClosed(_ projectId: UUID) {
+        if sections.close(projectId) { cancel(projectId: projectId) }
         scheduleIdleStop()
     }
 
@@ -168,6 +188,14 @@ final class IOSPreviewService {
         await Task.detached(priority: .utility) {
             PreviewSnapshotCache.lookup(key).map { IOSPreviewRendered(image: $0.image, info: $0.info) }
         }.value
+    }
+
+    /// 起動時に、設定から消えたプロジェクトのキャッシュを片付ける（設定が読めない間は消さない）。
+    static func pruneCacheOnLaunch() {
+        let settings = SettingsStore.shared
+        guard settings.problem == nil else { return }
+        let keep = Set(settings.projects.map(\.id))
+        Task.detached(priority: .utility) { PreviewSnapshotCache.prune(keeping: keep) }
     }
 
     /// アプリの終了時。mcpbridge をグループごと止め切ってから終える。
@@ -211,10 +239,12 @@ final class IOSPreviewService {
 
     private func perform(_ job: Job) async {
         do {
-            guard Self.xcodeIsRunning() else { throw XcodeBridgeFailure.xcodeNotRunning }
+            let target = try await xcodeTarget()
+            // 別の Xcode（起動し直した・別の版）に替わったら、前の mcpbridge は使わない。
+            if let clientTarget, !clientTarget.sameConnection(as: target) { shutdownBridge() }
             // 止めている途中の mcpbridge と重ねて起動しない（同時に 1 本）。
             await shutdownTask?.value
-            let client = bridge()
+            let client = bridge(target)
             if !(await client.isRunning) {
                 // 起動し直した mcpbridge では前に開いた ID は使えない。
                 workspace = nil
@@ -229,49 +259,81 @@ final class IOSPreviewService {
             let result = try await client.renderPreview(RenderPreviewArguments(
                 workspaceIdentifier: identifier, sourceFilePath: projectPath, index: request.index,
                 variants: request.variants, locale: request.locale, timeout: Self.renderTimeout))
-            let snapshot = URL(fileURLWithPath: try result.snapshot())
+            let snapshot = try result.snapshot()
+            _ = stalls.record(nil)
             // 描いている間に設定から消えたプロジェクトの分は残さない。
             guard !watchingSettings || knownProjects.contains(job.key.projectId) else {
                 states[job.key] = nil
                 return
             }
-            let info = PreviewSnapshotInfo(result: result, renderedAt: Date())
+            let info = PreviewSnapshotInfo(result: result, renderedAt: Date(), sourceModified: modified)
             let cacheKey = PreviewCacheKey(projectId: job.key.projectId, request: request, sourceModified: modified)
             let image = try await Task.detached(priority: .utility) {
-                try PreviewSnapshotCache.store(snapshotAt: snapshot, info: info, key: cacheKey)
+                try PreviewSnapshotCache.store(snapshotPath: snapshot, info: info, key: cacheKey)
             }.value
             rendered[job.key] = IOSPreviewRendered(image: image, info: info)
-            states[job.key] = nil
+            // 走査の後に書き換わったソースの絵は、一覧を読み直すまで出さない（古い行・番号と混ぜないため）。
+            states[job.key] = info.isCurrent(sourceModified: job.target.file.modified) ? nil : .failed(Self.sourceChangedMessage)
         } catch let failure as XcodeBridgeFailure {
             fail(job, failure)
+        } catch let rejection as PreviewSnapshotCache.SnapshotRejection {
+            fail(job, .renderFailed("Xcode の返した絵を写しませんでした（\(rejection.description)）"))
         } catch {
             fail(job, .renderFailed("描いた絵を保存できませんでした（\(error.localizedDescription)）"))
         }
         if current?.key == job.key, activity != .stopping { activity = nil }
     }
 
+    /// 動いている Xcode を数え直して、つなぐ先を決める。
+    private func xcodeTarget() async throws -> XcodeBridgeTarget {
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Self.xcodeBundleId)
+            .filter { !$0.isTerminated }
+            .compactMap { app in app.bundleURL.map { RunningXcode(pid: app.processIdentifier, bundlePath: $0.path) } }
+        // xcode-select を読むのは、どれにつなぐか選ぶ必要がある時だけ。
+        let selected: String? = running.count > 1
+            ? await Task.detached(priority: .utility) { XcodeSelection.selectedDeveloperDir() }.value
+            : nil
+        guard let target = XcodeSelection.target(running: running, selectedDeveloperDir: selected) else {
+            xcodeNotice = nil
+            throw XcodeBridgeFailure.xcodeNotRunning
+        }
+        xcodeNotice = target.notice
+        return target
+    }
+
     private func fail(_ job: Job, _ failure: XcodeBridgeFailure) {
         states[job.key] = .failed(failure.message)
+        // Xcode が終わった・mcpbridge が使えない時は、次は動いている Xcode を数え直して作り直す。
+        switch failure {
+        case .xcodeNotRunning, .bridgeUnavailable: shutdownBridge()
+        default: break
+        }
+        if stalls.record(failure) {
+            dropQueue(global: true, message: PreviewStallCounter.message(failure), projectId: job.key.projectId)
+            return
+        }
         guard failure.stopsQueue else { return }
-        problems[job.key.projectId] = failure.message
         // 続けても同じ失敗になるので、待っている分は描かずに戻す（Xcode が無い・許可が無い時は全部）。
         let global: Bool = switch failure {
         case .buildFailed: false
         default: true
         }
-        let dropped = queue.filter { global || $0.key.projectId == job.key.projectId }
-        queue.removeAll { global || $0.key.projectId == job.key.projectId }
-        dropped.forEach { states[$0.key] = nil }
-        if global { dropped.forEach { problems[$0.key.projectId] = failure.message } }
-        if case .bridgeUnavailable = failure { workspace = nil }
+        dropQueue(global: global, message: failure.message, projectId: job.key.projectId)
     }
 
-    private func bridge() -> XcodeBridgeClient {
+    private func dropQueue(global: Bool, message: String, projectId: UUID) {
+        problems[projectId] = message
+        let dropped = queue.filter { global || $0.key.projectId == projectId }
+        queue.removeAll { global || $0.key.projectId == projectId }
+        dropped.forEach { states[$0.key] = nil }
+        if global { dropped.forEach { problems[$0.key.projectId] = message } }
+        refreshBusy()
+    }
+
+    private func bridge(_ target: XcodeBridgeTarget) -> XcodeBridgeClient {
         if let client { return client }
-        var environment = ChildEnvironment.sanitized(ProcessInfo.processInfo.environment)
-        // Xcode が 1 つだけ動いていればそれにつなぐ（xcode-select の Xcode が動いていない時も描けるように）。
-        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Self.xcodeBundleId)
-        if running.count == 1 { environment["MCP_XCODE_PID"] = String(running[0].processIdentifier) }
+        // mcpbridge と xcrun をつなぐ Xcode の版にそろえ、その Xcode の PID を渡す。
+        let environment = target.environment(base: ChildEnvironment.sanitized(ProcessInfo.processInfo.environment))
         let launch = XcodeBridgeProcess.launcher(environment: environment, directory: NSHomeDirectory())
         let processes = processes
         let client = XcodeBridgeClient { events in
@@ -280,31 +342,44 @@ final class IOSPreviewService {
             return transport
         }
         self.client = client
+        clientTarget = target
         return client
     }
 
-    /// 別のプロジェクトなら前のを閉じてから開く。開いた ID は mcpbridge が動いている間だけ使い回す。
+    /// 別のプロジェクトなら前のを（自分で開いたものだけ）閉じてから開く。開いた ID は mcpbridge が動いている間だけ使い回す。
     private func open(_ target: IOSPreviewTarget, client: XcodeBridgeClient) async throws -> String {
         if let workspace, workspace.xcodeProject == target.xcodeProject, await client.isRunning { return workspace.identifier }
         if let previous = workspace {
             workspace = nil
-            try? await client.closeWorkspace(previous.identifier)
+            await close(previous, client: client)
         }
         activity = .opening(target.projectName)
-        let opened = try await client.openWorkspace(path: target.xcodeProject)
+        let opened = try await client.openOwnedWorkspace(path: target.xcodeProject)
+        let ours = opened.openedByUs || ownedWorkspaces.contains(target.xcodeProject)
+        if ours { ownedWorkspaces.insert(target.xcodeProject) }
         workspace = OpenedWorkspace(projectId: target.projectId, xcodeProject: target.xcodeProject,
-                                    identifier: opened.workspaceIdentifier)
-        return opened.workspaceIdentifier
+                                    identifier: opened.identifier, openedByUs: ours)
+        return opened.identifier
+    }
+
+    /// 閉じられた時だけ自分のものから外す（閉じ損ねたら次に開いた時も自分のものとして閉じるため）。
+    private func close(_ opened: OpenedWorkspace, client: XcodeBridgeClient) async {
+        guard opened.openedByUs, (try? await client.closeWorkspace(opened.identifier)) != nil else { return }
+        ownedWorkspaces.remove(opened.xcodeProject)
     }
 
     private func resolve(_ file: SwiftPreviewFile, workspace identifier: String, client: XcodeBridgeClient) async throws -> String {
         if let known = workspace?.paths[file.path] { return known }
         let found = try await client.glob(workspace: identifier, pattern: XcodeProjectPaths.globPattern(forFileName: file.name))
-        guard let path = XcodeProjectPaths.bestMatch(found.matches, relativePath: file.relativePath) else {
+        switch XcodeProjectPaths.match(found.matches, truncated: found.truncated ?? false, relativePath: file.relativePath) {
+        case .found(let path):
+            workspace?.paths[file.path] = path
+            return path
+        case .notFound:
             throw XcodeBridgeFailure.notInProject(file.relativePath)
+        case .ambiguous:
+            throw XcodeBridgeFailure.ambiguousInProject(file.relativePath)
         }
-        workspace?.paths[file.path] = path
-        return path
     }
 
     private func refreshBusy() {
@@ -316,26 +391,27 @@ final class IOSPreviewService {
     // MARK: - 止める
 
     private func scheduleIdleStop() {
-        guard openSections == 0, current == nil, queue.isEmpty, client != nil else { return }
+        guard !sections.anyOpen, current == nil, queue.isEmpty, client != nil else { return }
         idleTask?.cancel()
         idleTask = Task { [weak self] in
             try? await Task.sleep(for: Self.idleTimeout)
-            guard !Task.isCancelled, let self, openSections == 0, current == nil, queue.isEmpty else { return }
+            guard !Task.isCancelled, let self, !sections.anyOpen, current == nil, queue.isEmpty else { return }
             shutdownBridge()
         }
     }
 
-    /// 開いたプロジェクトを閉じ、mcpbridge を止める。
+    /// 自分で開いたプロジェクトを閉じ、mcpbridge を止める。
     private func shutdownBridge() {
         guard let client else { return }
         self.client = nil
+        clientTarget = nil
         let opened = workspace
         workspace = nil
         let previous = shutdownTask
         let processes = processes
         shutdownTask = Task {
             await previous?.value
-            if let opened, await client.isRunning { try? await client.closeWorkspace(opened.identifier) }
+            if let opened, await client.isRunning { await close(opened, client: client) }
             await client.stop()
             processes.prune()
         }
@@ -395,6 +471,7 @@ private final class BridgeProcesses: @unchecked Sendable {
         lock.withLock { processes.removeAll { $0.isFinished } }
     }
 }
+
 
 /// 描いた PNG のサムネイルと拡大の読み込み（縮小はバックグラウンドで・NSCache に持つ）。
 @MainActor

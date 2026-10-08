@@ -158,10 +158,12 @@ mac/
       ProjectImages.swift         ディレクトリの詳細の「画像」の走査とグループ化
     Previews/                   ディレクトリの詳細の「iPhone のプレビュー」（Xcode の RenderPreview）
       SwiftPreviews.swift         Swift のソースから #Preview を静的に拾う（コメント・文字列を飛ばす字句の読み取り・走査）
-      XcodeBridgeProtocol.swift   mcpbridge の JSON-RPC の組み立てと読み取り・呼んでよいツールの許可リスト・失敗の見分け・Xcode のプロジェクトの中のパスとの対応
-      XcodeBridgeClient.swift     MCP クライアント（握手・1 件ずつの要求・時間切れで止める・パッケージの読み込み中は待って頼み直す）
+      XcodeBridgeProtocol.swift   mcpbridge の JSON-RPC の組み立てと読み取り（ping への返事）・呼んでよいツールの許可リスト・失敗の見分け・Xcode のプロジェクトの中のパスとの対応・開いているワークスペースの一覧の読み取り
+      XcodeBridgeClient.swift     MCP クライアント（握手・1 件ずつの要求・時間切れで止める（止め切ってから次を起動）・パッケージの読み込み中は待って頼み直す・開く前の一覧で自分で開いたかを見分ける）
+      XcodeSelection.swift        つなぐ Xcode の選び方（動いている Xcode を数え直す・複数なら xcode-select・DEVELOPER_DIR）
+      PreviewQueueRules.swift     待ち行列の止め方（時間切れ・読み込み待ちが続いた時・節が閉じた時）
       XcodeBridgeProcess.swift    `xcrun mcpbridge` の子プロセス（新しいプロセスグループ・stdin / stdout の 1 行 1 メッセージ・グループごとの停止）
-      PreviewSnapshotCache.swift  描いた PNG と添え書きのキャッシュ（鍵・置き場・古い版の片付け）
+      PreviewSnapshotCache.swift  描いた PNG と添え書きのキャッシュ（鍵・置き場・写す前の絵の確かめ・古い版と消えたプロジェクトの片付け）
     Sites/                      ディレクトリの詳細の「サイト」（LP のプレビュー）
       SiteLocator.swift           LP の場所の自動検出と、設定の `site`（相対パス）の検証・解決（プロジェクトの外を指さない）
       SiteFiles.swift             配信のパスの解決（書き出しの外・隠しファイルは返さない・フォルダは index.html・拡張子なしは .html）と Content-Type
@@ -582,35 +584,58 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     iOS アプリの SwiftUI の `#Preview` を、**起動中の Xcode の MCP（`xcrun mcpbridge` の `RenderPreview`）**で描いて並べる（`Views/Directory/IOSPreviewsSection.swift`）。iPhone 側には出していない。
     - 一覧（ビルド不要）: Xcode のプロジェクトのあるフォルダの下の Swift ファイルを浅い順に読み、`#Preview` / `#Preview("名前")` / `#Preview("名前", traits: …)` / `#Preview(traits: …)` を
       ファイルごとに上から数える（コメント・文字列（複数行・raw・補間の入れ子）の中は数えない。名前は最初の引数がラベルの無い文字列の時だけ）。
-      `PreviewProvider` に準拠する型は一覧に出さないが、Xcode の `previewDefinitionIndexInFile` と番号をそろえるため数える。隠しフォルダと「画像」と同じ依存・成果物のフォルダ・
+      `PreviewProvider` に準拠する型（`struct` / `class` / `enum` / `actor` / `extension` の継承節の `PreviewProvider`・`SwiftUI.PreviewProvider`。ジェネリクスの制約・型注釈は数えない）は一覧に出さないが、
+      Xcode の `previewDefinitionIndexInFile` と番号をそろえるため数える。補間の入れ子が 32 段を超えるソースはそこで読むのをやめる。`#if` で分岐した `#Preview` は両方を数えるので番号がずれうる（下の「行の照合」で検出する）。隠しフォルダと「画像」と同じ依存・成果物のフォルダ・
       `.xcodeproj` / `.xcworkspace` / `.xcassets` の中は見ず、リンクは辿らない。深さ 10・Swift ファイル 5,000 件・フォルダ 20,000 個で打ち切り、2MB を超えるファイルは読まない。
       走査は `Sources/MonitorKit/Previews/SwiftPreviews.swift`（テストあり）。
     - 描画: `/usr/bin/xcrun mcpbridge` を子プロセス（stdio の JSON-RPC 2.0・1 行 1 メッセージ。MCP のクライアント）として起動し、`initialize`（protocolVersion `2025-06-18`）→
-      `notifications/initialized` → `tools/list` で `RenderPreview` があるか確かめる（無ければ Xcode 27 以降が要る旨）→ `XcodeOpenWorkspace`（開いた ID は mcpbridge が動いている間だけ使い回す。
-      別のプロジェクトを描く時は前のを `XcodeCloseWorkspace` で閉じてから開く）→ `XcodeGlob`（`**/<ファイル名>`）で Xcode のプロジェクトの中のパスを引き、ディスク上の相対パスと末尾の区間がいちばん長く一致するものを使う
-      （グループの名前がフォルダと違っても合わせられる）→ `RenderPreview`（`previewDefinitionIndexInFile`・`previewVariantOverrides`・`previewLocalizationOverride`・時間切れ 300 秒）。
-      返った `previewSnapshotPath` の PNG（端末の枠付き・枠の外は透明）を `~/Library/Caches/claude-deck/ios-previews/<project-id>/`（0700 / 0600）に写し、名前・行・描いた端末・切り替えの候補を隣の JSON に残す。
+      `notifications/initialized` → `tools/list` で `RenderPreview` があるか確かめる（無ければ Xcode 27 以降が要る旨）→ `XcodeListWorkspaces` で開く前から開いているかを見て → `XcodeOpenWorkspace`
+      （開いた ID は mcpbridge が動いている間だけ使い回す。**利用者が自分で開いていたワークスペース（同じパスか、返った ID が開く前の一覧にある）は閉じない**。一覧を読めない時も閉じない。
+      別のプロジェクトを描く時・止める時は、自分で開いたものだけを `XcodeCloseWorkspace` で閉じる）→ `XcodeGlob`（`**/<ファイル名>`）で Xcode のプロジェクトの中のパスを引き、ディスク上の相対パスと末尾の区間がいちばん長く一致するものを使う
+      （グループの名前がフォルダと違っても合わせられる。いちばん長い一致が同点で複数・ファイル名だけの一致で候補が複数・Glob の結果が打ち切られた時は、別のファイルを描かないよう描かずに「プロジェクト内で特定できない」旨を出す）→
+      `RenderPreview`（`previewDefinitionIndexInFile`・`previewVariantOverrides`・`previewLocalizationOverride`・時間切れ 300 秒）。`isError` が false でも本文が `{"type":"error",…}` なら失敗として扱う。
+      返った `previewSnapshotPath` は、絶対パス・シンボリックリンクでない通常のファイル・拡張子 `.png`・先頭 8 バイトが PNG の署名・50MB 以下の時だけ（リンクを辿らずに開いて確かめ直してから）
+      `~/Library/Caches/claude-deck/ios-previews/<project-id>/`（0700 / 0600）に写し、名前・行・描いた端末・切り替えの候補・描いた時のソースの更新時刻を隣の JSON に残す。
+      相手からの `ping` には空の result を返し（知らない要求には Method not found）、id が null の失敗は待っている 1 件を失敗にする。
       **呼ぶツールは読み取りと描画の許可リスト（`XcodeOpenWorkspace` / `XcodeCloseWorkspace` / `XcodeListWorkspaces` / `XcodeGlob` / `RenderPreview`）だけ**で、
-      それ以外（ファイルの書き換え・Run・テスト・ビルド設定の更新等）は要求を組み立てる所で拒む（`XcodeBridgeTool`）。対象プロジェクトのファイル・設定は変えない。
-    - mcpbridge はアプリ全体で 1 本・描くのは 1 件ずつ（要求も直列）。子の環境から API キー・子セッション印を除き（`ChildEnvironment`）、Xcode が 1 つだけ動いていれば `MCP_XCODE_PID` でそれにつなぐ。
+      それ以外（ファイルの書き換え・Run・テスト・ビルド設定の更新等）は要求を組み立てる所で拒む（`XcodeBridgeTool`）。
+      対象プロジェクトのソースは変えない（Xcode がビルドやユーザーごとの状態（DerivedData・xcuserdata 等）を更新することはある）。
+    - mcpbridge はアプリ全体で 1 本・描くのは 1 件ずつ（要求も直列）。子の環境から API キー・子セッション印を除く（`ChildEnvironment`）。
+      **描くたびに動いている Xcode を数え直して**つなぐ先を決める（`XcodeSelection`）: 1 つならそれ、複数なら xcode-select の Xcode、それも無ければ決めずに（xcode-select のまま）節に案内を出す。
+      決めた Xcode の `.app` の `Contents/Developer` を `DEVELOPER_DIR` で渡す（xcode-select と違う版の mcpbridge を使わないため）。
+      PID か Developer フォルダが前と変わった時（Xcode を起動し直した・版を替えた）・Xcode が動いていない / mcpbridge が使えない失敗の時は、mcpbridge を捨てて次は作り直す。
+      **`MCP_XCODE_PID` は渡さない**（親の環境にあっても消す）: 渡すと GUI の Xcode へ直につなぐ形（passthrough）になり、Xcode にウィンドウが 1 つも開いていないと Xcode が接続を断って
+      mcpbridge が終わる（「Rejecting connection - no workspace windows are open.」）。渡さない時は、その Xcode の中の headless の `Xcode Service` へつなぐ形（router）で、
+      ワークスペースもそこで開く（GUI のウィンドウは開かない）。Xcode 27（mcpbridge 25317）で確認。
+      開く前の一覧は mcpbridge を起動して最初の呼び出しにする: 何も開いていない時、2 回目以降の `XcodeListWorkspaces` は返らない（同じ版で確認）ので、ほかの呼び出しの後に開く時は
+      mcpbridge を起動し直してから一覧 → 開く。一覧は 10 秒で諦め、その時は自分で開いたとはみなさない（閉じない）。
       開発サーバーと同じく**新しいプロセスグループ**で起動し、止める時は stdin を閉じてからグループごと SIGTERM → 3 秒 → SIGKILL（`DevServerStopPlan`）。止めるのは、節がどこにも開いていない状態が 3 分続いた時
-      （開いたプロジェクトを閉じてから）・アプリの終了（`applicationWillTerminate` と SIGTERM / SIGINT の経路で止め切るまで待つ）・開いているプロジェクトが設定から消えた時（描いている 1 件の後）。
-      要求の時間切れでは、遅れて届く応答と食い違わないよう mcpbridge ごと止めて次の描画で起動し直す。開いた直後の「Waiting for packages to load」は 3 秒おきに最大 3 分待って頼み直す。
+      （自分で開いたプロジェクトを閉じてから）・アプリの終了（`applicationWillTerminate` と SIGTERM / SIGINT の経路で止め切るまで待つ）・開いているプロジェクトが設定から消えた時（描いている 1 件の後）。
+      要求の時間切れでは、遅れて届く応答と食い違わないよう mcpbridge ごと止めて次の描画で起動し直す（止め切るまで次を起動しない）。開いた直後の「Waiting for packages to load」は 3 秒おきに最大 3 分待って頼み直す。
+      時間切れ・読み込み待ちが続けて 2 回出たら、待っている分を描かずに戻して節の上に理由を出す（`PreviewStallCounter`）。
     - **初回の承認**: Xcode は MCP の相手（mcpbridge を起動したアプリ。実地ではプロジェクトを替えた時にも求められた）ごとに、メニューバーの Xcode の MCP のアイコンでの許可を求める。未承認の間は `XcodeOpenWorkspace` が 1 分ほど待ってから
       「waiting for the user to approve」を返すので、開いている間は案内を出し、返ったら「メニューバーの Xcode の MCP のアイコンから許可してから描き直してください」と出す。
       `.app` と `swift run` の実行ファイルは別の相手として扱われうる。
     - 画面: 節は既定で畳む（UserDefaults `directory.iosPreviews.collapsed`。開いた時に一覧を走査・「再読み込み」で走査し直す）。ファイル（相対パス・件数。畳める）ごとのグリッドに、
       描いた絵（縮小して NSCache）か、名前と「描く」の枠（待機中・描いています・描けませんでした（クリックでもう一度。ホバーで理由）もその場に出す）・名前（無ければ表示名かファイル名）・行。
-      描いた絵は鍵（プロジェクト・ファイル・番号・切り替えの組・言語・ソースの更新時刻）でキャッシュから次回もすぐ出す（ソースを書き換えると描き直すまで出さない。同じ指定の古い版は書いた時に消す）。
-      見出しの「すべて描く」はまだ描いていない（キャッシュにも無い）ものを順に待ち行列へ、描いている間は「取りやめる」（待っている分を外す。描いている 1 件は終わるまで待つ）。
+      描いた絵は鍵（プロジェクト・ファイル・番号・切り替えの組・言語・ソースの更新時刻）でキャッシュから次回もすぐ出す（ソースを書き換えると描き直すまで出さない。
+      その回に描いた絵も描いた時の更新時刻を持ち、一覧を走査した時の更新時刻と一致する時だけ出す。同じ指定の古い版は書いた時に消す）。
+      見出しの「すべて描く」はまだ今のソースの絵が無いものを順に待ち行列へ、描いている間は「取りやめる」（待っている分を外す。描いている 1 件は終わるまで待つ）。
+      **節を閉じると（畳んだ・別のプロジェクトへ移った等で、そのプロジェクトの節がどこにも開いていなくなったら）そのプロジェクトの待っている分を取りやめる**（`PreviewSectionPresence`）。
+      行の照合: Xcode が返した `sourceLineNumber` が一覧の行と違えば、枠の下と拡大のシートに「別のプレビューの可能性」を出す（`#if` 等で番号がずれた時）。
       描いた枠のクリックで拡大のシート（Esc で閉じる）: 返った候補（外観・文字の大きさ・向き・コントラスト・ボタンの枠・言語。`supportedPreviewVariantOverrides` / `supportedLocalizations`）を
       「既定」か値から選んで描き直す（組ごとに別にキャッシュ）・表示名・描いた端末・描いた時刻・Finder で表示。右クリックで描く / 描き直す・ソース / 画像を Finder で表示・パスのコピー。
     - 失敗の案内: Xcode が動いていない（「Xcode を起動すると描けます」。開いている間は 3 秒おきに見る。動いていなければ mcpbridge を起動しない）・未承認（上記）・
-      ビルド失敗（ログの `error:` の行を先頭から 3 行）・時間切れ・そのプレビューだけの失敗（`{"type":"error","data":…}` の中の文言）・Xcode のプロジェクトにファイルが無い。
+      ビルド失敗（ログの `error:` の行を先頭から 3 行）・時間切れ・そのプレビューだけの失敗（`{"type":"error","data":…}` の中の文言）・Xcode のプロジェクトにファイルが無い / 特定できない・
+      Xcode の返した絵を写さなかった（上の確かめに外れた）・描いている間にソースが書き換わった（「再読み込み」で出る）。
       Xcode が無い・未承認・ビルド失敗など続けても同じ失敗になるものは、待っている分を描かずに戻して節の上に理由を出す（× で消せる）。
-    - 実地（sandora・Xcode 27）: 初回はビルドを含んで約 110 秒、同じプロジェクトの別ファイルは約 60 秒、同じファイルの別のプレビューや外観の切り替えは 1〜10 秒。
-    - 判定（走査・JSON-RPC・失敗の見分け・パスの対応・キャッシュの鍵）と子プロセス・クライアントは `Sources/MonitorKit/Previews/`（テストあり。偽の mcpbridge で握手・直列・時間切れ・終了・
-      読み込み中の待ちを、sh の子で行の往復とグループごとの停止を確かめる）、持ち手は `Chat/Model/IOSPreviewStore.swift`。
+    - 実地（sandora・Xcode 27）: 初回はビルドを含んで約 100〜110 秒、同じプロジェクトの別ファイルは約 60 秒、同じファイルの別のプレビューや外観の切り替えは 1〜10 秒。
+      開く前の一覧は「No workspaces are currently open.」、開いた後は「* workspaceIdentifier: workspace-…, workspacePath: /…/random_talk.xcodeproj」の形で、
+      自分で開いたもの（閉じる）と既に開いていたもの（閉じない）を見分けられることと、返った `sourceLineNumber` が走査した行と一致することを確かめた。
+    - キャッシュの片付け: 起動時に設定に無い project-id のフォルダを消し（設定が読めない間は消さない）、動いている間に設定から消えたプロジェクトの分もその場で消す。
+    - 判定（走査・JSON-RPC・失敗の見分け・パスの対応・キャッシュの鍵と絵の確かめ・つなぐ Xcode の選び方・待ち行列の止め方）と子プロセス・クライアントは `Sources/MonitorKit/Previews/`
+      （テストあり。偽の mcpbridge で握手・直列・時間切れ（止め切ってから次を起動）・終了・読み込み中の待ち・ping・id が null の失敗・開く前の一覧を、sh の子で行の往復とグループごとの停止を確かめる）、
+      持ち手は `Chat/Model/IOSPreviewStore.swift`。
   - **見出しのボタンが入りきらない時**（会話の見出しも同じ）: 名前とパスは省略表示（最小 140px）まで縮め、それでも入らなければ優先度の低いボタンから
     「…」（`ellipsis.circle`。ホバーで「ほかの操作」と回したボタンの名前）のメニューにまとめる。メニューの項目は同じ動作を呼ぶ
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。

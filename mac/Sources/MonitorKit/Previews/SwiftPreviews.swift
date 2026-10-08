@@ -136,7 +136,7 @@ public enum SwiftPreviews {
     }
 }
 
-/// コメント・文字列（複数行・raw・補間の入れ子）を読み飛ばしながら `#Preview` と `: PreviewProvider` を探す。
+/// コメント・文字列（複数行・raw・補間の入れ子）を読み飛ばしながら `#Preview` と、型の宣言の `: PreviewProvider` を探す。
 struct PreviewLexer {
     struct Found {
         var name: String?
@@ -144,10 +144,23 @@ struct PreviewLexer {
         var provider: Bool
     }
 
+    /// 宣言の形を見分けるための、直前の字句（識別子と記号だけ。文字列は 1 つの印）。
+    enum Token: Equatable {
+        case word(String)
+        case symbol(UInt8)
+        case literal
+    }
+
+    /// 補間の入れ子の上限（壊れた・悪意のあるソースでスタックを使い切らないため）。
+    static let maxNesting = 32
+    static let historyLimit = 64
+
     let bytes: [UInt8]
     var i = 0
     var line = 1
     var found: [Found] = []
+    private var history: [Token] = []
+    private var nesting = 0
 
     init(bytes: [UInt8]) {
         self.bytes = bytes
@@ -179,27 +192,34 @@ struct PreviewLexer {
             case 0x0A:
                 line += 1
                 i += 1
+            case 0x20, 0x09, 0x0D:
+                i += 1
             case 0x2F where at(i + 1) == 0x2F:
                 skipLineComment()
             case 0x2F where at(i + 1) == 0x2A:
                 skipBlockComment()
             case 0x22:
                 skipString(hashes: 0)
+                remember(.literal)
             case 0x23:
                 if let hashes = rawStringHashes(at: i) {
                     i += hashes
                     skipString(hashes: hashes)
+                    remember(.literal)
                 } else if matches("#Preview", at: i), !(at(i + 8).map(Self.isIdentifier) ?? false),
                           !(i > 0 && Self.isIdentifier(bytes[i - 1])) {
                     let startLine = line
                     i += 8
                     if !untilCloseParen { found.append(Found(name: previewName(), line: startLine, provider: false)) }
+                    remember(.literal)
                 } else {
                     i += 1
+                    remember(.symbol(b))
                 }
             case 0x28:
                 depth += 1
                 i += 1
+                remember(.symbol(b))
             case 0x29:
                 if untilCloseParen && depth == 0 {
                     i += 1
@@ -207,29 +227,77 @@ struct PreviewLexer {
                 }
                 depth -= 1
                 i += 1
-            case 0x50 where matches("PreviewProvider", at: i):
-                let end = i + 15
-                let standalone = !(i > 0 && Self.isIdentifier(bytes[i - 1])) && !(at(end).map(Self.isIdentifier) ?? false)
-                if standalone, !untilCloseParen, inInheritanceClause(before: i) {
-                    found.append(Found(name: nil, line: line, provider: true))
-                }
-                i = end
+                remember(.symbol(b))
             default:
                 // 識別子は 1 語ずつ進める（語の途中の `PreviewProvider` を拾わないため）。
-                if Self.isIdentifier(b) {
-                    while i < bytes.count, Self.isIdentifier(bytes[i]) { i += 1 }
-                } else {
+                guard Self.isIdentifier(b) else {
                     i += 1
+                    remember(.symbol(b))
+                    continue
                 }
+                let start = i
+                while i < bytes.count, Self.isIdentifier(bytes[i]) { i += 1 }
+                let word = String(decoding: bytes[start..<i], as: UTF8.self)
+                if word == "PreviewProvider", !untilCloseParen, Self.isConformanceInTypeDeclaration(history) {
+                    found.append(Found(name: nil, line: line, provider: true))
+                }
+                remember(.word(word))
             }
         }
     }
 
-    /// 直前の空白でない文字が `:` か `,`（`struct X: PreviewProvider` / `struct X: A, PreviewProvider`）。
-    private func inInheritanceClause(before k: Int) -> Bool {
-        var j = k - 1
-        while j >= 0, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[j]) { j -= 1 }
-        return j >= 0 && (bytes[j] == 0x3A || bytes[j] == 0x2C)
+    private mutating func remember(_ token: Token) {
+        history.append(token)
+        if history.count > Self.historyLimit { history.removeFirst(history.count - Self.historyLimit) }
+    }
+
+    private static let declarationKeywords: Set<String> = ["struct", "class", "enum", "actor", "extension"]
+
+    /// `PreviewProvider` の直前の字句が、型の宣言の継承節（`struct X: A, SwiftUI.PreviewProvider`）か。
+    /// ジェネリクスの制約（`<T: PreviewProvider>`・`where T: PreviewProvider`）・型注釈（`let x: PreviewProvider`）は数えない。
+    static func isConformanceInTypeDeclaration(_ tokens: [Token]) -> Bool {
+        var k = tokens.count - 1
+        // `SwiftUI.PreviewProvider` の修飾。
+        if k >= 1, tokens[k] == .symbol(0x2E), tokens[k - 1] == .word("SwiftUI") { k -= 2 }
+        // 継承節の先頭の `:` まで、型の並び（`A`・`A.B`・`A<T>`・`,`）を遡る。
+        while k >= 0 {
+            switch tokens[k] {
+            case .symbol(0x3A):
+                return declaresType(tokens, before: k - 1)
+            case .symbol(0x2C):
+                k -= 1
+                guard let next = skipType(tokens, from: k) else { return false }
+                k = next
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
+    /// `k` から遡って型 1 つ（`A.B<C, D>`・`any`/`&` は無し）を読み飛ばし、その前の位置を返す。
+    private static func skipType(_ tokens: [Token], from start: Int) -> Int? {
+        var k = start
+        if k >= 0, tokens[k] == .symbol(0x3E) {
+            var depth = 0
+            while k >= 0 {
+                if tokens[k] == .symbol(0x3E) { depth += 1 }
+                if tokens[k] == .symbol(0x3C) { depth -= 1 }
+                k -= 1
+                if depth == 0 { break }
+            }
+            guard depth == 0 else { return nil }
+        }
+        guard k >= 0, case .word = tokens[k] else { return nil }
+        k -= 1
+        while k >= 1, tokens[k] == .symbol(0x2E), case .word = tokens[k - 1] { k -= 2 }
+        return k
+    }
+
+    /// `:` の前が `struct 名前` / `class 名前<T>` / `extension A.B` か。
+    private static func declaresType(_ tokens: [Token], before start: Int) -> Bool {
+        guard let k = skipType(tokens, from: start), k >= 0, case .word(let keyword) = tokens[k] else { return false }
+        return declarationKeywords.contains(keyword)
     }
 
     /// `#` の並びの後に `"` が来れば raw 文字列。その `#` の数。
@@ -280,7 +348,16 @@ struct PreviewLexer {
                     // 補間の中はコードとして読む（中の文字列・括弧の入れ子を越える）。
                     i = next + 1
                     simple = false
+                    guard nesting < Self.maxNesting else {
+                        // 入れ子が深すぎるソースはここで読むのをやめる（それより後は数えない）。
+                        i = bytes.count
+                        return nil
+                    }
+                    nesting += 1
+                    let saved = history
                     scanCode(untilCloseParen: true)
+                    history = saved
+                    nesting -= 1
                     continue
                 }
                 if let n = at(next) {

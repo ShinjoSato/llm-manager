@@ -46,8 +46,64 @@ final class XcodeBridgeProtocolTests: XCTestCase {
                        .notification(method: "notifications/tools/list_changed"))
         XCTAssertEqual(XcodeBridgeMessage.parse(Data("not json".utf8)), .unreadable)
         XCTAssertEqual(XcodeBridgeMessage.parse(Data(#"{"id":5}"#.utf8)), .unreadable)
+        // 相手からの要求（ping）は id を数でも文字列でも受ける。
+        XCTAssertEqual(XcodeBridgeMessage.parse(Data(#"{"jsonrpc":"2.0","id":9,"method":"ping"}"#.utf8)),
+                       .request(id: .number(9), method: "ping"))
+        XCTAssertEqual(XcodeBridgeMessage.parse(Data(#"{"jsonrpc":"2.0","id":"p-1","method":"ping"}"#.utf8)),
+                       .request(id: .string("p-1"), method: "ping"))
+        // id が null の失敗（要求を読めなかった）は id なしの失敗として返す。
+        XCTAssertEqual(XcodeBridgeMessage.parse(Data(#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}"#.utf8)),
+                       .error(id: nil, message: "Parse error"))
+        XCTAssertEqual(XcodeBridgeMessage.parse(Data(#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid"}}"#.utf8)),
+                       .error(id: nil, message: "Invalid"))
+        XCTAssertEqual(XcodeBridgeMessage.parse(Data(#"{"jsonrpc":"2.0","id":true,"result":{}}"#.utf8)), .unreadable)
         XCTAssertEqual(XcodeBridgeMessage.toolNames(Data(#"{"tools":[{"name":"RenderPreview"},{"name":"XcodeGlob"}]}"#.utf8)),
                        ["RenderPreview", "XcodeGlob"])
+    }
+
+    func testPongAndMethodNotFound() throws {
+        let pong = try object(XcodeBridgeMessage.pong(id: .number(9)))
+        XCTAssertEqual(pong["id"] as? Int, 9)
+        XCTAssertEqual((pong["result"] as? [String: Any])?.count, 0)
+        XCTAssertNil(pong["error"])
+        let stringPong = try object(XcodeBridgeMessage.pong(id: .string("p-1")))
+        XCTAssertEqual(stringPong["id"] as? String, "p-1")
+        let unknown = try object(XcodeBridgeMessage.methodNotFound(id: .number(3), method: "sampling/createMessage"))
+        XCTAssertEqual((unknown["error"] as? [String: Any])?["code"] as? Int, -32601)
+        XCTAssertNil(unknown["result"])
+    }
+
+    func testErrorPayloadWithoutIsErrorIsClassified() throws {
+        // isError が false でも本文が {"type":"error",…} なら失敗として扱う。
+        let text = try XCTUnwrap(XcodeToolResult.parse(Data(#"{"content":[{"type":"text","text":"{\"type\":\"error\",\"data\":\"Waiting for packages to load\"}"}]}"#.utf8)))
+        XCTAssertFalse(text.isError)
+        XCTAssertThrowsError(try text.decode(RenderPreviewResult.self)) { XCTAssertEqual($0 as? XcodeBridgeFailure, .packagesLoading) }
+        let structured = try XCTUnwrap(XcodeToolResult.parse(Data(#"{"content":[],"structuredContent":{"type":"error","data":"Crashed"}}"#.utf8)))
+        XCTAssertThrowsError(try structured.decode(RenderPreviewResult.self)) { XCTAssertEqual($0 as? XcodeBridgeFailure, .renderFailed("Crashed")) }
+        // 種類が error でなければ通常どおり読む。
+        let fine = try XCTUnwrap(XcodeToolResult.parse(Data(#"{"content":[],"structuredContent":{"type":"ok","displayName":"V"}}"#.utf8)))
+        XCTAssertNil(fine.failureText)
+        XCTAssertEqual(try fine.decode(RenderPreviewResult.self).displayName, "V")
+    }
+
+    func testWorkspaceListFindsIdentifiersAndPaths() {
+        let message = """
+        Open workspaces:
+        - workspace-thw6oNbhPy: /Users/me/My Apps/random_talk.xcodeproj (active scheme: random_talk)
+        - workspace-Ab_9: "/Users/me/b/App.xcworkspace/"
+        """
+        let list = XcodeWorkspaceList(message: message)
+        XCTAssertTrue(list.contains(identifier: "workspace-thw6oNbhPy"))
+        XCTAssertTrue(list.contains(identifier: "workspace-Ab_9"))
+        XCTAssertFalse(list.contains(identifier: "workspaces"))
+        XCTAssertTrue(list.contains(path: "/Users/me/My Apps/random_talk.xcodeproj"))
+        XCTAssertTrue(list.contains(path: "/Users/me/b/App.xcworkspace"))
+        XCTAssertTrue(list.contains(path: "/Users/me/b/./App.xcworkspace/"))
+        XCTAssertFalse(list.contains(path: "/Users/me/random_talk.xcodeproj"))
+        let empty = XcodeWorkspaceList(message: "No workspaces are currently open.")
+        XCTAssertTrue(empty.identifiers.isEmpty)
+        XCTAssertTrue(empty.paths.isEmpty)
+        XCTAssertTrue(XcodeWorkspaceList(message: "workspace1 at /p/A.xcodeproj").contains(identifier: "workspace1"))
     }
 
     func testToolResultDecodesStructuredContent() throws {
@@ -99,6 +155,7 @@ final class XcodeBridgeProtocolTests: XCTestCase {
         XCTAssertFalse(XcodeBridgeFailure.renderFailed("x").stopsQueue)
         XCTAssertFalse(XcodeBridgeFailure.timedOut(300).stopsQueue)
         XCTAssertFalse(XcodeBridgeFailure.notInProject("a").stopsQueue)
+        XCTAssertFalse(XcodeBridgeFailure.ambiguousInProject("a").stopsQueue)
         XCTAssertEqual(XcodeBridgeFailure.xcodeNotRunning.message, "Xcode を起動すると描けます")
     }
 
@@ -132,12 +189,22 @@ final class XcodeBridgeProtocolTests: XCTestCase {
 
     func testProjectPathMatching() {
         let matches = ["random_talk/Features/Matching/Views/RadarView.swift", "random_talk/Old/RadarView.swift", "Other/X.swift"]
-        XCTAssertEqual(XcodeProjectPaths.bestMatch(matches, relativePath: "Features/Matching/Views/RadarView.swift"),
-                       "random_talk/Features/Matching/Views/RadarView.swift")
-        XCTAssertEqual(XcodeProjectPaths.bestMatch(matches, relativePath: "Old/RadarView.swift"), "random_talk/Old/RadarView.swift")
-        XCTAssertEqual(XcodeProjectPaths.bestMatch(["App/A.swift"], relativePath: "./Sources/A.swift"), "App/A.swift")
-        XCTAssertNil(XcodeProjectPaths.bestMatch(matches, relativePath: "Features/Missing.swift"))
-        XCTAssertNil(XcodeProjectPaths.bestMatch([], relativePath: "A.swift"))
+        XCTAssertEqual(XcodeProjectPaths.match(matches, relativePath: "Features/Matching/Views/RadarView.swift"),
+                       .found("random_talk/Features/Matching/Views/RadarView.swift"))
+        XCTAssertEqual(XcodeProjectPaths.match(matches, relativePath: "Old/RadarView.swift"), .found("random_talk/Old/RadarView.swift"))
+        // 候補が 1 つなら、ファイル名だけの一致でも使う（グループの名前がフォルダと違う時）。
+        XCTAssertEqual(XcodeProjectPaths.match(["App/A.swift"], relativePath: "./Sources/A.swift"), .found("App/A.swift"))
+        XCTAssertEqual(XcodeProjectPaths.match(matches, relativePath: "Features/Missing.swift"), .notFound)
+        XCTAssertEqual(XcodeProjectPaths.match([], relativePath: "A.swift"), .notFound)
+        // ファイル名だけの一致で候補が複数・最高点が同点なら、別のファイルを描かないよう決めない。
+        XCTAssertEqual(XcodeProjectPaths.match(matches, relativePath: "New/RadarView.swift"), .ambiguous)
+        XCTAssertEqual(XcodeProjectPaths.match(["A/Views/V.swift", "B/Views/V.swift"], relativePath: "Views/V.swift"), .ambiguous)
+        XCTAssertEqual(XcodeProjectPaths.match(["A/Views/V.swift", "B/Views/V.swift"], relativePath: "A/Views/V.swift"), .found("A/Views/V.swift"))
+        // 同じパスが重ねて返っても 1 つとして数える。
+        XCTAssertEqual(XcodeProjectPaths.match(["App/A.swift", "App/A.swift"], relativePath: "A.swift"), .found("App/A.swift"))
+        // 打ち切られた結果では、見つかっても決めない（打ち切られた先にもっと合う候補がありうるため）。
+        XCTAssertEqual(XcodeProjectPaths.match(matches, truncated: true, relativePath: "Features/Matching/Views/RadarView.swift"), .ambiguous)
+        XCTAssertEqual(XcodeProjectPaths.match([], truncated: true, relativePath: "A.swift"), .ambiguous)
         XCTAssertEqual(XcodeProjectPaths.globPattern(forFileName: "RadarView.swift"), "**/RadarView.swift")
         XCTAssertEqual(XcodeProjectPaths.globPattern(forFileName: "View[1].swift"), "**/*.swift")
     }

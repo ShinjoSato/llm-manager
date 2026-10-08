@@ -14,6 +14,8 @@ struct IOSPreviewsSection: View {
     @State private var reloadToken = 0
     @State private var scanned: ScanRequest?
     @State private var xcodeRunning = true
+    /// 畳んだまま「すべて描く」を押した時は、節を開いてから足す（閉じた節の分は取りやめるため）。
+    @State private var renderAllWhenOpened = false
     @AppStorage("directory.iosPreviews.collapsed") private var collapsed = true
 
     private static let columns = [GridItem(.adaptive(minimum: 120, maximum: 160), spacing: 12, alignment: .top)]
@@ -35,15 +37,19 @@ struct IOSPreviewsSection: View {
             guard !collapsed, scanned != request else { return }
             if await list.reload(root: root) { scanned = request }
         }
-        // 開いている間は mcpbridge を止めず、Xcode が動いているかを見続ける。
+        // 開いている間は mcpbridge を止めず、Xcode が動いているかを見続ける。閉じたらこのプロジェクトの待ち行列を取りやめる。
         .task(id: collapsed) {
             guard !collapsed else { return }
-            service.sectionOpened()
+            service.sectionOpened(project.id)
+            if renderAllWhenOpened {
+                renderAllWhenOpened = false
+                if list.scan != nil { service.renderAll(targets) }
+            }
             while !Task.isCancelled {
                 xcodeRunning = IOSPreviewService.xcodeIsRunning()
                 try? await Task.sleep(for: .seconds(3))
             }
-            service.sectionClosed()
+            service.sectionClosed(project.id)
         }
         .sheet(item: $opened) { target in
             IOSPreviewSheet(target: target)
@@ -90,9 +96,13 @@ struct IOSPreviewsSection: View {
                 }
             } else {
                 HeaderButton(symbol: "play.rectangle.on.rectangle", name: "すべて描く",
-                             detail: "まだ描いていないプレビューを Xcode で 1 件ずつ描く") {
-                    collapsed = false
-                    service.renderAll(targets)
+                             detail: "まだ描いていないプレビューを Xcode で 1 件ずつ描く（節を閉じると残りは取りやめる）") {
+                    if collapsed {
+                        renderAllWhenOpened = true
+                        collapsed = false
+                    } else {
+                        service.renderAll(targets)
+                    }
                 }
                 .disabled(list.scan == nil || targets.isEmpty)
             }
@@ -116,6 +126,8 @@ struct IOSPreviewsSection: View {
             .truncationMode(.middle)
         if !xcodeRunning {
             noticeRow(symbol: "hammer", text: XcodeBridgeFailure.xcodeNotRunning.message, color: ChatTheme.secondary)
+        } else if let notice = service.xcodeNotice {
+            noticeRow(symbol: "hammer", text: notice, color: ChatTheme.secondary)
         }
         if service.busyProjects.contains(project.id), let activity = service.activity {
             HStack(spacing: 8) {
@@ -230,7 +242,7 @@ private struct IOSPreviewCell: View {
     }
 
     var body: some View {
-        let shown = service.rendered[key] ?? stored
+        let shown = service.current(key, sourceModified: target.file.modified) ?? stored
         let state = service.states[key]
         VStack(alignment: .leading, spacing: 4) {
             Button {
@@ -249,6 +261,9 @@ private struct IOSPreviewCell: View {
                 .font(.system(size: 10))
                 .foregroundStyle(ChatTheme.tertiary)
                 .lineLimit(1)
+            if let shown, shown.info.lineMismatch(expected: target.preview.line) {
+                LineMismatchLabel(info: shown.info, expected: target.preview.line)
+            }
         }
         .contextMenu {
             Button(shown == nil ? "描く" : "描き直す") { service.render(target, request: request) }
@@ -275,6 +290,9 @@ private struct IOSPreviewCell: View {
 
     private func help(shown: IOSPreviewRendered?, state: IOSPreviewService.ItemState?) -> String {
         if case .failed(let message) = state { return message }
+        if let shown, shown.info.lineMismatch(expected: target.preview.line) {
+            return LineMismatchLabel.detail(info: shown.info, expected: target.preview.line)
+        }
         if shown != nil { return "クリックで拡大: \(target.file.relativePath)（\(target.preview.line) 行）" }
         return "クリックで描く: \(target.file.relativePath)（\(target.preview.line) 行）"
     }
@@ -377,9 +395,9 @@ private struct IOSPreviewSheet: View {
     }
 
     var body: some View {
-        let shown = service.rendered[key] ?? stored
+        let shown = service.current(key, sourceModified: target.file.modified) ?? stored
         // 切り替えの候補は、今の絵か既定の絵の返した分から出す。
-        let info = shown?.info ?? service.rendered[defaultKey]?.info ?? defaultStored?.info
+        let info = shown?.info ?? service.current(defaultKey, sourceModified: target.file.modified)?.info ?? defaultStored?.info
         let state = service.states[key]
         VStack(spacing: 12) {
             header(info: shown?.info)
@@ -508,6 +526,12 @@ private struct IOSPreviewSheet: View {
             }
             Divider()
             if let shown {
+                if shown.info.lineMismatch(expected: target.preview.line) {
+                    Text(LineMismatchLabel.detail(info: shown.info, expected: target.preview.line))
+                        .font(ChatTheme.caption)
+                        .foregroundStyle(ChatTheme.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 detail("表示名", shown.info.displayName)
                 detail("端末", shown.info.destination?.label)
                 detail("描いた時刻", shown.info.renderedAt.formatted(date: .abbreviated, time: .standard))
@@ -542,5 +566,23 @@ private struct IOSPreviewSheet: View {
                 .foregroundStyle(value == nil ? ChatTheme.tertiary : ChatTheme.text)
                 .textSelection(.enabled)
         }
+    }
+}
+
+/// Xcode が描いた定義の行が、一覧の行と違う時の印（`#if` 等で番号がずれて別のプレビューを描いた可能性）。
+private struct LineMismatchLabel: View {
+    let info: PreviewSnapshotInfo
+    let expected: Int
+
+    static func detail(info: PreviewSnapshotInfo, expected: Int) -> String {
+        "別のプレビューの可能性: Xcode が描いたのは \(info.sourceLineNumber.map(String.init) ?? "?") 行の定義で、一覧の \(expected) 行と違います（#if などで数え方がずれた時に起きます）"
+    }
+
+    var body: some View {
+        Label("別のプレビューの可能性", systemImage: "exclamationmark.triangle")
+            .font(.system(size: 10))
+            .foregroundStyle(ChatTheme.error)
+            .lineLimit(1)
+            .help(Self.detail(info: info, expected: expected))
     }
 }

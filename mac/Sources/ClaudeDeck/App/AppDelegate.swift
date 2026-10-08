@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         SettingsStore.shared.startWatching()
         LinkVisitStore.shared.start()
+        IOSPreviewService.pruneCacheOnLaunch()
 
         let main = MainViewController()
         self.main = main
