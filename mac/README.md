@@ -30,6 +30,7 @@ mac/
       MainViewController.swift    メインウィンドウ = チャット画面（SwiftUI を NSHostingView で載せる）
       MonitorBridge.swift         アプリ全体で 1 つの MonitorStore（監視とフックの受け口はアプリの中で 1 つ）+ 終了シグナルの配線
       LimitWatch.swift            公式の残量で上限到達を見て、ホスト中の全端末を止める
+      SystemActions.swift         Finder で表示・クリップボードへのコピー・ファイル / フォルダを選ぶパネル
     Terminal/                   Claude Code を PTY でホストする端末ビュー（1 つの型を役割ごとの extension に分ける）
       ClaudeTerminalView.swift    本体（ClaudeStatus・ScreenState・持ち物・PTY 受信の傍受）
       ClaudeTerminalView+Launch.swift  claude の起動（環境からの API キー除去・--resume）
@@ -52,14 +53,17 @@ mac/
         ProjectImageStore.swift     ディレクトリの詳細の「画像」（走査・サムネイルの縮小をバックグラウンドで・NSCache）
         LinkVisitStore.swift        リンクの最終確認日（link-visits.json）の読み書き
         LinkTitleFetcher.swift      リンクの名前の候補にするページの <title> の取得（3 秒・資格情報なし）
+        ImageDecoding.swift         ImageIO での縮小（吹き出しの画像とディレクトリの詳細の画像で共有）
       Views/                      画面（SwiftUI）
         ChatRootView.swift          骨組み（切り替えバー | 一覧（境界のドラッグで幅を変える）| 会話かディレクトリの詳細 | 右パネルの差し込み口）
         ListPane.swift              一覧の幅の状態・境界のつかむ所・ウィンドウの最小幅
+        DeckStyles.swift            繰り返す見た目の組み合わせ（角丸の地と枠・入力欄の地・詳細のカード・見出しの帯・状態のカプセル 等）
+        WindowResizeView.swift      ウィンドウの大きさの変化を知らせる NSView（一覧の幅とステージの自動で畳む判定）
         RoomList/                   左の一覧（ルーム / ディレクトリ）
           ListModeBar.swift           左端の切り替えバー（「ルーム」/「ディレクトリ」・要対応のバッジ）
           RoomListView.swift          一覧（状態別のルームか登録ディレクトリ）・検索・「+」のポップオーバー・右クリックメニュー
           DirectoryRow.swift          ディレクトリ 1 行（プロジェクトの印・名前・パスの末尾・件数といちばん急ぐ状態・LP のサムネイル）
-          RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・プロジェクトの印（ProjectBadgeView・RoomAvatar）
+          RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・プロジェクトの印（ProjectBadgeView）
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
         Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・画像・GitHub・リンク・スレッド）
@@ -96,7 +100,7 @@ mac/
       StagePreviewPanel.swift     プレビュー（選択中のルームのプロジェクトの LP。開発サーバー → 書き出し → 案内）
       StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了
+    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift）
     Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
     Notify/                     要対応を iCloud（CloudKit）に書いて解消したら消す AttentionNotifier と、設定画面に出す通知の設定・状態
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
@@ -188,7 +192,9 @@ mac/
       TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
       ChildEnvironment.swift      子プロセス（claude・開発サーバー）の環境から API キーと Claude Code の子セッション印を除く
       SecureFile.swift            0600・置き換えで書く
-      DeckPaths.swift             Application Support / Caches / Logs の claude-deck
+      DeckPaths.swift             Application Support / Caches / Logs の claude-deck と、環境変数で差し替える設定ファイルの場所
+      Paths.swift                 realpath・フォルダか・ファイルの種類・URL の 1 区間のエンコード
+      Concurrency.swift           一度だけ通す印（OnceFlag）と、持ち主が消えたら止まる繰り返し（repeatingTask）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
                                 Server / Remote / Settings / Sites / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
