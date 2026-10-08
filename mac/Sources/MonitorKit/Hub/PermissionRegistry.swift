@@ -80,8 +80,7 @@ public enum PermissionRelay {
         )
     }
 
-    /// 申請元のセッション。チャネルは Claude Code の子プロセスなので親 PID で一意に引ける。
-    /// cwd では引かない（同じ場所の別セッションに付け替わると、見ていない確認を許可させる）。
+    /// 申請元のセッションは親 PID で引く（cwd で引くと同じ場所の別セッションに付け替わり、見ていない確認を許可させる）。
     public static func matchSession(pid: Int32?, sessions: [RawSession]) -> String? {
         guard let pid else { return nil }
         return sessions.first { $0.alive && $0.pid == pid }?.sessionId

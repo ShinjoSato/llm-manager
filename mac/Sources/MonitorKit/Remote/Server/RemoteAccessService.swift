@@ -2,8 +2,7 @@ import Foundation
 import Network
 import Observation
 
-/// 同じ Wi-Fi の iPhone 向けの口（TLS・端末トークン）。既定では開かず、`start` を呼んだ時だけ LAN のアドレスで待ち受ける。
-/// フック・チャネルの口（127.0.0.1:8766）とは別のサーバー・別のポート。
+/// 同じ Wi-Fi の iPhone 向けの口（TLS・端末トークン）。`start` を呼んだ時だけ LAN のアドレスで、:8766 とは別のサーバーで待ち受ける。
 @MainActor
 @Observable
 public final class RemoteAccessService {

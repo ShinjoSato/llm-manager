@@ -91,7 +91,7 @@ public enum AttachmentFormat {
                         body: parts.joined(separator: "\n\n"))
     }
 
-    /// 貼り付けで画像として取り込まれる形のパス。取り込めない形なら nil。
+    /// 貼り付けで画像として取り込まれる形のパス（取り込めない形なら nil）。
     /// TUI は貼り付けを「空白 + /」と改行で区切り、各片の前後の引用符を外し `\x` を `x` に戻してから拡張子を見る。
     static func pasteToken(_ path: String) -> String? {
         guard path.hasPrefix("/"), !path.contains(" /"), !path.contains("\\"),
@@ -112,8 +112,7 @@ public enum AttachmentFormat {
         return "\"" + path.replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 
-    /// 端末の入力欄に出ている画像の印（`[Image #N]`）の数。取り込みが済んだかを見るのに使う。
-    /// 入力欄は折り返しで行が割れ（`InputBox.text` は行ごとに詰めて改行でつなぐ）、印の途中で切れることがあるので空白を除いて数える。
+    /// 入力欄の画像の印（`[Image #N]`）の数。折り返しで印の途中が割れることがあるので空白を除いて数える。
     public static func imageTokenCount(in text: String) -> Int {
         text.filter { !$0.isWhitespace }.components(separatedBy: "[Image#").count - 1
     }
@@ -133,8 +132,7 @@ public enum AttachmentPasteboard {
         return imageType(in: pasteboard) != nil
     }
 
-    /// ファイル URL か、文字列の無い画像（元の形式のまま）を返す。添付にしないなら空。
-    /// 文字列を含むコピーは画像表現も載ることがあるので文字として貼る。変換は重いので取り込み（`ingest`）に任せる。
+    /// ファイル URL か、文字列の無い画像（変換は `ingest` に任せる）。文字列を含むコピーは画像表現も載りうるので文字として貼る。
     public static func sources(in pasteboard: NSPasteboard, imageName: String = "貼り付けた画像") -> [AttachmentSource] {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         if !urls.isEmpty { return urls.map { .file($0) } }
@@ -187,8 +185,7 @@ public struct AttachmentStore: Sendable {
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
     }
 
-    /// 画像は一時保存先へ写す（元が消える・パスに空白がある・TUI が読めない形式でも取り込めるように）。それ以外は元のパスのまま。
-    /// 写しと変換で重くなりうるので、メインスレッドから呼ばない。
+    /// 画像は一時保存先へ写す（元が消える・パスに空白がある・TUI が読めない形式でも取り込めるように）。重いのでメインスレッドから呼ばない。
     public func ingest(_ source: AttachmentSource) throws -> Attachment {
         switch source {
         case .imageData(let data, let name):
@@ -384,7 +381,7 @@ public enum PasteCheck {
         case pasted
         /// 入力欄が空か、貼る前から変わっていない。
         case missing
-        /// 入力欄を読めない（確かめられないので従来どおり送る）。
+        /// 入力欄を読めない（確かめられないので送る）。
         case unknown
     }
 

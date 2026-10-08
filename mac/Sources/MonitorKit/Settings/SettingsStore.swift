@@ -1,9 +1,8 @@
 import Foundation
 import Observation
 
-/// 設定の持ち手。「+」の一覧と設定画面が同じものを見る。
-/// 保存の直前にファイルを読み直し、外で書き換えられていれば外の内容に変更をかけ直す（外の変更を消さないため）。
-/// 外の変更と文字欄の入力が同じ欄で重なった時は、どの経路でも外の変更を残して入力を捨て、案内を出す。
+/// 設定の持ち手。保存の直前に読み直して外の内容に変更をかけ直す（外の変更を消さないため）。
+/// 外の変更と文字欄の入力が同じ欄で重なれば、外の変更を残して入力を捨て、案内を出す。
 @MainActor
 @Observable
 public final class SettingsStore {
@@ -298,8 +297,7 @@ public final class SettingsStore {
         return !lostChange
     }
 
-    /// 文字欄の変更を溜めて、少し間を置いてまとめて書く。同じ `key` は新しいものだけ残す。
-    /// `touched` を渡すと、外の変更が同じ欄を別の値にした時にこの入力を捨てる。
+    /// 文字欄の変更を溜めてまとめて書く（同じ `key` は新しいものだけ）。`touched` は外の変更が同じ欄を変えたかの判定。
     public func schedule(key: String, touched: ((DeckSettings, DeckSettings) -> Bool)? = nil, _ change: @escaping Change) {
         pending.removeAll { $0.key == key }
         pending.append(PendingEdit(key: key, change: change, touched: touched))

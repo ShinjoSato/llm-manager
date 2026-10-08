@@ -20,8 +20,7 @@ public enum PTYInput {
         cursorKey(direction == .up ? "A" : "B", applicationCursor: applicationCursor)
     }
 
-    /// AskUserQuestion のタブ移動（Tabs の既定の割り当て: → が tabs:next、← が tabs:previous。v2.1.286）。
-    /// Tab キーは複数選択では選択肢の移動に取られるので使わない。
+    /// AskUserQuestion のタブ移動（v2.1.286 の既定は → が tabs:next・← が tabs:previous。Tab は複数選択で選択肢の移動に取られる）。
     public static func tabKey(_ direction: MenuTabMover.Direction, applicationCursor: Bool) -> String {
         cursorKey(direction == .next ? "C" : "D", applicationCursor: applicationCursor)
     }
@@ -37,8 +36,7 @@ public enum PTYInput {
     /// 貼り付けと Enter を同時に送ると Enter が貼り付けに飲まれるので、少し空ける。
     public static let submitDelay: TimeInterval = 0.3
 
-    /// 入力欄に入れる本文。bracketed paste なら改行を含めたまま 1 回の貼り付けとして届く（Enter で送信されない）。
-    /// 返り値が nil なら送るものが無い。
+    /// 入力欄に入れる本文（送るものが無ければ nil）。bracketed paste なら改行を含めたまま 1 回の貼り付けとして届く。
     public static func messageBody(_ text: String, bracketedPaste: Bool) -> String? {
         var body = sanitize(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n"))
         body = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -80,8 +78,7 @@ public enum InputBlock: Sendable, Equatable {
         return nil
     }
 
-    /// 画面に加え、セッションファイルの返事待ちも見る。画面で読めないダイアログでも Enter はそこに取られるため。
-    /// `screenChangedAt` は端末の出力が最後に届いた時刻。
+    /// セッションファイルの返事待ちも見る（画面で読めないダイアログにも Enter は取られる）。`screenChangedAt` は最後の出力の時刻。
     public static func detect(screen: [String], waiting: SessionWaiting?, screenChangedAt: Date?) -> InputBlock? {
         if let block = detect(screen: screen) { return block }
         return waiting?.blocksSend(screen: screen, screenChangedAt: screenChangedAt) == true ? .menu : nil
@@ -125,8 +122,7 @@ public struct SessionWaiting: Sendable, Equatable {
     /// ダイアログの描画と status の書き込みのずれとして許す幅。
     static let freshMargin: TimeInterval = 1.0
 
-    /// 画面で読めないダイアログとして送信を止めるか。
-    /// waitingFor は閉じた後も古いまま残りうるので、通常の空の入力欄が見えている時は、画面の最後の変化より後に書かれた時だけ信じる。
+    /// waitingFor は閉じた後も古いまま残りうるので、通常の空の入力欄が見えている時は画面の最後の変化より後に書かれた時だけ信じる。
     public func blocksSend(screen: [String], screenChangedAt: Date?) -> Bool {
         guard isDialogOpen else { return false }
         if !InputBox.isPlainEmpty(screen: screen) { return true }
@@ -159,8 +155,7 @@ public enum ChoiceMenu {
     /// 入力欄の上の罫線から案内行を探す範囲（空行を除いた行数）。
     static let overlayFooterReach = 3
 
-    /// 入力欄の上に重ねて出たメニューの範囲（上の罫線〜入力欄の上の罫線の手前）。無ければ nil。
-    /// v2.1.288 の fullscreen では申し出等のダイアログが入力欄の真上に重なり、入力欄の ❯ と罫線は下に残る。
+    /// 入力欄の上に重ねて出たメニューの範囲（v2.1.288 の fullscreen では申し出等が入力欄の真上に重なり、❯ と罫線は下に残る）。
     /// 会話の中の案内行風の文字を拾わないよう、案内行が入力欄の罫線に接している時だけとみなす。
     static func overlayRange(_ lines: [String]) -> Range<Int>? {
         guard let prompt = InputBox.promptIndex(lines) else { return nil }
@@ -233,8 +228,7 @@ public enum ChoiceMenu {
 
 /// 端末下部の入力欄（罫線の直下の ❯ 行から次の罫線まで）。
 public enum InputBox {
-    /// 入力欄の ❯ 行の位置。`❯ n. …` の形は下を罫線で閉じている時だけ入力欄とみなす（番号付きの文を入力中）。
-    /// v2.1.286 では入力欄だけが ❯ の上下を罫線で挟み、選択メニューは ❯ の下を閉じない。
+    /// 入力欄の ❯ 行。`❯ n. …` は下を罫線で閉じている時だけ入力欄とみなす（v2.1.286 で選択メニューは ❯ の下を閉じない）。
     static func promptIndex(_ lines: [String]) -> Int? {
         lines.indices.last { index in
             guard index > 0 else { return false }
@@ -301,8 +295,7 @@ public struct PermissionPrompt: Sendable, Equatable {
         self.lines = lines
     }
 
-    /// 画面の行（上から順）から権限プロンプトを読み取る。出ていなければ nil。
-    /// 区切り線（─）から「Do you want to …?」の手前までを本文とし、選択肢（1. Yes …）が続くことを確かめる。
+    /// 区切り線（─）から「Do you want to …?」の手前までを本文とし、選択肢（1. Yes …）が続く時だけ読む。
     public static func parse(screen: [String]) -> PermissionPrompt? {
         guard let questionIndex = screen.lastIndex(where: { isQuestion($0) }) else { return nil }
         let after = screen[(questionIndex + 1)...].prefix(6)

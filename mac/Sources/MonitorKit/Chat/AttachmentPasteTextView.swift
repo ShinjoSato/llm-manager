@@ -10,8 +10,7 @@ open class AttachmentPasteTextView: NSTextView {
         #selector(NSText.paste(_:)), #selector(NSTextView.pasteAsPlainText(_:)), #selector(NSTextView.pasteAsRichText(_:)),
     ]
 
-    /// 文字用の NSTextView は読める型（文字列・RTF・ファイル名）が無いとペーストを無効にし、⌘V のメニューごと効かなくなる。
-    /// 画像だけのクリップボード（スクリーンショット等）でも押せるよう、添付にできる時は有効にする。
+    /// 文字用の NSTextView は画像だけのクリップボードでペーストを無効にするので、添付にできる時は有効にする。
     open override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         enablesAttachPaste(item.action) || super.validateUserInterfaceItem(item)
     }

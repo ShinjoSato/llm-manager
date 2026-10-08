@@ -19,8 +19,7 @@ struct StoredDevice: Codable, Sendable, Equatable {
     var publicValue: RemoteDevice { RemoteDevice(id: id, name: name, pairedAt: pairedAt, lastUsedAt: lastUsedAt) }
 }
 
-/// ペアリング（一時トークン → 端末ごとの長期トークン）と端末一覧。どのスレッドからでも呼べる。
-/// 一覧は `devices.json`（0600）に置く。
+/// ペアリング（一時トークン → 端末ごとの長期トークン）と端末一覧（`devices.json`・0600）。どのスレッドからでも呼べる。
 public final class RemotePairingStore: @unchecked Sendable {
     /// 一時トークンの寿命。
     public static let ticketLifetime: TimeInterval = 5 * 60

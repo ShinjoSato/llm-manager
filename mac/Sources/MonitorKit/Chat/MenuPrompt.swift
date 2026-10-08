@@ -21,8 +21,7 @@ public struct MenuPrompt: Sendable, Hashable {
             self.isSubmit = isSubmit
         }
 
-        /// 選ぶと文字の入力に移る選択肢。カードからは本文を渡せないので選ばせない。
-        /// 複数選択の自由入力の行は ❯ が乗ると例文が消えてチェック欄だけになる。
+        /// 選ぶと文字の入力に移る選択肢（カードからは本文を渡せないので選ばせない）。複数選択では ❯ が乗るとチェック欄だけになる。
         public var isFreeText: Bool {
             if isSubmit { return false }
             if checked != nil && label.isEmpty { return true }
@@ -66,8 +65,7 @@ public struct MenuPrompt: Sendable, Hashable {
     /// AskUserQuestion の「Type something.」・plan の「Tell Claude what to change」（v2.1.286）。
     static let freeTextPrefixes = ["type something", "tell claude what to change"]
 
-    /// カーソル位置を除いて同じメニューか（押した時のカードと今の画面の照合に使う）。
-    /// 今のタブは文字ではなく背景色で読むので比べない（問いの文面でタブの違いは分かる）。
+    /// カーソル位置を除いて同じメニューか。今のタブは背景色で読むので比べない（問いの文面で違いは分かる）。
     public func sameMenu(as other: MenuPrompt) -> Bool {
         context == other.context && question == other.question && options == other.options
             && tabs?.ignoringCurrent == other.tabs?.ignoringCurrent
@@ -91,7 +89,7 @@ public struct MenuPrompt: Sendable, Hashable {
     }
 }
 
-/// AskUserQuestion の上部のタブ行。v2.1.286 の描画は `← ☒ 見出し … ✔ Submit →`（☒ 回答済み・☐ 未回答）で、今のタブは背景色だけで示す。
+/// AskUserQuestion のタブ行。v2.1.286 は `← ☒ 見出し … ✔ Submit →`（☒ 回答済み・☐ 未回答）で、今のタブは背景色だけで示す。
 /// 問いが 1 つの単一選択は Submit タブも矢印も無く ` ☐ 見出し ` だけ。
 public struct MenuTabs: Sendable, Hashable {
     public struct Tab: Sendable, Hashable {
@@ -187,8 +185,7 @@ extension ChoiceMenu {
     /// ❯ の行を探すのは操作案内（無ければ画面の末尾）からこの行数まで。上の会話履歴の ❯ を選択肢と読まないため。
     static let cursorSearchLines = 24
 
-    /// 画面の選択メニューを読み取る。メニューが無い・形が読めない時は nil。
-    /// `highlight` は画面の行（`screen` の添字）の各文字に背景色が付いているか。タブ行の今のタブを見分けるのに使う。
+    /// 画面の選択メニュー（無い・読めなければ nil）。`highlight` は行ごとの各文字の背景色の有無で、今のタブを見分けるのに使う。
     public static func parse(screen: [String], highlight: ((Int) -> [Bool]?)? = nil) -> MenuPrompt? {
         guard isShowing(screen: screen) else { return nil }
         return parseShowing(screen: screen, highlight: highlight)
@@ -240,8 +237,7 @@ extension ChoiceMenu {
     static let reviewTitle = "Review your answers"
     static let reviewQuestion = "Ready to submit your answers?"
 
-    /// 問い（無ければ選択肢）の上にあるタブ行の位置と中身。罫線・会話の行に当たるまでに無ければ nil。
-    /// 問いの画面ではすぐ上、確認画面では間に見出しと回答の一覧が入る。
+    /// 問い（無ければ選択肢）の上のタブ行。問いの画面ではすぐ上、確認画面では間に見出しと回答の一覧が入る。
     static func tabRow(_ lines: [String], above row: Int, question: String) -> (Int, MenuTabs, [Range<Int>])? {
         var index = row - 1
         var scanned = 0
@@ -317,8 +313,7 @@ extension ChoiceMenu {
         return nil
     }
 
-    /// 選択肢が出ているのに中身を読めない時、そのメニューを見分ける写し（押した時と今が同じかの照合に使う）。
-    /// 選択肢として読める・メニューが無い時は nil。
+    /// 中身を読めないメニューを見分ける写し（押した時と今の照合に使う）。読める・メニューが無い時は nil。
     public static func unreadable(screen: [String]) -> UnreadableMenu? {
         guard isShowing(screen: screen), parseShowing(screen: screen) == nil else { return nil }
         let lines = menuZoneWithOffset(screen).lines.map { $0.trimmed }.filter { !$0.isEmpty }
@@ -335,8 +330,7 @@ extension ChoiceMenu {
         return UnreadableMenu(lines: ["端末でダイアログが開いています（\(waiting.waitingFor ?? "")）"], cancelExits: false, isDialog: true)
     }
 
-    /// 番号付きの選択肢。`anchorRow` の行から番号が 1 ずつ続く範囲だけを取る（上の本文の番号付きリストを混ぜないため）。
-    /// 複数選択の最後のチェック欄の下に Submit / Next の行があれば、その位置に選択肢として入れる。
+    /// `anchorRow` から番号が 1 ずつ続く範囲だけを取る（上の本文の番号付きリストを混ぜないため）。最後のチェック欄の下の Submit / Next も入れる。
     static func numberedRows(_ lines: [String], anchorRow: Int) -> [(index: Int, option: MenuPrompt.Option)] {
         let numbered = lines.indices.compactMap { index in choiceNumber(lines[index], cursor: false).map { (index, $0) } }
         guard let at = numbered.firstIndex(where: { $0.0 == anchorRow }) else { return [] }
@@ -397,8 +391,7 @@ extension ChoiceMenu {
         }
     }
 
-    /// 選択肢の直前（空行は飛ばす）の行。罫線に当たれば問いは無い。
-    /// 80 桁を超える・改行のある問いは左の縦線（`│ `）付きで折り返して出るので、続く縦線の行をまとめて 1 つの問いにする。
+    /// 選択肢の直前の行（罫線に当たれば無し）。長い・改行のある問いは左の縦線（`│ `）付きで折り返すので 1 つにまとめる。
     static func questionAbove(_ lines: [String], before row: Int) -> (String, Int?) {
         var index = row - 1
         while index >= 0 {
@@ -437,8 +430,7 @@ extension ChoiceMenu {
         character.isASCII && (character.isLetter || character.isNumber)
     }
 
-    /// 問いの上の本文。上の罫線までを囲みとし（すぐ上が罫線の plan の承認はその上の囲み）、
-    /// 罫線が見当たらなければ空行・会話の行・経過表示で止める（照合に使うので変化する行を入れない）。
+    /// 問いの上の本文（上の罫線まで。無ければ空行・会話・経過表示で止める。照合に使うので変化する行を入れない）。
     static func contextAbove(_ lines: [String], before row: Int) -> [String] {
         var end = row - 1
         while end >= 0, lines[end].trimmed.isEmpty { end -= 1 }
@@ -524,8 +516,8 @@ public struct UnreadableMenu: Sendable, Hashable {
     }
 }
 
-/// 押した選択肢まで ❯ を矢印で 1 行ずつ動かし、着いた位置が続けて変わらない時だけ Enter で確定する。
-/// 番号キーは使わない（trust 確認には番号が無く、番号キーが移動か即決定かもメニューで違う）。未反映の矢印は常に 0 か 1 個（`PendingArrowHold`）。
+/// ❯ を矢印で 1 行ずつ動かし、着いた位置が続けて変わらない時だけ Enter で確定する（未反映の矢印は常に 0 か 1 個）。
+/// 番号キーは使わない（trust 確認には番号が無く、番号キーが移動か即決定かもメニューで違う）。
 public struct MenuNavigator: Sendable {
     public enum Direction: Sendable, Equatable { case up, down }
 
@@ -624,8 +616,7 @@ public struct MenuNavigator: Sendable {
     }
 }
 
-/// 未反映の矢印を残して移動をやめた後、次の移動を始めさせない印。
-/// 残ったキーが次の移動の 1 歩と数えられると、着いたと見なした後にもう 1 行動いて別の選択肢で確定してしまうため。
+/// 未反映の矢印を残してやめた後、次の移動を始めさせない印（残ったキーで着いた後にもう 1 行動き、別の選択肢で確定しないため）。
 public struct PendingArrowHold: Sendable, Equatable {
     /// 端末の出力がこれだけ止まっていれば、残ったキーは処理済み（か捨てられた）とみなす。
     public static let quietInterval: TimeInterval = 1.5
@@ -661,8 +652,7 @@ extension PendingArrowHold {
     }
 }
 
-/// AskUserQuestion の問いのタブを →/← で 1 つ移る手順。キーは 1 回だけ送り、画面の問いが替わったのを確かめて終える。
-/// 反映を待ち切れなくても再送しない（2 つ届くと 2 つ先へ移るため）。
+/// AskUserQuestion のタブを →/← で 1 つ移る。待ち切れなくても再送しない（2 つ届くと 2 つ先へ移るため）。
 public struct MenuTabMover: Sendable {
     public enum Direction: Sendable, Equatable { case next, previous }
 

@@ -65,8 +65,7 @@ public enum LimitGuard {
     /// 入力欄が無い時（メニュー表示中）に下から見る行数（空行を除く）。
     static let menuLines = 15
 
-    /// 端末の実画面（上から順の行）の末尾に上限表示が出ていれば、その行を返す。
-    /// 会話本文は見ない。見るのは入力欄より下（フッター）、入力欄直上の最後の `⎿` 行（エラー表示）、メニュー表示中の選択肢だけ。
+    /// 画面の末尾の上限表示の行。会話本文は見ず、フッター・入力欄直上の最後の `⎿` 行・メニューの選択肢だけを見る。
     public static func screenLimitLine(_ screen: [String]) -> String? {
         let lines = TerminalScreen.droppingTrailingBlankLines(screen)
         guard let boxTop = inputBoxTop(lines) else {

@@ -1,7 +1,6 @@
 import Foundation
 
-/// 旧 TSV（registry.tsv / github-projects.tsv）と書き出した settings.json の取り込み。
-/// 既にあるものは上書きせず、足りないものだけ足す。
+/// 旧 TSV（registry.tsv / github-projects.tsv）と書き出した settings.json の取り込み（足りないものだけ足す）。
 public enum SettingsImport {
     public enum Format: Equatable, Sendable {
         case registryTSV

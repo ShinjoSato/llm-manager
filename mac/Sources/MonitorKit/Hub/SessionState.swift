@@ -9,8 +9,7 @@ struct FeedLine: Equatable {
     var local = false
 }
 
-/// 監視が持つセッションごとの可変状態。SessionHub の actor の上でだけ触り、辞書への出し入れは SessionHub だけが行う。
-/// フィールドは書く層ごとに分け、他の層は読むだけ（例外は節の中に書く）。
+/// セッションごとの可変状態。SessionHub の actor の上でだけ触り、欄は書く層ごとに分けて他の層は読むだけ（例外は節の中に書く）。
 final class SessionState {
     /// ログの終わり方。busy はモデルの番（ツール実行中・長考中）で、無音でも動いている。
     enum TurnState { case busy, settled }

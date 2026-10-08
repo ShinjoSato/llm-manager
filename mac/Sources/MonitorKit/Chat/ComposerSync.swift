@@ -1,7 +1,6 @@
 import Foundation
 
-/// 入力欄とモデルの下書きの同期判定。変換中（marked text）は下書きが確定分しか持たず、書き戻すと変換中の文字ごと消えるので、
-/// 自分が最後に渡した値と違う時（送信後の空など本当の外部変更）だけ書き戻す。
+/// 入力欄と下書きの同期。変換中の文字は下書きに無く書き戻すと消えるので、最後に渡した値と違う時（本当の外部変更）だけ書き戻す。
 public struct ComposerSync: Sendable, Equatable {
     /// 入力欄から下書きへ最後に渡した値（書き戻した値も含む）。nil はまだ一度も同期していない。
     public private(set) var lastPublished: String?

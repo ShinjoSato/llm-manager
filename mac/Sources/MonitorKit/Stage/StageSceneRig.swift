@@ -1,8 +1,7 @@
 import AppKit
 import SceneKit
 
-/// `StageSceneModel` を SceneKit のノードに起こして動かす。描画面（SCNView / SCNRenderer）はこれを読むだけ。
-/// ノードの組み替えは呼び出し側のスレッド、動きは描画スレッド（`renderer(_:updateAtTime:)`）から触る。
+/// `StageSceneModel` を SceneKit のノードに起こして動かす。組み替えは呼び出し側、動きは描画スレッド（`renderer(_:updateAtTime:)`）から触る。
 public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked Sendable {
     public let scene = SCNScene()
     public let cameraNode = SCNNode()
@@ -20,8 +19,8 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         var markGlow: SCNMaterial?
     }
 
-    // 描画スレッドはシーンの鍵を持って delegate を呼びうる。この鍵の中で SceneKit を触ると順序が逆転しうるので、
-    // 参照の読み書きだけに使い、シーングラフの付け外しは鍵の外で SCNTransaction.lock の中で行う。
+    // 描画スレッドはシーンの鍵を持って delegate を呼びうるので、この鍵は参照の読み書きだけに使う（鍵の順序の逆転を避ける）。
+    // シーングラフの付け外しは鍵の外で SCNTransaction.lock の中で行う。
     private let lock = NSLock()
     private var moving = Moving()
     // 以下は呼び出し側のスレッドだけが触る。
@@ -55,8 +54,8 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
     _output.color.rgb = saturate(c) * alpha;
     """
 
-    /// 光の板。three.js は canvas の絵（16 進の値をそのまま線形として読む）を tone map し、濃さ × opacity を掛けて足す。
-    /// 濃さは放射グラデーション（中心 d0 → 4 割で 50 → 縁で 0）。絵を介すと色空間の変換で縁が濃くなるので式で描く。
+    /// 光の板。three.js と同じく放射グラデーション（中心 d0 → 4 割で 50 → 縁で 0）を tone map して濃さ × opacity で足す。
+    /// 絵を介すと色空間の変換で縁が濃くなるので式で描く。
     static let glowShading = """
     #pragma arguments
     float3 glowColor;
@@ -359,8 +358,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         material?.setValue(NSNumber(value: Float(value)), forKey: "glowOpacity")
     }
 
-    /// 足元の影と光の輪。three.js は半透明を sRGB のまま重ね、線形で重ねる SceneKit では明るく出るので、
-    /// 下を残す割合を掛ける板と足りない分を足す板の 2 枚に分けて sRGB の重ね結果に合わせる。
+    /// 足元の影と光の輪。three.js は sRGB のまま重ねるので、掛ける板と足す板の 2 枚に分けて SceneKit（線形）でも同じ明るさにする。
     static func haloShading(adding: Bool, ground hex: UInt32) -> String {
         let ground = rgb(hex)
         return """
@@ -416,8 +414,7 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
         x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4)
     }
 
-    /// three.js の GridHelper と同じ線（中心の 2 本だけ明るい色）。色ごとに 1 形状にする。
-    /// 1px の線は tone map すると地面に沈む（three.js では地面より明るく見えた）ので、色をそのまま出す。
+    /// three.js の GridHelper と同じ線（中心の 2 本だけ明るい色）。1px の線は tone map すると地面に沈むので色をそのまま出す。
     static func gridNodes(size: Double, divisions: Int, backdrop: StageBackdrop) -> [SCNNode] {
         let half = size / 2
         let step = size / Double(divisions)

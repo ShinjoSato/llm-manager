@@ -1,7 +1,6 @@
 import Foundation
 
-/// アプリ内サーバー（:8766）の口: `GET /api/health`・`POST /hook`・`POST /api/channel/permissions`（判断が出るまで待たせる）。
-/// 認証が無く承認の口もあるので、ループバックでしか待ち受けず、Host / Origin / 接続元も確かめる。
+/// アプリ内サーバー（:8766）の口。認証が無く承認の口もあるので、ループバックでしか待ち受けず、Host / Origin / 接続元も確かめる。
 public enum HookServerRoutes {
     /// 既定の待ち受け。`~/.claude/settings.json` のフックと claude-deck-channel がこのポートを宛先にしている。
     public static let defaultPort = 8766

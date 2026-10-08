@@ -54,8 +54,7 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
     }
 }
 
-/// Claude Code のセッションレジストリを pid から引く。
-/// アプリが PTY で起動した claude は `exec` で zsh を置き換えるので、PTY の子 pid がそのまま claude の pid になる。
+/// セッションレジストリを pid から引く（PTY で起動した claude は `exec` で zsh を置き換えるので、子 pid がそのまま claude の pid）。
 public struct ClaudeSessionRegistry: Sendable {
     public var directory: URL
 

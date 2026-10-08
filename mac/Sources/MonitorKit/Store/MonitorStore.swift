@@ -15,8 +15,7 @@ public enum MonitorConnectionState: Sendable, Equatable {
     }
 }
 
-/// セッション・フィード・残量・権限確認を保持する観測可能なストア。
-/// データ源はアプリ内の監視（`SessionHub` / `TranscriptStore`）で、フック等の外からの口は `HTTPServer` で受ける。
+/// セッション・フィード・残量・権限確認を保持する観測可能なストア（データ源は `SessionHub` / `TranscriptStore`）。
 @MainActor
 @Observable
 public final class MonitorStore {

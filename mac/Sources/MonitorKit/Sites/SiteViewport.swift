@@ -122,8 +122,7 @@ public enum SiteNavigationPolicy {
         case openInBrowser(URL)
     }
 
-    /// `origin` があれば（開発サーバー）、ページそのものの遷移はそれと同じ origin に限り、他の http / https はブラウザへ回す。
-    /// `origin` が無ければ（書き出し・公開 URL）`allows` のとおり。
+    /// `origin`（開発サーバー）があればページの遷移は同じ origin に限り他はブラウザへ回す。無ければ `allows` のとおり。
     public static func decide(_ url: URL?, mainFrame: Bool, origin: URL?) -> Decision {
         guard let origin, mainFrame else { return allows(url, mainFrame: mainFrame) ? .allow : .cancel }
         if let url, sameOrigin(url, origin) { return .allow }

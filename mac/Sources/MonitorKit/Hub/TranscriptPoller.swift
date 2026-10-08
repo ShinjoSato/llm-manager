@@ -1,7 +1,6 @@
 import Foundation
 
-/// 実況層。ログ（jsonl）の末尾差分を State に映し、サブエージェントの様子を見る。ログの場所とサブエージェント種別のキャッシュはここが持つ。
-/// フィードは配らずに返す（番号を付けて配るのは SessionHub）。
+/// 実況層。ログ（jsonl）の末尾差分とサブエージェントの様子を State に映し、フィードは配らずに返す。
 struct TranscriptPoller {
     /// サブエージェントのログがこの時間内に更新されていれば、そのエージェントは動いているとみなす。
     static let agentWindow: Double = 3 * 60_000
@@ -132,8 +131,7 @@ struct TranscriptPoller {
         return outcome
     }
 
-    /// 初回読みの各行を起動前の分（フィードに積まない）とみなすか。時刻の無い行は近くの時刻のある行に倣う
-    /// （--resume で書き直された古いメタ情報を新着にしないため）。時刻のある行が無ければ、起動前から動いていたセッションの分だけ古いとみなす。
+    /// 初回読みの各行を起動前の分とみなすか。時刻の無い行は近くの時刻のある行に倣う（--resume で書き直された古いメタ情報を新着にしないため）。
     private func initialQuietFlags(_ events: [ParsedEvent], knownAtStart: Bool) -> [Bool] {
         var flags = [Bool](repeating: knownAtStart, count: events.count)
         var previous: Double?
