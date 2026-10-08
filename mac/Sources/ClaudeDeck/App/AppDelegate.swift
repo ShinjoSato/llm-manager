@@ -73,8 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             main?.model.restorer.saveOnTermination()
             SettingsStore.shared.flushPending(force: true)
             SettingsStore.shared.stopWatching()
-            // 開発サーバーはアプリの外で動き続けないよう、プロセスグループごと止め切ってから終える。
+            // 開発サーバーと mcpbridge はアプリの外で動き続けないよう、プロセスグループごと止め切ってから終える。
             DevServerStore.shared.stopAllBlocking()
+            IOSPreviewService.shared.stopAllBlocking()
         }
         RemoteAccessController.shared.shutdown()
         AttentionNotifier.shared.stop()
