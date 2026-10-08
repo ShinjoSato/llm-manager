@@ -24,20 +24,7 @@ struct ProjectLinkRow: View {
                 Button(action: open) {
                     HStack(spacing: 8) {
                         if due { LinkDueBadge() }
-                        Image(systemName: link.resolvedKind.symbol)
-                            .font(.system(size: 11))
-                            .frame(width: 14)
-                            .foregroundStyle(openable ? ChatTheme.link : ChatTheme.tertiary)
-                            .help(link.resolvedKind.label)
-                        Text(link.name.isEmpty ? "（名前なし）" : link.name)
-                            .font(ChatTheme.body)
-                            .foregroundStyle(openable ? ChatTheme.text : ChatTheme.tertiary)
-                            .lineLimit(1)
-                        Text(link.url)
-                            .font(ChatTheme.caption)
-                            .foregroundStyle(ChatTheme.tertiary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                        LinkTitleParts(link: link, openable: openable)
                         Spacer(minLength: 0)
                         if openable {
                             Text(ProjectLinks.lastOpenedLabel(visits.lastOpened(projectID: projectID, link: link)))

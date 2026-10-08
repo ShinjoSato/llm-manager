@@ -80,7 +80,7 @@ final class EditorLauncher {
 
     /// 設定の変化を見出しへすぐ映すため、描画の中で毎回引く（SettingsStore は Observable）。
     func githubDestinations(for target: EditorTarget) -> [GitHubDestination] {
-        guard let link = ProjectMatcher.project(for: target.cwd, in: SettingsStore.shared.projects)?.github else { return [] }
+        guard let link = matchedProject(target)?.github else { return [] }
         return GitHubDestination.all(for: link)
     }
 
@@ -102,19 +102,22 @@ final class EditorLauncher {
 
     /// 紐づいたプロジェクトのリンクのうち開けるもの（設定の変化を見出しへすぐ映すため、描画の中で毎回引く）。
     func projectLinks(for target: EditorTarget) -> [ProjectLink] {
-        guard let project = ProjectMatcher.project(for: target.cwd, in: SettingsStore.shared.projects) else { return [] }
-        return ProjectLinks.openable(project.links)
+        ProjectLinks.openable(matchedProject(target)?.links ?? [])
     }
 
     /// 見出しに単独のボタンで出すピン留めのリンク（描画の中で毎回引く）。
     func pinnedLinks(for target: EditorTarget) -> [ProjectLink] {
-        guard let project = ProjectMatcher.project(for: target.cwd, in: SettingsStore.shared.projects) else { return [] }
-        return ProjectLinks.pinned(project.links)
+        ProjectLinks.pinned(matchedProject(target)?.links ?? [])
     }
 
     /// 紐づいたプロジェクトの id（最終確認日の記録に使う）。
     func projectID(for target: EditorTarget) -> UUID? {
-        ProjectMatcher.project(for: target.cwd, in: SettingsStore.shared.projects)?.id
+        matchedProject(target)?.id
+    }
+
+    /// 場所が一致するか配下にある登録プロジェクト（いちばん深いもの）。
+    private func matchedProject(_ target: EditorTarget) -> ManagedProject? {
+        ProjectMatcher.project(for: target.cwd, in: SettingsStore.shared.projects)
     }
 
     /// 設定が外で書き換わっていても開く直前に URL を確かめる。開けた時だけ最終確認日を記録する（どの経路から開いてもここを通る）。
@@ -123,10 +126,7 @@ final class EditorLauncher {
             showNote(.failed("「\(link.name)」の URL が開ける形ではありません（http / https のアドレスにしてください）"), for: target.key)
             return
         }
-        guard NSWorkspace.shared.open(url) else {
-            showNote(.failed("ブラウザで開けませんでした: \(url.absoluteString)"), for: target.key)
-            return
-        }
+        guard openInBrowser(url, for: target.key) else { return }
         if let projectID = projectID ?? self.projectID(for: target) {
             LinkVisitStore.shared.record(projectID: projectID, link: link)
         }
@@ -138,12 +138,18 @@ final class EditorLauncher {
             showNote(.failed("GitHub の URL を組み立てられません（設定の owner / リポジトリを確かめてください）"), for: key)
             return
         }
-        guard NSWorkspace.shared.open(url) else {
-            showNote(.failed("ブラウザで開けませんでした: \(url.absoluteString)"), for: key)
-            return
-        }
+        guard openInBrowser(url, for: key) else { return }
         // 組織の owner だと個人の形の URL は 404 になるので、推測で開いたことを伝える。
         showNote(unknownKind ? .openedWithNote("owner の種類を確かめられなかったため、個人の Project として開きました") : .opened, for: key)
+    }
+
+    /// 既定のブラウザで開く。開けなければ理由を出して false。
+    private func openInBrowser(_ url: URL, for key: String) -> Bool {
+        guard NSWorkspace.shared.open(url) else {
+            showNote(.failed("ブラウザで開けませんでした: \(url.absoluteString)"), for: key)
+            return false
+        }
+        return true
     }
 
     private func open(_ url: URL, with app: URL, for key: String) {

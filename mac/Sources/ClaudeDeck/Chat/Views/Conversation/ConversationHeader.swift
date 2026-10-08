@@ -34,9 +34,7 @@ struct ConversationHeader: View {
             // 名前を最小幅まで縮めてからボタンを「…」に回す。
             EditorButtons(model: model, room: room).layoutPriority(1)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 64)
-        .headerBackground()
+        .centerHeaderBar()
     }
 }
 
@@ -63,32 +61,17 @@ struct EditorButtons: View {
         let editors = model.editors
         let target = room.editorTarget
         let xcodeProject = editors.xcodeProject(for: target)
-        let closing = editors.closingXcode.contains(target.key)
-        var actions: [HeaderAction] = [
-            .button(id: "vscode", priority: 5, symbol: VSCodeButton.symbol, name: VSCodeButton.name,
-                    detail: VSCodeButton.detail(target)) { editors.openInVSCode(target) },
-        ]
+        var actions: [HeaderAction] = [HeaderAction.vscode(priority: 5, editors: editors, target: target)]
         if let github = HeaderAction.github(priority: 3, editors: editors, target: target) { actions.append(github) }
         actions += HeaderAction.pins(priority: 2, editors: editors, target: target)
         if let links = HeaderAction.links(priority: 2, editors: editors, target: target) { actions.append(links) }
-        if let xcodeProject {
-            actions.append(.button(id: "xcode", priority: 4, symbol: "hammer", name: "Xcode",
-                                   detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(target) })
-            actions.append(.button(id: "xcode-close", priority: 1, symbol: "xmark.rectangle", name: "閉じる",
-                                   detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
-                                   busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true })
-        }
+        actions += HeaderAction.xcode(openPriority: 4, closePriority: 1, editors: editors, target: target,
+                                      project: xcodeProject) { confirmingClose = true }
         return HStack(spacing: 6) {
             EditorNoteText(note: editors.notes[target.key])
             HeaderActionRow(actions: actions).layoutPriority(1)
         }
-        // メニューから押しても確認を出せるよう、ボタンではなく列に付ける。
-        .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
-            Button("閉じる", role: .destructive) { editors.closeInXcode(target) }
-            Button("やめる", role: .cancel) {}
-        } message: {
-            Text("\(xcodeProject?.lastPathComponent ?? "ワークスペース") を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
-        }
+        .xcodeCloseConfirmation(isPresented: $confirmingClose, editors: editors, target: target, project: xcodeProject)
     }
 }
 
@@ -109,26 +92,12 @@ struct EditorNoteText: View {
     }
 }
 
-struct VSCodeButton: View {
-    let editors: EditorLauncher
-    let target: EditorTarget
-
-    static let symbol = "chevron.left.forwardslash.chevron.right"
-    static let name = "VS Code"
-    static func detail(_ target: EditorTarget) -> String { "VS Code で開く: \(target.cwd)" }
-
-    var body: some View {
-        HeaderButton(symbol: Self.symbol, name: Self.name, detail: Self.detail(target)) { editors.openInVSCode(target) }
-    }
-}
-
 /// 開く先が 1 つならそのまま開き、ボードとリポジトリの両方ならメニューで選ぶ。
 struct GitHubButton: View {
     let editors: EditorLauncher
     let target: EditorTarget
     let destinations: [GitHubDestination]
     let opening: Bool
-    @State private var hovering = false
 
     static let symbol = "rectangle.3.group"
     static let name = "GitHub"
@@ -139,20 +108,12 @@ struct GitHubButton: View {
         if destinations.count == 1, let only = destinations.first {
             HeaderButton(symbol: Self.symbol, name: Self.name, detail: only.help, busyStatus: busyStatus) { editors.openOnGitHub(only, for: target) }
         } else if destinations.count > 1 {
-            Menu {
+            HeaderMenuButton(symbol: Self.symbol, name: Self.name, detail: destinations.map(\.help).joined(separator: "\n"),
+                             busyStatus: busyStatus) {
                 ForEach(Array(destinations.enumerated()), id: \.offset) { _, destination in
                     Button(destination.menuTitle) { editors.openOnGitHub(destination, for: target) }
                 }
-            } label: {
-                HeaderButtonLabel(symbol: Self.symbol, busy: opening, hovering: hovering, showsMenu: true)
             }
-            .disabled(opening)
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .headerButtonHelp(name: Self.name, detail: destinations.map(\.help).joined(separator: "\n"), busyStatus: busyStatus)
-            .trackHover($hovering)
         }
     }
 }
@@ -162,7 +123,6 @@ struct ProjectLinkButton: View {
     let editors: EditorLauncher
     let target: EditorTarget
     let links: [ProjectLink]
-    @State private var hovering = false
 
     static let symbol = "link"
     static let name = "リンク"
@@ -171,17 +131,9 @@ struct ProjectLinkButton: View {
         if links.count == 1, let only = links.first {
             HeaderButton(symbol: Self.symbol, name: Self.name, detail: ProjectLinks.help(for: only)) { editors.openLink(only, for: target) }
         } else if links.count > 1 {
-            Menu {
+            HeaderMenuButton(symbol: Self.symbol, name: Self.name, detail: links.map(ProjectLinks.help(for:)).joined(separator: "\n")) {
                 ProjectLinkMenuItems(links: links) { editors.openLink($0, for: target) }
-            } label: {
-                HeaderButtonLabel(symbol: Self.symbol, busy: false, hovering: hovering, showsMenu: true)
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .headerButtonHelp(name: Self.name, detail: links.map(ProjectLinks.help(for:)).joined(separator: "\n"), busyStatus: nil)
-            .trackHover($hovering)
         }
     }
 }
@@ -381,6 +333,30 @@ struct HeaderTooltipModifier: ViewModifier {
     private func removeClickMonitor() {
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
+    }
+}
+
+/// 見出しのメニューのボタン（開く先が複数・入りきらなかった操作）。処理中は押せない。
+struct HeaderMenuButton<Items: View>: View {
+    let symbol: String
+    let name: String
+    let detail: String?
+    var busyStatus: String? = nil
+    var showsChevron = true
+    @ViewBuilder let items: Items
+    @State private var hovering = false
+
+    var body: some View {
+        Menu { items } label: {
+            HeaderButtonLabel(symbol: symbol, busy: busyStatus != nil, hovering: hovering, showsMenu: showsChevron)
+        }
+        .disabled(busyStatus != nil)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .headerButtonHelp(name: name, detail: detail, busyStatus: busyStatus)
+        .trackHover($hovering)
     }
 }
 

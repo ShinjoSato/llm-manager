@@ -105,16 +105,10 @@ private struct StageSitePreview: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task(id: TaskKey(path: project.path, site: project.site?.path, token: reloadToken)) {
+        .task(id: SiteTaskKey(project: project, token: reloadToken)) {
             let loaded = await SiteSnapshot.load(project)
             if !Task.isCancelled { snapshot = loaded }
         }
-    }
-
-    private struct TaskKey: Hashable {
-        let path: String
-        let site: String?
-        let token: Int
     }
 
     private var toolbar: some View {
@@ -130,19 +124,9 @@ private struct StageSitePreview: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            if target != nil {
-                SiteViewportPicker(raw: $viewportRaw)
-                HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの場所と更新時刻も確かめ直す") {
-                    reloadToken += 1
-                }
-                HeaderButton(symbol: "safari", name: "ブラウザで開く",
-                             detail: (SiteNavigationPolicy.browserURL(preview.currentURL) ?? target?.url)?.absoluteString) {
-                    if let url = SiteNavigationPolicy.browserURL(preview.currentURL) ?? target?.url { NSWorkspace.shared.open(url) }
-                }
-            } else if snapshot?.exportModified != nil, snapshot?.serverProblem != nil {
-                HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの配信を開き直す") {
-                    reloadToken += 1
-                }
+            SitePreviewControls(viewportRaw: $viewportRaw, preview: preview, targetURL: target?.url,
+                                serverFailed: snapshot?.exportModified != nil && snapshot?.serverProblem != nil) {
+                reloadToken += 1
             }
         }
         .zIndex(1)

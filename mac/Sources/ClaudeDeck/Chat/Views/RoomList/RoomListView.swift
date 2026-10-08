@@ -76,7 +76,7 @@ struct RoomListView: View {
     @ViewBuilder
     private var roomItems: some View {
         let items = model.listItems
-        if items.isEmpty { emptyState }
+        if items.isEmpty { roomEmptyState }
         ForEach(items) { item in
             switch item.kind {
             case .phase(let phase, let count):
@@ -128,26 +128,21 @@ struct RoomListView: View {
     }
 
     private var directoryEmptyState: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(model.query.isEmpty ? "ディレクトリがありません" : "一致するディレクトリがありません")
-                .font(ChatTheme.body)
-                .foregroundStyle(ChatTheme.secondary)
-            if model.query.isEmpty {
-                Text("「+」の「フォルダを追加…」か設定画面で登録します。")
-                    .font(ChatTheme.caption)
-                    .foregroundStyle(ChatTheme.tertiary)
-            }
-        }
-        .padding(16)
+        emptyState(kind: "ディレクトリ", hint: "「+」の「フォルダを追加…」か設定画面で登録します。")
     }
 
-    private var emptyState: some View {
+    private var roomEmptyState: some View {
+        emptyState(kind: "ルーム", hint: "「+」からプロジェクトを選ぶと Claude Code が起動します。")
+    }
+
+    /// 一覧が空の時の案内。検索で絞った結果が空なら登録の案内は出さない。
+    private func emptyState(kind: String, hint: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(model.query.isEmpty ? "ルームがありません" : "一致するルームがありません")
+            Text(model.query.isEmpty ? "\(kind)がありません" : "一致する\(kind)がありません")
                 .font(ChatTheme.body)
                 .foregroundStyle(ChatTheme.secondary)
             if model.query.isEmpty {
-                Text("「+」からプロジェクトを選ぶと Claude Code が起動します。")
+                Text(hint)
                     .font(ChatTheme.caption)
                     .foregroundStyle(ChatTheme.tertiary)
             }

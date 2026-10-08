@@ -151,28 +151,18 @@ struct ListPaneWindowSync: NSViewRepresentable {
     }
 }
 
-final class ListPaneWindowView: NSView {
+final class ListPaneWindowView: WindowResizeView {
     weak var layout: ListPaneLayout?
     var minimumWidth: Double = 0 {
         didSet { applyMinimum() }
     }
-    private var observer: NSObjectProtocol?
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if let observer { NotificationCenter.default.removeObserver(observer) }
-        observer = nil
-        guard let window else { return }
-        observer = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window,
-                                                          queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.report() }
-        }
+    override func didAttach(to window: NSWindow) {
         applyMinimum()
-        report()
     }
 
-    private func report() {
-        guard let width = window?.contentLayoutRect.width else { return }
+    override func windowDidResize(_ window: NSWindow) {
+        let width = window.contentLayoutRect.width
         // 画面の更新中に観測される値を書き換えないよう、次の周回で渡す。
         DispatchQueue.main.async { [weak self] in self?.layout?.windowWidthChanged(width) }
     }
@@ -180,9 +170,5 @@ final class ListPaneWindowView: NSView {
     private func applyMinimum() {
         guard minimumWidth > 0, let window, window.contentMinSize.width != minimumWidth else { return }
         window.contentMinSize = NSSize(width: minimumWidth, height: window.contentMinSize.height)
-    }
-
-    deinit {
-        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 }

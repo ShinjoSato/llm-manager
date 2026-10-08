@@ -165,17 +165,9 @@ private struct DirectoryDetailHeader: View {
             }
             // 名前を最小幅まで縮めてからボタンを「…」に回す。
             .layoutPriority(1)
-            // メニューから押しても確認を出せるよう、ボタンではなく列に付ける。
-            .confirmationDialog("Xcode から閉じますか？", isPresented: $confirmingClose) {
-                Button("閉じる", role: .destructive) { editors.closeInXcode(target) }
-                Button("やめる", role: .cancel) {}
-            } message: {
-                Text("\(xcodeProject?.lastPathComponent ?? "ワークスペース") を Xcode から閉じます。Xcode は終了せず、起動していなければ何もしません。未保存の変更があれば Xcode が確認を出します。")
-            }
+            .xcodeCloseConfirmation(isPresented: $confirmingClose, editors: editors, target: target, project: xcodeProject)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 64)
-        .headerBackground()
+        .centerHeaderBar()
         .zIndex(1)
     }
 
@@ -188,22 +180,15 @@ private struct DirectoryDetailHeader: View {
                     detail: running ? "このプロジェクトで動いているルームを開く" : "このプロジェクトで claude を起動して新しいルームを開く") {
                 model.launch(project)
             },
-            .button(id: "vscode", priority: 7, symbol: VSCodeButton.symbol, name: VSCodeButton.name,
-                    detail: VSCodeButton.detail(target)) { editors.openInVSCode(target) },
+            HeaderAction.vscode(priority: 7, editors: editors, target: target),
             .button(id: "finder", priority: 3, symbol: "folder", name: "Finder",
                     detail: "Finder で表示: \(project.path)") { editors.revealInFinder(target) },
         ]
         if let github = HeaderAction.github(priority: 5, editors: editors, target: target) { actions.append(github) }
         actions += HeaderAction.pins(priority: 4, editors: editors, target: target)
         if let links = HeaderAction.links(priority: 4, editors: editors, target: target) { actions.append(links) }
-        if let xcodeProject {
-            let closing = editors.closingXcode.contains(target.key)
-            actions.append(.button(id: "xcode", priority: 6, symbol: "hammer", name: "Xcode",
-                                   detail: "Xcode で開く: \(xcodeProject.path)") { editors.openInXcode(target) })
-            actions.append(.button(id: "xcode-close", priority: 2, symbol: "xmark.rectangle", name: "閉じる",
-                                   detail: "Xcode からこのワークスペースだけを閉じる（Xcode は終了しません）",
-                                   busyStatus: closing ? "閉じています…" : nil) { confirmingClose = true })
-        }
+        actions += HeaderAction.xcode(openPriority: 6, closePriority: 2, editors: editors, target: target,
+                                      project: xcodeProject) { confirmingClose = true }
         actions.append(.button(id: "settings", priority: 1, symbol: "gearshape", name: "設定で編集",
                                detail: "設定画面のプロジェクトタブで開く") {
             SettingsWindow.show(tab: .projects, project: project.id)

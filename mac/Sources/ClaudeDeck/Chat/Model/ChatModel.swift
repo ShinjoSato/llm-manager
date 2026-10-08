@@ -42,6 +42,13 @@ enum ChatCenter: Equatable {
     case links
 }
 
+extension SettingsStore {
+    /// そのフォルダの登録プロジェクト。無ければ名前だけの仮のプロジェクト。
+    func project(atPath path: String, orNamed name: String) -> ManagedProject {
+        projects.first { $0.path == path } ?? ManagedProject(name: name, path: path)
+    }
+}
+
 /// 画面に 1 つだけ出す警告。どの部品からでも出せるよう ChatModel と分けて持つ。
 @MainActor
 @Observable
@@ -158,15 +165,9 @@ final class ChatModel {
             let sessionId = session.resolveSessionId(store)
             let snapshot = sessionId.flatMap { store.session(id: $0) }
             let status = session.end != nil ? .stopped : liveStatus(of: session, snapshot: snapshot, connected: connected)
-            let line: String
-            switch session.end {
-            case .limitReached: line = "上限に達したため終了しました"
-            case .exited: line = "claude は終了しました"
-            case .launchFailed: line = "claude を起動できませんでした"
-            case nil:
-                line = sessionId.flatMap { latestLine[$0] } ?? snapshot.flatMap(Self.line(of:))
-                    ?? (session.pid == nil ? "起動中…" : "セッション開始")
-            }
+            let line = session.end?.message
+                ?? sessionId.flatMap { latestLine[$0] } ?? snapshot.flatMap(Self.line(of:))
+                ?? (session.pid == nil ? "起動中…" : "セッション開始")
             let activity = snapshot?.lastActivityAt ?? session.lastChangeAt.timeIntervalSince1970 * 1000
             return Room(id: .hosted(session.id), name: session.project.name, branch: snapshot?.branch, status: status,
                         line: line, activityAt: activity, sessionId: sessionId, cwd: session.project.path,
@@ -291,10 +292,7 @@ final class ChatModel {
             select(.hosted(running.id))
             return
         }
-        let session = HostedSession(project: project)
-        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
-        hosted.append(session)
-        session.start()
+        let session = host(project)
         select(.hosted(session.id))
         restorer.saveNow()
     }
@@ -309,10 +307,7 @@ final class ChatModel {
 
     /// 引き継ぎで外部の claude を止められた。同じ会話を `--resume` で起動し、外部ルームの書きかけと添付を引き取る。
     private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
-        let session = HostedSession(project: project, resumeSessionId: sessionId)
-        session.onLimitReached = { [weak self] session in self?.limitReached(session) }
-        hosted.append(session)
-        session.start()
+        let session = host(project, resuming: sessionId)
         outbox.move(from: roomId, to: .hosted(session.id))
         select(.hosted(session.id))
         restorer.saveNow()
@@ -320,14 +315,18 @@ final class ChatModel {
 
     /// 前回アプリが止まった時に動いていたセッションを同じ cwd で `--resume` する。書きかけも戻す。選択は未選択の時だけ移す。
     func resumeRestored(_ record: HostedSessionRecord) -> HostedSession {
-        let project = SettingsStore.shared.projects.first(where: { $0.path == record.cwd })
-            ?? ManagedProject(name: record.name, path: record.cwd)
-        let session = HostedSession(project: project, resumeSessionId: record.sessionId)
+        let session = host(SettingsStore.shared.project(atPath: record.cwd, orNamed: record.name), resuming: record.sessionId)
+        if let draft = record.draft { outbox.drafts[.hosted(session.id)] = draft }
+        if selection == nil { select(.hosted(session.id)) }
+        return session
+    }
+
+    /// claude を起動して一覧に加える（上限で止まった時の知らせも受ける）。
+    private func host(_ project: ManagedProject, resuming sessionId: String? = nil) -> HostedSession {
+        let session = HostedSession(project: project, resumeSessionId: sessionId)
         session.onLimitReached = { [weak self] session in self?.limitReached(session) }
         hosted.append(session)
         session.start()
-        if let draft = record.draft { outbox.drafts[.hosted(session.id)] = draft }
-        if selection == nil { select(.hosted(session.id)) }
         return session
     }
 

@@ -44,13 +44,7 @@ struct SitePreviewSection: View {
             content
         }
         .detailCard()
-        .task(id: TaskKey(path: project.path, site: project.site?.path, token: reloadToken)) { await refresh() }
-    }
-
-    private struct TaskKey: Hashable {
-        let path: String
-        let site: String?
-        let token: Int
+        .task(id: SiteTaskKey(project: project, token: reloadToken)) { await refresh() }
     }
 
     // MARK: - 見出しの行
@@ -90,19 +84,9 @@ struct SitePreviewSection: View {
 
     private var toolbarControls: some View {
         HStack(spacing: 8) {
-            if targetURL != nil {
-                SiteViewportPicker(raw: $viewportRaw)
-                HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの場所と更新時刻も確かめ直す") {
-                    reloadToken += 1
-                }
-                HeaderButton(symbol: "safari", name: "ブラウザで開く",
-                             detail: (SiteNavigationPolicy.browserURL(preview.currentURL) ?? targetURL)?.absoluteString) {
-                    openInBrowser()
-                }
-            } else if source == .export, hasExport, snapshot?.serverProblem != nil {
-                HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの配信を開き直す") {
-                    reloadToken += 1
-                }
+            SitePreviewControls(viewportRaw: $viewportRaw, preview: preview, targetURL: targetURL,
+                                serverFailed: source == .export && hasExport && snapshot?.serverProblem != nil) {
+                reloadToken += 1
             }
         }
         .fixedSize()
@@ -279,10 +263,5 @@ struct SitePreviewSection: View {
                 source = location != nil ? .export : links.first.map { .link($0.url) } ?? .export
             }
         }
-    }
-
-    private func openInBrowser() {
-        guard let url = SiteNavigationPolicy.browserURL(preview.currentURL) ?? targetURL else { return }
-        NSWorkspace.shared.open(url)
     }
 }

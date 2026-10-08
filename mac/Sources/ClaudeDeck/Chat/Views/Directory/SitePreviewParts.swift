@@ -39,6 +39,42 @@ struct SiteSnapshot: Equatable {
     }
 }
 
+/// 調べ直す鍵（プロジェクトの場所・サイトの指定・「再読み込み」の回数）。
+struct SiteTaskKey: Hashable {
+    let path: String
+    let site: String?
+    let token: Int
+
+    init(project: ManagedProject, token: Int) {
+        path = project.path
+        site = project.site?.path
+        self.token = token
+    }
+}
+
+/// プレビューの見出しの操作。映せる時は幅の切り替え・再読み込み・ブラウザで開く、配信を開けなかった時は再読み込みだけ。
+struct SitePreviewControls: View {
+    @Binding var viewportRaw: String
+    let preview: SitePreviewState
+    /// 今映しているページ（無ければ nil）。
+    let targetURL: URL?
+    /// 書き出しはあるが配信を開けなかった。
+    let serverFailed: Bool
+    let onReload: () -> Void
+
+    var body: some View {
+        if targetURL != nil {
+            SiteViewportPicker(raw: $viewportRaw)
+            HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの場所と更新時刻も確かめ直す", action: onReload)
+            HeaderButton(symbol: "safari", name: "ブラウザで開く", detail: preview.browserURL(fallback: targetURL)?.absoluteString) {
+                if let url = preview.browserURL(fallback: targetURL) { NSWorkspace.shared.open(url) }
+            }
+        } else if serverFailed {
+            HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "書き出しの配信を開き直す", action: onReload)
+        }
+    }
+}
+
 /// 表示幅の切り替え（PC / タブレット / スマホ）。
 struct SiteViewportPicker: View {
     @Binding var raw: String

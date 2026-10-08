@@ -174,10 +174,25 @@ extension ClaudeTerminalView {
             return completion(.cancelled)
         }
         guard let navigator = MenuNavigator(expected: expected, target: choice) else { return completion(.unavailable) }
-        releasePendingArrowHoldIfDone(cursor: currentMenu()?.cursor)
-        guard pendingArrowHold == nil else { return completion(.settling) }
-        isNavigatingMenu = true
+        if let refusal = beginNavigation() { return completion(refusal) }
         stepMenu(navigator, completion: completion)
+    }
+
+    /// ❯ の移動を始める。前回やめた矢印の反映を待つ間は `.settling` を返して始めない。
+    private func beginNavigation() -> MenuAnswerOutcome? {
+        releasePendingArrowHoldIfDone(cursor: currentMenu()?.cursor)
+        guard pendingArrowHold == nil else { return .settling }
+        isNavigatingMenu = true
+        return nil
+    }
+
+    /// 移動をやめる。未反映の矢印が残りうるので `hold` が外れるまで次の移動を始めない。
+    private func abortNavigation(_ failure: MenuNavigator.Failure, hold: PendingArrowHold?,
+                                 completion: (MenuAnswerOutcome) -> Void) {
+        isNavigatingMenu = false
+        pendingArrowHold = hold
+        evaluateStatus()
+        completion(.failed(failure))
     }
 
     private func stepMenu(_ navigator: MenuNavigator, completion: @escaping (MenuAnswerOutcome) -> Void) {
@@ -193,10 +208,7 @@ extension ClaudeTerminalView {
             completion(.confirmed)
             return
         case .abort(let failure):
-            isNavigatingMenu = false
-            pendingArrowHold = PendingArrowHold.after(navigator, now: Date())
-            evaluateStatus()
-            completion(.failed(failure))
+            abortNavigation(failure, hold: PendingArrowHold.after(navigator, now: Date()), completion: completion)
             return
         case .press(let direction):
             send(txt: PTYInput.arrowKey(direction, applicationCursor: getTerminal().applicationCursor))
@@ -214,9 +226,7 @@ extension ClaudeTerminalView {
     func moveMenuTab(_ expected: MenuPrompt, direction: MenuTabMover.Direction, completion: @escaping (MenuAnswerOutcome) -> Void) {
         guard !isNavigatingMenu else { return completion(.unavailable) }
         guard let mover = MenuTabMover(expected: expected, direction: direction) else { return completion(.unavailable) }
-        releasePendingArrowHoldIfDone(cursor: currentMenu()?.cursor)
-        guard pendingArrowHold == nil else { return completion(.settling) }
-        isNavigatingMenu = true
+        if let refusal = beginNavigation() { return completion(refusal) }
         stepTab(mover, completion: completion)
     }
 
@@ -233,10 +243,7 @@ extension ClaudeTerminalView {
             completion(.moved)
             return
         case .abort(let failure):
-            isNavigatingMenu = false
-            pendingArrowHold = PendingArrowHold.after(mover, now: Date())
-            evaluateStatus()
-            completion(.failed(failure))
+            abortNavigation(failure, hold: PendingArrowHold.after(mover, now: Date()), completion: completion)
             return
         case .press(let direction):
             send(txt: PTYInput.tabKey(direction, applicationCursor: getTerminal().applicationCursor))

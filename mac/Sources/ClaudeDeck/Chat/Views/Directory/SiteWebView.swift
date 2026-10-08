@@ -10,6 +10,11 @@ final class SitePreviewState {
     var currentURL: URL?
     var loading = false
     var failure: String?
+
+    /// ブラウザで開く先（今のページ、無ければ `fallback`）。
+    func browserURL(fallback: URL?) -> URL? {
+        SiteNavigationPolicy.browserURL(currentURL) ?? fallback
+    }
 }
 
 /// サイトのプレビュー。`zoom` で縮めて表示幅（CSS ピクセル）ぶんを枠に収める。

@@ -150,20 +150,7 @@ private struct LinkOverviewRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     if row.due { LinkDueBadge() }
-                    Image(systemName: link.resolvedKind.symbol)
-                        .font(.system(size: 11))
-                        .frame(width: 14)
-                        .foregroundStyle(ChatTheme.link)
-                        .help(link.resolvedKind.label)
-                    Text(link.name)
-                        .font(ChatTheme.body)
-                        .foregroundStyle(ChatTheme.text)
-                        .lineLimit(1)
-                    Text(link.url)
-                        .font(ChatTheme.caption)
-                        .foregroundStyle(ChatTheme.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    LinkTitleParts(link: link, openable: true)
                     Spacer(minLength: 8)
                     Text(ProjectLinks.lastOpenedLabel(row.lastOpened))
                         .font(ChatTheme.caption)
@@ -186,6 +173,29 @@ private struct LinkOverviewRowView: View {
         .buttonStyle(.plain)
         .help(ProjectLinks.help(for: link))
         .onHover { hovering = $0 }
+    }
+}
+
+/// リンクの行の種類のアイコン・名前・URL（開けないものは薄く）。
+struct LinkTitleParts: View {
+    let link: ProjectLink
+    let openable: Bool
+
+    var body: some View {
+        Image(systemName: link.resolvedKind.symbol)
+            .font(.system(size: 11))
+            .frame(width: 14)
+            .foregroundStyle(openable ? ChatTheme.link : ChatTheme.tertiary)
+            .help(link.resolvedKind.label)
+        Text(link.name.isEmpty ? "（名前なし）" : link.name)
+            .font(ChatTheme.body)
+            .foregroundStyle(openable ? ChatTheme.text : ChatTheme.tertiary)
+            .lineLimit(1)
+        Text(link.url)
+            .font(ChatTheme.caption)
+            .foregroundStyle(ChatTheme.tertiary)
+            .lineLimit(1)
+            .truncationMode(.middle)
     }
 }
 

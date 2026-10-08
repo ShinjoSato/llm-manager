@@ -68,8 +68,7 @@ final class ChatHandover {
             return
         }
         inProgress.insert(sessionId)
-        let project = SettingsStore.shared.projects.first(where: { $0.path == room.cwd })
-            ?? ManagedProject(name: room.name, path: room.cwd)
+        let project = SettingsStore.shared.project(atPath: room.cwd, orNamed: room.name)
         let roomId = room.id
         Task {
             let outcome = await SessionTerminator().terminate(pid: pid, sessionId: sessionId)

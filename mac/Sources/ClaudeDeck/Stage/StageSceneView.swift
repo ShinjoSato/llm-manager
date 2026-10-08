@@ -131,28 +131,11 @@ struct WindowWidthReader: NSViewRepresentable {
     }
 }
 
-final class WidthReportingView: NSView {
+final class WidthReportingView: WindowResizeView {
     var onChange: ((CGFloat) -> Void)?
-    private var observer: NSObjectProtocol?
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if let observer { NotificationCenter.default.removeObserver(observer) }
-        observer = nil
-        guard let window else { return }
-        observer = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window,
-                                                          queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.report() }
-        }
-        report()
-    }
-
-    private func report() {
-        guard let width = window?.frame.width else { return }
+    override func windowDidResize(_ window: NSWindow) {
+        let width = window.frame.width
         DispatchQueue.main.async { [weak self] in self?.onChange?(width) }
-    }
-
-    deinit {
-        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 }

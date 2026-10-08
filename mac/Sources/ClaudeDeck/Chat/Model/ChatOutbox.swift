@@ -110,17 +110,12 @@ final class ChatOutbox {
 
     static func inputDisabledReason(for room: Room) -> String? {
         guard let session = room.hosted else { return "外部セッションにはここから送れません" }
-        switch session.end {
-        case .limitReached: return "上限に達したため終了しました"
-        case .exited: return "claude は終了しました"
-        case .launchFailed: return "claude を起動できませんでした"
-        case nil:
-            if session.pid == nil { return "起動中…" }
-            switch session.inputBlock {
-            case .permission: return "権限の確認に答えると送れます"
-            case .menu: return "上の選択肢に答えると送れます"
-            case nil: return nil
-            }
+        if let end = session.end { return end.message }
+        if session.pid == nil { return "起動中…" }
+        switch session.inputBlock {
+        case .permission: return "権限の確認に答えると送れます"
+        case .menu: return "上の選択肢に答えると送れます"
+        case nil: return nil
         }
     }
 
