@@ -130,8 +130,8 @@ struct SegmentButton: View {
 enum SitePreviewHeight: Equatable {
     /// 決まった高さまで（ステージパネルのように枠の高さが先に決まる時）。
     case fixed(Double)
-    /// 欄の幅いっぱいに収まる高さまで。見えている高さが分かればそれに対して大きくしすぎない。
-    case fillWidth(visibleHeight: Double?)
+    /// 欄の幅いっぱいに収まる高さまで。枠に使える高さが分かればそこまで。
+    case fillWidth(room: Double?)
 }
 
 /// 表示幅で組ませたページを、与えられた幅と高さに縮めて収める枠。
@@ -148,7 +148,7 @@ struct SitePreviewFrame: View {
     private var maxHeight: Double {
         switch height {
         case .fixed(let value): return value
-        case .fillWidth(let visibleHeight): return viewport.heightLimit(available: max(availableWidth, 1), visibleHeight: visibleHeight)
+        case .fillWidth(let room): return viewport.heightLimit(available: max(availableWidth, 1), room: room)
         }
     }
 

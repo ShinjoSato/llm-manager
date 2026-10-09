@@ -34,6 +34,10 @@ final class ProjectImageStore {
     private let scanner = BackgroundScan<ProjectImageScan>()
     var scan: ProjectImageScan? { scanner.value }
     var scanning: Bool { scanner.scanning }
+    var reloadToken: Int {
+        get { scanner.reloadToken }
+        set { scanner.reloadToken = newValue }
+    }
 
     // 画面の初期化のたびに作られるので、使う時まで NSCache を作らない。
     @ObservationIgnored private lazy var thumbnails: NSCache<NSString, LoadedImage> = {
@@ -49,10 +53,9 @@ final class ProjectImageStore {
     }()
     @ObservationIgnored private lazy var gate = DecodeGate(limit: Self.decodeLimit)
 
-    /// 走査し直す。走り切って反映した時だけ true。
-    @discardableResult
-    func reload(projectPath: String) async -> Bool {
-        await scanner.reload { ProjectImages.scan(projectPath: projectPath, isCancelled: $0) }
+    /// 前に走り切った鍵と同じなら走査しない。
+    func scanIfNeeded(_ key: DetailScanKey) async {
+        await scanner.scanIfNeeded(key) { ProjectImages.scan(projectPath: key.path, isCancelled: $0) }
     }
 
     /// 同じファイルでも更新されていれば別の絵として読み直す。
@@ -147,13 +150,28 @@ private struct DecodedImage: @unchecked Sendable {
     let pixelSize: ProjectImageStore.PixelSize?
 }
 
+/// 詳細の節の走査の鍵（タブを開いた時・「再読み込み」で走査する）。
+struct DetailScanKey: Hashable {
+    let path: String
+    let token: Int
+}
+
 /// 節の走査をバックグラウンドで回す（「画像」と「iPhone のプレビュー」で共通）。呼び出し側の取り消しで走査を止め、遅れて返った古い結果は捨てる。
 @MainActor
 @Observable
 final class BackgroundScan<Value: Sendable> {
     private(set) var value: Value?
     private(set) var scanning = false
+    /// 「再読み込み」の回数。タブを離れて節の画面が消えても数を保ち、戻った時に走査し直さない。
+    var reloadToken = 0
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var scannedKey: DetailScanKey?
+
+    /// 取りやめた走査は済みにせず、次にタブを開いた時にやり直す。
+    func scanIfNeeded(_ key: DetailScanKey, _ work: @escaping @Sendable (_ isCancelled: () -> Bool) -> Value) async {
+        guard scannedKey != key else { return }
+        if await reload(work) { scannedKey = key }
+    }
 
     /// 走り切って反映した時だけ true。
     @discardableResult

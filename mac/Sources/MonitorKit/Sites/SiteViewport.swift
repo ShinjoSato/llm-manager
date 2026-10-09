@@ -54,17 +54,14 @@ public enum SiteViewport: String, CaseIterable, Identifiable, Sendable {
                                   frameHeight: (fullHeight * scale).rounded(.down))
     }
 
-    /// 見えている高さに対してこの割合までに抑える（スクロールせずに全体を見渡せるように）。
-    public static let visibleHeightFraction = 0.8
-    /// 見えている高さが小さくても、これより低くはしない。
+    /// 欄が低くても、これより低くはしない（その分は欄をスクロールする）。
     public static let minimumPreviewHeight = 320.0
 
-    /// 欄の幅いっぱいに収まる高さを上限とし、見えている高さの `visibleHeightFraction` を超えない（`minimumPreviewHeight` は保つ）。
-    public func heightLimit(available: Double, visibleHeight: Double?) -> Double {
+    /// 欄の幅いっぱいに収まる高さを上限とし、タブの中で枠に使える高さ `room` を超えない（`minimumPreviewHeight` は保つ）。
+    public func heightLimit(available: Double, room: Double?) -> Double {
         let fill = layout(available: available, maxHeight: .infinity).frameHeight + bezel * 2
-        guard let visibleHeight, visibleHeight.isFinite, visibleHeight > 0 else { return fill }
-        let cap = max(visibleHeight * Self.visibleHeightFraction, Self.minimumPreviewHeight)
-        return min(fill, cap)
+        guard let room, room.isFinite, room > 0 else { return fill }
+        return min(fill, max(room, Self.minimumPreviewHeight))
     }
 }
 

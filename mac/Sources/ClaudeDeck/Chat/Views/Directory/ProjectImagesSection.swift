@@ -5,44 +5,36 @@ import SwiftUI
 /// ディレクトリの詳細の「画像」: プロジェクト配下の画像をフォルダごとにサムネイルで並べる。クリックで拡大、右クリックで Finder とパスのコピー。
 struct ProjectImagesSection: View {
     let project: ManagedProject
+    /// 詳細が持つストア（タブを行き来しても走査の結果と件数を保つ）。
+    let store: ProjectImageStore
 
-    @State private var store = ProjectImageStore()
     @State private var previewing: ProjectImage?
     @State private var collapsedGroups: Set<String> = []
-    @State private var reloadToken = 0
-    @State private var scanned: DetailScanKey?
-    @AppStorage("directory.images.collapsed") private var collapsed = false
 
     private static let columns = [GridItem(.adaptive(minimum: 116, maximum: 150), spacing: 10, alignment: .top)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             toolbar
-            if !collapsed { content }
+            content
         }
         .detailCard()
-        // 畳んでいる間は走査せず、開いた時に初めて走査する（畳めば走査中のものは取りやめる）。
-        .task(id: scanKey) {
-            let key = scanKey
-            guard key.open, scanned != key else { return }
-            // 走り切った時だけ済みにする（畳んで取りやめた走査は開いた時にやり直す）。
-            if await store.reload(projectPath: project.path) { scanned = key }
-        }
+        // タブを離れれば画面ごと消えて走査中のものは取りやめる。
+        .task(id: scanKey) { await store.scanIfNeeded(scanKey) }
         .sheet(item: $previewing) { image in
             ProjectImagePreview(image: image, store: store)
         }
     }
 
-    private var scanKey: DetailScanKey { DetailScanKey(path: project.path, open: !collapsed, token: reloadToken) }
+    private var scanKey: DetailScanKey { DetailScanKey(path: project.path, token: store.reloadToken) }
 
     private var toolbar: some View {
         HStack(spacing: 8) {
-            SectionDisclosureButton(name: "画像", count: store.scan?.count, collapsed: $collapsed)
+            SectionTitle(name: "画像", count: store.scan?.count)
             Spacer(minLength: 8)
             HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "プロジェクト配下を走査し直す",
                          busyStatus: store.scanning ? "走査中" : nil) {
-                collapsed = false
-                reloadToken += 1
+                store.reloadToken += 1
             }
         }
     }
@@ -95,13 +87,6 @@ struct ProjectImagesSection: View {
             }
         }
     }
-}
-
-/// 詳細の節の走査の鍵（畳んでいる間は走査せず、開いた時・「再読み込み」で走査する）。
-struct DetailScanKey: Hashable {
-    let path: String
-    let open: Bool
-    let token: Int
 }
 
 /// グリッドの 1 枠: サムネイル・ファイル名・寸法とファイルサイズ。読んだ絵と寸法は枠ごとに持つ（他の枠の読み込みで描き直さない）。
