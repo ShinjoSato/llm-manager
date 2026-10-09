@@ -50,14 +50,15 @@ mac/
         SessionRestorer.swift       ホスト中のセッションの記録（hosted-sessions.json）と起動時の再開・作業中だったものへの続きの頼み
         SiteThumbnailStore.swift    「ディレクトリ」の行の LP のサムネイル（オフスクリーンの WKWebView で撮って縮小・キャッシュ・1 つずつ）
         DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める。ルームを閉じても止めない）
-        ProjectImageStore.swift     ディレクトリの詳細の「画像」（走査・サムネイルの縮小をバックグラウンドで・NSCache）
+        ProjectImageStore.swift     ディレクトリの詳細の「画像」（走査・サムネイルの縮小をバックグラウンドで・NSCache）・節の走査の持ち手（BackgroundScan。「iPhone のプレビュー」と共有）
+        IOSPreviewStore.swift       ディレクトリの詳細の「iPhone のプレビュー」（mcpbridge を 1 本持って 1 件ずつ描く・待ち行列・キャッシュへ写す・節を閉じて 3 分で止める）
         LinkVisitStore.swift        リンクの最終確認日（link-visits.json）の読み書き
         LinkTitleFetcher.swift      リンクの名前の候補にするページの <title> の取得（3 秒・資格情報なし）
-        ImageDecoding.swift         ImageIO での縮小（吹き出しの画像とディレクトリの詳細の画像で共有）
+        ImageDecoding.swift         ImageIO での縮小（吹き出しの画像・ディレクトリの詳細の画像・iPhone のプレビューで共有）
       Views/                      画面（SwiftUI）
         ChatRootView.swift          骨組み（切り替えバー | 一覧（境界のドラッグで幅を変える）| 会話かディレクトリの詳細 | 右パネルの差し込み口）
         ListPane.swift              一覧の幅の状態・境界のつかむ所・ウィンドウの最小幅
-        DeckStyles.swift            繰り返す見た目の組み合わせ（角丸の地と枠・入力欄の地・詳細のカード・見出しの帯・状態のカプセル 等）
+        DeckStyles.swift            繰り返す見た目の組み合わせ（角丸の地と枠・入力欄の地・詳細のカード・見出しの帯・状態のカプセル・畳める節の見出し・グリッドの枠 等）
         WindowResizeView.swift      ウィンドウの大きさの変化を知らせる NSView（一覧の幅とステージの自動で畳む判定）
         RoomList/                   左の一覧（ルーム / ディレクトリ）
           ListModeBar.swift           左端の切り替えバー（「ルーム」/「ディレクトリ」・要対応のバッジ）
@@ -66,9 +67,10 @@ mac/
           RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・プロジェクトの印（ProjectBadgeView）
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
-        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・画像・GitHub・リンク・スレッド）
+        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・画像・iPhone のプレビュー・GitHub・リンク・スレッド）
           ProjectLinkEditor.swift     「リンク」の節の追加・編集のポップオーバー（種類と名前の提案・<title> の取得）
           ProjectImagesSection.swift  「画像」: フォルダごとのサムネイルのグリッド・拡大のシート
+          IOSPreviewsSection.swift    「iPhone のプレビュー」: 全ファイルの #Preview を 1 つのグリッド（枠にファイル名と行）・すべて描く・拡大して切り替えて描き直すシート
           SitePreviewSection.swift    「サイト」: 見る元（開発サーバー / 書き出し / 公開 URL）・表示幅・再読み込み・ブラウザで開く・書き出しの更新時刻
           SitePreviewParts.swift      サイトの欄とステージパネルのプレビューで共有する部品（場所の読み込み・表示幅の切り替え・縮める枠・開発サーバーの操作と出力）
           SiteWebView.swift           プレビューの WKWebView（pageZoom で縮めて表示幅ぶんを収める・file: / javascript: へは遷移しない）
@@ -125,7 +127,7 @@ mac/
       TranscriptStore.swift       会話履歴の取得と追記の購読（250ms）を持つ actor
       SessionMessaging.swift      受信箱ソケットへの伝言（Unix ソケット・自分の所有のソケットだけ）
       UsageReader.swift           使用量ファイル（statusline.sh が書く）の読み取り
-      XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探し（会話の見出しの「Xcode」「閉じる」と iPhone の API が使う）
+      XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探し（会話の見出しの「Xcode」「閉じる」・ディレクトリの詳細の「iPhone のプレビュー」と iPhone の API が使う）
       ClaudeHome.swift            ~/.claude のパス・スラッグ・transcript の場所
       JSONLoose.swift             JSON の値を typeof の厳しさで読む（NSNumber の 1 を true と取り違えない）・行の絞り込みのバイト列検索
     Server/                     フック等を受けるアプリ内の HTTP サーバー
@@ -153,14 +155,22 @@ mac/
       LinkVisits.swift            リンクの最終確認日（link-visits.json）の型と読み書き
       LinkOverview.swift          横断のリンク一覧の組み立て（節・絞り込み・確認が必要な数）
       LinkTitle.swift             ページの <title> の読み取り（文字コードの判別・切れた UTF-8 の扱い）
-      ProjectImages.swift         ディレクトリの詳細の「画像」の走査とグループ化
+      ProjectImages.swift         ディレクトリの詳細の「画像」の走査とグループ化・浅い順の走査（ProjectTree。「iPhone のプレビュー」と共有）
+    Previews/                   ディレクトリの詳細の「iPhone のプレビュー」（Xcode の RenderPreview）
+      SwiftPreviews.swift         Swift のソースから #Preview を静的に拾う（コメント・文字列を飛ばす字句の読み取り・走査）
+      XcodeBridgeProtocol.swift   mcpbridge の JSON-RPC の組み立てと読み取り（ping への返事）・呼んでよいツールの許可リスト・失敗の見分け・Xcode のプロジェクトの中のパスとの対応・開いているワークスペースの一覧の読み取り
+      XcodeBridgeClient.swift     MCP クライアント（握手・1 件ずつの要求・時間切れで止める（止め切ってから次を起動）・パッケージの読み込み中は待って頼み直す・開く前の一覧で自分で開いたかを見分ける）
+      XcodeSelection.swift        つなぐ Xcode の選び方（動いている Xcode を数え直す・複数なら xcode-select・DEVELOPER_DIR）
+      PreviewQueueRules.swift     待ち行列の止め方（時間切れ・読み込み待ちが続いた時・節が閉じた時）
+      XcodeBridgeProcess.swift    `xcrun mcpbridge` の子プロセス（新しいプロセスグループ・stdin / stdout の 1 行 1 メッセージ・グループごとの停止）
+      PreviewSnapshotCache.swift  描いた PNG と添え書きのキャッシュ（鍵・置き場・写す前の絵の確かめ・古い版と消えたプロジェクトの片付け）
     Sites/                      ディレクトリの詳細の「サイト」（LP のプレビュー）
       SiteLocator.swift           LP の場所の自動検出と、設定の `site`（相対パス）の検証・解決（プロジェクトの外を指さない）
       SiteFiles.swift             配信のパスの解決（書き出しの外・隠しファイルは返さない・フォルダは index.html・拡張子なしは .html）と Content-Type
       SiteServer.swift            書き出しの静的配信（サイトごとに 127.0.0.1 のランダムなポート・GET / HEAD のみ。SitePreviewServers）
       SiteViewport.swift          表示幅（PC / タブレット / スマホ）と縮める率・欄の幅と見えている高さからの高さの上限・サムネイルのキャッシュの名前・プレビューの中で開いてよい行き先
       DevServerRules.swift        開発サーバーの起動条件（dev スクリプト）・子の環境・出力からのアドレスの読み取り・失敗の理由・出力の末尾・止める手順
-      DevServerProcess.swift      開発サーバーの子プロセス（新しいプロセスグループで起動・出力と終了の通知・グループごとの停止）
+      DevServerProcess.swift      開発サーバーの子プロセス（新しいプロセスグループで起動・出力と終了の通知・グループごとの停止。起動と停止の手順 ProcessGroup は mcpbridge と共有）
     Limit/
       LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
       LimitState.swift            上限到達の記録（limit-state.json）と、続けて止めた分をまとめた知らせの文言
@@ -190,14 +200,14 @@ mac/
       DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
                                   Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
       TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
-      ChildEnvironment.swift      子プロセス（claude・開発サーバー）の環境から API キーと Claude Code の子セッション印を除く
+      ChildEnvironment.swift      子プロセス（claude・開発サーバー・mcpbridge）の環境から API キーと Claude Code の子セッション印を除く
       SecureFile.swift            0600・置き換えで書く
       DeckPaths.swift             Application Support / Caches / Logs の claude-deck と、環境変数で差し替える設定ファイルの場所
       Paths.swift                 realpath・フォルダか・ファイルの種類・URL の 1 区間のエンコード
       Concurrency.swift           一度だけ通す印（OnceFlag）と、持ち主が消えたら止まる繰り返し（repeatingTask）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
-                                Server / Remote / Settings / Sites / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
+                                Server / Remote / Settings / Sites / Previews / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   docs/pty-daemon.md            アプリを閉じても claude を動かし続ける常駐プロセスの設計と試作の記録（未実装）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
@@ -537,7 +547,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「Xcode」「閉じる」（プロジェクトの path の配下に
     `.xcworkspace` / `.xcodeproj` がある時だけ。会話の見出しと同じ処理で、検出の結果は cwd ごと、閉じる処理中の印は押した先（ルーム / プロジェクト）ごとに `EditorLauncher` が持つ）・
     「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
-    本文は概要（フルパス・状態・メモ）、サイト（下記）、画像（下記）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンク（下記）、
+    本文は概要（フルパス・状態・メモ）、サイト（下記）、画像（下記）、iPhone のプレビュー（下記）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンク（下記）、
     そのプロジェクトのスレッド（ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）。
     本文は中央の欄の幅いっぱいに使う（文章の節は読みやすいよう 900px まで、サイトのプレビューと画像は欄いっぱい）。
   - **リンク**（詳細の節）: 設定の `links` を全部、種類のアイコン・名前・URL（中略）の行で出す。開けるものは押すとブラウザで開き（開けた時だけ最終確認日を記録）、
@@ -570,6 +580,48 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     - 節は畳める（UserDefaults `directory.images.collapsed`・既定は開く。畳んでいる間は走査せず、開いた時に初めて走査する。畳めば走査中のものは取りやめる）。グループも畳める（画面の間だけ）。
       画像が無ければ「画像なし」。
     - 走査とグループ化は `Sources/MonitorKit/Projects/ProjectImages.swift`（テストあり）、ストアは `Chat/Model/ProjectImageStore.swift`。
+  - **iPhone のプレビュー**（詳細の節。プロジェクトの path の配下に `.xcworkspace` / `.xcodeproj` がある時だけ。開くのは「Xcode」ボタンと同じもの（`XcodeFinder`））:
+    iOS アプリの SwiftUI の `#Preview` を、**起動中の Xcode の MCP（`xcrun mcpbridge` の `RenderPreview`）**で描いて並べる（`Views/Directory/IOSPreviewsSection.swift`）。iPhone 側には出していない。
+    - 一覧（ビルド不要）: Xcode のプロジェクトのあるフォルダの下の Swift ファイルを浅い順に読み、`#Preview`（名前・`traits:` 付きも）をファイルごとに上から数える。
+      コメント・文字列（複数行・raw・補間の入れ子。32 段を超えたらそこで読むのをやめる）の中は数えず、名前は最初の引数がラベルの無い文字列の時だけ。
+      型の宣言の継承節の `PreviewProvider`（`SwiftUI.` 付きも。ジェネリクスの制約・型注釈は除く）は一覧に出さないが、Xcode の `previewDefinitionIndexInFile` と番号をそろえるため数える。
+      `#if` で分岐した `#Preview` は両方数えるので番号がずれうる（下の「行の照合」で検出）。隠しフォルダ・「画像」と同じ依存 / 成果物のフォルダ・`.xcodeproj` / `.xcworkspace` / `.xcassets` の中は見ず、リンクは辿らない。
+      深さ 10・Swift ファイル 5,000 件・フォルダ 20,000 個で打ち切り、2MB を超えるファイルは読まない。走査は `Sources/MonitorKit/Previews/SwiftPreviews.swift`（テストあり）。
+    - 描画: mcpbridge（stdio の JSON-RPC 2.0・1 行 1 メッセージ）と `initialize`（protocolVersion `2025-06-18`）→ `tools/list` で `RenderPreview` を確かめ（無ければ Xcode 27 以降が要る旨）→
+      `XcodeListWorkspaces`（開く前から開いているか）→ `XcodeOpenWorkspace` → `XcodeGlob`（`**/<ファイル名>`）で Xcode のプロジェクトの中のパスを引き → `RenderPreview`（時間切れ 300 秒）。
+      - Glob の結果はディスク上の相対パスと末尾の区間がいちばん長く一致するものを使う（グループ名がフォルダと違っても合う）。同点が複数・結果が打ち切られた時は、別のファイルを描かないよう「プロジェクト内で特定できない」と出す。
+      - 開いた ID は mcpbridge が動いている間だけ使い回す。**利用者が開いていたもの（同じパスか、返った ID が開く前の一覧にある。一覧を読めない時も）は閉じない**。別のプロジェクトを描く時・止める時は、自分で開いたものだけを `XcodeCloseWorkspace` で閉じる。
+      - `isError` が false でも本文が `{"type":"error",…}` なら失敗。返った `previewSnapshotPath` は絶対パス・リンクでない通常のファイル・`.png`・PNG の署名・50MB 以下を（リンクを辿らずに開き直して）確かめてから
+        `~/Library/Caches/claude-deck/ios-previews/<project-id>/`（0700 / 0600）に写し、名前・行・端末・切り替えの候補・ソースの更新時刻を隣の JSON に残す。相手の `ping` には空の result（知らない要求には Method not found）、id が null の失敗は待っている 1 件を失敗にする。
+      - **呼ぶツールは `XcodeOpenWorkspace` / `XcodeCloseWorkspace` / `XcodeListWorkspaces` / `XcodeGlob` / `RenderPreview` の許可リストだけ**で、それ以外（書き換え・Run・テスト・ビルド設定等）は要求を組み立てる所で拒む（`XcodeBridgeTool`）。
+        ソースは変えない（Xcode が DerivedData・xcuserdata 等を更新することはある）。
+    - mcpbridge はアプリ全体で 1 本・描くのは 1 件ずつ（要求も直列）。子の環境から API キー・子セッション印を除く（`ChildEnvironment`）。
+      **描くたびに動いている Xcode を数え直して**つなぐ先を決め（`XcodeSelection`。1 つならそれ、複数なら xcode-select の Xcode、どちらでもなければ決めずに案内を出す）、その `.app` の `Contents/Developer` を `DEVELOPER_DIR` で渡す（違う版の mcpbridge を使わないため）。
+      PID か Developer フォルダが変わった時・Xcode が動いていない / mcpbridge が使えない失敗の時は、mcpbridge を捨てて次は作り直す。
+      - **`MCP_XCODE_PID` は渡さない**（親の環境にあっても消す）: 渡すと GUI の Xcode へ直につなぎ（passthrough）、ウィンドウが無いと接続を断られて mcpbridge が終わる（「Rejecting connection - no workspace windows are open.」）。
+        渡さなければ Xcode の中の headless の `Xcode Service` へつなぎ（router）、ワークスペースもそこで開く（GUI のウィンドウは開かない）。Xcode 27（mcpbridge 25317）で確認。
+      - 何も開いていない時、2 回目以降の `XcodeListWorkspaces` は返らない（同じ版で確認）ので、開く前の一覧は起動し直した mcpbridge の最初の呼び出しにする。一覧は 10 秒で諦め、その時は自分で開いたとはみなさない。
+      - 開発サーバーと同じく**新しいプロセスグループ**で起動し、止める時は stdin を閉じてからグループごと SIGTERM → 3 秒 → SIGKILL（`ProcessGroup`・`DevServerStopPlan`）。止めるのは、節がどこにも開いていない状態が 3 分続いた時
+        （自分で開いたものを閉じてから）・アプリの終了（`applicationWillTerminate` と SIGTERM / SIGINT の経路で止め切るまで待つ）・開いているプロジェクトが設定から消えた時（描いている 1 件の後）。
+      - 要求の時間切れでは、遅れて届く応答と食い違わないよう mcpbridge ごと止める（止め切るまで次を起動しない）。開いた直後の「Waiting for packages to load」は 3 秒おきに最大 3 分頼み直す。
+        時間切れ・読み込み待ちが続けて 2 回出たら、待っている分を描かずに戻して理由を出す（`PreviewStallCounter`）。
+    - **初回の承認**: Xcode は MCP の相手（mcpbridge を起動したアプリ。実地ではプロジェクトを替えた時にも求められた。`.app` と `swift run` は別の相手になりうる）ごとに、メニューバーの Xcode の MCP のアイコンでの許可を求める。
+      未承認の間は `XcodeOpenWorkspace` が 1 分ほど待ってから「waiting for the user to approve」を返すので、開いている間は案内を出し、返ったら許可してから描き直すよう出す。
+    - 画面: 節は既定で畳む（UserDefaults `directory.iosPreviews.collapsed`。開いた時に走査・「再読み込み」で走査し直す）。全ファイルの `#Preview` を 1 つのグリッドに、描いた絵（縮小して NSCache）か名前と「描く」の枠
+      （待機中・描いています・描けませんでした（クリックでもう一度。ホバーで理由）もその場に出す）・名前（無ければ表示名かファイル名）・ファイル名と行で並べる。
+      - 描いた絵は鍵（プロジェクト・ファイル・番号・切り替えの組・言語・ソースの更新時刻）でキャッシュし次回もすぐ出す。ソースを書き換えると描き直すまで出さない（その回に描いた絵も、走査した時の更新時刻と一致する時だけ出す）。同じ指定の古い版は書いた時に消す。
+      - 「すべて描く」はまだ今のソースの絵が無いものを順に待ち行列へ。描いている間は「取りやめる」（待っている分を外す。描いている 1 件は終わるまで待つ）。
+        **そのプロジェクトの節がどこにも開いていなくなったら（畳んだ・別のプロジェクトへ移った等）待っている分を取りやめる**（`PreviewSectionPresence`）。
+      - 行の照合: Xcode が返した `sourceLineNumber` が一覧の行と違えば、枠の下と拡大のシートに「別のプレビューの可能性」を出す。
+      - 描いた枠のクリックで拡大のシート（Esc で閉じる）: 返った候補（外観・文字の大きさ・向き・コントラスト・ボタンの枠・言語）を「既定」か値から選んで描き直す（組ごとに別にキャッシュ）・表示名・端末・描いた時刻・Finder で表示。
+        右クリックで描く / 描き直す・ソース / 画像を Finder で表示・パスのコピー。
+    - 失敗の案内: Xcode が動いていない（開いている間は 3 秒おきに見る。動いていなければ mcpbridge を起動しない）・未承認・ビルド失敗（ログの `error:` の行を先頭から 3 行）・時間切れ・
+      そのプレビューだけの失敗（`{"type":"error","data":…}` の中の文言）・ファイルが Xcode のプロジェクトに無い / 特定できない・返った絵を写さなかった・描いている間にソースが書き換わった（「再読み込み」で出る）。
+      Xcode が無い・未承認・ビルド失敗など続けても同じ失敗になるものは、待っている分を描かずに戻して節の上に理由を出す（× で消せる）。
+    - 実地（sandora・Xcode 27）: 初回はビルドを含んで約 100〜110 秒、同じプロジェクトの別ファイルは約 60 秒、同じファイルの別のプレビューや外観の切り替えは 1〜10 秒。開く前の一覧
+      （「No workspaces are currently open.」/「* workspaceIdentifier: workspace-…, workspacePath: /…/random_talk.xcodeproj」）で自分で開いたものと既に開いていたものを見分けられることと、`sourceLineNumber` が走査した行と一致することを確かめた。
+    - キャッシュの片付け: 起動時に設定に無い project-id のフォルダを消し（設定が読めない間は消さない）、動いている間に設定から消えたプロジェクトの分もその場で消す。
+    - 判定（走査・JSON-RPC・失敗の見分け・パスの対応・キャッシュの鍵と絵の確かめ・つなぐ Xcode の選び方・待ち行列の止め方）と子プロセス・クライアントは `Sources/MonitorKit/Previews/`（テストあり。偽の mcpbridge と sh の子で確かめる）、持ち手は `Chat/Model/IOSPreviewStore.swift`。
   - **見出しのボタンが入りきらない時**（会話の見出しも同じ）: 名前とパスは省略表示（最小 140px）まで縮め、それでも入らなければ優先度の低いボタンから
     「…」（`ellipsis.circle`。ホバーで「ほかの操作」と回したボタンの名前）のメニューにまとめる。メニューの項目は同じ動作を呼ぶ
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
@@ -1103,7 +1155,9 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - iCloud 経由の通知は実機（登録済みのコンテナ・プロファイル）では未確認。
 - 上限到達の画面表示は実際の上限で出たものを未確認（文言はバイナリから、`⎿` の位置は TUI の描画コードから推定）。表示の形が違えば補助経路だけ効かない（主経路の残量判定は効く）。
 - ホスト中のルームはアプリを終了すると claude ごと終わる（次の起動で `--resume` で再開するが、作業は一度止まる。アプリを閉じても動かし続ける常駐プロセスの設計は `docs/pty-daemon.md`・未実装）。
-- アプリが強制終了・クラッシュした時は、サイトの開発サーバー（`npm run dev`）が残りうる。
+- アプリが強制終了・クラッシュした時は、サイトの開発サーバー（`npm run dev`）と「iPhone のプレビュー」の mcpbridge が残りうる。
+- 「iPhone のプレビュー」は起動中の Xcode（RenderPreview のある 27 以降）が要る（Xcode を起動していない時の自前の描き手は未実装）。描画とキャッシュへの写しは
+  MonitorKit のクライアントで sandora（描けた）と mirio（ビルド失敗の文言）で確かめたが、アプリの画面での操作（グリッド・シートでの切り替え）とアプリからの初回の承認は目視で未確認。
 - 権限プロンプト・選択メニューの読み取りは端末画面の文言（`Do you want to …?` と `1. Yes`、`❯ n.` の選択肢、`Enter to confirm` 等の操作案内）に依る。
   **Claude Code の TUI の更新で判定を見直す必要がある**: `PTYInput.swift` の `InputBlock` / `ChoiceMenu` / `PermissionPrompt` / `InputBox`、`MenuPrompt.swift`
   （v2.1.286 の trust 確認・AskUserQuestion・plan 承認・入力欄の例文と NBSP で確認）。文言・配置（罫線と ❯ の位置関係、操作案内の有無）に依存している。

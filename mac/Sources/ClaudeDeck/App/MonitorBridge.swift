@@ -26,8 +26,9 @@ enum MonitorBridge {
         for sig in [SIGTERM, SIGINT] {
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             source.setEventHandler {
-                // 終了の確認や保留で applicationWillTerminate まで届かなくても、開発サーバーは先に止める。
+                // 終了の確認や保留で applicationWillTerminate まで届かなくても、開発サーバーと mcpbridge は先に止める。
                 DevServerStore.shared.stopAllBlocking()
+                IOSPreviewService.shared.stopAllBlocking()
                 QuitCoordinator.shared.terminateBySignal()
             }
             source.resume()

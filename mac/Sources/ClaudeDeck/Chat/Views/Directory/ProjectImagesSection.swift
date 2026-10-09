@@ -10,7 +10,7 @@ struct ProjectImagesSection: View {
     @State private var previewing: ProjectImage?
     @State private var collapsedGroups: Set<String> = []
     @State private var reloadToken = 0
-    @State private var scanned: ScanRequest?
+    @State private var scanned: DetailScanKey?
     @AppStorage("directory.images.collapsed") private var collapsed = false
 
     private static let columns = [GridItem(.adaptive(minimum: 116, maximum: 150), spacing: 10, alignment: .top)]
@@ -22,40 +22,22 @@ struct ProjectImagesSection: View {
         }
         .detailCard()
         // 畳んでいる間は走査せず、開いた時に初めて走査する（畳めば走査中のものは取りやめる）。
-        .task(id: ScanKey(path: project.path, open: !collapsed, token: reloadToken)) {
-            let request = ScanRequest(path: project.path, token: reloadToken)
-            guard !collapsed, scanned != request else { return }
+        .task(id: scanKey) {
+            let key = scanKey
+            guard key.open, scanned != key else { return }
             // 走り切った時だけ済みにする（畳んで取りやめた走査は開いた時にやり直す）。
-            if await store.reload(projectPath: project.path) { scanned = request }
+            if await store.reload(projectPath: project.path) { scanned = key }
         }
         .sheet(item: $previewing) { image in
             ProjectImagePreview(image: image, store: store)
         }
     }
 
-    private struct ScanKey: Hashable {
-        let path: String
-        let open: Bool
-        let token: Int
-    }
-
-    private struct ScanRequest: Equatable {
-        let path: String
-        let token: Int
-    }
+    private var scanKey: DetailScanKey { DetailScanKey(path: project.path, open: !collapsed, token: reloadToken) }
 
     private var toolbar: some View {
         HStack(spacing: 8) {
-            Button { collapsed.toggle() } label: {
-                HStack(spacing: 6) {
-                    DisclosureChevron(collapsed: collapsed)
-                    Text(store.scan.map { "画像  \($0.count)" } ?? "画像")
-                        .sectionLabelStyle()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(collapsed ? "画像の節を開く" : "画像の節を畳む")
+            SectionDisclosureButton(name: "画像", count: store.scan?.count, collapsed: $collapsed)
             Spacer(minLength: 8)
             HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "プロジェクト配下を走査し直す",
                          busyStatus: store.scanning ? "走査中" : nil) {
@@ -69,13 +51,13 @@ struct ProjectImagesSection: View {
     private var content: some View {
         if let scan = store.scan {
             if scan.groups.isEmpty {
-                emptyText("画像なし")
+                SectionNote("画像なし")
             }
             ForEach(scan.groups) { group in
                 groupView(group)
             }
             if scan.truncated {
-                emptyText("画像が \(ProjectImages.maxCount) 件かフォルダが \(ProjectImages.maxDirectories) 個を超えたため、浅いフォルダから \(scan.count) 件までを出しています（深さ \(ProjectImages.maxDepth) まで）")
+                SectionNote("画像が \(ProjectImages.maxCount) 件かフォルダが \(ProjectImages.maxDirectories) 個を超えたため、浅いフォルダから \(scan.count) 件までを出しています（深さ \(ProjectImages.maxDepth) まで）")
             }
         } else {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 40)
@@ -113,13 +95,13 @@ struct ProjectImagesSection: View {
             }
         }
     }
+}
 
-    private func emptyText(_ text: String) -> some View {
-        Text(text)
-            .font(ChatTheme.caption)
-            .foregroundStyle(ChatTheme.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
+/// 詳細の節の走査の鍵（畳んでいる間は走査せず、開いた時・「再読み込み」で走査する）。
+struct DetailScanKey: Hashable {
+    let path: String
+    let open: Bool
+    let token: Int
 }
 
 /// グリッドの 1 枠: サムネイル・ファイル名・寸法とファイルサイズ。読んだ絵と寸法は枠ごとに持つ（他の枠の読み込みで描き直さない）。
@@ -165,15 +147,7 @@ private struct ProjectImageCell: View {
     }
 
     private func thumbnail(_ shown: ProjectImageStore.LoadedImage?) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 10)
-        return Color.clear
-            .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: .infinity)
-            .background(shape.fill(ChatTheme.inputSurface))
-            .overlay { ThumbnailContent(image: shown?.image, failed: failed) }
-            .clipShape(shape)
-            .overlay(shape.stroke(ChatTheme.border))
-            .contentShape(shape)
+        GridTile { ThumbnailContent(image: shown?.image, failed: failed) }
     }
 }
 

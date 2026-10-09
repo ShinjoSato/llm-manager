@@ -80,3 +80,62 @@ struct DisclosureChevron: View {
             .frame(width: 10)
     }
 }
+
+/// 詳細の畳める節の見出し（印・名前・件数）。押すと開閉する。
+struct SectionDisclosureButton: View {
+    let name: String
+    let count: Int?
+    @Binding var collapsed: Bool
+
+    var body: some View {
+        Button { collapsed.toggle() } label: {
+            HStack(spacing: 6) {
+                DisclosureChevron(collapsed: collapsed)
+                Text(count.map { "\(name)  \($0)" } ?? name)
+                    .sectionLabelStyle()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(collapsed ? "\(name)の節を開く" : "\(name)の節を畳む")
+    }
+}
+
+/// 節の中の控えめな案内（空・打ち切りの知らせ）。
+struct SectionNote: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(ChatTheme.caption)
+            .foregroundStyle(ChatTheme.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// グリッドの 1 枠（縦横比を保った入力欄の地と角丸の枠線）。
+struct GridTile<Content: View>: View {
+    let aspectRatio: CGFloat
+    let content: Content
+
+    init(aspectRatio: CGFloat = 1, @ViewBuilder content: () -> Content) {
+        self.aspectRatio = aspectRatio
+        self.content = content()
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 10)
+        Color.clear
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .background(shape.fill(ChatTheme.inputSurface))
+            .overlay { content }
+            .clipShape(shape)
+            .overlay(shape.stroke(ChatTheme.border))
+            .contentShape(shape)
+    }
+}

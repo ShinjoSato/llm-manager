@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（概要・操作・サイト・画像・GitHub の紐づけ・リンク・スレッド）。
+/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（概要・操作・サイト・画像・iPhone のプレビュー・GitHub の紐づけ・リンク・スレッド）。
 struct DirectoryDetailView: View {
     let model: ChatModel
     let directory: ProjectDirectory
@@ -22,6 +22,9 @@ struct DirectoryDetailView: View {
                     // 別のプロジェクトへ移ったら、見る元・表示中のページ・画像の一覧を持ち越さない。
                     SitePreviewSection(project: project, visibleHeight: visibleHeight).id(project.id)
                     ProjectImagesSection(project: project).id(project.id)
+                    if let xcodeProject = model.editors.xcodeProject(for: project.editorTarget) {
+                        IOSPreviewsSection(project: project, xcodeProject: xcodeProject).id(project.id)
+                    }
                     github.frame(maxWidth: Self.readableWidth, alignment: .leading)
                     links.frame(maxWidth: Self.readableWidth, alignment: .leading)
                     threads.frame(maxWidth: Self.readableWidth, alignment: .leading)

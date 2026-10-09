@@ -31,8 +31,9 @@ final class ProjectImageStore {
         }
     }
 
-    private(set) var scan: ProjectImageScan?
-    private(set) var scanning = false
+    private let scanner = BackgroundScan<ProjectImageScan>()
+    var scan: ProjectImageScan? { scanner.value }
+    var scanning: Bool { scanner.scanning }
 
     // 画面の初期化のたびに作られるので、使う時まで NSCache を作らない。
     @ObservationIgnored private lazy var thumbnails: NSCache<NSString, LoadedImage> = {
@@ -47,23 +48,11 @@ final class ProjectImageStore {
         return cache
     }()
     @ObservationIgnored private lazy var gate = DecodeGate(limit: Self.decodeLimit)
-    @ObservationIgnored private var generation = 0
 
-    /// 走査し直す。呼び出し側の取り消しで走査を止め、遅れて返った古い走査の結果は捨てる。走り切って反映した時だけ true。
+    /// 走査し直す。走り切って反映した時だけ true。
     @discardableResult
     func reload(projectPath: String) async -> Bool {
-        generation += 1
-        let current = generation
-        scanning = true
-        let task = Task.detached(priority: .userInitiated) {
-            ProjectImages.scan(projectPath: projectPath, isCancelled: { Task.isCancelled })
-        }
-        let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
-        guard generation == current else { return false }
-        scanning = false
-        guard !Task.isCancelled else { return false }
-        scan = result
-        return true
+        await scanner.reload { ProjectImages.scan(projectPath: projectPath, isCancelled: $0) }
     }
 
     /// 同じファイルでも更新されていれば別の絵として読み直す。
@@ -156,6 +145,30 @@ final class ProjectImageStore {
 private struct DecodedImage: @unchecked Sendable {
     let image: CGImage
     let pixelSize: ProjectImageStore.PixelSize?
+}
+
+/// 節の走査をバックグラウンドで回す（「画像」と「iPhone のプレビュー」で共通）。呼び出し側の取り消しで走査を止め、遅れて返った古い結果は捨てる。
+@MainActor
+@Observable
+final class BackgroundScan<Value: Sendable> {
+    private(set) var value: Value?
+    private(set) var scanning = false
+    @ObservationIgnored private var generation = 0
+
+    /// 走り切って反映した時だけ true。
+    @discardableResult
+    func reload(_ work: @escaping @Sendable (_ isCancelled: () -> Bool) -> Value) async -> Bool {
+        generation += 1
+        let current = generation
+        scanning = true
+        let task = Task.detached(priority: .userInitiated) { work { Task.isCancelled } }
+        let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        guard generation == current else { return false }
+        scanning = false
+        guard !Task.isCancelled else { return false }
+        value = result
+        return true
+    }
 }
 
 /// デコードの同時実行を絞る。枠が空くのを待っている間に取り消されれば待つのをやめる。

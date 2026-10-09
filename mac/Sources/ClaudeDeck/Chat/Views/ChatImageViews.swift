@@ -68,7 +68,7 @@ final class ChatImageLoader {
     }
 
     nonisolated private static func decode(_ image: ChatImage, sessionId: String?, maxPixels: Int,
-                                           source: Source) async -> DecodedImage? {
+                                           source: Source) async -> DecodedCGImage? {
         let data: Data?
         switch image {
         case .file(let path):
@@ -78,12 +78,8 @@ final class ChatImageLoader {
             data = await source(sessionId, itemId, index)
         }
         guard let data, let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        return ImageDecoding.thumbnail(of: source, maxPixels: maxPixels).map(DecodedImage.init)
+        return ImageDecoding.thumbnail(of: source, maxPixels: maxPixels).map(DecodedCGImage.init)
     }
-}
-
-private struct DecodedImage: @unchecked Sendable {
-    let image: CGImage
 }
 
 /// 吹き出しが画像を引くための組（どのセッションの transcript か）。
