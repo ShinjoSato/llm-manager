@@ -17,6 +17,8 @@ final class TranscriptCache {
     @ObservationIgnored private var recent: [String] = []
     /// 手元に会話を持っておくルームの数。行き来の多い数件だけ取り直しを省く。
     static let kept = 4
+    /// メインと別ウィンドウで出している会話（件数の上限に関わらず手放さない）。
+    @ObservationIgnored var pinned: () -> Set<String> = { [] }
     /// 吹き出しの画像の読み込みとキャッシュ。
     @ObservationIgnored private(set) lazy var imageLoader = ChatImageLoader(source: store.imageSource)
 
@@ -31,7 +33,7 @@ final class TranscriptCache {
         return buffers[sessionId]?.items ?? []
     }
 
-    /// 選択中のルームの履歴を揃える。取り直しも全件で置き換える（止まっていた間の発話は手元の末尾より前に入りうるので `after=` では埋まらない）。
+    /// 出しているルームの履歴を揃える。取り直しも全件で置き換える（止まっていた間の発話は手元の末尾より前に入りうるので `after=` では埋まらない）。
     func ensure(for sessionId: String?) {
         guard let sessionId, store.connection.isConnected else { return }
         recent.removeAll { $0 == sessionId }
@@ -60,7 +62,7 @@ final class TranscriptCache {
 
     /// 直近に開いたもの以外の会話を手放す（開き直せば取り直す）。
     private func forgetOld() {
-        let keep = Set(recent.suffix(Self.kept)).union(loading)
+        let keep = TranscriptRetention.keep(recent: recent, kept: Self.kept, loading: loading, pinned: pinned())
         recent.removeAll { !keep.contains($0) }
         for id in buffers.keys where !keep.contains(id) {
             buffers[id] = nil
@@ -68,10 +70,10 @@ final class TranscriptCache {
         }
     }
 
-    /// 監視を始め直した。止まっていた間の分を取り直す（`selected` は選択中のルームの sessionId）。
-    func reconnected(selected sessionId: String?) {
+    /// 監視を始め直した。止まっていた間の分を取り直す（`shown` はメインと別ウィンドウで出している sessionId）。
+    func reconnected(shown sessionIds: [String]) {
         stale = Set(buffers.keys)
-        ensure(for: sessionId)
+        for sessionId in sessionIds { ensure(for: sessionId) }
     }
 
     private func receive(_ event: TranscriptEvent) {

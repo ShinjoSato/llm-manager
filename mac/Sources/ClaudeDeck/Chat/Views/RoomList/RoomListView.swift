@@ -162,6 +162,8 @@ struct RoomListView: View {
 
     @ViewBuilder
     private func contextMenu(for room: Room) -> some View {
+        Button("別ウィンドウで開く") { model.openWindow(for: room.id) }
+        Divider()
         if let session = room.hosted {
             Button(session.end == nil ? "ルームを閉じる（claude を終了）" : "ルームを閉じる") { model.close(session) }
         }
