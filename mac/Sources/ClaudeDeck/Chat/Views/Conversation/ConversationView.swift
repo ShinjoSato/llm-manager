@@ -1,15 +1,17 @@
 import SwiftUI
 import MonitorKit
 
-/// 中央カラム: 見出し + チャット。
+/// 中央カラム（と別ウィンドウ）: 見出し + チャット。
 struct ConversationView: View {
     @Bindable var model: ChatModel
     let room: Room
+    /// 別ウィンドウの中か（見出しに「別ウィンドウで開く」を出さない）。
+    var inWindow = false
 
     var body: some View {
         VStack(spacing: 0) {
             // ボタンの吹き出しを下の会話の上に重ねるため、見出しを前に出す。
-            ConversationHeader(model: model, room: room).zIndex(1)
+            ConversationHeader(model: model, room: room, inWindow: inWindow).zIndex(1)
             if room.isExternal { ExternalBanner(model: model, room: room) }
             ChatPane(model: model, room: room)
         }

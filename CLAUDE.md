@@ -68,8 +68,9 @@ Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts
 - **画面の構成**:
   - 左端の切り替えバーで左の一覧を「ルーム」（監視のセッション + ホスト中のセッションを要対応 / 稼働中 / 待機で並べる）と「ディレクトリ」（設定に登録したプロジェクト。最上部の固定行「リンク」で横断のリンク一覧）に切り替える。「一覧の切り替えバー」「ルーム一覧」
   - 中央は `ChatModel.center` で、会話（`TranscriptStore` から組み立てたチャット。端末ビューは画面に載せず、PTY の受信と画面読み取りだけに使う）・ディレクトリの詳細（見出しの操作・サイト・画像・iPhone のプレビュー・GitHub・リンク・スレッド）・横断のリンク一覧を出し分ける。「会話（中央）」「ルーム一覧」
-  - 見出しのボタン（VS Code・GitHub・リンク・ピン・Xcode・閉じる・ディレクトリでは起動・Finder・設定で編集）はアイコンだけで、入りきらなければ優先度の低いものから「…」へ回す。「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` がある時だけで、「閉じる」は AppleScript でそのワークスペースだけを閉じる（初回は macOS のオートメーション許可が要る）。
+  - 見出しのボタン（VS Code・GitHub・リンク・ピン・Xcode・閉じる・別ウィンドウで開く・ディレクトリでは起動・Finder・設定で編集）はアイコンだけで、入りきらなければ優先度の低いものから「…」へ回す。「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` がある時だけで、「閉じる」は AppleScript でそのワークスペースだけを閉じる（初回は macOS のオートメーション許可が要る）。
   - 右はステージパネル（360px。SceneKit の 3D ステージと、選択中のルームのプロジェクトの LP のプレビューを切り替える）。「ステージパネル」
+  - ルームは一覧の右クリックか見出しのボタンで別ウィンドウにも開ける（`RoomWindows`・同じルームは 1 枚・中身は同じ `ConversationView` で送信と回答は同じ経路・下書きと添付はルームごとに共有・メインで他を見ている間も取得と既読を続ける・別ウィンドウ同士は macOS のタブにまとめられる・閉じてもセッションは止めない・復元しない）。「別ウィンドウ」
   - 設定画面（「claude-deck → 設定…」⌘,）のタブはプロジェクト・GitHub・iPhone 連携・キャラクター・書き出し・読み込み・起動と終了・外観（ナイト / ライト）。「設定（settings.json）」
   - コードは画面が `mac/Sources/ClaudeDeck/`（`Chat/Model/`・`Chat/Views/` の `RoomList` / `Directory` / `Links` / `Conversation` / `Composer`・`Terminal/`（`ClaudeTerminalView` を `+Launch` / `+Input` / `+Screen` / `+Limit` の extension に分ける）・`Stage/`・`Settings/`）、UI に依らない判定は `mac/Sources/MonitorKit/`（テストあり）。
 - **ホスト中のセッションへの送信と回答**: 入力欄は ⏎ 送信・⇧⏎ 改行で、PTY に bracketed paste で本文を入れ、入ったのを画面で確かめてから Enter（画像は先にパスを貼って `[Image #N]` を確かめる）。**端末で選択待ち（権限プロンプト・plan 承認・AskUserQuestion・trust 確認・入力欄に重なったダイアログ・セッションファイルの `waitingFor`）の間は送らない**（Enter が選択の確定になるため）。権限カードは Channels があれば `store.decide`、無ければ端末に許可 `1` / 拒否 `Esc`。選択肢カードは ↑/↓ で「❯」を 1 行ずつ動かし、着いたのを画面で確かめてから Enter（番号キーは使わない）。どれも押した時のカードと今の画面が違えば送らない。「入力欄と PTY への送信」「権限カード」「選択肢カード」

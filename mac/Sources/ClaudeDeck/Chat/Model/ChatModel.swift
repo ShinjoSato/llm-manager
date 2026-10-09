@@ -46,7 +46,19 @@ enum ChatCenter: Equatable {
 @MainActor
 @Observable
 final class ChatAlerts {
-    var message: String?
+    var message: String? {
+        didSet {
+            if message == nil {
+                target = nil
+            } else if oldValue == nil {
+                target = keyRoomWindow()
+            }
+        }
+    }
+    /// 出た時に前にあった別ウィンドウの印（nil ならメインに出す）。操作したウィンドウで知らせるため。
+    private(set) var target: UUID?
+    /// 前にある別ウィンドウの印。
+    @ObservationIgnored var keyRoomWindow: () -> UUID? = { nil }
 }
 
 /// チャット画面の状態。監視とホスト中のセッションからルーム一覧を組み立て、送信・伝言・引き継ぎ・回答・会話・エディタの部品を束ねる。
@@ -69,6 +81,11 @@ final class ChatModel {
     let editors: EditorLauncher
     /// ホスト中のセッションの記録と、起動時の再開。
     let restorer = SessionRestorer()
+    /// 別ウィンドウで開いているルーム。
+    private(set) var detached = DetachedRooms<RoomID>()
+    /// 別ウィンドウを出す（無ければ作り、あれば前に出す）・閉じる。ウィンドウを持つ側が設定する。
+    @ObservationIgnored var presentRoomWindow: (_ token: UUID) -> Void = { _ in }
+    @ObservationIgnored var dismissRoomWindow: (_ token: UUID) -> Void = { _ in }
 
     private(set) var hosted: [HostedSession] = []
     var selection: RoomID?
@@ -114,6 +131,7 @@ final class ChatModel {
         outbox.roomIds = { [weak self] sessionId in self?.rooms.filter { $0.sessionId == sessionId }.map(\.id) ?? [] }
         outbox.isHandingOver = { handover.inProgress.contains($0) }
         handover.onResume = { [weak self] project, sessionId, roomId in self?.resume(project: project, sessionId: sessionId, from: roomId) }
+        transcripts.pinned = { [weak self] in Set(self?.shownSessionIds(includingHiddenMain: true) ?? []) }
         refreshRooms()
         restorer.model = self
         restorer.start()
@@ -232,10 +250,14 @@ final class ChatModel {
         return rooms.first { $0.id == selection }
     }
 
+    func room(id: RoomID) -> Room? {
+        rooms.first { $0.id == id }
+    }
+
     func select(_ id: RoomID) {
         selection = id
         center = .room
-        markSelectedSeen()
+        markShownSeen()
     }
 
     func selectDirectory(_ id: UUID) {
@@ -253,10 +275,39 @@ final class ChatModel {
         return (id, directories.first { $0.id == id })
     }
 
-    /// 選択中のルームを既読にする（新着を受けるたびにも呼ぶ）。会話を出していない間は読んでいないので数えない。
-    func markSelectedSeen() {
-        guard center == .room, let sessionId = selectedRoom?.sessionId else { return }
-        lastSeen[sessionId] = Date().timeIntervalSince1970 * 1000
+    /// 出している会話を既読にする（新着を受けるたびにも呼ぶ）。メインで会話を出していない間、そのルームは読んでいないので数えない。
+    func markShownSeen() {
+        let now = Date().timeIntervalSince1970 * 1000
+        for sessionId in shownSessionIds(includingHiddenMain: false) { lastSeen[sessionId] = now }
+    }
+
+    /// 監視を始め直した時に、メインと別ウィンドウで出している会話を取り直す。
+    func reconnectTranscripts(epoch: Int) {
+        transcripts.reconnected(epoch: epoch, shown: shownSessionIds(includingHiddenMain: true))
+    }
+
+    /// メインと別ウィンドウで出している会話。`includingHiddenMain` ならメインが詳細等を出している間も選択中のルームを含める（戻った時のため）。
+    func shownSessionIds(includingHiddenMain: Bool) -> [String] {
+        let main = includingHiddenMain || center == .room ? selectedRoom?.sessionId : nil
+        return ShownSessions.sessionIds(main: main, detached: detached.rooms.map { room(id: $0)?.sessionId })
+    }
+
+    // MARK: - 別ウィンドウ
+
+    /// ルームを別ウィンドウで開く。既に開いていればそのウィンドウを前に出す。
+    func openWindow(for id: RoomID) {
+        let token = detached.open(id).token
+        presentRoomWindow(token)
+    }
+
+    /// 別ウィンドウが閉じられた（セッションはそのまま）。
+    func roomWindowClosed(_ token: UUID) {
+        detached.close(token)
+    }
+
+    /// 警告をメインに出すか（出したウィンドウが閉じられていればメインに回す）。
+    var showsAlertInMain: Bool {
+        alerts.message != nil && alerts.target.flatMap { detached.room(for: $0) } == nil
     }
 
     static func status(from local: ClaudeStatus) -> SessionStatus {
@@ -301,6 +352,7 @@ final class ChatModel {
     private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
         let session = host(project, resuming: sessionId)
         outbox.move(from: roomId, to: .hosted(session.id))
+        if let duplicate = detached.retarget(from: roomId, to: .hosted(session.id)) { dismissRoomWindow(duplicate) }
         select(.hosted(session.id))
         restorer.saveNow()
     }

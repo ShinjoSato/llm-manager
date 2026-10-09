@@ -1,9 +1,10 @@
 import AppKit
 import MonitorKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     private var window: NSWindow!
     private var main: MainViewController!
+    private var roomWindows: RoomWindows!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -30,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.title = "claude-deck"
         window.backgroundColor = ChatTheme.nsBackground
         window.titlebarAppearsTransparent = true
+        // メインはルームの別ウィンドウのタブに混ぜない（一覧の幅の同期がこのウィンドウの大きさ前提のため）。
+        window.tabbingMode = .disallowed
         window.contentViewController = main
         // 幅は一覧の幅に応じて画面側（`ListPaneWindowSync`）が掛け直す。
         window.contentMinSize = NSSize(width: ListPaneWidth.minimumWindowWidth(listWidth: ListPaneWidth.standard), height: 520)
@@ -40,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.delegate = self
         window.makeKeyAndOrderFront(nil)
         QuitCoordinator.shared.showMainWindow = { [weak self] in self?.window.makeKeyAndOrderFront(nil) }
+        roomWindows = RoomWindows(model: main.model, mainWindow: window) { [weak self] in self?.window.makeKeyAndOrderFront(nil) }
         // 画面のモデルを渡した後に開く（操作の受け手が揃ってから）。既定は無効。
         RemoteAccessController.shared.startIfEnabled()
     }
@@ -52,7 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 最後のウィンドウを閉じると終了するので、閉じる前に終了の確認を通す（取り消したらウィンドウを残す）。
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        let others = NSApp.windows.contains { $0 !== sender && $0.isVisible && $0.canBecomeMain }
+        // ルームの別ウィンドウはメインの付属なので、残っていても閉じる時の終了の確認は今までどおり通す。
+        let others = NSApp.windows.contains { $0 !== sender && $0.isVisible && $0.canBecomeMain && !roomWindows.owns($0) }
         guard sender === window, !others else { return true }
         // 終了の保留中に閉じても待ちは続ける（確認なしで中断しない）。Dock から出し直せる。
         if QuitCoordinator.shared.isWaiting {
@@ -64,7 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { window?.makeKeyAndOrderFront(nil) }
+        // 別ウィンドウだけが見えている時も、隠したメインを出し直す。
+        if !flag || !(window.isVisible || window.isMiniaturized) { window?.makeKeyAndOrderFront(nil) }
         return true
     }
 
@@ -118,7 +124,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         editMenu.addItem(withTitle: "すべて選択", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenuItem.submenu = editMenu
 
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "ウインドウ")
+        windowMenu.addItem(withTitle: "しまう", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "拡大/縮小", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        let closeItem = windowMenu.addItem(withTitle: "別ウィンドウを閉じる", action: #selector(closeRoomWindow(_:)), keyEquivalent: "w")
+        closeItem.target = self
+        windowMenuItem.submenu = windowMenu
+        // タブの操作（すべてのウインドウを結合 等）とウィンドウの一覧は AppKit がここに足す。
+        NSApp.windowsMenu = windowMenu
+
         NSApplication.shared.mainMenu = mainMenu
+    }
+
+    /// ⌘W はルームの別ウィンドウ（タブ）だけを閉じる（メインを閉じると終了の確認になるため）。
+    @MainActor @objc private func closeRoomWindow(_ sender: Any?) {
+        guard let key = NSApp.keyWindow, roomWindows.owns(key) else { return }
+        key.performClose(sender)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.action == #selector(closeRoomWindow(_:)) else { return true }
+        return MainActor.assumeIsolated { roomWindows?.owns(NSApp.keyWindow) ?? false }
     }
 
     @MainActor @objc private func showSettings() {

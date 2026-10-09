@@ -52,6 +52,14 @@ struct HeaderAction: Identifiable {
                 detail: "VS Code で開く: \(target.cwd)") { editors.openInVSCode(target) }
     }
 
+    /// 「別ウィンドウで開く」。
+    static func openInWindow(priority: Int, subpriority: Int, action: @escaping () -> Void) -> HeaderAction {
+        var item = HeaderAction.button(id: "window", priority: priority, symbol: "macwindow.badge.plus", name: "別ウィンドウで開く",
+                                       detail: "このルームを別のウィンドウで開く（開いていれば前に出す）", action: action)
+        item.subpriority = subpriority
+        return item
+    }
+
     /// 「Xcode」と「閉じる」（`project` が無ければ出さない）。閉じるは `onClose` で確認を開く。
     static func xcode(openPriority: Int, closePriority: Int, editors: EditorLauncher, target: EditorTarget,
                       project: URL?, onClose: @escaping () -> Void) -> [HeaderAction] {

@@ -30,15 +30,15 @@ struct ChatRootView<Trailing: View>: View {
         .background(ChatTheme.background)
         .environment(\.colorScheme, ChatTheme.colorScheme(for: AppearanceSettings.shared.theme))
         .onAppear { selectFirstIfNeeded() }
-        .onChange(of: model.store.connectionEpoch) { model.transcripts.reconnected(selected: model.selectedRoom?.sessionId) }
+        .onChange(of: model.store.connectionEpoch) { _, epoch in model.reconnectTranscripts(epoch: epoch) }
         .onChange(of: model.selectedRoom?.sessionId, initial: true) { _, sessionId in
             model.transcripts.ensure(for: sessionId)
-            model.markSelectedSeen()
+            model.markShownSeen()
         }
-        .onChange(of: model.store.feed.last?.id) { model.markSelectedSeen() }
+        .onChange(of: model.store.feed.last?.id) { model.markShownSeen() }
         .onChange(of: model.rooms.count) { selectFirstIfNeeded() }
         .onChange(of: model.firstVisibleRoom?.id) { selectFirstIfNeeded() }
-        .alert("claude-deck", isPresented: Binding(get: { model.alerts.message != nil },
+        .alert("claude-deck", isPresented: Binding(get: { model.showsAlertInMain },
                                                    set: { if !$0 { model.alerts.message = nil } })) {
             Button("OK") { model.alerts.message = nil }
         } message: {
