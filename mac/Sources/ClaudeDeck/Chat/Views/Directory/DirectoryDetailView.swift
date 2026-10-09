@@ -24,6 +24,7 @@ private struct DirectoryDetailTabs: View {
     @State private var remembered: DirectoryTab?
     @State private var hasSite: Bool?
     @State private var images = ProjectImageStore()
+    @State private var siteSource = SiteSourceSelection()
     @State private var iosPreviews = BackgroundScan<SwiftPreviewScan>()
     @State private var visibleHeight: Double?
 
@@ -76,7 +77,7 @@ private struct DirectoryDetailTabs: View {
     private func section(_ tab: DirectoryTab, xcodeProject: URL?, rooms: [Room]) -> some View {
         switch tab {
         case .site:
-            SitePreviewSection(project: project, availableHeight: visibleHeight.map { $0 - Double(Self.padding) * 2 })
+            SitePreviewSection(project: project, availableHeight: visibleHeight.map { $0 - Double(Self.padding) * 2 }, selection: $siteSource)
         case .images:
             ProjectImagesSection(project: project, store: images)
         case .iosPreviews:

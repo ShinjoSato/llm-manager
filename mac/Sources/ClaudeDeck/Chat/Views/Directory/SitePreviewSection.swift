@@ -2,26 +2,40 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
+/// サイトの見る元（開発サーバーか、書き出しか、設定のリンク（http / https）のどれか）と、初めの選択を済ませたか。
+struct SiteSourceSelection {
+    enum Source: Hashable {
+        case devServer
+        case export
+        case link(String)
+    }
+    var source: Source = .export
+    var choseInitial = false
+}
+
 /// ディレクトリの詳細の「サイト」: LP を開発サーバー・書き出し（アプリ内の静的配信）・公開 URL で、幅を切り替えて見る。
 struct SitePreviewSection: View {
     let project: ManagedProject
     /// タブの中でこの節（枠を含む）に使える高さ。プレビューを欄の下端まで広げるのに使う。
     var availableHeight: Double? = nil
 
-    /// 見る元。開発サーバーか、書き出しか、設定のリンク（http / https）のどれか。
-    private enum Source: Hashable {
-        case devServer
-        case export
-        case link(String)
-    }
-
+    /// タブを替えても選んだ見る元を保つため、持ち場は詳細の側。
+    @Binding var selection: SiteSourceSelection
     @State private var snapshot: SiteSnapshot?
-    @State private var source: Source = .export
-    @State private var choseInitialSource = false
     @State private var reloadToken = 0
     @State private var preview = SitePreviewState()
     @State private var headerHeight: Double = 0
     @AppStorage(SitePreviewDefaults.viewportKey) private var viewportRaw = SiteViewport.desktop.rawValue
+
+    private var source: Source {
+        get { selection.source }
+        nonmutating set { selection.source = newValue }
+    }
+    private var choseInitialSource: Bool {
+        get { selection.choseInitial }
+        nonmutating set { selection.choseInitial = newValue }
+    }
+    private typealias Source = SiteSourceSelection.Source
 
     private var viewport: SiteViewport { SiteViewport(rawValue: viewportRaw) ?? .desktop }
     private var links: [ProjectLink] { ProjectLinks.openable(project.links) }

@@ -318,7 +318,8 @@ final class SiteViewportTests: XCTestCase {
         XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 320, room: 200), 200)
         // 使える高さが分からなければ幅だけで決める。
         XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: nil), 625)
-        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: 0), 625)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: 0), 320)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: -50), 320)
         XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: .infinity), 625)
     }
 

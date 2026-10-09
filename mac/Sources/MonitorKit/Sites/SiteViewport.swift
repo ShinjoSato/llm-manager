@@ -60,7 +60,7 @@ public enum SiteViewport: String, CaseIterable, Identifiable, Sendable {
     /// 欄の幅いっぱいに収まる高さを上限とし、タブの中で枠に使える高さ `room` を超えない（`minimumPreviewHeight` は保つ）。
     public func heightLimit(available: Double, room: Double?) -> Double {
         let fill = layout(available: available, maxHeight: .infinity).frameHeight + bezel * 2
-        guard let room, room.isFinite, room > 0 else { return fill }
+        guard let room, room.isFinite else { return fill }
         return min(fill, max(room, Self.minimumPreviewHeight))
     }
 }
