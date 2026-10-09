@@ -68,7 +68,7 @@ mac/
           RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・プロジェクトの印（ProjectBadgeView）
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
-        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・概要・サイト・画像・iPhone のプレビュー・GitHub・リンク・スレッド）
+        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・サイト・画像・iPhone のプレビュー・リンク・スレッド）
           ProjectLinkEditor.swift     「リンク」の節の追加・編集のポップオーバー（種類と名前の提案・<title> の取得）
           ProjectImagesSection.swift  「画像」: フォルダごとのサムネイルのグリッド・拡大のシート
           IOSPreviewsSection.swift    「iPhone のプレビュー」: 全ファイルの #Preview を 1 つのグリッド（枠にファイル名と行）・すべて描く・拡大して切り替えて描き直すシート
@@ -551,8 +551,9 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「Xcode」「閉じる」（プロジェクトの path の配下に
     `.xcworkspace` / `.xcodeproj` がある時だけ。会話の見出しと同じ処理で、検出の結果は cwd ごと、閉じる処理中の印は押した先（ルーム / プロジェクト）ごとに `EditorLauncher` が持つ）・
     「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
-    本文は概要（フルパス・状態・メモ）、サイト（下記）、画像（下記）、iPhone のプレビュー（下記）、GitHub の紐づけ（owner / リポジトリ / Project 番号）、リンク（下記）、
+    本文はサイト（下記）、画像（下記）、iPhone のプレビュー（下記）、リンク（下記）、
     そのプロジェクトのスレッド（ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）。
+    パス・状態・メモ・GitHub の紐づけは本文に出さない（見出しのパスと状態のほかは設定画面で見る）。
     本文は中央の欄の幅いっぱいに使う（文章の節は読みやすいよう 900px まで、サイトのプレビューと画像は欄いっぱい）。
   - **リンク**（詳細の節）: 設定の `links` を全部、種類のアイコン・名前・URL（中略）の行で出す。開けるものは押すとブラウザで開き（開けた時だけ最終確認日を記録）、
     開けない形・名前の重複は理由付きで薄く出す。各行の右にピン（`pin` / `pin.fill`。押すと `pinned` を切り替え。付いている間は常に見せる）と
@@ -631,7 +632,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
     回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
     候補は `ViewThatFits` で入るものを選ぶ（`Views/Conversation/HeaderActions.swift`）。回す順の計算は `Sources/MonitorKit/Chat/HeaderOverflow.swift`（テストあり）。
-  - **サイト**（概要の下）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
+  - **サイト**（本文の先頭）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
     - 場所: 設定の `site`（下記「設定（settings.json）」）があればそれ、無ければプロジェクト直下と 2 階層までのサブフォルダから探す
       （`next.config.{js,mjs,ts,cjs}` があるか、`package.json` と `out/index.html` がある所。`node_modules`・`.next`・`out`・隠しフォルダ等の中は見ず、
       見つけたサイトの中も探さない。シンボリックリンクのフォルダは辿らない）。複数あれば書き出し済み → 浅い → 名前の順で先頭を使い、候補がある旨を出す。
