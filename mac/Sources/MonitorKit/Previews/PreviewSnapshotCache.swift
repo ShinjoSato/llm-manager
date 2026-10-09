@@ -17,8 +17,6 @@ public struct PreviewRenderRequest: Hashable, Sendable {
         self.locale = locale
     }
 
-    public var isDefault: Bool { variants.isEmpty && (locale ?? "").isEmpty }
-
     /// ファイル・番号・切り替えを並びによらず 1 本の文字列に。
     var slotText: String {
         let pairs = variants.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")

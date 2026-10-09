@@ -1,7 +1,7 @@
 import Foundation
 
 /// mcpbridge（Xcode の MCP）で呼んでよいツール。読み取りと描画だけで、ファイルの書き換え・Run・テスト等は呼ばない。
-public enum XcodeBridgeTool: String, CaseIterable, Sendable {
+public enum XcodeBridgeTool: String, Sendable {
     case openWorkspace = "XcodeOpenWorkspace"
     case closeWorkspace = "XcodeCloseWorkspace"
     case listWorkspaces = "XcodeListWorkspaces"
@@ -142,12 +142,11 @@ public enum XcodeBridgeIncoming: Equatable, Sendable {
 /// JSON-RPC 2.0（1 行 1 メッセージ）の組み立てと読み取り。
 public enum XcodeBridgeMessage {
     public static let protocolVersion = "2025-06-18"
-    public static let clientName = "claude-deck"
 
-    public static func initialize(id: Int, version: String = "1") -> Data {
+    public static func initialize(id: Int) -> Data {
         encode(["jsonrpc": "2.0", "id": id, "method": "initialize",
                 "params": ["protocolVersion": protocolVersion, "capabilities": [String: Any](),
-                           "clientInfo": ["name": clientName, "version": version]]])
+                           "clientInfo": ["name": "claude-deck", "version": "1"]]])
     }
 
     public static func initialized() -> Data {
@@ -223,7 +222,7 @@ public struct XcodeToolResult: Equatable, Sendable {
     }
 
     /// 失敗の文言。`isError` が false でも本文が `{"type":"error",…}` なら失敗として扱う。
-    public var failureText: String? {
+    var failureText: String? {
         if isError { return text }
         if let structured, Self.isErrorPayload(structured) { return String(decoding: structured, as: UTF8.self) }
         if Self.isErrorPayload(Data(text.utf8)) { return text }
@@ -235,9 +234,14 @@ public struct XcodeToolResult: Equatable, Sendable {
         return object["type"] as? String == "error"
     }
 
-    /// エラーなら理由を、そうでなければ structuredContent を型に読む（無ければ本文の text を JSON として読む）。
-    public func decode<T: Decodable>(_ type: T.Type) throws -> T {
+    /// 失敗なら理由を投げる。
+    public func throwIfFailed() throws {
         if let failureText { throw XcodeBridgeFailure.classify(failureText) }
+    }
+
+    /// 失敗なら理由を、そうでなければ structuredContent を型に読む（無ければ本文の text を JSON として読む）。
+    public func decode<T: Decodable>(_ type: T.Type) throws -> T {
+        try throwIfFailed()
         let source = structured ?? Data(text.utf8)
         do {
             return try JSONDecoder().decode(type, from: source)
@@ -249,10 +253,6 @@ public struct XcodeToolResult: Equatable, Sendable {
 
 public struct XcodeOpenWorkspaceResult: Decodable, Equatable, Sendable {
     public var workspaceIdentifier: String
-    public var workspacePath: String?
-    public var activeScheme: String?
-    public var activeRunDestination: String?
-    public var message: String?
 }
 
 public struct XcodeListWorkspacesResult: Decodable, Equatable, Sendable {
@@ -261,12 +261,10 @@ public struct XcodeListWorkspacesResult: Decodable, Equatable, Sendable {
 
 /// XcodeListWorkspaces の文言（ID とパスを並べた説明文）から、開いているものを拾う。
 public struct XcodeWorkspaceList: Equatable, Sendable {
-    public var message: String
     public var identifiers: Set<String>
     public var paths: Set<String>
 
     public init(message: String) {
-        self.message = message
         identifiers = Self.matches(#"\bworkspace(?:-[A-Za-z0-9_]+|\d+)\b"#, in: message)
         paths = Set(Self.matches(#"(?<![^\s:("'`])/[^\n"'`<>]*?\.(?:xcodeproj|xcworkspace)(?![A-Za-z0-9_])"#, in: message).map(Self.normalized))
     }
@@ -290,20 +288,12 @@ public struct XcodeWorkspaceList: Equatable, Sendable {
 /// 開いたワークスペース。`openedByUs` が false なら利用者が開いていたもので、閉じない。
 public struct XcodeOpenedWorkspace: Equatable, Sendable {
     public var identifier: String
-    public var path: String
     public var openedByUs: Bool
-
-    public init(identifier: String, path: String, openedByUs: Bool) {
-        self.identifier = identifier
-        self.path = path
-        self.openedByUs = openedByUs
-    }
 }
 
 public struct XcodeGlobResult: Decodable, Equatable, Sendable {
     public var matches: [String]
     public var truncated: Bool?
-    public var totalFound: Int?
 }
 
 /// 描いた端末。
@@ -311,12 +301,6 @@ public struct RenderedDestination: Codable, Equatable, Sendable {
     public var deviceModelName: String?
     public var platformName: String?
     public var systemVersion: String?
-
-    public init(deviceModelName: String? = nil, platformName: String? = nil, systemVersion: String? = nil) {
-        self.deviceModelName = deviceModelName
-        self.platformName = platformName
-        self.systemVersion = systemVersion
-    }
 
     /// 「iPhone 17 Pro・iOS 27.0」。
     public var label: String? {

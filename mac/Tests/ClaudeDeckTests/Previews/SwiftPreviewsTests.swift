@@ -3,7 +3,7 @@ import XCTest
 
 final class SwiftPreviewsTests: XCTestCase {
     private func defs(_ source: String) -> [SwiftPreviewDefinition] {
-        SwiftPreviews.definitions(in: source)
+        SwiftPreviews.definitions(in: Data(source.utf8))
     }
 
     func testNamedUnnamedAndTraits() {

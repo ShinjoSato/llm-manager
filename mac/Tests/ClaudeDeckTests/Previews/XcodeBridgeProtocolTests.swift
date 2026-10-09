@@ -112,7 +112,6 @@ final class XcodeBridgeProtocolTests: XCTestCase {
         XCTAssertFalse(result.isError)
         let opened = try result.decode(XcodeOpenWorkspaceResult.self)
         XCTAssertEqual(opened.workspaceIdentifier, "workspace-1")
-        XCTAssertEqual(opened.activeScheme, "App")
         // structuredContent が無ければ本文の text を JSON として読む。
         let textOnly = try XCTUnwrap(XcodeToolResult.parse(Data(#"{"content":[{"type":"text","text":"{\"matches\":[\"a/B.swift\"],\"truncated\":false,\"totalFound\":1}"}]}"#.utf8)))
         XCTAssertEqual(try textOnly.decode(XcodeGlobResult.self).matches, ["a/B.swift"])

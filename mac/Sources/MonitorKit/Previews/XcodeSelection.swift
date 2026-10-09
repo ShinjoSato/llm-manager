@@ -63,10 +63,7 @@ public enum XcodeSelection {
 
     /// 末尾の `/` とシンボリックリンクをそろえる（`/Applications/Xcode.app` と同じものを指す別名を同じとみなす）。
     static func normalized(_ path: String) -> String {
-        let resolved = (path as NSString).resolvingSymlinksInPath
-        var text = (resolved as NSString).standardizingPath
-        while text.hasSuffix("/"), text.count > 1 { text.removeLast() }
-        return text
+        XcodeWorkspaceList.normalized((path as NSString).resolvingSymlinksInPath)
     }
 
     /// xcode-select の Developer フォルダ（`DEVELOPER_DIR` があればそれが優先される）。

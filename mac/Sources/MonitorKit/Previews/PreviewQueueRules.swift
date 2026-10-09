@@ -3,7 +3,7 @@ import Foundation
 /// 時間切れ・読み込み待ちが続く時に待ち行列を止める判定（Xcode が詰まっている時に同じ待ちを繰り返さないため）。
 public struct PreviewStallCounter: Equatable, Sendable {
     public static let limit = 2
-    public private(set) var count = 0
+    private var count = 0
 
     public init() {}
 

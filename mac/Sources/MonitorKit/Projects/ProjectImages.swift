@@ -61,6 +61,8 @@ public enum ProjectImages {
     /// 大文字小文字を区別しないファイルシステムで `Build/` 等を素通りさせないため、小文字でも照合する。
     private static let skippedLowercased = Set(skipped.map { $0.lowercased() })
 
+    static func isSkipped(_ name: String) -> Bool { skippedLowercased.contains(name.lowercased()) }
+
     public static func isImage(_ name: String) -> Bool {
         extensions.contains((name as NSString).pathExtension.lowercased())
     }
@@ -70,50 +72,28 @@ public enum ProjectImages {
                             maxDirectories: Int = maxDirectories, isCancelled: () -> Bool = { false },
                             fileManager: FileManager = .default) -> ProjectImageScan {
         var images: [ProjectImage] = []
-        var truncated = false
         let realProject = FilePaths.realPath(projectPath)
-        var queue: [(relative: String, depth: Int)] = [(".", 0)]
-        var head = 0
-        scanning: while head < queue.count {
-            if isCancelled() { break }
-            if head >= maxDirectories {
-                truncated = true
-                break
+        // 画面の並びと同じ順で集め、打ち切った時に残るものを表示と一致させる。
+        let truncated = ProjectTree.walk(root: projectPath, maxDepth: maxDepth, maxDirectories: maxDirectories,
+                                         isCancelled: isCancelled, fileManager: fileManager, descend: { !isSkipped($0) }) { entry in
+            let found: ProjectImage?
+            switch entry.type {
+            case .typeRegular:
+                found = isImage(entry.name) ? image(entry.relativePath, path: entry.path, attrs: entry.attributes) : nil
+            case .typeSymbolicLink:
+                // フォルダのリンクは循環しうるので辿らない。ファイルのリンクは実体がプロジェクトの中にある時だけ数える。
+                guard isImage(entry.name), let realProject, let real = FilePaths.realPath(entry.path),
+                      real.hasPrefix(realProject + "/"),
+                      let realAttrs = try? fileManager.attributesOfItem(atPath: real),
+                      realAttrs[.type] as? FileAttributeType == .typeRegular else { return true }
+                found = image(entry.relativePath, path: entry.path, attrs: realAttrs)
+            default:
+                found = nil
             }
-            let (relative, depth) = queue[head]
-            head += 1
-            let dir = SiteLocator.absolute(relative, in: projectPath)
-            guard let names = try? fileManager.contentsOfDirectory(atPath: dir) else { continue }
-            // 画面の並びと同じ順で集め、打ち切った時に残るものを表示と一致させる。
-            for name in names.sorted(by: Self.naturalOrder) where !name.hasPrefix(".") {
-                let child = (dir as NSString).appendingPathComponent(name)
-                let childRelative = relative == "." ? name : "\(relative)/\(name)"
-                guard let attrs = try? fileManager.attributesOfItem(atPath: child),
-                      let type = attrs[.type] as? FileAttributeType else { continue }
-                let found: ProjectImage?
-                switch type {
-                case .typeDirectory:
-                    if depth < maxDepth, !skippedLowercased.contains(name.lowercased()) { queue.append((childRelative, depth + 1)) }
-                    found = nil
-                case .typeRegular:
-                    found = isImage(name) ? image(childRelative, path: child, attrs: attrs) : nil
-                case .typeSymbolicLink:
-                    // フォルダのリンクは循環しうるので辿らない。ファイルのリンクは実体がプロジェクトの中にある時だけ数える。
-                    guard isImage(name), let realProject, let real = FilePaths.realPath(child),
-                          real.hasPrefix(realProject + "/"),
-                          let realAttrs = try? fileManager.attributesOfItem(atPath: real),
-                          realAttrs[.type] as? FileAttributeType == .typeRegular else { continue }
-                    found = image(childRelative, path: child, attrs: realAttrs)
-                default:
-                    found = nil
-                }
-                guard let found else { continue }
-                if images.count >= maxCount {
-                    truncated = true
-                    break scanning
-                }
-                images.append(found)
-            }
+            guard let found else { return true }
+            guard images.count < maxCount else { return false }
+            images.append(found)
+            return true
         }
         return ProjectImageScan(groups: grouped(images), truncated: truncated)
     }
@@ -154,5 +134,43 @@ public enum ProjectImages {
     /// 数字を自然順に並べる（img2 < img10）。
     static func naturalOrder(_ a: String, _ b: String) -> Bool {
         a.localizedStandardCompare(b) == .orderedAscending
+    }
+}
+
+/// プロジェクトの下を浅いフォルダから自然順で辿る（「画像」と「iPhone のプレビュー」の走査で共通）。
+enum ProjectTree {
+    struct Entry {
+        let name: String
+        let path: String
+        let relativePath: String
+        let type: FileAttributeType
+        let attributes: [FileAttributeKey: Any]
+    }
+
+    /// 隠しファイルは見ず、`descend` の通るフォルダだけ降りてフォルダ以外を `visit` に渡す。`visit` の false かフォルダ数の上限で打ち切ったら true。
+    static func walk(root: String, maxDepth: Int, maxDirectories: Int, isCancelled: () -> Bool, fileManager: FileManager,
+                     descend: (String) -> Bool, visit: (Entry) -> Bool) -> Bool {
+        var queue: [(relative: String, depth: Int)] = [(".", 0)]
+        var head = 0
+        while head < queue.count {
+            if isCancelled() { return false }
+            if head >= maxDirectories { return true }
+            let (relative, depth) = queue[head]
+            head += 1
+            let dir = SiteLocator.absolute(relative, in: root)
+            guard let names = try? fileManager.contentsOfDirectory(atPath: dir) else { continue }
+            for name in names.sorted(by: ProjectImages.naturalOrder) where !name.hasPrefix(".") {
+                let child = (dir as NSString).appendingPathComponent(name)
+                let childRelative = relative == "." ? name : "\(relative)/\(name)"
+                guard let attrs = try? fileManager.attributesOfItem(atPath: child),
+                      let type = attrs[.type] as? FileAttributeType else { continue }
+                if type == .typeDirectory {
+                    if depth < maxDepth, descend(name) { queue.append((childRelative, depth + 1)) }
+                } else if !visit(Entry(name: name, path: child, relativePath: childRelative, type: type, attributes: attrs)) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 }

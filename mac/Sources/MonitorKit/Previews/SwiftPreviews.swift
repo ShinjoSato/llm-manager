@@ -37,15 +37,13 @@ public struct SwiftPreviewFile: Equatable, Sendable, Identifiable {
 
 /// 走査の結果。
 public struct SwiftPreviewScan: Equatable, Sendable {
-    public var root: String
     public var files: [SwiftPreviewFile]
     /// ファイル数・フォルダ数の上限で打ち切った。
     public var truncated: Bool
 
     public var count: Int { files.reduce(0) { $0 + $1.previews.count } }
 
-    public init(root: String, files: [SwiftPreviewFile], truncated: Bool) {
-        self.root = root
+    public init(files: [SwiftPreviewFile], truncated: Bool) {
         self.files = files
         self.truncated = truncated
     }
@@ -58,7 +56,6 @@ public enum SwiftPreviews {
     public static let maxDirectories = 20_000
     /// これより大きいソースは生成物とみなして読まない。
     public static let maxFileSize = 2 * 1024 * 1024
-    private static let skippedLowercased = Set(ProjectImages.skipped.map { $0.lowercased() })
 
     /// Xcode のプロジェクト（`.xcodeproj` / `.xcworkspace`）のあるフォルダ。ソースはふつうこの下にある。
     public static func scanRoot(forXcodeProject path: String) -> String {
@@ -66,62 +63,33 @@ public enum SwiftPreviews {
     }
 
     /// 起点の下の Swift ファイルを浅い順に読み、`#Preview` のあるものだけを相対パスの自然順で返す。
-    public static func scan(root: String, maxDepth: Int = maxDepth, maxFiles: Int = maxFiles,
-                            maxDirectories: Int = maxDirectories, isCancelled: () -> Bool = { false },
-                            fileManager: FileManager = .default) -> SwiftPreviewScan {
+    public static func scan(root: String, maxFiles: Int = maxFiles, isCancelled: () -> Bool = { false }) -> SwiftPreviewScan {
+        let fileManager = FileManager.default
         var files: [SwiftPreviewFile] = []
-        var truncated = false
         var swiftCount = 0
-        var queue: [(relative: String, depth: Int)] = [(".", 0)]
-        var head = 0
-        scanning: while head < queue.count {
-            if isCancelled() { break }
-            if head >= maxDirectories {
-                truncated = true
-                break
+        let truncated = ProjectTree.walk(root: root, maxDepth: maxDepth, maxDirectories: maxDirectories, isCancelled: isCancelled,
+                                         fileManager: fileManager, descend: { name in
+            let lower = name.lowercased()
+            let bundle = lower.hasSuffix(".xcodeproj") || lower.hasSuffix(".xcworkspace") || lower.hasSuffix(".xcassets")
+            return !bundle && !ProjectImages.isSkipped(name)
+        }) { entry in
+            // リンクは辿らない（循環と、プロジェクトの外のソースを拾わないため）。
+            guard entry.type == .typeRegular, entry.name.lowercased().hasSuffix(".swift") else { return true }
+            guard swiftCount < maxFiles else { return false }
+            swiftCount += 1
+            let size = (entry.attributes[.size] as? NSNumber)?.intValue ?? 0
+            // 字句を読む前に粗くふるう。
+            guard size <= maxFileSize, let data = fileManager.contents(atPath: entry.path),
+                  data.range(of: Data("#Preview".utf8)) != nil else { return true }
+            let previews = definitions(in: data)
+            if !previews.isEmpty {
+                files.append(SwiftPreviewFile(relativePath: entry.relativePath, path: entry.path,
+                                              modified: entry.attributes[.modificationDate] as? Date, previews: previews))
             }
-            let (relative, depth) = queue[head]
-            head += 1
-            let dir = SiteLocator.absolute(relative, in: root)
-            guard let names = try? fileManager.contentsOfDirectory(atPath: dir) else { continue }
-            for name in names.sorted(by: ProjectImages.naturalOrder) where !name.hasPrefix(".") {
-                let child = (dir as NSString).appendingPathComponent(name)
-                let childRelative = relative == "." ? name : "\(relative)/\(name)"
-                // リンクは辿らない（循環と、プロジェクトの外のソースを拾わないため）。
-                guard let attrs = try? fileManager.attributesOfItem(atPath: child),
-                      let type = attrs[.type] as? FileAttributeType else { continue }
-                if type == .typeDirectory {
-                    let lower = name.lowercased()
-                    let bundle = lower.hasSuffix(".xcodeproj") || lower.hasSuffix(".xcworkspace") || lower.hasSuffix(".xcassets")
-                    if depth < maxDepth, !bundle, !skippedLowercased.contains(lower) { queue.append((childRelative, depth + 1)) }
-                    continue
-                }
-                guard type == .typeRegular, name.lowercased().hasSuffix(".swift") else { continue }
-                if swiftCount >= maxFiles {
-                    truncated = true
-                    break scanning
-                }
-                swiftCount += 1
-                let size = (attrs[.size] as? NSNumber)?.intValue ?? 0
-                guard size <= maxFileSize, let data = fileManager.contents(atPath: child),
-                      containsPreviewWord(data) else { continue }
-                let previews = definitions(in: data)
-                guard !previews.isEmpty else { continue }
-                files.append(SwiftPreviewFile(relativePath: childRelative, path: child,
-                                              modified: attrs[.modificationDate] as? Date, previews: previews))
-            }
+            return true
         }
         files.sort { ProjectImages.naturalOrder($0.relativePath, $1.relativePath) }
-        return SwiftPreviewScan(root: root, files: files, truncated: truncated)
-    }
-
-    /// 字句を読む前の粗いふるい。
-    static func containsPreviewWord(_ data: Data) -> Bool {
-        data.range(of: Data("#Preview".utf8)) != nil
-    }
-
-    public static func definitions(in source: String) -> [SwiftPreviewDefinition] {
-        definitions(in: Data(source.utf8))
+        return SwiftPreviewScan(files: files, truncated: truncated)
     }
 
     /// `#Preview` を上から拾う。`PreviewProvider` に準拠する型は一覧に出さないが、Xcode と番号をそろえるため数える。
@@ -253,8 +221,7 @@ struct PreviewLexer {
 
     private static let declarationKeywords: Set<String> = ["struct", "class", "enum", "actor", "extension"]
 
-    /// `PreviewProvider` の直前の字句が、型の宣言の継承節（`struct X: A, SwiftUI.PreviewProvider`）か。
-    /// ジェネリクスの制約（`<T: PreviewProvider>`・`where T: PreviewProvider`）・型注釈（`let x: PreviewProvider`）は数えない。
+    /// `PreviewProvider` の直前の字句が型の宣言の継承節か（ジェネリクスの制約・型注釈は数えない）。
     static func isConformanceInTypeDeclaration(_ tokens: [Token]) -> Bool {
         var k = tokens.count - 1
         // `SwiftUI.PreviewProvider` の修飾。

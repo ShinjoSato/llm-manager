@@ -20,3 +20,8 @@ extension NSImage {
         self.init(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 }
+
+/// 縮小した絵をバックグラウンドから渡す包み（作った後は変えない）。
+struct DecodedCGImage: @unchecked Sendable {
+    let image: CGImage
+}

@@ -276,7 +276,7 @@ final class XcodeBridgeClientTests: XCTestCase {
         }
         // 開いていなければ自分で開いたもの。
         let (fresh, calls) = try await open(listMessage: "No workspaces are currently open.")
-        XCTAssertEqual(fresh, XcodeOpenedWorkspace(identifier: "workspace-1", path: path, openedByUs: true))
+        XCTAssertEqual(fresh, XcodeOpenedWorkspace(identifier: "workspace-1", openedByUs: true))
         XCTAssertEqual(calls, ["XcodeListWorkspaces", "XcodeOpenWorkspace"])
         // 同じパスが既に開いていれば利用者のもの（閉じない）。
         let (users, _) = try await open(listMessage: "Open workspaces:\n- workspace-9: \(path)")

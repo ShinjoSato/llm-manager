@@ -78,20 +78,18 @@ public actor XcodeBridgeClient {
     }
 
     public func closeWorkspace(_ identifier: String) async throws {
-        let result = try await call(.closeWorkspace, ["workspaceIdentifier": identifier], timeout: timeouts.short)
-        if let failure = result.failureText { throw XcodeBridgeFailure.classify(failure) }
+        try await call(.closeWorkspace, ["workspaceIdentifier": identifier], timeout: timeouts.short).throwIfFailed()
     }
 
     /// Xcode で開いているワークスペースの一覧（文言のまま）。
     public func listWorkspaces() async throws -> XcodeWorkspaceList {
         let result = try await call(.listWorkspaces, [:], timeout: timeouts.list)
-        if let failure = result.failureText { throw XcodeBridgeFailure.classify(failure) }
+        try result.throwIfFailed()
         let message = (try? result.decode(XcodeListWorkspacesResult.self))?.message ?? result.text
         return XcodeWorkspaceList(message: message)
     }
 
-    /// 開く前に一覧を見て、利用者が既に開いていたものなら「自分で開いたものではない」として返す（閉じないため）。
-    /// 一覧を読めない時も自分で開いたとはみなさない。
+    /// 開く前に一覧を見て、利用者が既に開いていた（一覧を読めない時も）なら自分で開いたとはみなさない（閉じないため）。
     public func openOwnedWorkspace(path: String) async throws -> XcodeOpenedWorkspace {
         // 何も開いていない時の一覧は、起動して最初の呼び出しでないと返らない（Xcode 27 の mcpbridge で確認）ので起動し直す。
         if callsSinceStart > 0 {
@@ -103,7 +101,7 @@ public actor XcodeBridgeClient {
         if transport == nil { try await start() }
         let opened = try await openWorkspace(path: path)
         let openedByUs = before.map { !$0.contains(path: path) && !$0.contains(identifier: opened.workspaceIdentifier) } ?? false
-        return XcodeOpenedWorkspace(identifier: opened.workspaceIdentifier, path: path, openedByUs: openedByUs)
+        return XcodeOpenedWorkspace(identifier: opened.workspaceIdentifier, openedByUs: openedByUs)
     }
 
     public func glob(workspace: String, pattern: String) async throws -> XcodeGlobResult {
@@ -111,8 +109,7 @@ public actor XcodeBridgeClient {
             .decode(XcodeGlobResult.self)
     }
 
-    /// 描いて結果を返す。絵が無い時は理由を投げる。待つのはツールの時間切れより少し長く。
-    /// 開いた直後のパッケージの読み込み中は、`packagesWait` の間だけ間を置いて頼み直す。
+    /// 描いて結果を返す（絵が無ければ理由を投げる）。開いた直後のパッケージの読み込み中は `packagesWait` の間だけ頼み直す。
     public func renderPreview(_ arguments: RenderPreviewArguments, packagesWait: Duration = .seconds(180),
                               retryInterval: Duration = .seconds(3)) async throws -> RenderPreviewResult {
         let clock = ContinuousClock()
@@ -217,8 +214,8 @@ public actor XcodeBridgeClient {
             }
         case .exited(let detail):
             let reason = detail.isEmpty ? "mcpbridge が終了しました" : "mcpbridge が終了しました: \(XcodeBridgeFailure.summary(detail, limit: 300))"
-            let failure = XcodeBridgeFailure.classifyExit(reason)
-            failAll(failure)
+            // Xcode が無くて終わった時はそう言う。
+            failAll(XcodeBridgeFailure.classify(reason) == .xcodeNotRunning ? .xcodeNotRunning : .bridgeUnavailable(reason))
             await shutdown()
         }
     }
@@ -230,15 +227,12 @@ public actor XcodeBridgeClient {
     }
 
     private func shutdown() async {
-        guard let transport else {
-            failAll(.bridgeUnavailable("mcpbridge を止めました"))
-            return
-        }
+        failAll(.bridgeUnavailable("mcpbridge を止めました"))
+        guard let transport else { return }
         self.transport = nil
         generation += 1
         reader?.cancel()
         reader = nil
-        failAll(.bridgeUnavailable("mcpbridge を止めました"))
         let previous = stopping
         let task = Task {
             await previous?.value
@@ -246,13 +240,5 @@ public actor XcodeBridgeClient {
         }
         stopping = task
         await task.value
-    }
-}
-
-extension XcodeBridgeFailure {
-    /// mcpbridge が終わった時の文言から（Xcode が無い時はそう言う）。
-    static func classifyExit(_ text: String) -> XcodeBridgeFailure {
-        if case .xcodeNotRunning = classify(text) { return .xcodeNotRunning }
-        return .bridgeUnavailable(text)
     }
 }

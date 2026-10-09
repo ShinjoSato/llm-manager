@@ -1,7 +1,6 @@
 import Foundation
 
-/// 新しいプロセスグループで起動した開発サーバー。止める時はグループごと止め、先頭のプロセスは止まり切るまで刈り取らない
-/// （番号が使い回されず、グループが自分の子のものだと言い切れるため）。
+/// 新しいプロセスグループで起動した開発サーバー。止める時はグループごと止める（`ProcessGroup`）。
 public final class DevServerProcess: @unchecked Sendable {
     public let pid: pid_t
     /// 受け手が詰まっている間にため込む出力の上限（超えたら古い方から捨てる）。
@@ -9,9 +8,7 @@ public final class DevServerProcess: @unchecked Sendable {
 
     private let lock = NSLock()
     private var exited: DevServerExit?
-    private var reaped = false
-    private var termSentAt: Date?
-    private var killSentAt: Date?
+    private var group: ProcessGroup
     private var stopTask: Task<Void, Never>?
     private var exitSource: DispatchSourceProcess?
     private var output: FileHandle?
@@ -25,6 +22,7 @@ public final class DevServerProcess: @unchecked Sendable {
     private init(pid: pid_t, deliveryQueue: DispatchQueue, onOutput: @escaping @Sendable (Data) -> Void,
                  onExit: @escaping @Sendable (DevServerExit) -> Void) {
         self.pid = pid
+        group = ProcessGroup(pid: pid)
         self.deliveryQueue = deliveryQueue
         self.onOutput = onOutput
         self.onExit = onExit
@@ -39,38 +37,12 @@ public final class DevServerProcess: @unchecked Sendable {
         guard pipe(&fds) == 0 else { throw PosixSpawnError.failed(errno) }
         let (readFD, writeFD) = (fds[0], fds[1])
         _ = fcntl(readFD, F_SETFD, FD_CLOEXEC)
-
-        var attr: posix_spawnattr_t?
-        posix_spawnattr_init(&attr)
-        defer { posix_spawnattr_destroy(&attr) }
-        // 新しいグループにして、止める時に孫（npm → node 等）までまとめて届くようにする。親の fd は持ち込ませない。
-        let flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
-        posix_spawnattr_setflags(&attr, Int16(flags))
-        posix_spawnattr_setpgroup(&attr, 0)
-        var defaults = sigset_t()
-        sigemptyset(&defaults)
-        for sig in [SIGPIPE, SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGCHLD] { sigaddset(&defaults, sig) }
-        posix_spawnattr_setsigdefault(&attr, &defaults)
-        var empty = sigset_t()
-        sigemptyset(&empty)
-        posix_spawnattr_setsigmask(&attr, &empty)
-
-        var actions: posix_spawn_file_actions_t?
-        posix_spawn_file_actions_init(&actions)
-        defer { posix_spawn_file_actions_destroy(&actions) }
-        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
-        posix_spawn_file_actions_adddup2(&actions, writeFD, 1)
-        posix_spawn_file_actions_adddup2(&actions, writeFD, 2)
-        posix_spawn_file_actions_addchdir_np(&actions, directory)
-
-        let argv = ([executable] + arguments).map { strdup($0) } + [nil]
-        let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
-        defer {
-            argv.forEach { free($0) }
-            envp.forEach { free($0) }
+        let (pid, rc) = ProcessGroup.spawn(executable: executable, arguments: arguments, environment: environment,
+                                           directory: directory) { actions in
+            posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+            posix_spawn_file_actions_adddup2(&actions, writeFD, 1)
+            posix_spawn_file_actions_adddup2(&actions, writeFD, 2)
         }
-        var pid: pid_t = 0
-        let rc = posix_spawn(&pid, executable, &actions, &attr, argv, envp)
         close(writeFD)
         guard rc == 0 else {
             close(readFD)
@@ -102,9 +74,7 @@ public final class DevServerProcess: @unchecked Sendable {
 
     /// 先頭のプロセスが終わったか（刈り取らずに見る）。
     private func peekExit() -> DevServerExit? {
-        var info = siginfo_t()
-        guard waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0, info.si_pid == pid else { return nil }
-        return DevServerExit(siginfoCode: info.si_code, status: info.si_status)
+        ProcessGroup.peekExit(pid).map { DevServerExit(siginfoCode: $0.si_code, status: $0.si_status) }
     }
 
     /// 受け取った出力をためて、受け手のキューへまとめて渡す（届いた順のまま、詰まっても際限なくはためない）。
@@ -165,7 +135,7 @@ public final class DevServerProcess: @unchecked Sendable {
     public var exitStatus: DevServerExit? { lock.withLock { exited } }
 
     /// グループを止め切って（またはあきらめて）先頭を刈り取ったか。
-    public var isFinished: Bool { lock.withLock { reaped } }
+    public var isFinished: Bool { lock.withLock { group.reaped } }
 
     /// グループごと止める（SIGTERM → 猶予の後 SIGKILL）。何度呼んでも 1 回分の手順になる。
     public func stop() async {
@@ -184,59 +154,16 @@ public final class DevServerProcess: @unchecked Sendable {
 
     /// アプリの終了時。まとめて SIGTERM を送り、全部が止まるか猶予が尽きるまでこのスレッドで待つ。
     public static func stopAllBlocking(_ processes: [DevServerProcess]) {
-        var remaining = processes
-        while !remaining.isEmpty {
-            let now = Date()
-            remaining.removeAll { $0.advance(now: now) }
-            if !remaining.isEmpty { usleep(50_000) }
-        }
+        ProcessGroup.advanceAllBlocking(processes.map { process in { process.advance(now: $0) } })
     }
 
     /// 手順を 1 つ進める。終わったら true。
     private func advance(now: Date) -> Bool {
         lock.withLock {
-            let owns = ownsGroupLocked()
-            // 一覧を取れない時は、先頭が生きていれば残っているとみなして手順を続ける。
-            let alive = owns && (Self.groupAlive(pid) ?? (peekExit() == nil))
-            let step = DevServerStopPlan.next(ownsGroup: owns, groupAlive: alive, termSentAt: termSentAt,
-                                              killSentAt: killSentAt, now: now)
-            switch step {
-            case .terminate:
-                killpg(pid, SIGTERM)
-                termSentAt = now
-                return false
-            case .kill:
-                killpg(pid, SIGKILL)
-                killSentAt = now
-                return false
-            case .wait:
-                return false
-            case .finished:
-                reapLocked()
-                return true
-            }
-        }
-    }
-
-    /// 刈り取る前で、今も自分の子か（終わっていても刈り取っていなければ番号は使い回されない）。
-    private func ownsGroupLocked() -> Bool {
-        guard !reaped else { return false }
-        var info = siginfo_t()
-        return waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0
-    }
-
-    private func reapLocked() {
-        guard !reaped else { return }
-        reaped = true
-        exitSource?.cancel()
-        exitSource = nil
-        var status: Int32 = 0
-        // SIGKILL の後もまだ終わっていなければ、終わるのを待って刈り取る（ゾンビを残さない）。
-        guard waitpid(pid, &status, WNOHANG) == 0 else { return }
-        let pid = pid
-        DispatchQueue.global(qos: .utility).async {
-            var status: Int32 = 0
-            waitpid(pid, &status, 0)
+            guard group.advance(now: now) else { return false }
+            exitSource?.cancel()
+            exitSource = nil
+            return true
         }
     }
 
@@ -252,5 +179,111 @@ public final class DevServerProcess: @unchecked Sendable {
         size = procs.count * stride
         guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return nil }
         return procs.prefix(size / stride).contains { $0.kp_eproc.e_pgid == pgid && $0.kp_proc.p_stat != SZOMB }
+    }
+}
+
+/// 新しいプロセスグループの子の起動とグループごとの停止（開発サーバーと mcpbridge で共通・持ち主のロックの中で使う。先頭は止め切るまで刈り取らない）。
+struct ProcessGroup {
+    let pid: pid_t
+    private(set) var reaped = false
+    private var termSentAt: Date?
+    private var killSentAt: Date?
+
+    init(pid: pid_t) {
+        self.pid = pid
+    }
+
+    /// 新しいグループで起動する（止める時に孫まで届くように。親の fd は持ち込ませず、シグナルは既定に戻す）。`wire` で標準入出力をつなぐ。
+    static func spawn(executable: String, arguments: [String], environment: [String: String], directory: String,
+                      wire: (inout posix_spawn_file_actions_t?) -> Void) -> (pid: pid_t, rc: Int32) {
+        var attr: posix_spawnattr_t?
+        posix_spawnattr_init(&attr)
+        defer { posix_spawnattr_destroy(&attr) }
+        let flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
+        posix_spawnattr_setflags(&attr, Int16(flags))
+        posix_spawnattr_setpgroup(&attr, 0)
+        var defaults = sigset_t()
+        sigemptyset(&defaults)
+        for sig in [SIGPIPE, SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGCHLD] { sigaddset(&defaults, sig) }
+        posix_spawnattr_setsigdefault(&attr, &defaults)
+        var empty = sigset_t()
+        sigemptyset(&empty)
+        posix_spawnattr_setsigmask(&attr, &empty)
+
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        wire(&actions)
+        posix_spawn_file_actions_addchdir_np(&actions, directory)
+
+        let argv = ([executable] + arguments).map { strdup($0) } + [nil]
+        let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer {
+            argv.forEach { free($0) }
+            envp.forEach { free($0) }
+        }
+        var pid: pid_t = 0
+        let rc = posix_spawn(&pid, executable, &actions, &attr, argv, envp)
+        return (pid, rc)
+    }
+
+    /// 先頭のプロセスが終わっていれば、その知らせ（刈り取らずに見る）。
+    static func peekExit(_ pid: pid_t) -> siginfo_t? {
+        var info = siginfo_t()
+        guard waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0, info.si_pid == pid else { return nil }
+        return info
+    }
+
+    /// 止める手順（SIGTERM → 猶予の後 SIGKILL）を 1 つ進める。止め切って（またはあきらめて）刈り取ったら true。
+    mutating func advance(now: Date) -> Bool {
+        let owns = ownsGroup()
+        // 一覧を取れない時は、先頭が生きていれば残っているとみなして手順を続ける。
+        let alive = owns && (DevServerProcess.groupAlive(pid) ?? (Self.peekExit(pid) == nil))
+        switch DevServerStopPlan.next(ownsGroup: owns, groupAlive: alive, termSentAt: termSentAt,
+                                      killSentAt: killSentAt, now: now) {
+        case .terminate:
+            killpg(pid, SIGTERM)
+            termSentAt = now
+            return false
+        case .kill:
+            killpg(pid, SIGKILL)
+            killSentAt = now
+            return false
+        case .wait:
+            return false
+        case .finished:
+            reap()
+            return true
+        }
+    }
+
+    /// 刈り取る前で、今も自分の子か（終わっていても刈り取っていなければ番号は使い回されない）。
+    private func ownsGroup() -> Bool {
+        guard !reaped else { return false }
+        var info = siginfo_t()
+        return waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0
+    }
+
+    private mutating func reap() {
+        guard !reaped else { return }
+        reaped = true
+        var status: Int32 = 0
+        // SIGKILL の後もまだ終わっていなければ、終わるのを待って刈り取る（ゾンビを残さない）。
+        guard waitpid(pid, &status, WNOHANG) == 0 else { return }
+        let pid = pid
+        DispatchQueue.global(qos: .utility).async {
+            var status: Int32 = 0
+            waitpid(pid, &status, 0)
+        }
+    }
+
+    /// アプリの終了時。全部が終わるまで、このスレッドで手順を進める。
+    static func advanceAllBlocking(_ steps: [(Date) -> Bool]) {
+        var remaining = steps
+        while !remaining.isEmpty {
+            let now = Date()
+            remaining.removeAll { $0(now) }
+            if !remaining.isEmpty { usleep(50_000) }
+        }
     }
 }

@@ -8,10 +8,10 @@ struct IOSPreviewsSection: View {
     /// 開く `.xcworkspace` / `.xcodeproj`。
     let xcodeProject: URL
 
-    @State private var list = IOSPreviewList()
+    @State private var list = BackgroundScan<SwiftPreviewScan>()
     @State private var opened: IOSPreviewTarget?
     @State private var reloadToken = 0
-    @State private var scanned: ScanRequest?
+    @State private var scanned: DetailScanKey?
     @State private var xcodeRunning = true
     /// 畳んだまま「すべて描く」を押した時は、節を開いてから足す（閉じた節の分は取りやめるため）。
     @State private var renderAllWhenOpened = false
@@ -31,10 +31,10 @@ struct IOSPreviewsSection: View {
         }
         .detailCard()
         // 畳んでいる間は走査せず、開いた時に初めて走査する。
-        .task(id: ScanKey(root: root, open: !collapsed, token: reloadToken)) {
-            let request = ScanRequest(root: root, token: reloadToken)
-            guard !collapsed, scanned != request else { return }
-            if await list.reload(root: root) { scanned = request }
+        .task(id: scanKey) {
+            let key = scanKey
+            guard key.open, scanned != key else { return }
+            if await list.reload({ SwiftPreviews.scan(root: key.path, isCancelled: $0) }) { scanned = key }
         }
         // 開いている間は mcpbridge を止めず、Xcode が動いているかを見続ける。閉じたらこのプロジェクトの待ち行列を取りやめる。
         .task(id: collapsed) {
@@ -42,7 +42,7 @@ struct IOSPreviewsSection: View {
             service.sectionOpened(project.id)
             if renderAllWhenOpened {
                 renderAllWhenOpened = false
-                if list.scan != nil { service.renderAll(targets) }
+                service.renderAll(targets)
             }
             while !Task.isCancelled {
                 xcodeRunning = IOSPreviewService.xcodeIsRunning()
@@ -55,19 +55,10 @@ struct IOSPreviewsSection: View {
         }
     }
 
-    private struct ScanKey: Hashable {
-        let root: String
-        let open: Bool
-        let token: Int
-    }
-
-    private struct ScanRequest: Equatable {
-        let root: String
-        let token: Int
-    }
+    private var scanKey: DetailScanKey { DetailScanKey(path: root, open: !collapsed, token: reloadToken) }
 
     private var targets: [IOSPreviewTarget] {
-        (list.scan?.files ?? []).flatMap { file in
+        (list.value?.files ?? []).flatMap { file in
             file.previews.map { IOSPreviewTarget(projectId: project.id, projectName: project.name,
                                                  xcodeProject: xcodeProject.path, file: file, preview: $0) }
         }
@@ -76,16 +67,7 @@ struct IOSPreviewsSection: View {
     private var toolbar: some View {
         let busy = service.busyProjects.contains(project.id)
         return HStack(spacing: 8) {
-            Button { collapsed.toggle() } label: {
-                HStack(spacing: 6) {
-                    DisclosureChevron(collapsed: collapsed)
-                    Text(list.scan.map { "iPhone のプレビュー  \($0.count)" } ?? "iPhone のプレビュー")
-                        .sectionLabelStyle()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(collapsed ? "iPhone のプレビューの節を開く" : "iPhone のプレビューの節を畳む")
+            SectionDisclosureButton(name: "iPhone のプレビュー", count: list.value?.count, collapsed: $collapsed)
             Spacer(minLength: 8)
             if busy {
                 HeaderButton(symbol: "stop.fill", name: "取りやめる",
@@ -103,7 +85,7 @@ struct IOSPreviewsSection: View {
                         service.renderAll(targets)
                     }
                 }
-                .disabled(list.scan == nil || targets.isEmpty)
+                .disabled(targets.isEmpty)
             }
             HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "ソースの #Preview を探し直す",
                          busyStatus: list.scanning ? "走査中" : nil) {
@@ -164,34 +146,26 @@ struct IOSPreviewsSection: View {
 
     @ViewBuilder
     private var content: some View {
-        if let scan = list.scan {
+        if let scan = list.value {
             if scan.files.isEmpty {
-                emptyText("#Preview なし（\(root) の下の Swift ファイル）")
+                SectionNote("#Preview なし（\(root) の下の Swift ファイル）")
             }
-            // ファイルの区切りは付けず、全部を 1 つのグリッドに並べる（ファイル名は各枠に出す）。
-            // 番号はファイルごとに 0 から振るので、グリッドの id はファイルと番号の組にする（重なると並びが崩れてちらつく）。
             LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 12) {
                 ForEach(targets) { target in
                     IOSPreviewCell(target: target) { opened = target }
                 }
             }
             if scan.truncated {
-                emptyText("Swift ファイルが \(SwiftPreviews.maxFiles) 件かフォルダが \(SwiftPreviews.maxDirectories) 個を超えたため、浅いフォルダから読んだ分だけを出しています")
+                SectionNote("Swift ファイルが \(SwiftPreviews.maxFiles) 件かフォルダが \(SwiftPreviews.maxDirectories) 個を超えたため、浅いフォルダから読んだ分だけを出しています")
             }
         } else {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 40)
         }
     }
-
-    private func emptyText(_ text: String) -> some View {
-        Text(text)
-            .font(ChatTheme.caption)
-            .foregroundStyle(ChatTheme.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
 }
 
 extension IOSPreviewTarget: Identifiable {
+    /// 番号はファイルごとに 0 から振るので、ファイルと番号の組にする（重なるとグリッドの並びが崩れてちらつく）。
     var id: String { "\(file.relativePath)#\(preview.index)" }
 }
 
@@ -204,11 +178,9 @@ private struct IOSPreviewCell: View {
     @State private var image: NSImage?
 
     private var service: IOSPreviewService { .shared }
-    private var request: PreviewRenderRequest { IOSPreviewService.defaultRequest(target) }
-    private var key: IOSPreviewItemKey { IOSPreviewItemKey(projectId: target.projectId, request: request) }
-    private var cacheKey: PreviewCacheKey {
-        PreviewCacheKey(projectId: target.projectId, request: request, sourceModified: target.file.modified)
-    }
+    private var request: PreviewRenderRequest { target.defaultRequest }
+    private var key: IOSPreviewItemKey { target.key(request) }
+    private var cacheKey: PreviewCacheKey { target.cacheKey(request) }
 
     var body: some View {
         let shown = service.current(key, sourceModified: target.file.modified) ?? stored
@@ -269,12 +241,8 @@ private struct IOSPreviewCell: View {
     }
 
     private func frame(shown: IOSPreviewRendered?, state: IOSPreviewService.ItemState?) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 10)
-        return Color.clear
-            .aspectRatio(0.5, contentMode: .fit)
-            .frame(maxWidth: .infinity)
-            .background(shape.fill(ChatTheme.inputSurface))
-            .overlay {
+        GridTile(aspectRatio: 0.5) {
+            Group {
                 if let image {
                     Image(nsImage: image)
                         .resizable()
@@ -287,13 +255,12 @@ private struct IOSPreviewCell: View {
                     placeholder(state: state)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topTrailing) {
                 // 描き直しの間も前の絵は出したまま、隅に状態を出す。
                 if shown != nil, let state { badge(state).padding(6) }
             }
-            .clipShape(shape)
-            .overlay(shape.stroke(ChatTheme.border))
-            .contentShape(shape)
+        }
     }
 
     @ViewBuilder
@@ -324,20 +291,18 @@ private struct IOSPreviewCell: View {
         .padding(8)
     }
 
-    @ViewBuilder
     private func badge(_ state: IOSPreviewService.ItemState) -> some View {
-        switch state {
-        case .rendering, .queued:
-            ProgressView().controlSize(.mini)
-                .padding(4)
-                .background(Circle().fill(ChatTheme.background.opacity(0.85)))
-        case .failed:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(ChatTheme.error)
-                .padding(4)
-                .background(Circle().fill(ChatTheme.background.opacity(0.85)))
+        Group {
+            if case .failed = state {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ChatTheme.error)
+            } else {
+                ProgressView().controlSize(.mini)
+            }
         }
+        .padding(4)
+        .background(Circle().fill(ChatTheme.background.opacity(0.85)))
     }
 }
 
@@ -357,18 +322,13 @@ private struct IOSPreviewSheet: View {
     private var request: PreviewRenderRequest {
         PreviewRenderRequest(relativePath: target.file.relativePath, index: target.preview.index, variants: variants, locale: locale)
     }
-    private var key: IOSPreviewItemKey { IOSPreviewItemKey(projectId: target.projectId, request: request) }
-    private var defaultKey: IOSPreviewItemKey {
-        IOSPreviewItemKey(projectId: target.projectId, request: IOSPreviewService.defaultRequest(target))
-    }
-    private func cacheKey(_ request: PreviewRenderRequest) -> PreviewCacheKey {
-        PreviewCacheKey(projectId: target.projectId, request: request, sourceModified: target.file.modified)
-    }
+    private var key: IOSPreviewItemKey { target.key(request) }
 
     var body: some View {
         let shown = service.current(key, sourceModified: target.file.modified) ?? stored
         // 切り替えの候補は、今の絵か既定の絵の返した分から出す。
-        let info = shown?.info ?? service.current(defaultKey, sourceModified: target.file.modified)?.info ?? defaultStored?.info
+        let info = shown?.info ?? service.current(target.key(target.defaultRequest), sourceModified: target.file.modified)?.info
+            ?? defaultStored?.info
         let state = service.states[key]
         VStack(spacing: 12) {
             header(info: shown?.info)
@@ -382,11 +342,11 @@ private struct IOSPreviewSheet: View {
         .padding(16)
         .frame(minWidth: 680, minHeight: 560)
         .background(ChatTheme.background)
-        .task(id: cacheKey(request)) {
-            stored = await IOSPreviewService.cached(cacheKey(request))
+        .task(id: target.cacheKey(request)) {
+            stored = await IOSPreviewService.cached(target.cacheKey(request))
         }
         .task {
-            defaultStored = await IOSPreviewService.cached(cacheKey(IOSPreviewService.defaultRequest(target)))
+            defaultStored = await IOSPreviewService.cached(target.cacheKey(target.defaultRequest))
         }
         .task(id: shown) {
             guard let shown else {

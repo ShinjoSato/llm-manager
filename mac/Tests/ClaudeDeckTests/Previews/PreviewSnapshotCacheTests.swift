@@ -24,8 +24,6 @@ final class PreviewSnapshotCacheTests: XCTestCase {
                           PreviewCacheKey(projectId: project, request: PreviewRenderRequest(relativePath: "A/V.swift", index: 1), sourceModified: date).slot)
         XCTAssertNotEqual(PreviewCacheKey(projectId: project, request: PreviewRenderRequest(relativePath: "A/V.swift", index: 1, locale: "ja"), sourceModified: date).slot,
                           PreviewCacheKey(projectId: project, request: PreviewRenderRequest(relativePath: "A/V.swift", index: 1), sourceModified: date).slot)
-        XCTAssertTrue(PreviewRenderRequest(relativePath: "a", index: 0).isDefault)
-        XCTAssertFalse(a.isDefault)
     }
 
     private static let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D])

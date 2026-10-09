@@ -25,6 +25,16 @@ struct IOSPreviewTarget: Sendable {
     let preview: SwiftPreviewDefinition
 
     var label: String { preview.name ?? "\(file.name)（\(preview.line) 行）" }
+
+    /// 既定の指定（切り替えなし）。
+    var defaultRequest: PreviewRenderRequest { PreviewRenderRequest(relativePath: file.relativePath, index: preview.index) }
+
+    func key(_ request: PreviewRenderRequest) -> IOSPreviewItemKey { IOSPreviewItemKey(projectId: projectId, request: request) }
+
+    /// 今のソース（走査した時の更新時刻）を描いた絵の鍵。
+    func cacheKey(_ request: PreviewRenderRequest) -> PreviewCacheKey {
+        PreviewCacheKey(projectId: projectId, request: request, sourceModified: file.modified)
+    }
 }
 
 /// mcpbridge を 1 本だけ持ち、プレビューを 1 件ずつ描いてキャッシュへ写す。節が閉じて数分使わなければ止める。
@@ -112,7 +122,7 @@ final class IOSPreviewService {
 
     /// 1 件を待ち行列に足す（同じものが待っている・描いている間は足さない）。
     func render(_ target: IOSPreviewTarget, request: PreviewRenderRequest) {
-        let key = IOSPreviewItemKey(projectId: target.projectId, request: request)
+        let key = target.key(request)
         if let state = states[key], state == .queued || state == .rendering { return }
         startWatchingSettings()
         cancelling.remove(target.projectId)
@@ -127,23 +137,15 @@ final class IOSPreviewService {
     func renderAll(_ targets: [IOSPreviewTarget]) {
         Task {
             let missing = await Task.detached(priority: .utility) {
-                targets.filter { target in
-                    let key = PreviewCacheKey(projectId: target.projectId, request: Self.defaultRequest(target),
-                                              sourceModified: target.file.modified)
-                    return PreviewSnapshotCache.lookup(key) == nil
-                }
+                targets.filter { PreviewSnapshotCache.lookup($0.cacheKey($0.defaultRequest)) == nil }
             }.value
             for target in missing {
-                let key = IOSPreviewItemKey(projectId: target.projectId, request: Self.defaultRequest(target))
                 // 待つ間に節を閉じたプロジェクトの分は足さない。
-                guard sections.isOpen(target.projectId), current(key, sourceModified: target.file.modified) == nil else { continue }
-                render(target, request: Self.defaultRequest(target))
+                guard sections.isOpen(target.projectId),
+                      current(target.key(target.defaultRequest), sourceModified: target.file.modified) == nil else { continue }
+                render(target, request: target.defaultRequest)
             }
         }
-    }
-
-    nonisolated static func defaultRequest(_ target: IOSPreviewTarget) -> PreviewRenderRequest {
-        PreviewRenderRequest(relativePath: target.file.relativePath, index: target.preview.index)
     }
 
     /// 描いた絵のうち、今のソース（走査した時の更新時刻）を描いたものだけ。書き換えた後の古い絵は出さない。
@@ -154,9 +156,7 @@ final class IOSPreviewService {
 
     /// 待っている分を外す。描いている 1 件は止められないので、終わるまで待つ。
     func cancel(projectId: UUID) {
-        let dropped = queue.filter { $0.key.projectId == projectId }
-        queue.removeAll { $0.key.projectId == projectId }
-        dropped.forEach { states[$0.key] = nil }
+        dequeue { $0.key.projectId == projectId }
         if current?.key.projectId == projectId {
             cancelling.insert(projectId)
             activity = .stopping
@@ -313,26 +313,30 @@ final class IOSPreviewService {
             return
         }
         guard failure.stopsQueue else { return }
-        // 続けても同じ失敗になるので、待っている分は描かずに戻す（Xcode が無い・許可が無い時は全部）。
-        let global: Bool = switch failure {
-        case .buildFailed: false
-        default: true
-        }
+        // 続けても同じ失敗になるので、待っている分は描かずに戻す（ビルド失敗はそのプロジェクトだけ、Xcode が無い・許可が無い時等は全部）。
+        let global: Bool = if case .buildFailed = failure { false } else { true }
         dropQueue(global: global, message: failure.message, projectId: job.key.projectId)
     }
 
     private func dropQueue(global: Bool, message: String, projectId: UUID) {
         problems[projectId] = message
-        let dropped = queue.filter { global || $0.key.projectId == projectId }
-        queue.removeAll { global || $0.key.projectId == projectId }
-        dropped.forEach { states[$0.key] = nil }
+        let dropped = dequeue { global || $0.key.projectId == projectId }
         if global { dropped.forEach { problems[$0.key.projectId] = message } }
         refreshBusy()
     }
 
+    /// 待っている分のうち当てはまるものを外す。
+    @discardableResult
+    private func dequeue(where match: (Job) -> Bool) -> [Job] {
+        let dropped = queue.filter(match)
+        queue.removeAll(where: match)
+        dropped.forEach { states[$0.key] = nil }
+        return dropped
+    }
+
     private func bridge(_ target: XcodeBridgeTarget) -> XcodeBridgeClient {
         if let client { return client }
-        // mcpbridge と xcrun をつなぐ Xcode の版にそろえ、その Xcode の PID を渡す。
+        // mcpbridge と xcrun の版をつなぐ Xcode にそろえる。
         let environment = target.environment(base: ChildEnvironment.sanitized(ProcessInfo.processInfo.environment))
         let launch = XcodeBridgeProcess.launcher(environment: environment, directory: NSHomeDirectory())
         let processes = processes
@@ -472,7 +476,6 @@ private final class BridgeProcesses: @unchecked Sendable {
     }
 }
 
-
 /// 描いた PNG のサムネイルと拡大の読み込み（縮小はバックグラウンドで・NSCache に持つ）。
 @MainActor
 final class IOSPreviewImages {
@@ -496,47 +499,17 @@ final class IOSPreviewImages {
     }
 
     func load(_ rendered: IOSPreviewRendered, maxPixels: Int) async -> NSImage? {
+        if let image = cached(rendered, maxPixels: maxPixels) { return image }
         let key = Self.key(rendered, maxPixels: maxPixels)
         let url = rendered.image
-        if let image = cache.object(forKey: key) { return image }
-        let decoded = await Task.detached(priority: .userInitiated) { () -> DecodedPreview? in
+        let decoded = await Task.detached(priority: .userInitiated) { () -> DecodedCGImage? in
             guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = ImageDecoding.thumbnail(of: source, maxPixels: maxPixels) else { return nil }
-            return DecodedPreview(image: image)
+            return DecodedCGImage(image: image)
         }.value
         guard let decoded else { return nil }
         let image = NSImage(pixelSized: decoded.image)
         cache.setObject(image, forKey: key)
         return image
-    }
-}
-
-private struct DecodedPreview: @unchecked Sendable {
-    let image: CGImage
-}
-
-/// 節ごとの `#Preview` の一覧（走査はバックグラウンドで・取り消せる）。
-@MainActor
-@Observable
-final class IOSPreviewList {
-    private(set) var scan: SwiftPreviewScan?
-    private(set) var scanning = false
-    @ObservationIgnored private var generation = 0
-
-    /// 走り切って反映した時だけ true。
-    @discardableResult
-    func reload(root: String) async -> Bool {
-        generation += 1
-        let current = generation
-        scanning = true
-        let task = Task.detached(priority: .userInitiated) {
-            SwiftPreviews.scan(root: root, isCancelled: { Task.isCancelled })
-        }
-        let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
-        guard generation == current else { return false }
-        scanning = false
-        guard !Task.isCancelled else { return false }
-        scan = result
-        return true
     }
 }
