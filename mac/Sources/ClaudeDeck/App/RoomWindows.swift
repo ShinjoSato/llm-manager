@@ -76,7 +76,8 @@ final class RoomWindows: NSObject, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         // 終了の保留中に隠したメインしか残らないと、最後のウィンドウを閉じた扱いでアプリが終わるので先に出し直す。
-        if let main = mainWindow, !main.isVisible, !main.isMiniaturized { showMainWindow() }
+        let othersVisible = windows.values.contains { $0 !== sender && $0.isVisible }
+        if !othersVisible, let main = mainWindow, !main.isVisible, !main.isMiniaturized { showMainWindow() }
         return true
     }
 

@@ -15,6 +15,8 @@ final class TranscriptCache {
     @ObservationIgnored private var stale: Set<String> = []
     /// 開いた順（末尾が新しい）。会話を持ち・追記を購読するのは直近のこれだけ。
     @ObservationIgnored private var recent: [String] = []
+    /// 取り直しを済ませた監視の回。メインと別ウィンドウの両方から呼ばれても 1 回だけにする。
+    @ObservationIgnored private var reconnectedEpoch = 0
     /// 手元に会話を持っておくルームの数。行き来の多い数件だけ取り直しを省く。
     static let kept = 4
     /// メインと別ウィンドウで出している会話（件数の上限に関わらず手放さない）。
@@ -71,7 +73,9 @@ final class TranscriptCache {
     }
 
     /// 監視を始め直した。止まっていた間の分を取り直す（`shown` はメインと別ウィンドウで出している sessionId）。
-    func reconnected(shown sessionIds: [String]) {
+    func reconnected(epoch: Int, shown sessionIds: [String]) {
+        guard epoch != reconnectedEpoch else { return }
+        reconnectedEpoch = epoch
         stale = Set(buffers.keys)
         for sessionId in sessionIds { ensure(for: sessionId) }
     }

@@ -30,7 +30,7 @@ struct ChatRootView<Trailing: View>: View {
         .background(ChatTheme.background)
         .environment(\.colorScheme, ChatTheme.colorScheme(for: AppearanceSettings.shared.theme))
         .onAppear { selectFirstIfNeeded() }
-        .onChange(of: model.store.connectionEpoch) { model.transcripts.reconnected(shown: model.shownSessionIds(includingHiddenMain: true)) }
+        .onChange(of: model.store.connectionEpoch) { _, epoch in model.reconnectTranscripts(epoch: epoch) }
         .onChange(of: model.selectedRoom?.sessionId, initial: true) { _, sessionId in
             model.transcripts.ensure(for: sessionId)
             model.markShownSeen()

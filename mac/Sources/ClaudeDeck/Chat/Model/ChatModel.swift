@@ -281,6 +281,11 @@ final class ChatModel {
         for sessionId in shownSessionIds(includingHiddenMain: false) { lastSeen[sessionId] = now }
     }
 
+    /// 監視を始め直した時に、メインと別ウィンドウで出している会話を取り直す。
+    func reconnectTranscripts(epoch: Int) {
+        transcripts.reconnected(epoch: epoch, shown: shownSessionIds(includingHiddenMain: true))
+    }
+
     /// メインと別ウィンドウで出している会話。`includingHiddenMain` ならメインが詳細等を出している間も選択中のルームを含める（戻った時のため）。
     func shownSessionIds(includingHiddenMain: Bool) -> [String] {
         let main = includingHiddenMain || center == .room ? selectedRoom?.sessionId : nil

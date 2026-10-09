@@ -18,6 +18,9 @@ struct RoomWindowView: View {
                 model.transcripts.ensure(for: sessionId)
                 model.markShownSeen()
             }
+            // メインが隠れていると向こうの onChange が回らないことがあるので、こちらでも同じことをする（どちらも何度呼んでも同じ）。
+            .onChange(of: model.store.feed.last?.id) { model.markShownSeen() }
+            .onChange(of: model.store.connectionEpoch) { _, epoch in model.reconnectTranscripts(epoch: epoch) }
             .onChange(of: room?.name, initial: true) { _, name in
                 if let name { setTitle(name) }
             }
