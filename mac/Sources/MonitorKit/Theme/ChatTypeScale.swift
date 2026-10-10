@@ -14,8 +14,8 @@ public struct ChatTypeScale: Sendable, Equatable {
 
     /// 発話・伝言・会話以外の Markdown と同じ大きさ。
     public static let standard = ChatTypeScale(body: 14, lineSpacing: 3)
-    /// Claude の返答。会話の主な中身なので発話より 2pt 大きく、行間も広げる。
-    public static let reply = ChatTypeScale(body: 16, lineSpacing: 5)
+    /// Claude の返答。会話の主な中身なので発話より 1pt 大きく、行間も広げる。
+    public static let reply = ChatTypeScale(body: 15, lineSpacing: 4)
 
     /// `standard` に対する倍率。
     public var ratio: CGFloat { body / Self.standard.body }

@@ -15,14 +15,14 @@ final class ChatTypeScaleTests: XCTestCase {
         XCTAssertEqual(s.digitWidth, 8.5)
     }
 
-    /// 返答は発話より 2pt 大きく、見出し・等幅も同じ比率で 0.5pt 刻みにそろう。
+    /// 返答は発話より 1pt 大きく、見出し・等幅も同じ比率で 0.5pt 刻みにそろう。
     func testReplyScalesEverythingByTheSameRatio() {
         let r = ChatTypeScale.reply
-        XCTAssertEqual(r.body, ChatTypeScale.standard.body + 2)
+        XCTAssertEqual(r.body, ChatTypeScale.standard.body + 1)
         XCTAssertGreaterThan(r.lineSpacing, ChatTypeScale.standard.lineSpacing)
-        XCTAssertEqual(r.mono, 13.5)
-        XCTAssertEqual([1, 2, 3, 4].map(r.heading), [21.5, 19, 17, 16])
-        XCTAssertEqual([r.blockSpacing(nested: false), r.blockSpacing(nested: true)], [11.5, 7])
+        XCTAssertEqual(r.mono, 13)
+        XCTAssertEqual([1, 2, 3, 4].map(r.heading), [20.5, 17.5, 16, 15])
+        XCTAssertEqual([r.blockSpacing(nested: false), r.blockSpacing(nested: true)], [10.5, 6.5])
         for level in 1...3 {
             XCTAssertGreaterThan(r.heading(level), r.body)
             XCTAssertEqual(r.heading(level) * 2, (r.heading(level) * 2).rounded())
