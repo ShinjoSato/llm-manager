@@ -23,7 +23,7 @@ final class DeckThemeTests: XCTestCase {
         XCTAssertEqual([p.userBubble, p.userBubbleText, p.claudeBubble, p.claudeBubbleBorder],
                        [0x2563eb, 0xffffff, 0x172033, 0x222d42])
         XCTAssertEqual([p.accent, p.onAccent, p.onPermission, p.codeSurface, p.stagePanel],
-                       [0x34d399, 0x053321, 0x053321, 0x0d1320, 0x0b111d])
+                       [0x34d399, 0x053321, 0x053321, 0x141c2d, 0x0b111d])
         XCTAssertEqual([p.feedTool, p.feedPrompt, p.feedStatus, p.feedSession, p.feedAgent],
                        [0x7dd3fc, 0xc4b5fd, 0xfcd34d, 0x6ee7b7, 0xf0abfc])
         // 名前のハッシュで引く 8 色（blue → red の順）は、キーを足す前の色のまま。

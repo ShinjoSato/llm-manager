@@ -113,7 +113,7 @@ public struct ThemePalette: Sendable, Equatable {
         text: 0xe6ebf2, secondary: 0x97a3b6, tertiary: 0x7c889b, heading: 0xf1f5f9,
         permission: 0xfbbf24, waiting: 0x7cc4ff, working: 0x34d399, idle: 0x97a3b6, error: 0xf87171,
         userBubble: 0x2563eb, userBubbleText: 0xffffff, claudeBubble: 0x172033, claudeBubbleBorder: 0x222d42,
-        accent: 0x34d399, onAccent: 0x053321, onPermission: 0x053321, codeSurface: 0x0d1320, stagePanel: 0x0b111d,
+        accent: 0x34d399, onAccent: 0x053321, onPermission: 0x053321, codeSurface: 0x141c2d, stagePanel: 0x0b111d,
         feedTool: 0x7dd3fc, feedPrompt: 0xc4b5fd, feedStatus: 0xfcd34d, feedSession: 0x6ee7b7, feedAgent: 0xf0abfc,
         avatarPalette: [0xf87171, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0x60a5fa, 0x818cf8, 0xa78bfa, 0xf472b6, 0xd4a373, 0x9ca3af],
         cardFill: .tint(0xfbbf24, 0.06), cardBorder: .solid(0xfbbf24), pendingCardFill: .tint(0xfbbf24, 0.04),

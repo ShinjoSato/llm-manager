@@ -203,7 +203,7 @@ private struct MarkdownTable: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: frameAlignment)
-            .background(row < 0 ? ChatTheme.codeSurface : (row % 2 == 1 ? ChatTheme.background.opacity(0.35) : Color.clear))
+            .background(row < 0 ? ChatTheme.codeSurface : (row % 2 == 1 ? ChatTheme.codeSurface.opacity(0.55) : Color.clear))
             .overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
             .overlay(alignment: .trailing) {
                 if column < table.header.count - 1 { Rectangle().fill(ChatTheme.border).frame(width: 1) }
