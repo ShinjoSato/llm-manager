@@ -86,8 +86,8 @@ mac/
           RoomWindowView.swift        別ウィンドウの中身（1 ルームの会話・会話の取得と既読・ルームが消えた時の案内・そのウィンドウで出す警告）
           BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文）
           HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
-          MessageList.swift           吹き出しの一覧（末尾への自動スクロール・カードの差し込み・空の時の案内）
-          MessageBubbles.swift        発話 1 件（EntryView）・自分 / Claude の吹き出し（Claude の吹き出しの右クリックとホバーのボタンで別ウィンドウに開く）
+          MessageList.swift           会話の一覧（中央の列にそろえる・末尾への自動スクロール・カードの差し込み・空の時の案内）
+          MessageBubbles.swift        発話 1 件（EntryView）・自分の吹き出し・Claude の返答（枠なしの本文。右クリックとホバーのボタンで別ウィンドウに開く）
           ToolsRow.swift              「ツール N件 ▸」の畳み
           PermissionCard.swift        権限確認のカード
           MenuCard.swift              選択肢のカード（選択肢の行・AskUserQuestion のタブ）
@@ -204,7 +204,7 @@ mac/
       DetachedBubbles.swift       別ウィンドウで開いている吹き出し（sessionId と項目の id の鍵・同じ吹き出しは 1 枚・開ける吹き出しの判定・タイトル）
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
                                 SceneKit のノードへの起こし（StageSceneRig）・背景側の色（StageBackdrop）・設定画面の見本（CharacterGallery）
-    Theme/                      カラーテーマ（DeckTheme: ナイト / ライトの色の組）
+    Theme/                      カラーテーマ（DeckTheme: ナイト / ライトの色の組）・会話の Markdown の文字の段階（ChatTypeScale）
     Notify/                     通知にする要対応の組み立て（AttentionNoticeSource）と iCloud を使えるかの確認・失敗の文言（CloudKitNoticeStore）
     Support/                    共通の下回り
       DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
@@ -771,7 +771,10 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - 会話はアプリ内の `TranscriptStore` から組み立てる。ルームを開いた時に、直近に開いた 4 ルームを対象に追記の購読を張り直してから
   `fetchTranscript` で全件、以降は追記を id で重複除去して足す（それより前に開いたルームの会話は手放し、開き直した時に取り直す。メインと別ウィンドウで出している会話は手放さない）。
   監視を始め直した（`connectionEpoch` の増加）後は**全件を取り直して置き換える**。最初の発話前でログが無い時は空のまま追記を待つ。
-- 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し。Claude の応答は Markdown を描く（見出し・表・箇条書き / 番号付きリスト（入れ子）・引用・区切り線・コードブロック、インラインの太字・斜体・コード・リンク）。リンクは http / https だけ開き、`file://` やカスタムスキームは開かない（会話ビュー全体で判定は `ChatMarkdown.isOpenableLink`）。コードブロック内のタブはそのまま保つ。コードブロックの右上にコピーのボタン（横スクロールしても右上に留まる。押すと中身をクリップボードに入れ、1.5 秒チェックマークにする）。表は寄せ指定に従い、列幅は中身に合わせて長いセルは折り返し、吹き出しより広い時だけ横スクロール。解析は自前（`ChatMarkdown`・外部ライブラリなし）で本文ごとにキャッシュし、描画は `Chat/Views/MarkdownView.swift`。自分の発話と伝言はインライン装飾のみ。
+- 表示: 会話は欄の中央の列（最大 760pt・`ChatTheme.columnWidth`。欄が広ければ左右に余白、狭ければ欄いっぱい）に並べる。自分の発話は列の右に寄せた青い吹き出し（14pt）。
+  Claude の応答は吹き出しの枠・背景を付けず、列いっぱいの左揃えの本文として発話より 2pt 大きい 16pt で描く（行間も広げる）。見出し・リスト・表・引用・インラインのコード・コードブロックも同じ比率で大きくする
+  （大きさは `ChatTypeScale`（MonitorKit・テストあり）の `.reply` を Environment の `chatTypeScale` で `MarkdownView` に渡す。既定の `.standard` は今までの 14pt / 等幅 12pt）。
+  返答に添えた画像・ツールの行・権限カード・選択肢カードも同じ列の左端にそろえる。Claude の応答は Markdown を描く（見出し・表・箇条書き / 番号付きリスト（入れ子）・引用・区切り線・コードブロック、インラインの太字・斜体・コード・リンク）。リンクは http / https だけ開き、`file://` やカスタムスキームは開かない（会話ビュー全体で判定は `ChatMarkdown.isOpenableLink`）。コードブロック内のタブはそのまま保つ。コードブロックの右上にコピーのボタン（横スクロールしても右上に留まる。押すと中身をクリップボードに入れ、1.5 秒チェックマークにする）。表は寄せ指定に従い、列幅は中身に合わせて長いセルは折り返し、本文の列より広い時だけ横スクロール。解析は自前（`ChatMarkdown`・外部ライブラリなし）で本文ごとにキャッシュし、描画は `Chat/Views/MarkdownView.swift`。自分の発話と伝言はインライン装飾のみ。
   ツール呼び出しは直前の発話の下に「ツール N件 ▸」の 1 行に畳み、開くとツール名と対象を並べる。実行中のものは緑で強調。
   新着で末尾へ自動スクロールし、上に遡っている間は止める（macOS 15 以降）。
 - 作業中に送った指示は Claude Code 側でキューに入り、ログに「ユーザーの発話」として残らないため吹き出しには出ない（応答には反映される）。

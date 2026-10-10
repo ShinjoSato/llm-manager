@@ -58,9 +58,10 @@ struct MarkdownView: View {
 private struct MarkdownBlocks: View {
     let blocks: [ChatMarkdown.Block]
     let depth: Int
+    @Environment(\.chatTypeScale) private var scale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: depth == 0 ? 10 : 6) {
+        VStack(alignment: .leading, spacing: scale.blockSpacing(nested: depth > 0)) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 blockView(block)
             }
@@ -72,13 +73,13 @@ private struct MarkdownBlocks: View {
         switch block {
         case .paragraph(let text):
             Text(MarkdownCache.inline(text))
-                .font(ChatTheme.body)
+                .font(.system(size: scale.body))
                 .foregroundStyle(ChatTheme.text)
-                .lineSpacing(3)
+                .lineSpacing(scale.lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
         case .heading(let level, let text):
             Text(MarkdownCache.inline(text))
-                .font(Self.headingFont(level))
+                .font(headingFont(level))
                 .foregroundStyle(ChatTheme.heading)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, depth == 0 ? 4 : 0)
@@ -106,23 +107,19 @@ private struct MarkdownBlocks: View {
         }
     }
 
-    private static func headingFont(_ level: Int) -> Font {
-        switch level {
-        case 1: return .system(size: 19, weight: .bold)
-        case 2: return .system(size: 16.5, weight: .bold)
-        case 3: return .system(size: 15, weight: .semibold)
-        default: return .system(size: 14, weight: .semibold)
-        }
+    private func headingFont(_ level: Int) -> Font {
+        .system(size: scale.heading(level), weight: level <= 2 ? .bold : .semibold)
     }
 }
 
 private struct MarkdownCodeBlock: View {
     let code: String
+    @Environment(\.chatTypeScale) private var scale
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             Text(code)
-                .font(ChatTheme.mono)
+                .font(.system(size: scale.mono, design: .monospaced))
                 .foregroundStyle(ChatTheme.text)
                 .padding(10)
         }
@@ -169,16 +166,18 @@ private struct MarkdownList: View {
     let start: Int
     let items: [ChatMarkdown.ListItem]
     let depth: Int
+    @Environment(\.chatTypeScale) private var scale
 
     var body: some View {
         let digits = String(start + max(items.count - 1, 0)).count
-        VStack(alignment: .leading, spacing: 4) {
+        let font = Font.system(size: scale.body)
+        VStack(alignment: .leading, spacing: scale.listSpacing) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(ordered ? "\(start + index)." : bullet)
-                        .font(ordered ? ChatTheme.body.monospacedDigit() : ChatTheme.body)
+                        .font(ordered ? font.monospacedDigit() : font)
                         .foregroundStyle(ChatTheme.secondary)
-                        .frame(minWidth: ordered ? CGFloat(digits) * 8.5 + 6 : 10, alignment: .trailing)
+                        .frame(minWidth: ordered ? CGFloat(digits) * scale.digitWidth + 6 : 10, alignment: .trailing)
                     AnyView(MarkdownBlocks(blocks: item.blocks, depth: depth + 1))
                 }
             }
@@ -190,9 +189,10 @@ private struct MarkdownList: View {
     }
 }
 
-/// 表。列幅は中身に合わせ、長いセルは折り返す。吹き出しより広い時だけ横スクロールにする。
+/// 表。列幅は中身に合わせ、長いセルは折り返す。本文の列より広い時だけ横スクロールにする。
 private struct MarkdownTable: View {
     let table: ChatMarkdown.Table
+    @Environment(\.chatTypeScale) private var scale
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -230,14 +230,14 @@ private struct MarkdownTable: View {
         case .trailing: .trailing
         }
         return Text(MarkdownCache.inline(text))
-            .font(row < 0 ? ChatTheme.body.weight(.semibold) : ChatTheme.body)
+            .font(.system(size: scale.body, weight: row < 0 ? .semibold : .regular))
             .foregroundStyle(row < 0 ? ChatTheme.heading : ChatTheme.text)
             .multilineTextAlignment(textAlignment)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: frameAlignment)
-            .background(row < 0 ? ChatTheme.codeSurface : (row % 2 == 1 ? ChatTheme.background.opacity(0.35) : Color.clear))
+            .background(row < 0 ? ChatTheme.codeSurface : (row % 2 == 1 ? ChatTheme.codeSurface.opacity(0.55) : Color.clear))
             .overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
             .overlay(alignment: .trailing) {
                 if column < table.header.count - 1 { Rectangle().fill(ChatTheme.border).frame(width: 1) }

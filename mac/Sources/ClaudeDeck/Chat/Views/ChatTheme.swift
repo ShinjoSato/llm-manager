@@ -67,6 +67,9 @@ enum ChatTheme {
     static let headline = Font.system(size: 16, weight: .bold)
     static let mono = Font.system(size: 12, design: .monospaced)
 
+    /// 会話の列の最大幅。広い欄でも 1 行が長くなりすぎず、目で追いやすい長さに留める。
+    static let columnWidth: CGFloat = 760
+
     /// プロジェクトの印の色（`ProjectColor.allCases` の順。ナイト / ライトで動的）。
     static let avatarPalette: [Color] = ProjectColor.allCases.map { key in
         Color(nsColor: dynamic(night: ThemePalette.night.avatar(key), light: ThemePalette.light.avatar(key)))
@@ -152,6 +155,11 @@ enum ChatTheme {
         case .unknown: return "不明"
         }
     }
+}
+
+extension EnvironmentValues {
+    /// Markdown の文字の段階。Claude の返答だけ大きくし、他の場所の Markdown は今の大きさのままにするため描く側から渡す。
+    @Entry var chatTypeScale: ChatTypeScale = .standard
 }
 
 extension Color {

@@ -58,8 +58,11 @@ struct MessageList: View {
                     }
                     Color.clear.frame(height: 1).id(Self.bottomId)
                 }
+                // 広い欄では中央の列に収め、返答・ツールの行・カードの左端をそろえる。
+                .frame(maxWidth: ChatTheme.columnWidth)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 20)
+                .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
             .modifier(BottomTracking(pinned: $pinnedToBottom))
