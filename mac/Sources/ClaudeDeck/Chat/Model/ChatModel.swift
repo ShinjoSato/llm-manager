@@ -86,6 +86,8 @@ final class ChatModel {
     /// 別ウィンドウを出す（無ければ作り、あれば前に出す）・閉じる。ウィンドウを持つ側が設定する。
     @ObservationIgnored var presentRoomWindow: (_ token: UUID) -> Void = { _ in }
     @ObservationIgnored var dismissRoomWindow: (_ token: UUID) -> Void = { _ in }
+    /// 吹き出しの写しを別ウィンドウに出す（同じ吹き出しなら前に出す）。ウィンドウを持つ側が設定する。
+    @ObservationIgnored var presentBubbleWindow: (BubbleSnapshot) -> Void = { _ in }
 
     private(set) var hosted: [HostedSession] = []
     var selection: RoomID?

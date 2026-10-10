@@ -5,6 +5,7 @@ struct EntryView: View {
     let entry: ChatEntry
     let runningToolId: String?
     let imageSource: ChatImageSource
+    var bubbleWindow: BubbleWindowOpener? = nil
 
     var body: some View {
         let trailing = entry.role == .user || entry.role == .relay || entry.role == .outgoing
@@ -21,7 +22,8 @@ struct EntryView: View {
                     UserBubble(text: entry.text, images: entry.images, imageSource: imageSource, pending: true)
                 }
             case .assistant:
-                ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource)
+                ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource,
+                             openInWindow: bubbleWindow.flatMap { opener in opener.canOpen ? { opener.open(entry) } : nil })
                     .frame(maxWidth: .infinity, alignment: .leading)
             case .relay:
                 HStack {
@@ -82,6 +84,8 @@ struct ClaudeBubble: View {
     let text: String
     var images: [ChatImage] = []
     var imageSource: ChatImageSource?
+    var openInWindow: (() -> Void)? = nil
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -89,10 +93,70 @@ struct ClaudeBubble: View {
                 ChatImageGrid(images: images, source: imageSource)
             }
             if !text.isEmpty {
-                MarkdownView(text: text)
-                .textSelection(.enabled)
-                .environment(\.chatTypeScale, .reply)
+                HStack(alignment: .top, spacing: 6) {
+                    MarkdownView(text: text)
+                        .textSelection(.enabled)
+                        .environment(\.chatTypeScale, .reply)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contextMenu {
+                            if let openInWindow {
+                                Button("別ウィンドウで開く", systemImage: BubbleWindowButton.symbol, action: openInWindow)
+                            }
+                        }
+                    if let openInWindow {
+                        BubbleWindowButton(visible: hovering, action: openInWindow)
+                    }
+                }
+                // 本文とボタンの間の隙間でもホバーが切れないよう、行全体を当たり判定にする。
+                .contentShape(Rectangle())
+                .trackHover($hovering)
             }
         }
+    }
+}
+
+/// Claude の返答を別ウィンドウで開く口。比べられる値にして、会話の行を毎回描き直させない。
+struct BubbleWindowOpener: Equatable {
+    let model: ChatModel
+    let sessionId: String?
+    let roomName: String
+
+    var canOpen: Bool { sessionId != nil }
+
+    @MainActor func open(_ entry: ChatEntry) {
+        if let snapshot = BubbleSnapshot(entry: entry, sessionId: sessionId, roomName: roomName) { model.presentBubbleWindow(snapshot) }
+    }
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.model === b.model && a.sessionId == b.sessionId && a.roomName == b.roomName
+    }
+}
+
+/// 吹き出しの右上の脇に、カーソルを乗せている間だけ出す「別ウィンドウで開く」。場所は常に取っておき、出し入れで本文の幅を揺らさない。
+struct BubbleWindowButton: View {
+    static let symbol = "macwindow.badge.plus"
+    private static let side: CGFloat = 24
+
+    let visible: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: Self.symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ChatTheme.text)
+                .frame(width: Self.side, height: Self.side)
+                .roundedSurface(7, fill: hovering ? ChatTheme.selectedRow : ChatTheme.inputSurface, stroke: ChatTheme.inputBorder)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // 右は会話の端に近く切れやすいので、名前はボタンの下に出す。
+        .modifier(HeaderTooltipModifier(name: "別ウィンドウで開く", details: []))
+        .accessibilityLabel("別ウィンドウで開く")
+        .trackHover($hovering)
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .animation(.easeOut(duration: 0.12), value: visible)
     }
 }

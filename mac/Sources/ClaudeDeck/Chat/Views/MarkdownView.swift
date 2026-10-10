@@ -124,6 +124,40 @@ private struct MarkdownCodeBlock: View {
                 .padding(10)
         }
         .roundedSurface(9, fill: ChatTheme.codeSurface, stroke: ChatTheme.border)
+        // 横スクロールの外に置き、ずらしても右上に留める。
+        .overlay(alignment: .topTrailing) { CodeCopyButton(code: code).padding(5) }
+    }
+}
+
+/// コードブロックの中身をクリップボードに入れる。押した後しばらくチェックマークにして、コピーできたと分かるようにする。
+private struct CodeCopyButton: View {
+    let code: String
+    @State private var copied = false
+    @State private var hovering = false
+    @State private var reset: Task<Void, Never>?
+
+    var body: some View {
+        Button {
+            SystemActions.copy(code)
+            copied = true
+            reset?.cancel()
+            reset = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                if !Task.isCancelled { copied = false }
+            }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(copied ? ChatTheme.working : hovering ? ChatTheme.text : ChatTheme.tertiary)
+                .frame(width: 24, height: 22)
+                .roundedSurface(6, fill: ChatTheme.codeSurface, stroke: hovering ? ChatTheme.border : .clear)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .modifier(HeaderTooltipModifier(name: copied ? "コピーしました" : "コピー", details: []))
+        .accessibilityLabel("コードをコピー")
+        .onDisappear { reset?.cancel() }
     }
 }
 

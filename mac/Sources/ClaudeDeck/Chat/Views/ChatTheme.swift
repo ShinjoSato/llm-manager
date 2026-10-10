@@ -201,6 +201,13 @@ enum ChatTime {
         return formatter.string(from: date)
     }
 
+    /// 今日なら「12:34」、それ以外は「6/4 12:34」。
+    static func clock(_ date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "" }
+        let formatter = Calendar.current.isDate(date, inSameDayAs: now) ? timeFormatter : dayTimeFormatter
+        return formatter.string(from: date)
+    }
+
     /// 「12:34:56」。
     static func seconds(_ date: Date) -> String { secondsFormatter.string(from: date) }
     /// 「6/4 12:34」。

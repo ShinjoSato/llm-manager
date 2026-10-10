@@ -2,13 +2,13 @@ import AppKit
 import SwiftUI
 import MonitorKit
 
-/// ルームの別ウィンドウ。開いているルームは `ChatModel.detached` が持ち、ここは印ごとに 1 枚の NSWindow を持つだけ。
+/// Claude の返答の吹き出しの別ウィンドウ。開いた時点の本文の写しを持ち、印ごとに 1 枚の NSWindow を持つ。
 @MainActor
-final class RoomWindows: NSObject, NSWindowDelegate {
-    /// 別ウィンドウ同士だけを macOS のタブにまとめられるようにする（メインは混ぜない）。
-    static let tabbingIdentifier = "ClaudeDeckRoomWindow"
+final class BubbleWindows: NSObject, NSWindowDelegate {
+    /// 吹き出しのウィンドウ同士だけを macOS のタブにまとめる（ルームの別ウィンドウとは混ぜない）。
+    static let tabbingIdentifier = "ClaudeDeckBubbleWindow"
 
-    private let model: ChatModel
+    private var bubbles = DetachedBubbles()
     private var windows: [UUID: NSWindow] = [:]
     private weak var mainWindow: NSWindow?
     private let showMainWindow: () -> Void
@@ -16,13 +16,10 @@ final class RoomWindows: NSObject, NSWindowDelegate {
     var peers: () -> [NSWindow] = { [] }
 
     init(model: ChatModel, mainWindow: NSWindow, showMainWindow: @escaping () -> Void) {
-        self.model = model
         self.mainWindow = mainWindow
         self.showMainWindow = showMainWindow
         super.init()
-        model.presentRoomWindow = { [weak self] token in self?.present(token) }
-        model.dismissRoomWindow = { [weak self] token in self?.windows[token]?.close() }
-        model.alerts.keyRoomWindow = { [weak self] in self?.token(of: NSApp.keyWindow) }
+        model.presentBubbleWindow = { [weak self] snapshot in self?.present(snapshot) }
     }
 
     var allWindows: [NSWindow] { Array(windows.values) }
@@ -36,18 +33,18 @@ final class RoomWindows: NSObject, NSWindowDelegate {
         return windows.first { $0.value === window }?.key
     }
 
-    private func present(_ token: UUID) {
+    private func present(_ snapshot: BubbleSnapshot) {
+        let token = bubbles.open(snapshot).token
         if let window = windows[token] {
             window.makeKeyAndOrderFront(nil)
             return
         }
-        let window = DetachedWindow.make(size: NSSize(width: 760, height: 720),
-                                         minSize: NSSize(width: ListPaneWidth.centerMinimum, height: 420),
+        let shown = bubbles.snapshot(for: token) ?? snapshot
+        let window = DetachedWindow.make(size: NSSize(width: 620, height: 640), minSize: NSSize(width: 360, height: 240),
                                          tabbingIdentifier: Self.tabbingIdentifier)
-        window.title = model.detached.room(for: token).flatMap(model.room(id:))?.name ?? "ルーム"
-        window.contentView = NSHostingView(rootView: RoomWindowView(model: model, token: token) { [weak window] title in
-            window?.title = title
-        })
+        let time = ChatTime.clock(shown.at.map(Date.init(epochMillis:)))
+        window.title = shown.title(time: time)
+        window.contentView = NSHostingView(rootView: BubbleWindowView(snapshot: shown, time: time))
         window.delegate = self
         DetachedWindow.place(window, siblings: windows.values, main: mainWindow)
         windows[token] = window
@@ -62,6 +59,6 @@ final class RoomWindows: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, let token = token(of: window) else { return }
         windows[token] = nil
-        model.roomWindowClosed(token)
+        bubbles.close(token)
     }
 }
