@@ -96,7 +96,7 @@ mac/
           AttachmentDrop.swift        ドロップから添付を拾う
           ComposerTextView.swift      Return を横取りする NSTextView（⌘V の添付は MonitorKit の AttachmentPasteTextView）
         ChatImageViews.swift        吹き出しの画像（サムネイルの格子・拡大表示のシート・表示時に読み込んで NSCache に持つ ChatImageLoader）
-        MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・解析結果のキャッシュ）
+        MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・コードブロックのコピーのボタン・解析結果のキャッシュ）
         ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
         PixelAvatar.swift           ルーム一覧と見出しのドット絵キャラ（絵は DeckCore の PixelCharacter）
         ChatTheme.swift             色・文字・時刻の書式のトークン（色はテーマ（ナイト / ライト）ごとの値を描く時の外観で選ぶ。AppKit 側の色も）
@@ -767,7 +767,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - 会話はアプリ内の `TranscriptStore` から組み立てる。ルームを開いた時に、直近に開いた 4 ルームを対象に追記の購読を張り直してから
   `fetchTranscript` で全件、以降は追記を id で重複除去して足す（それより前に開いたルームの会話は手放し、開き直した時に取り直す。メインと別ウィンドウで出している会話は手放さない）。
   監視を始め直した（`connectionEpoch` の増加）後は**全件を取り直して置き換える**。最初の発話前でログが無い時は空のまま追記を待つ。
-- 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し。Claude の応答は Markdown を描く（見出し・表・箇条書き / 番号付きリスト（入れ子）・引用・区切り線・コードブロック、インラインの太字・斜体・コード・リンク）。リンクは http / https だけ開き、`file://` やカスタムスキームは開かない（会話ビュー全体で判定は `ChatMarkdown.isOpenableLink`）。コードブロック内のタブはそのまま保つ。表は寄せ指定に従い、列幅は中身に合わせて長いセルは折り返し、吹き出しより広い時だけ横スクロール。解析は自前（`ChatMarkdown`・外部ライブラリなし）で本文ごとにキャッシュし、描画は `Chat/Views/MarkdownView.swift`。自分の発話と伝言はインライン装飾のみ。
+- 表示: 自分の発話は右の青い吹き出し、Claude の応答は左の暗色の吹き出し。Claude の応答は Markdown を描く（見出し・表・箇条書き / 番号付きリスト（入れ子）・引用・区切り線・コードブロック、インラインの太字・斜体・コード・リンク）。リンクは http / https だけ開き、`file://` やカスタムスキームは開かない（会話ビュー全体で判定は `ChatMarkdown.isOpenableLink`）。コードブロック内のタブはそのまま保つ。コードブロックの右上にコピーのボタン（横スクロールしても右上に留まる。押すと中身をクリップボードに入れ、1.5 秒チェックマークにする）。表は寄せ指定に従い、列幅は中身に合わせて長いセルは折り返し、吹き出しより広い時だけ横スクロール。解析は自前（`ChatMarkdown`・外部ライブラリなし）で本文ごとにキャッシュし、描画は `Chat/Views/MarkdownView.swift`。自分の発話と伝言はインライン装飾のみ。
   ツール呼び出しは直前の発話の下に「ツール N件 ▸」の 1 行に畳み、開くとツール名と対象を並べる。実行中のものは緑で強調。
   新着で末尾へ自動スクロールし、上に遡っている間は止める（macOS 15 以降）。
 - 作業中に送った指示は Claude Code 側でキューに入り、ログに「ユーザーの発話」として残らないため吹き出しには出ない（応答には反映される）。
