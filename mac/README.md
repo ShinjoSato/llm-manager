@@ -84,7 +84,7 @@ mac/
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）。メインの中央と別ウィンドウで共通
           ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」のボタン
           RoomWindowView.swift        別ウィンドウの中身（1 ルームの会話・会話の取得と既読・ルームが消えた時の案内・そのウィンドウで出す警告）
-          BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文）
+          BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文。大きさは会話の返答と同じ）
           HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
           MessageList.swift           会話の一覧（中央の列にそろえる・末尾への自動スクロール・カードの差し込み・空の時の案内）
           MessageBubbles.swift        発話 1 件（EntryView）・自分の吹き出し・Claude の返答（枠なしの本文。右クリックとホバーのボタンで別ウィンドウに開く）
