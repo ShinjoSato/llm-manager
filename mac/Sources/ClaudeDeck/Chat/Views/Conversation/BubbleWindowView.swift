@@ -4,6 +4,8 @@ import MonitorKit
 /// 吹き出しの別ウィンドウの中身: 開いた時点の本文を会話と同じ Markdown で描き、縦にスクロールして読む。
 struct BubbleWindowView: View {
     let snapshot: BubbleSnapshot
+    /// 開いた時に決めた時刻の表記（タイトルと揃える）。
+    let time: String
     /// 見本の描画で外観を固定する時だけ渡す（既定は設定のテーマに追従）。
     var theme: DeckTheme? = nil
 
@@ -36,7 +38,6 @@ struct BubbleWindowView: View {
                 .foregroundStyle(ChatTheme.heading)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            let time = ChatTime.clock(snapshot.at.map(Date.init(epochMillis:)))
             if !time.isEmpty {
                 Text(time).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary).lineLimit(1)
             }

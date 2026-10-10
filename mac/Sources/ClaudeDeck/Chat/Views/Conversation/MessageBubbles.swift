@@ -5,8 +5,7 @@ struct EntryView: View {
     let entry: ChatEntry
     let runningToolId: String?
     let imageSource: ChatImageSource
-    /// Claude の返答を別ウィンドウで開く（開けない吹き出しでは nil）。
-    var openInWindow: (() -> Void)? = nil
+    var bubbleWindow: BubbleWindowOpener? = nil
 
     var body: some View {
         let trailing = entry.role == .user || entry.role == .relay || entry.role == .outgoing
@@ -24,7 +23,8 @@ struct EntryView: View {
                 }
             case .assistant:
                 HStack {
-                    ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource, openInWindow: openInWindow)
+                    ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource,
+                                 openInWindow: bubbleWindow.flatMap { opener in opener.canOpen ? { opener.open(entry) } : nil })
                     Spacer(minLength: 96)
                 }
             case .relay:
@@ -114,9 +114,28 @@ struct ClaudeBubble: View {
                         BubbleWindowButton(visible: hovering, action: openInWindow)
                     }
                 }
+                // 吹き出しとボタンの間の隙間でもホバーが切れないよう、行全体を当たり判定にする。
+                .contentShape(Rectangle())
                 .trackHover($hovering)
             }
         }
+    }
+}
+
+/// Claude の返答を別ウィンドウで開く口。比べられる値にして、会話の行を毎回描き直させない。
+struct BubbleWindowOpener: Equatable {
+    let model: ChatModel
+    let sessionId: String?
+    let roomName: String
+
+    var canOpen: Bool { sessionId != nil }
+
+    @MainActor func open(_ entry: ChatEntry) {
+        if let snapshot = BubbleSnapshot(entry: entry, sessionId: sessionId, roomName: roomName) { model.presentBubbleWindow(snapshot) }
+    }
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.model === b.model && a.sessionId == b.sessionId && a.roomName == b.roomName
     }
 }
 
@@ -139,7 +158,8 @@ struct BubbleWindowButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .modifier(HeaderTooltipModifier(name: "別ウィンドウで開く", details: [], leadingOffset: Self.side + 6))
+        // 右は会話の端に近く切れやすいので、名前はボタンの下に出す。
+        .modifier(HeaderTooltipModifier(name: "別ウィンドウで開く", details: []))
         .accessibilityLabel("別ウィンドウで開く")
         .trackHover($hovering)
         .opacity(visible ? 1 : 0)

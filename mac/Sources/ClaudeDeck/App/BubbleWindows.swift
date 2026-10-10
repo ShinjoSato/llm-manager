@@ -42,8 +42,9 @@ final class BubbleWindows: NSObject, NSWindowDelegate {
         let shown = bubbles.snapshot(for: token) ?? snapshot
         let window = DetachedWindow.make(size: NSSize(width: 620, height: 640), minSize: NSSize(width: 360, height: 240),
                                          tabbingIdentifier: Self.tabbingIdentifier)
-        window.title = shown.title(time: ChatTime.clock(shown.at.map(Date.init(epochMillis:))))
-        window.contentView = NSHostingView(rootView: BubbleWindowView(snapshot: shown))
+        let time = ChatTime.clock(shown.at.map(Date.init(epochMillis:)))
+        window.title = shown.title(time: time)
+        window.contentView = NSHostingView(rootView: BubbleWindowView(snapshot: shown, time: time))
         window.delegate = self
         DetachedWindow.place(window, siblings: windows.values, main: mainWindow)
         windows[token] = window

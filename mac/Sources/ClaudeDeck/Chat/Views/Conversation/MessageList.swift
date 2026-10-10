@@ -20,8 +20,7 @@ struct MessageList: View {
                     if entries.isEmpty { emptyState }
                     ForEach(entries) { entry in
                         EntryView(entry: entry, runningToolId: runningId, imageSource: imageSource,
-                                  openInWindow: BubbleSnapshot(entry: entry, sessionId: room.sessionId, roomName: room.name)
-                                      .map { snapshot in { model.presentBubbleWindow(snapshot) } })
+                                  bubbleWindow: BubbleWindowOpener(model: model, sessionId: room.sessionId, roomName: room.name))
                     }
                     ForEach(permissions) { permission in
                         PermissionCard(toolName: permission.toolName,
