@@ -16,6 +16,7 @@ struct BubbleWindowView: View {
             ScrollView {
                 MarkdownView(text: snapshot.text)
                     .textSelection(.enabled)
+                    .environment(\.chatTypeScale, .reply)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 20)
