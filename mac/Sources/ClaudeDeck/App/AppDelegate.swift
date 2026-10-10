@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var window: NSWindow!
     private var main: MainViewController!
     private var roomWindows: RoomWindows!
+    private var bubbleWindows: BubbleWindows!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -44,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.makeKeyAndOrderFront(nil)
         QuitCoordinator.shared.showMainWindow = { [weak self] in self?.window.makeKeyAndOrderFront(nil) }
         roomWindows = RoomWindows(model: main.model, mainWindow: window) { [weak self] in self?.window.makeKeyAndOrderFront(nil) }
+        bubbleWindows = BubbleWindows(model: main.model, mainWindow: window) { [weak self] in self?.window.makeKeyAndOrderFront(nil) }
+        roomWindows.peers = { [weak self] in self?.bubbleWindows.allWindows ?? [] }
+        bubbleWindows.peers = { [weak self] in self?.roomWindows.allWindows ?? [] }
         // 画面のモデルを渡した後に開く（操作の受け手が揃ってから）。既定は無効。
         RemoteAccessController.shared.startIfEnabled()
     }
@@ -56,8 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// 最後のウィンドウを閉じると終了するので、閉じる前に終了の確認を通す（取り消したらウィンドウを残す）。
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // ルームの別ウィンドウはメインの付属なので、残っていても閉じる時の終了の確認は今までどおり通す。
-        let others = NSApp.windows.contains { $0 !== sender && $0.isVisible && $0.canBecomeMain && !roomWindows.owns($0) }
+        // ルーム・吹き出しの別ウィンドウはメインの付属なので、残っていても閉じる時の終了の確認は今までどおり通す。
+        let others = NSApp.windows.contains { $0 !== sender && $0.isVisible && $0.canBecomeMain && !ownsDetached($0) }
         guard sender === window, !others else { return true }
         // 終了の保留中に閉じても待ちは続ける（確認なしで中断しない）。Dock から出し直せる。
         if QuitCoordinator.shared.isWaiting {
@@ -130,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         windowMenu.addItem(withTitle: "しまう", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "拡大/縮小", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
-        let closeItem = windowMenu.addItem(withTitle: "別ウィンドウを閉じる", action: #selector(closeRoomWindow(_:)), keyEquivalent: "w")
+        let closeItem = windowMenu.addItem(withTitle: "別ウィンドウを閉じる", action: #selector(closeDetachedWindow(_:)), keyEquivalent: "w")
         closeItem.target = self
         windowMenuItem.submenu = windowMenu
         // タブの操作（すべてのウインドウを結合 等）とウィンドウの一覧は AppKit がここに足す。
@@ -139,15 +143,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApplication.shared.mainMenu = mainMenu
     }
 
-    /// ⌘W はルームの別ウィンドウ（タブ）だけを閉じる（メインを閉じると終了の確認になるため）。
-    @MainActor @objc private func closeRoomWindow(_ sender: Any?) {
-        guard let key = NSApp.keyWindow, roomWindows.owns(key) else { return }
+    /// ⌘W はルーム・吹き出しの別ウィンドウ（タブ）だけを閉じる（メインを閉じると終了の確認になるため）。
+    @MainActor @objc private func closeDetachedWindow(_ sender: Any?) {
+        guard let key = NSApp.keyWindow, ownsDetached(key) else { return }
         key.performClose(sender)
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard menuItem.action == #selector(closeRoomWindow(_:)) else { return true }
-        return MainActor.assumeIsolated { roomWindows?.owns(NSApp.keyWindow) ?? false }
+        guard menuItem.action == #selector(closeDetachedWindow(_:)) else { return true }
+        return MainActor.assumeIsolated { ownsDetached(NSApp.keyWindow) }
+    }
+
+    @MainActor private func ownsDetached(_ window: NSWindow?) -> Bool {
+        (roomWindows?.owns(window) ?? false) || (bubbleWindows?.owns(window) ?? false)
     }
 
     @MainActor @objc private func showSettings() {

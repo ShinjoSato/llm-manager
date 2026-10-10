@@ -19,7 +19,8 @@ struct MessageList: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if entries.isEmpty { emptyState }
                     ForEach(entries) { entry in
-                        EntryView(entry: entry, runningToolId: runningId, imageSource: imageSource)
+                        EntryView(entry: entry, runningToolId: runningId, imageSource: imageSource,
+                                  bubbleWindow: BubbleWindowOpener(model: model, sessionId: room.sessionId, roomName: room.name))
                     }
                     ForEach(permissions) { permission in
                         PermissionCard(toolName: permission.toolName,
