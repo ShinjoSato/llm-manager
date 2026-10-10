@@ -5,6 +5,8 @@ struct EntryView: View {
     let entry: ChatEntry
     let runningToolId: String?
     let imageSource: ChatImageSource
+    /// Claude の返答を別ウィンドウで開く（開けない吹き出しでは nil）。
+    var openInWindow: (() -> Void)? = nil
 
     var body: some View {
         let trailing = entry.role == .user || entry.role == .relay || entry.role == .outgoing
@@ -22,7 +24,7 @@ struct EntryView: View {
                 }
             case .assistant:
                 HStack {
-                    ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource)
+                    ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource, openInWindow: openInWindow)
                     Spacer(minLength: 96)
                 }
             case .relay:
@@ -86,6 +88,8 @@ struct ClaudeBubble: View {
     let text: String
     var images: [ChatImage] = []
     var imageSource: ChatImageSource?
+    var openInWindow: (() -> Void)? = nil
+    @State private var hovering = false
 
     var body: some View {
         let shape = BubbleShape.incoming
@@ -94,13 +98,52 @@ struct ClaudeBubble: View {
                 ChatImageGrid(images: images, source: imageSource)
             }
             if !text.isEmpty {
-                MarkdownView(text: text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(shape.fill(ChatTheme.claudeBubble))
-                .overlay(shape.stroke(ChatTheme.claudeBubbleBorder))
+                HStack(alignment: .top, spacing: 6) {
+                    MarkdownView(text: text)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(shape.fill(ChatTheme.claudeBubble))
+                        .overlay(shape.stroke(ChatTheme.claudeBubbleBorder))
+                        .contextMenu {
+                            if let openInWindow {
+                                Button("別ウィンドウで開く", systemImage: BubbleWindowButton.symbol, action: openInWindow)
+                            }
+                        }
+                    if let openInWindow {
+                        BubbleWindowButton(visible: hovering, action: openInWindow)
+                    }
+                }
+                .trackHover($hovering)
             }
         }
+    }
+}
+
+/// 吹き出しの右上の脇に、カーソルを乗せている間だけ出す「別ウィンドウで開く」。場所は常に取っておき、出し入れで本文の幅を揺らさない。
+struct BubbleWindowButton: View {
+    static let symbol = "macwindow.badge.plus"
+    private static let side: CGFloat = 24
+
+    let visible: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: Self.symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ChatTheme.text)
+                .frame(width: Self.side, height: Self.side)
+                .roundedSurface(7, fill: hovering ? ChatTheme.selectedRow : ChatTheme.inputSurface, stroke: ChatTheme.inputBorder)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .modifier(HeaderTooltipModifier(name: "別ウィンドウで開く", details: [], leadingOffset: Self.side + 6))
+        .accessibilityLabel("別ウィンドウで開く")
+        .trackHover($hovering)
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .animation(.easeOut(duration: 0.12), value: visible)
     }
 }

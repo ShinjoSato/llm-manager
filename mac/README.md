@@ -23,8 +23,10 @@ mac/
   Sources/ClaudeDeck/
     App/                        起動・ウィンドウ・アプリ全体で 1 つのもの
       main.swift                  NSApplication 起動
-      AppDelegate.swift           ウィンドウ + メニュー（「ウインドウ」のしまう・⌘W で別ウィンドウを閉じる・タブ）+ 終了の確認（applicationShouldTerminate・ウィンドウを閉じる時）
+      AppDelegate.swift           ウィンドウ + メニュー（「ウインドウ」のしまう・⌘W でルーム / 吹き出しの別ウィンドウを閉じる・タブ）+ 終了の確認（applicationShouldTerminate・ウィンドウを閉じる時）
       RoomWindows.swift           ルームの別ウィンドウ（印ごとに 1 枚の NSWindow・タイトルはルーム名・別ウィンドウ同士だけ macOS のタブにまとめられる・閉じても止めない）
+      BubbleWindows.swift         Claude の返答の吹き出しの別ウィンドウ（開いた時点の本文の写しを持つ・同じ吹き出しは 1 枚・吹き出し同士だけタブにまとめられる・閉じても止めない）
+      DetachedWindow.swift        別ウィンドウ（ルーム・吹き出し）に共通の作り方・置き方・最後の 1 枚を閉じる時にメインを出し直す判定
       QuitCoordinator.swift       終了の確認ダイアログと「作業が終わったら終了」の待ち（.terminateLater）
       LaunchSettings.swift        起動時の再開の設定（UserDefaults・既定はオン）
       AppearanceSettings.swift    カラーテーマ（ナイト / ライト）の設定（UserDefaults）と NSApp.appearance への反映
@@ -82,9 +84,10 @@ mac/
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）。メインの中央と別ウィンドウで共通
           ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」のボタン
           RoomWindowView.swift        別ウィンドウの中身（1 ルームの会話・会話の取得と既読・ルームが消えた時の案内・そのウィンドウで出す警告）
+          BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文）
           HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
           MessageList.swift           吹き出しの一覧（末尾への自動スクロール・カードの差し込み・空の時の案内）
-          MessageBubbles.swift        発話 1 件（EntryView）・自分 / Claude の吹き出し
+          MessageBubbles.swift        発話 1 件（EntryView）・自分 / Claude の吹き出し（Claude の吹き出しの右クリックとホバーのボタンで別ウィンドウに開く）
           ToolsRow.swift              「ツール N件 ▸」の畳み
           PermissionCard.swift        権限確認のカード
           MenuCard.swift              選択肢のカード（選択肢の行・AskUserQuestion のタブ）
@@ -198,6 +201,7 @@ mac/
       HeaderOverflow.swift        見出しのボタンが入りきらない時に「…」へ回す順（優先度の低いものから）
       DetachedRooms.swift         別ウィンドウで開いているルーム（同じルームは 1 枚・引き継ぎでの付け替え）・会話を取得し既読にする対象（ShownSessions）・
                                   手元に持つ会話の決め方（TranscriptRetention）
+      DetachedBubbles.swift       別ウィンドウで開いている吹き出し（sessionId と項目の id の鍵・同じ吹き出しは 1 枚・開ける吹き出しの判定・タイトル）
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
                                 SceneKit のノードへの起こし（StageSceneRig）・背景側の色（StageBackdrop）・設定画面の見本（CharacterGallery）
     Theme/                      カラーテーマ（DeckTheme: ナイト / ライトの色の組）
@@ -784,7 +788,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   （`ChatModel.markShownSeen`。メインは会話を出している間だけ、別ウィンドウは開いている間）。別ウィンドウとメインで選んでいるルームの会話は「直近 4 ルーム」の数に関わらず手放さない
   （`TranscriptRetention`）。監視を始め直した時はメインと別ウィンドウの両方を取り直す（`ShownSessions`）。
 - タイトルはルーム名（変われば追従）。別ウィンドウ同士は同じ `tabbingIdentifier` で、「ウインドウ」メニューの「すべてのウインドウを結合」や
-  システム設定の「タブで開く」で macOS のタブにまとめられる（メインは `tabbingMode = .disallowed` で混ぜない）。⌘W は別ウィンドウ（タブ）だけを閉じる。
+  システム設定の「タブで開く」で macOS のタブにまとめられる（メインは `tabbingMode = .disallowed` で混ぜない）。⌘W は別ウィンドウ（タブ。吹き出しの別ウィンドウも）だけを閉じる。
   テーマ（ナイト / ライト）はメインと同じく `AppearanceSettings` に追従する。
 - 警告（送れなかった理由など）は出た時に前にあったウィンドウに出す（`ChatAlerts.target`。そのウィンドウが閉じられていればメインに出す）。
 - ルームが閉じられた・一覧から消えた時はウィンドウを勝手に閉じず「このルームは閉じられました。」と出す（監視の開始中はその旨）。外部セッションを引き継いだ時は、
@@ -794,6 +798,22 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   次の起動で別ウィンドウは復元しない。
 - 開いているルームの集合と付け替え・取得と既読の対象の決め方は `Sources/MonitorKit/Chat/DetachedRooms.swift`（テストあり）、
   ウィンドウは `Sources/ClaudeDeck/App/RoomWindows.swift`、中身は `Sources/ClaudeDeck/Chat/Views/Conversation/RoomWindowView.swift`。
+  作り方・置き方・最後の 1 枚を閉じる時の扱いは吹き出しの別ウィンドウと共通（`Sources/ClaudeDeck/App/DetachedWindow.swift`）。
+
+### 吹き出しの別ウィンドウ
+
+- Claude の返答の吹き出しを 1 つだけ別ウィンドウに出し、横に置いたまま会話を続けられる。開くのは吹き出しの右クリック「別ウィンドウで開く」か、
+  吹き出しにカーソルを乗せた間だけ右上の脇に出る小さなボタン（`macwindow.badge.plus`。ホバーで名前を出すのは見出しと同じ `HeaderTooltipModifier`。場所は常に取っておき本文の幅を揺らさない）。
+  メインの会話からもルームの別ウィンドウの会話からも開ける。自分の発話・伝言・ツールの行・カード・本文の無い吹き出しは開けない。
+- 中身は開いた時点の本文の写し（`BubbleSnapshot`）。ルームが閉じても会話が流れても見続けられ、後から開き直しても写しは最初のまま。
+  本文は会話と同じ `MarkdownView` で縦にスクロールして読み、文字は選択できる。リンクは会話と同じく http / https だけ開く。画像は出さない。
+  上の帯にルーム名と発言の時刻、右に「全文をコピー」（Markdown の原文をクリップボードへ。押した直後は印がチェックになる）。
+- タイトルは「ルーム名 · 時刻」（今日なら `HH:mm`、それ以外は `M/d HH:mm`）。
+- 同じ吹き出し（sessionId と transcript の項目の id の組 `BubbleKey`）は 2 枚開かず、今のウィンドウを前に出す。違う吹き出しはいくつでも開ける。
+- 吹き出しのウィンドウ同士は同じ `tabbingIdentifier`（ルームの別ウィンドウとは別）で macOS のタブにまとめられる。テーマ（ナイト / ライト）に追従し、⌘W で閉じる。
+- 寿命はルームの別ウィンドウと同じ（閉じてもアプリ・セッションは止めない・メインを閉じる時の終了の確認はそのまま・アプリの終了で閉じる・次の起動で復元しない）。
+- 開いている吹き出しの集合と開ける吹き出しの判定は `Sources/MonitorKit/Chat/DetachedBubbles.swift`（テストあり）、
+  ウィンドウは `Sources/ClaudeDeck/App/BubbleWindows.swift`、中身は `Sources/ClaudeDeck/Chat/Views/Conversation/BubbleWindowView.swift`。
 
 ### 入力欄と PTY への送信
 
