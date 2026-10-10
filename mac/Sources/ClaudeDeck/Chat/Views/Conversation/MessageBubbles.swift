@@ -21,10 +21,8 @@ struct EntryView: View {
                     UserBubble(text: entry.text, images: entry.images, imageSource: imageSource, pending: true)
                 }
             case .assistant:
-                HStack {
-                    ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource)
-                    Spacer(minLength: 96)
-                }
+                ClaudeBubble(text: entry.text, images: entry.images, imageSource: imageSource)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             case .relay:
                 HStack {
                     Spacer(minLength: 96)
@@ -47,9 +45,6 @@ enum BubbleShape {
     /// 右に寄せる吹き出し（本人の発話・伝言）。
     static let outgoing = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
                                                  bottomTrailingRadius: 4, topTrailingRadius: 16)
-    /// 左に寄せる吹き出し（Claude）。
-    static let incoming = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 4,
-                                                 bottomTrailingRadius: 16, topTrailingRadius: 16)
 }
 
 struct UserBubble: View {
@@ -82,13 +77,13 @@ struct UserBubble: View {
     }
 }
 
+/// Claude の返答。会話の主な中身なので枠を付けず、列いっぱいの本文として発話より大きい文字で描く。
 struct ClaudeBubble: View {
     let text: String
     var images: [ChatImage] = []
     var imageSource: ChatImageSource?
 
     var body: some View {
-        let shape = BubbleShape.incoming
         VStack(alignment: .leading, spacing: 6) {
             if !images.isEmpty, let imageSource {
                 ChatImageGrid(images: images, source: imageSource)
@@ -96,10 +91,7 @@ struct ClaudeBubble: View {
             if !text.isEmpty {
                 MarkdownView(text: text)
                 .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(shape.fill(ChatTheme.claudeBubble))
-                .overlay(shape.stroke(ChatTheme.claudeBubbleBorder))
+                .environment(\.chatTypeScale, .reply)
             }
         }
     }
