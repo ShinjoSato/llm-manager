@@ -133,6 +133,7 @@ SwiftUI・iOS 17 以上・iPhone のみ。バンドル ID `$(DECK_BUNDLE_PREFIX)
 - 未着手。着手時に方針をここに追記する。
 
 ## メモ
+- **開発ブランチと preview の運用**: 開発ブランチは Issue ごとに **develop から**切る（他の開発ブランチの上に積まない）。完成したものは **preview に develop + 完成した全ブランチをまとめてマージ**し、ユーザーは preview 1 つで確認する（新しく完成するたびに preview を develop から作り直して全部入れ直す）。同じ箇所を触るブランチ同士がぶつかったら preview のマージで解消し、develop へのマージ時は後のブランチに develop を取り込んで解消する。「preview-done」は preview に入っている PR をまとめてマージする合図として扱う（一部だけなら番号を確かめる）。
 - GitHub リポジトリは `ShinjoSato/llm-manager`（ベースブランチは develop）。`.gitignore` でビルド成果物（`mac/dist/`・`.build/` 等）と手元だけで持つもの（下記）を除外。
 - **手元だけで持つもの（git で追跡しない）**: `config/Local.xcconfig`（署名・識別子）、`.claude/github-project.json`（開発フローの設定）、
   `~/Library/Application Support/claude-deck/`（settings.json・iPhone 連携の証明書と端末トークン・usage.json・hosted-sessions.json・limit-state.json・link-visits.json）。リポジトリに秘密情報の置き場は無い。
