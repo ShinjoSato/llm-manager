@@ -107,6 +107,8 @@ struct ClaudeBubble: View {
                         BubbleWindowButton(visible: hovering, action: openInWindow)
                     }
                 }
+                // 枠を外しても上下の発話との距離が吹き出しの頃と変わらないよう、その内側の余白だけ残す。
+                .padding(.vertical, 10)
                 // 本文とボタンの間の隙間でもホバーが切れないよう、行全体を当たり判定にする。
                 .contentShape(Rectangle())
                 .trackHover($hovering)
