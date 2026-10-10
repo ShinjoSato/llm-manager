@@ -298,33 +298,35 @@ final class SiteViewportTests: XCTestCase {
 
     func testHeightLimitFillsWidthOnWideColumns() {
         // 欄が 1000pt なら PC 表示（1280×800）は 0.78 倍で横いっぱい、高さは 625。
-        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 1200), 625)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: 1200), 625)
         let layout = SiteViewport.desktop.layout(available: 1000,
-                                                 maxHeight: SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 1200))
+                                                 maxHeight: SiteViewport.desktop.heightLimit(available: 1000, room: 1200))
         XCTAssertEqual(layout.frameWidth, 1000)
         // 1280pt を超える欄でも拡大はしないので 800 で止まる。
-        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1800, visibleHeight: 2000), 800)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1800, room: 2000), 800)
     }
 
-    func testHeightLimitStaysWithinVisibleHeight() {
-        // 見えている高さが 600 なら 480 まで（幅は高さに合わせて縮む）。
-        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 600), 480)
-        let layout = SiteViewport.desktop.layout(available: 1000, maxHeight: 480)
-        XCTAssertEqual(layout.frameHeight, 480)
-        XCTAssertEqual(layout.frameWidth, 768)
+    func testHeightLimitUsesTheWholeRoom() {
+        // タブの中で枠に使える高さが 600 なら、その高さいっぱいの 600 まで（幅は高さに合わせて縮む）。
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: 600), 600)
+        let layout = SiteViewport.desktop.layout(available: 1000, maxHeight: 600)
+        XCTAssertEqual(layout.frameHeight, 600)
+        XCTAssertEqual(layout.frameWidth, 960)
         // とても低い時も最小の高さは保つ。
-        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 200), 320)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: 200), 320)
         // 最小の高さより幅で決まる高さが低ければそちら。
-        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 320, visibleHeight: 200), 200)
-        // 見えている高さが分からなければ幅だけで決める。
-        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: nil), 625)
-        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, visibleHeight: 0), 625)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 320, room: 200), 200)
+        // 使える高さが分からなければ幅だけで決める。
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: nil), 625)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: 0), 320)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: -50), 320)
+        XCTAssertEqual(SiteViewport.desktop.heightLimit(available: 1000, room: .infinity), 625)
     }
 
     func testHeightLimitForPhoneIncludesBezel() {
         // スマホは拡大しないので 844 + 枠 20 まで。
-        XCTAssertEqual(SiteViewport.phone.heightLimit(available: 1000, visibleHeight: 5000), 864)
-        XCTAssertEqual(SiteViewport.phone.heightLimit(available: 1000, visibleHeight: 800), 640)
+        XCTAssertEqual(SiteViewport.phone.heightLimit(available: 1000, room: 5000), 864)
+        XCTAssertEqual(SiteViewport.phone.heightLimit(available: 1000, room: 640), 640)
         XCTAssertEqual(SiteViewport.phone.layout(available: 1000, maxHeight: 640).frameHeight, 620, accuracy: 1)
     }
 

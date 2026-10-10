@@ -2,31 +2,55 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// ディレクトリの詳細の「サイト」: LP を開発サーバー・書き出し（アプリ内の静的配信）・公開 URL で、幅を切り替えて見る。
-struct SitePreviewSection: View {
-    let project: ManagedProject
-    /// 詳細のスクロール欄の見えている高さ（プレビューを大きくしすぎないため）。
-    var visibleHeight: Double? = nil
-
-    /// 見る元。開発サーバーか、書き出しか、設定のリンク（http / https）のどれか。
-    private enum Source: Hashable {
+/// サイトの見る元（開発サーバーか、書き出しか、設定のリンク（http / https）のどれか）と、初めの選択を済ませたか。
+struct SiteSourceSelection {
+    enum Source: Hashable {
         case devServer
         case export
         case link(String)
     }
+    var source: Source = .export
+    var choseInitial = false
+}
 
+/// ディレクトリの詳細の「サイト」: LP を開発サーバー・書き出し（アプリ内の静的配信）・公開 URL で、幅を切り替えて見る。
+struct SitePreviewSection: View {
+    let project: ManagedProject
+    /// タブの中でこの節（枠を含む）に使える高さ。プレビューを欄の下端まで広げるのに使う。
+    var availableHeight: Double? = nil
+
+    /// タブを替えても選んだ見る元を保つため、持ち場は詳細の側。
+    @Binding var selection: SiteSourceSelection
     @State private var snapshot: SiteSnapshot?
-    @State private var source: Source = .export
-    @State private var choseInitialSource = false
     @State private var reloadToken = 0
     @State private var preview = SitePreviewState()
+    @State private var headerHeight: Double = 0
     @AppStorage(SitePreviewDefaults.viewportKey) private var viewportRaw = SiteViewport.desktop.rawValue
+
+    private var source: Source {
+        get { selection.source }
+        nonmutating set { selection.source = newValue }
+    }
+    private var choseInitialSource: Bool {
+        get { selection.choseInitial }
+        nonmutating set { selection.choseInitial = newValue }
+    }
+    private typealias Source = SiteSourceSelection.Source
 
     private var viewport: SiteViewport { SiteViewport(rawValue: viewportRaw) ?? .desktop }
     private var links: [ProjectLink] { ProjectLinks.openable(project.links) }
     private var location: SiteLocation? { snapshot?.location }
     private var hasExport: Bool { snapshot?.exportModified != nil }
     private var devServer: DevServer? { location.flatMap { DevServerStore.shared.server(for: $0.root) } }
+
+    private static let spacing: CGFloat = 10
+    /// `detailCard()` の内側の余白（上下）。
+    private static let cardPadding = 28.0
+
+    /// 見出しの行と案内を除いて、プレビューの枠に残る高さ。
+    private var previewRoom: Double? {
+        availableHeight.map { $0 - Self.cardPadding - headerHeight - Double(Self.spacing) }
+    }
 
     /// 今の見る元で開く URL（開けない時は nil）。
     private var targetURL: URL? {
@@ -38,9 +62,13 @@ struct SitePreviewSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            toolbar
-            info
+        VStack(alignment: .leading, spacing: Self.spacing) {
+            VStack(alignment: .leading, spacing: Self.spacing) {
+                toolbar
+                info
+            }
+            .zIndex(1)
+            .onGeometryChange(for: Double.self) { $0.size.height } action: { headerHeight = $0 }
             content
         }
         .detailCard()
@@ -204,7 +232,7 @@ struct SitePreviewSection: View {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
         } else if let url = targetURL {
             SitePreviewFrame(url: url, origin: source == .devServer ? url : nil, viewport: viewport, reloadToken: reloadToken,
-                             state: preview, height: .fillWidth(visibleHeight: visibleHeight))
+                             state: preview, height: .fillWidth(room: previewRoom))
         } else if source == .devServer, location != nil {
             if devServer?.isActive == true {
                 hint("開発サーバーがアドレス（http://localhost:…）を出すとここに映ります。")

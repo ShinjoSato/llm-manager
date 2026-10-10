@@ -7,15 +7,11 @@ struct IOSPreviewsSection: View {
     let project: ManagedProject
     /// 開く `.xcworkspace` / `.xcodeproj`。
     let xcodeProject: URL
+    /// 詳細が持つ走査（タブを行き来しても一覧と件数を保つ）。
+    let list: BackgroundScan<SwiftPreviewScan>
 
-    @State private var list = BackgroundScan<SwiftPreviewScan>()
     @State private var opened: IOSPreviewTarget?
-    @State private var reloadToken = 0
-    @State private var scanned: DetailScanKey?
     @State private var xcodeRunning = true
-    /// 畳んだまま「すべて描く」を押した時は、節を開いてから足す（閉じた節の分は取りやめるため）。
-    @State private var renderAllWhenOpened = false
-    @AppStorage("directory.iosPreviews.collapsed") private var collapsed = true
 
     private static let columns = [GridItem(.adaptive(minimum: 120, maximum: 160), spacing: 12, alignment: .top)]
     private var service: IOSPreviewService { .shared }
@@ -24,26 +20,17 @@ struct IOSPreviewsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             toolbar
-            if !collapsed {
-                notices
-                content
-            }
+            notices
+            content
         }
         .detailCard()
-        // 畳んでいる間は走査せず、開いた時に初めて走査する。
         .task(id: scanKey) {
             let key = scanKey
-            guard key.open, scanned != key else { return }
-            if await list.reload({ SwiftPreviews.scan(root: key.path, isCancelled: $0) }) { scanned = key }
+            await list.scanIfNeeded(key) { SwiftPreviews.scan(root: key.path, isCancelled: $0) }
         }
-        // 開いている間は mcpbridge を止めず、Xcode が動いているかを見続ける。閉じたらこのプロジェクトの待ち行列を取りやめる。
-        .task(id: collapsed) {
-            guard !collapsed else { return }
+        // タブを開いている間は mcpbridge を止めず、Xcode が動いているかを見続ける。タブを離れたらこのプロジェクトの待ち行列を取りやめる。
+        .task {
             service.sectionOpened(project.id)
-            if renderAllWhenOpened {
-                renderAllWhenOpened = false
-                service.renderAll(targets)
-            }
             while !Task.isCancelled {
                 xcodeRunning = IOSPreviewService.xcodeIsRunning()
                 try? await Task.sleep(for: .seconds(3))
@@ -55,7 +42,7 @@ struct IOSPreviewsSection: View {
         }
     }
 
-    private var scanKey: DetailScanKey { DetailScanKey(path: root, open: !collapsed, token: reloadToken) }
+    private var scanKey: DetailScanKey { DetailScanKey(path: root, token: list.reloadToken) }
 
     private var targets: [IOSPreviewTarget] {
         (list.value?.files ?? []).flatMap { file in
@@ -67,7 +54,7 @@ struct IOSPreviewsSection: View {
     private var toolbar: some View {
         let busy = service.busyProjects.contains(project.id)
         return HStack(spacing: 8) {
-            SectionDisclosureButton(name: "iPhone のプレビュー", count: list.value?.count, collapsed: $collapsed)
+            SectionTitle(name: "iPhone のプレビュー", count: list.value?.count)
             Spacer(minLength: 8)
             if busy {
                 HeaderButton(symbol: "stop.fill", name: "取りやめる",
@@ -77,20 +64,14 @@ struct IOSPreviewsSection: View {
                 }
             } else {
                 HeaderButton(symbol: "play.rectangle.on.rectangle", name: "すべて描く",
-                             detail: "まだ描いていないプレビューを Xcode で 1 件ずつ描く（節を閉じると残りは取りやめる）") {
-                    if collapsed {
-                        renderAllWhenOpened = true
-                        collapsed = false
-                    } else {
-                        service.renderAll(targets)
-                    }
+                             detail: "まだ描いていないプレビューを Xcode で 1 件ずつ描く（タブを離れると残りは取りやめる）") {
+                    service.renderAll(targets)
                 }
                 .disabled(targets.isEmpty)
             }
             HeaderButton(symbol: "arrow.clockwise", name: "再読み込み", detail: "ソースの #Preview を探し直す",
                          busyStatus: list.scanning ? "走査中" : nil) {
-                collapsed = false
-                reloadToken += 1
+                list.reloadToken += 1
             }
         }
         .zIndex(1)

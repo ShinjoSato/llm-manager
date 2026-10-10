@@ -1,46 +1,110 @@
 import SwiftUI
 import MonitorKit
 
-/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（操作・サイト・画像・iPhone のプレビュー・リンク・スレッド）。
+/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（見出しの操作と、サイト・画像・iPhone のプレビュー・リンク・スレッドのタブ）。
 struct DirectoryDetailView: View {
     let model: ChatModel
     let directory: ProjectDirectory
 
+    var body: some View {
+        VStack(spacing: 0) {
+            DirectoryDetailHeader(model: model, project: directory.project)
+            // 別のプロジェクトへ移ったら、選んだタブ・走査の結果・見る元・表示中のページを持ち越さない。
+            DirectoryDetailTabs(model: model, directory: directory).id(directory.project.id)
+        }
+        .background(ChatTheme.background)
+    }
+}
+
+/// タブの列と、選んだタブの節だけを欄いっぱいに出す本文。
+private struct DirectoryDetailTabs: View {
+    let model: ChatModel
+    let directory: ProjectDirectory
+
+    @State private var remembered: DirectoryTab?
+    @State private var hasSite: Bool?
+    @State private var images = ProjectImageStore()
+    @State private var siteSource = SiteSourceSelection()
+    @State private var iosPreviews = BackgroundScan<SwiftPreviewScan>()
     @State private var visibleHeight: Double?
+
+    init(model: ChatModel, directory: ProjectDirectory) {
+        self.model = model
+        self.directory = directory
+        _remembered = State(initialValue: DirectoryTabMemory().remembered(for: directory.project.id))
+    }
 
     private var project: ManagedProject { directory.project }
 
-    /// 文章の節を抑える幅（サイトのプレビューは欄いっぱい）。
+    /// 文章の節を抑える幅（サイトのプレビューと画像は欄いっぱい）。
     private static let readableWidth: CGFloat = 900
+    private static let padding: CGFloat = 20
 
     var body: some View {
+        let xcodeProject = model.editors.xcodeProject(for: project.editorTarget)
+        let rooms = threadRooms
+        let available = DirectoryTabs.available(hasSite: hasSite, hasXcodeProject: xcodeProject != nil)
+        let selection = DirectoryTabs.resolve(remembered: remembered, available: available)
         VStack(spacing: 0) {
-            DirectoryDetailHeader(model: model, project: project)
+            DirectoryTabBar(items: available.map { DirectoryTabBar.Item(tab: $0, count: count(of: $0, rooms: rooms)) },
+                            selection: selection) { tab in
+                remembered = tab
+                DirectoryTabMemory().remember(tab, for: project.id)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // 別のプロジェクトへ移ったら、見る元・表示中のページ・画像の一覧を持ち越さない。
-                    SitePreviewSection(project: project, visibleHeight: visibleHeight).id(project.id)
-                    ProjectImagesSection(project: project).id(project.id)
-                    if let xcodeProject = model.editors.xcodeProject(for: project.editorTarget) {
-                        IOSPreviewsSection(project: project, xcodeProject: xcodeProject).id(project.id)
-                    }
-                    links.frame(maxWidth: Self.readableWidth, alignment: .leading)
-                    threads.frame(maxWidth: Self.readableWidth, alignment: .leading)
+                    section(selection, xcodeProject: xcodeProject, rooms: rooms)
                 }
-                .padding(20)
+                .padding(Self.padding)
                 // 中身が広くてもスクロール欄の幅に収め、はみ出して中央寄せにさせない。
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
+            // タブを替えたら前のタブのスクロール位置を持ち越さない。
+            .id(selection)
             .scrollIndicators(.automatic)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { visibleHeight = proxy.size.height }
-                        .onChange(of: proxy.size.height) { _, height in visibleHeight = height }
-                }
-            }
+            .onGeometryChange(for: Double.self) { $0.size.height } action: { visibleHeight = $0 }
         }
-        .background(ChatTheme.background)
+        // サイトの有無は軽い探索だけで決め、配信や開発サーバーの確かめはサイトのタブを開いた時に回す。
+        .task(id: SiteTaskKey(project: project, token: 0)) {
+            let project = project
+            let lookup = await Task.detached(priority: .userInitiated) { SiteLocator.lookup(project: project) }.value
+            guard !Task.isCancelled else { return }
+            hasSite = DirectoryTabs.hasSite(lookup)
+        }
+    }
+
+    @ViewBuilder
+    private func section(_ tab: DirectoryTab, xcodeProject: URL?, rooms: [Room]) -> some View {
+        switch tab {
+        case .site:
+            SitePreviewSection(project: project, availableHeight: visibleHeight.map { $0 - Double(Self.padding) * 2 }, selection: $siteSource)
+        case .images:
+            ProjectImagesSection(project: project, store: images)
+        case .iosPreviews:
+            if let xcodeProject {
+                IOSPreviewsSection(project: project, xcodeProject: xcodeProject, list: iosPreviews)
+            }
+        case .links:
+            links.frame(maxWidth: Self.readableWidth, alignment: .leading)
+        case .threads:
+            threads(rooms).frame(maxWidth: Self.readableWidth, alignment: .leading)
+        }
+    }
+
+    /// 画像と iPhone は走査し終えた時だけ数を出す。
+    private func count(of tab: DirectoryTab, rooms: [Room]) -> Int? {
+        switch tab {
+        case .site: return nil
+        case .images: return images.scan?.count
+        case .iosPreviews: return iosPreviews.value?.count
+        case .links: return project.links.count
+        case .threads: return rooms.count
+        }
+    }
+
+    private var threadRooms: [Room] {
+        let byId = Dictionary(model.rooms.map { ($0.id.string, $0) }, uniquingKeysWith: { a, _ in a })
+        return directory.ids.compactMap { byId[$0] }
     }
 
     /// 設定の `links` を全部出す（開けないものは理由付きで薄く）。追加・編集・並べ替え・削除はここから設定ファイルに書く。
@@ -63,10 +127,8 @@ struct DirectoryDetailView: View {
         }
     }
 
-    private var threads: some View {
-        let byId = Dictionary(model.rooms.map { ($0.id.string, $0) }, uniquingKeysWith: { a, _ in a })
-        let rooms = directory.ids.compactMap { byId[$0] }
-        return DetailSection(title: "スレッド  \(rooms.count)") {
+    private func threads(_ rooms: [Room]) -> some View {
+        DetailSection(title: "スレッド  \(rooms.count)") {
             if rooms.isEmpty { emptyText("スレッドなし") }
             ForEach(rooms) { room in
                 Button { model.select(room.id) } label: {

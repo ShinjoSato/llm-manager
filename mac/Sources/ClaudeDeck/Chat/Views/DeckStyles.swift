@@ -81,23 +81,14 @@ struct DisclosureChevron: View {
     }
 }
 
-/// 詳細の畳める節の見出し（印・名前・件数）。押すと開閉する。
-struct SectionDisclosureButton: View {
+/// 詳細の節の見出し（名前と、分かっていれば件数）。
+struct SectionTitle: View {
     let name: String
-    let count: Int?
-    @Binding var collapsed: Bool
+    var count: Int? = nil
 
     var body: some View {
-        Button { collapsed.toggle() } label: {
-            HStack(spacing: 6) {
-                DisclosureChevron(collapsed: collapsed)
-                Text(count.map { "\(name)  \($0)" } ?? name)
-                    .sectionLabelStyle()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(collapsed ? "\(name)の節を開く" : "\(name)の節を畳む")
+        Text(count.map { "\(name)  \($0)" } ?? name)
+            .sectionLabelStyle()
     }
 }
 
