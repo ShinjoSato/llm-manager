@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（概要・操作・サイト・画像・iPhone のプレビュー・GitHub の紐づけ・リンク・スレッド）。
+/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（操作・サイト・画像・iPhone のプレビュー・リンク・スレッド）。
 struct DirectoryDetailView: View {
     let model: ChatModel
     let directory: ProjectDirectory
@@ -18,14 +18,12 @@ struct DirectoryDetailView: View {
             DirectoryDetailHeader(model: model, project: project)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    overview.frame(maxWidth: Self.readableWidth, alignment: .leading)
                     // 別のプロジェクトへ移ったら、見る元・表示中のページ・画像の一覧を持ち越さない。
                     SitePreviewSection(project: project, visibleHeight: visibleHeight).id(project.id)
                     ProjectImagesSection(project: project).id(project.id)
                     if let xcodeProject = model.editors.xcodeProject(for: project.editorTarget) {
                         IOSPreviewsSection(project: project, xcodeProject: xcodeProject).id(project.id)
                     }
-                    github.frame(maxWidth: Self.readableWidth, alignment: .leading)
                     links.frame(maxWidth: Self.readableWidth, alignment: .leading)
                     threads.frame(maxWidth: Self.readableWidth, alignment: .leading)
                 }
@@ -43,41 +41,6 @@ struct DirectoryDetailView: View {
             }
         }
         .background(ChatTheme.background)
-    }
-
-    private var overview: some View {
-        DetailSection(title: "概要") {
-            DetailField(label: "パス") {
-                Text(project.path)
-                    .font(ChatTheme.mono)
-                    .foregroundStyle(ChatTheme.text)
-                    .textSelection(.enabled)
-            }
-            DetailField(label: "状態") {
-                Text(project.status.label)
-                    .font(ChatTheme.body)
-                    .foregroundStyle(ChatTheme.text)
-            }
-            DetailField(label: "メモ") {
-                Text(project.note.isEmpty ? "なし" : project.note)
-                    .font(ChatTheme.body)
-                    .foregroundStyle(project.note.isEmpty ? ChatTheme.tertiary : ChatTheme.text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var github: some View {
-        DetailSection(title: "GitHub") {
-            if let link = project.github {
-                DetailField(label: "owner") { detailText(link.owner) }
-                DetailField(label: "リポジトリ") { detailText(link.repo) }
-                DetailField(label: "Project 番号") { detailText(link.projectNumber.map(String.init)) }
-            } else {
-                emptyText("紐づけなし（設定の GitHub タブで紐づけます）")
-            }
-        }
     }
 
     /// 設定の `links` を全部出す（開けないものは理由付きで薄く）。追加・編集・並べ替え・削除はここから設定ファイルに書く。
@@ -115,13 +78,6 @@ struct DirectoryDetailView: View {
                 .help("このルームの会話を開く")
             }
         }
-    }
-
-    private func detailText(_ value: String?) -> some View {
-        Text(value ?? "なし")
-            .font(ChatTheme.mono)
-            .foregroundStyle(value == nil ? ChatTheme.tertiary : ChatTheme.text)
-            .textSelection(.enabled)
     }
 
     private func emptyText(_ text: String) -> some View {
@@ -221,22 +177,6 @@ private struct DetailSection<Content: View>: View {
             content
         }
         .detailCard()
-    }
-}
-
-private struct DetailField<Content: View>: View {
-    let label: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(label)
-                .font(ChatTheme.caption)
-                .foregroundStyle(ChatTheme.secondary)
-                .frame(width: 88, alignment: .leading)
-            content
-            Spacer(minLength: 0)
-        }
     }
 }
 
