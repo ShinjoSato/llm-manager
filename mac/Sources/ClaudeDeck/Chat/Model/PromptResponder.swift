@@ -93,8 +93,14 @@ final class PromptResponder {
         guard !busyKeys.contains(Self.ptyPermissionKey(session)) else {
             return .failure("busy", "権限の回答を送っているところです。少し待ってからもう一度押してください。")
         }
+        let answering = !key.movesCursor && (session.permissionPrompt != nil || session.menuPrompt != nil || session.unreadableMenu != nil)
         switch session.sendKey(key) {
         case .sent:
+            // 画面が描き替わるまでは古いカードが今の画面と一致して見えるので、別ウィンドウや iPhone から重ねて答えさせない。
+            if answering {
+                holdBusy(Self.ptyPermissionKey(session))
+                holdBusy(Self.ptyMenuKey(session))
+            }
             return .success("sent")
         case .navigating:
             return .failure("navigating", "カードから選択肢を動かしているところです。終わってからもう一度押してください。")

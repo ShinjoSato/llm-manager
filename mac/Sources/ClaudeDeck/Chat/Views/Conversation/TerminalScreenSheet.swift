@@ -37,11 +37,15 @@ struct TerminalScreenSheet: View {
             // 押しっぱなしの連打で行き過ぎないよう、押した時だけ送る。
             .onKeyPress(phases: .down) { keyPress in
                 guard keyPress.modifiers.isDisjoint(with: [.command, .control, .option]),
-                      let key = TerminalKey(keyCharacter: keyPress.key.character) else { return .ignored }
+                      let key = TerminalKey(keyCharacter: keyPress.key.character),
+                      // Shift+Tab は Claude Code ではモードの切り替えなので、ただの Tab として送らない。
+                      !(key == .tab && keyPress.modifiers.contains(.shift)) else { return .ignored }
                 press(key)
                 return .handled
             }
             .onAppear { focused = true }
+            // Esc は端末に送るキーなので、シートは「閉じる」（⌘W）でだけ閉じる。
+            .interactiveDismissDisabled()
             .task {
                 while !Task.isCancelled {
                     refresh()

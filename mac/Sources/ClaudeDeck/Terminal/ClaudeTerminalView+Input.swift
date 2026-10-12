@@ -270,9 +270,13 @@ extension ClaudeTerminalView {
         guard !isSending else { return .sending }
         guard process?.running == true, let text = key.sequence(applicationCursor: getTerminal().applicationCursor) else { return .ended }
         let cursor = key.movesCursor ? currentMenu()?.cursor : nil
+        if key.movesCursor { releasePendingArrowHoldIfDone(cursor: cursor) }
         send(txt: text)
         // 反映前の矢印を数えずにカードの移動が始まると 1 行先で確定しうるので、反映まで待たせる。
-        if key.movesCursor { pendingArrowHold = PendingArrowHold(since: Date(), cursor: cursor) }
+        // 続けて押した時は最初の位置を残す（後の位置で上書きすると、1 回目の反映だけで外れてしまう）。
+        if key.movesCursor { pendingArrowHold = PendingArrowHold(since: Date(), cursor: pendingArrowHold?.cursor ?? cursor) }
+        // 入力欄に文字や呼び出した履歴が残りうるので、次の送信の前に一度確かめさせる。
+        if leftoverCheck == .none { leftoverCheck = .warnOnce }
         return .sent
     }
 
