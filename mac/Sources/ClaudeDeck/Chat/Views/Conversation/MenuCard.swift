@@ -7,6 +7,8 @@ struct MenuCard: View {
     let busy: Bool
     /// 直前の操作の結果（複数選択でチェックを切り替えた等）。
     let notice: String?
+    /// 「端末の画面」を開く（ホスト中のルームだけ）。送信中のまま止まっても押せるよう無効化の外に置く。
+    var onOpenTerminal: (() -> Void)? = nil
     /// 押した時のメニューと選択肢の位置。nil は取り消し（Esc）。
     let onChoose: (MenuPrompt, Int?) -> Void
     /// 押した時のメニューと、問いのタブを移る向き。
@@ -73,6 +75,10 @@ struct MenuCard: View {
         }
         .disabled(busy)
         .opacity(busy ? 0.6 : 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .bottomTrailing) {
+            if let onOpenTerminal { CardTerminalButton(action: onOpenTerminal) }
+        }
         .cardFrame()
         .exitConfirmation(presenting: $exitMenu) { onChoose($0, nil) }
     }

@@ -86,6 +86,31 @@ final class PromptResponder {
         return .failure(code, message)
     }
 
+    // MARK: - 端末の画面
+
+    /// 「端末の画面」からキーを 1 回送る。権限の回答を送っている間・選択肢を動かしている間は送らない（二重操作で行き過ぎないため）。
+    func sendTerminalKey(_ session: HostedSession, _ key: TerminalKey) -> RemoteActionResult {
+        guard !busyKeys.contains(Self.ptyPermissionKey(session)) else {
+            return .failure("busy", "権限の回答を送っているところです。少し待ってからもう一度押してください。")
+        }
+        let answering = !key.movesCursor && (session.permissionPrompt != nil || session.menuPrompt != nil || session.unreadableMenu != nil)
+        switch session.sendKey(key) {
+        case .sent:
+            // 画面が描き替わるまでは古いカードが今の画面と一致して見えるので、別ウィンドウや iPhone から重ねて答えさせない。
+            if answering {
+                holdBusy(Self.ptyPermissionKey(session))
+                holdBusy(Self.ptyMenuKey(session))
+            }
+            return .success("sent")
+        case .navigating:
+            return .failure("navigating", "カードから選択肢を動かしているところです。終わってからもう一度押してください。")
+        case .sending:
+            return .failure("sending", "入力欄からの送信の途中です。終わってからもう一度押してください。")
+        case .ended:
+            return .failure("ended", "claude が動いていないため送れません。")
+        }
+    }
+
     // MARK: - 選択肢
 
     static func ptyMenuKey(_ session: HostedSession) -> String { "menu:\(session.id.uuidString)" }

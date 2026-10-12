@@ -5,6 +5,8 @@ import MonitorKit
 struct UnreadableMenuCard: View {
     let menu: UnreadableMenu
     let busy: Bool
+    /// 「端末の画面」を開く（ホスト中のルームだけ）。
+    var onOpenTerminal: (() -> Void)? = nil
     /// 押した時の写しを渡す。
     let onCancel: (UnreadableMenu) -> Void
     @State private var exitMenu: UnreadableMenu?
@@ -16,12 +18,16 @@ struct UnreadableMenuCard: View {
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.secondary)
             HStack(spacing: 8) {
-                CardEscapeButton(exits: menu.cancelExits) {
-                    if menu.cancelExits { exitMenu = menu } else { onCancel(menu) }
+                HStack(spacing: 8) {
+                    CardEscapeButton(exits: menu.cancelExits) {
+                        if menu.cancelExits { exitMenu = menu } else { onCancel(menu) }
+                    }
+                    if busy { ProgressView().controlSize(.small) }
                 }
-                if busy { ProgressView().controlSize(.small) }
+                .disabled(busy)
+                Spacer(minLength: 8)
+                if let onOpenTerminal { CardTerminalButton(action: onOpenTerminal) }
             }
-            .disabled(busy)
         }
         .cardFrame()
         .exitConfirmation(presenting: $exitMenu, onExit: onCancel)

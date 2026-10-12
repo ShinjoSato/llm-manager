@@ -254,6 +254,32 @@ extension ClaudeTerminalView {
         }
     }
 
+    enum KeySendResult: Equatable {
+        case sent
+        /// 選択肢へ ❯ を動かしている最中。重ねて送ると行き先がずれる。
+        case navigating
+        /// 入力欄からの送信の途中。貼り付けと Enter の間に割り込まない。
+        case sending
+        /// claude が動いていない・送れないキー。
+        case ended
+    }
+
+    /// 「端末の画面」のキーを 1 回だけ送る。カードの移動中・入力欄の送信中は送らない。
+    func sendKey(_ key: TerminalKey) -> KeySendResult {
+        guard !isNavigatingMenu else { return .navigating }
+        guard !isSending else { return .sending }
+        guard process?.running == true, let text = key.sequence(applicationCursor: getTerminal().applicationCursor) else { return .ended }
+        let cursor = key.movesCursor ? currentMenu()?.cursor : nil
+        if key.movesCursor { releasePendingArrowHoldIfDone(cursor: cursor) }
+        send(txt: text)
+        // 反映前の矢印を数えずにカードの移動が始まると 1 行先で確定しうるので、反映まで待たせる。
+        // 続けて押した時は最初の位置を残す（後の位置で上書きすると、1 回目の反映だけで外れてしまう）。
+        if key.movesCursor { pendingArrowHold = PendingArrowHold(since: Date(), cursor: pendingArrowHold?.cursor ?? cursor) }
+        // 入力欄に文字や呼び出した履歴が残りうるので、次の送信の前に一度確かめさせる。
+        if leftoverCheck == .none { leftoverCheck = .warnOnce }
+        return .sent
+    }
+
     enum UnreadableCancelResult: Equatable {
         case sent
         /// 読めないメニューが出ていない（消えた・読めるようになった）。

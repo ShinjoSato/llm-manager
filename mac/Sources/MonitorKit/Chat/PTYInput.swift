@@ -64,6 +64,73 @@ public enum PTYInput {
     }
 }
 
+/// 「端末の画面」から 1 回ずつ直接送れるキー。カードで答えられない時の逃げ道なので、文字の自由入力は持たない。
+public enum TerminalKey: Hashable, Sendable {
+    case up, down, left, right
+    case enter, escape, tab, space
+    /// 1〜9 だけ（範囲外は送らない）。
+    case digit(Int)
+
+    /// シートに並べる順。
+    public static let all: [TerminalKey] = [.left, .up, .down, .right, .enter, .escape, .tab, .space] + (1...9).map { .digit($0) }
+
+    /// PTY に送る列。矢印は実キーボードと同じく端末のカーソルモードに合わせる。送れないキーは nil。
+    public func sequence(applicationCursor: Bool) -> String? {
+        switch self {
+        case .up: return PTYInput.arrowKey(.up, applicationCursor: applicationCursor)
+        case .down: return PTYInput.arrowKey(.down, applicationCursor: applicationCursor)
+        case .right: return PTYInput.cursorKey("C", applicationCursor: applicationCursor)
+        case .left: return PTYInput.cursorKey("D", applicationCursor: applicationCursor)
+        case .enter: return PTYInput.submitKey
+        case .escape: return "\u{1b}"
+        case .tab: return "\t"
+        case .space: return " "
+        case .digit(let number): return (1...9).contains(number) ? String(number) : nil
+        }
+    }
+
+    /// ボタンと結果の一言に出す名前。
+    public var label: String {
+        switch self {
+        case .up: return "↑"
+        case .down: return "↓"
+        case .left: return "←"
+        case .right: return "→"
+        case .enter: return "Enter"
+        case .escape: return "Esc"
+        case .tab: return "Tab"
+        case .space: return "Space"
+        case .digit(let number): return String(number)
+        }
+    }
+
+    /// ❯ やタブを動かすキー（送った後、反映までカードからの移動を待たせる）。
+    public var movesCursor: Bool {
+        switch self {
+        case .up, .down, .left, .right: return true
+        case .enter, .escape, .tab, .space, .digit: return false
+        }
+    }
+
+    /// キーボードの押下の文字（SwiftUI の `KeyEquivalent.character`）から。矢印は AppKit の機能キーの私用領域（U+F700〜）で届く。
+    public init?(keyCharacter: Character) {
+        switch keyCharacter {
+        case "\u{F700}": self = .up
+        case "\u{F701}": self = .down
+        case "\u{F702}": self = .left
+        case "\u{F703}": self = .right
+        // テンキーの Enter は ETX（U+0003）で届く。
+        case "\r", "\u{3}": self = .enter
+        case "\u{1b}": self = .escape
+        case "\t": self = .tab
+        case " ": self = .space
+        default:
+            guard let number = keyCharacter.wholeNumberValue, keyCharacter.isASCII, (1...9).contains(number) else { return nil }
+            self = .digit(number)
+        }
+    }
+}
+
 /// 入力欄への送信（Enter）を止めるべき端末画面の状態。
 public enum InputBlock: Sendable, Equatable {
     /// ツール使用の権限プロンプト。Enter が「1. Yes」になる。
