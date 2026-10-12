@@ -222,6 +222,7 @@ mac/
   docs/pty-daemon.md            アプリを閉じても claude を動かし続ける常駐プロセスの設計と試作の記録（未実装）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
   scripts/bundle.sh             claude-deck.app を組み立てて署名する（プロファイルがあれば Apple Development + iCloud、無ければ ad-hoc。チャネルの実行ファイルも同梱）
+  scripts/install.sh            develop を最新にして組み立て、動いている claude-deck を普通に終了させてから /Applications のものと入れ替えて起動し直す
   scripts/statusline.sh         Claude Code の statusLine。表示に加えて使用量を Application Support に残す
 ```
 
@@ -1187,6 +1188,22 @@ cp config/Local.example.xcconfig config/Local.xcconfig   # 雛形を写して自
 
 ### `.app` として起動する
 
+普段使いは `/Applications` に入れて、Spotlight・Launchpad・Dock から起動する。入れるのも更新するのも次の 1 つ:
+
+```sh
+cd /Users/shinjo/project/ai-manager/mac
+./scripts/install.sh           # develop を最新に → 組み立て → 動いている claude-deck を終了 → /Applications/claude-deck.app と入れ替え → 起動
+```
+
+- develop にいて作業ツリーがきれいな時だけ `git pull --ff-only` する（違えば止まる）。今の作業ツリーのまま組み立てるなら `--no-pull`。
+- 動いている claude-deck（同じバンドル ID）には ⌘Q と同じ普通の終了を頼むので、稼働中・権限待ちがあれば確認が出る。取りやめた・180 秒で終わらなかった時は入れ替えない。
+  ホスト中のセッションは終了の時に記録され、起動し直すと再開する（「終了と次の起動」）。初回は端末から claude-deck を操作する許可（オートメーション）を macOS が尋ねる。
+- 入れる先に同じ名前の別のアプリ（バンドル ID が違う）がある時は消さずに止まる。組み立ては一時フォルダで行い、`mac/dist/` は変えない。
+- オプション: `--dest <dir>`（既定 `/Applications`）/ `--no-pull` / `--no-launch` / `--adhoc` / `--build-system auto|default|native`（後ろの 2 つは bundle.sh に渡す）。
+- Channels のチャネルを `.mcp.json` に登録する時は `/Applications/claude-deck.app/Contents/MacOS/claude-deck-channel` を指せば、更新のたびに新しくなる。
+
+組み立てだけをする時（`mac/dist/` に作る）:
+
 ```sh
 cd /Users/shinjo/project/ai-manager/mac
 ./scripts/bundle.sh            # → mac/dist/claude-deck.app（config/ の値に合うプロファイルがあれば Apple Development、無ければ ad-hoc）
@@ -1197,7 +1214,7 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - `auto` は通常の `swift build` を試し、失敗したら `--build-system native` で再ビルドする。Metal Toolchain が無い環境では通常ビルドが SwiftTerm の `Shaders.metal` のコンパイルで失敗するため（`xcodebuild -downloadComponent MetalToolchain` で入れれば通常ビルドが通る）。
 - 依存のリソースバンドル（`SwiftTerm_SwiftTerm.bundle`）は `Contents/Resources/` に同梱する。claude-deck は SwiftTerm の Metal レンダラーを有効にしていないため、現状このバンドルは参照されない（有効化する場合は SPM の `Bundle.module` が `.app` 直下を探す点に注意）。
 - バンドル ID（`CFBundleIdentifier`）と `DeckICloudContainer` は `config/` の値で Info.plist に埋める。署名はチーム ID・コンテナが設定されていて、このアプリ用のプロビジョニングプロファイルがあれば Apple Development（iCloud のエンタイトルメント付き。上の「iPhone への通知」）、無ければ ad-hoc（`codesign -s -`）。Developer ID 署名・公証・配布・自動アップデートはしない。別の Mac へコピーすると Gatekeeper に止められる前提（右クリック → 開く）。
-- `/Applications` へ置く場合は `--out /Applications` またはコピー。置き場所に関わらず、設定は `~/Library/Application Support/claude-deck/settings.json` を読む（上の「設定（settings.json）」。Finder 起動には環境変数が渡らないので `CLAUDE_DECK_SETTINGS` は効かない）。
+- 置き場所に関わらず、設定は `~/Library/Application Support/claude-deck/settings.json` を読む（上の「設定（settings.json）」。Finder 起動には環境変数が渡らないので `CLAUDE_DECK_SETTINGS` は効かない）。
 - 生成物 `mac/dist/` と `mac/.build/` は git 管理外。
 - アイコン（任意）: `mac/Resources/AppIcon.icns` を置くと同梱される。1024px の PNG から作る例:
   ```sh
