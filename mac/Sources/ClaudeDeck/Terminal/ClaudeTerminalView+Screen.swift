@@ -156,6 +156,11 @@ extension ClaudeTerminalView {
         line.translateToString(trimRight: true, skipNullCellsFollowingWide: true).replacingOccurrences(of: "\u{0}", with: " ")
     }
 
+    /// 「端末の画面」に出す表示。カードの読み取りと違い、右の別の欄も含めて見えているまま出す。
+    func displayScreenLines() -> [String] {
+        TerminalScreen.droppingTrailingBlankLines(rawScreenLines().map(Self.text(of:)))
+    }
+
     /// 上限の検査は右の別の欄も含めて全幅で読む（`screenLines` と違い欄で切らない）。
     func limitScreenLines() -> [String] {
         rawScreenLines().map(Self.text(of:))

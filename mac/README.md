@@ -37,8 +37,8 @@ mac/
     Terminal/                   Claude Code を PTY でホストする端末ビュー（1 つの型を役割ごとの extension に分ける）
       ClaudeTerminalView.swift    本体（ClaudeStatus・ScreenState・持ち物・PTY 受信の傍受）
       ClaudeTerminalView+Launch.swift  claude の起動（環境からの API キー除去・--resume）
-      ClaudeTerminalView+Input.swift   入力（貼り付け・Enter・画像の取り込み待ち・権限 / 選択メニュー / タブへの回答）
-      ClaudeTerminalView+Screen.swift  画面の読み取り（状態の監視・実画面の行・背景色・選択メニューの解析・画面の写し）
+      ClaudeTerminalView+Input.swift   入力（貼り付け・Enter・画像の取り込み待ち・権限 / 選択メニュー / タブへの回答・「端末の画面」のキー）
+      ClaudeTerminalView+Screen.swift  画面の読み取り（状態の監視・実画面の行・背景色・選択メニューの解析・画面の写し・「端末の画面」に出す全幅の行）
       ClaudeTerminalView+Limit.swift   画面末尾の上限表示の監視と強制終了
     Chat/                       チャット画面（ルーム一覧・会話・入力欄・権限カード・選択肢カード）
       Model/                      ChatModel と、それが束ねる部品（@Observable・画面に依らない）
@@ -82,7 +82,7 @@ mac/
           LinkOverviewView.swift      中央の横断のリンク一覧と、「ディレクトリ」の固定行「リンク」（LinkOverviewListRow）
         Conversation/               中央の会話
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）。メインの中央と別ウィンドウで共通
-          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」のボタン
+          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」のボタン
           RoomWindowView.swift        別ウィンドウの中身（1 ルームの会話・会話の取得と既読・ルームが消えた時の案内・そのウィンドウで出す警告）
           BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文。大きさは会話の返答と同じ）
           HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
@@ -93,6 +93,7 @@ mac/
           MenuCard.swift              選択肢のカード（選択肢の行・AskUserQuestion のタブ）
           UnreadableMenuCard.swift    選択肢が読めない時のカード
           PromptCardParts.swift       カードの共通部品（見出し・等幅の抜粋・控えめなボタン・枠・終了の確認）
+          TerminalScreenSheet.swift   「端末の画面」のシート（端末の今の表示・送れるキーのボタンとキーボード）と、カード・見出しから開く口
         Composer/                   入力欄
           Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード・添付ボタン）
           AttachmentStrip.swift       入力欄の上の添付チップ
@@ -190,7 +191,7 @@ mac/
                                   終了の確認の要否と文言（QuitConfirmation）・「作業が終わったら終了」の待ち（QuitWait）
       Attachments.swift           添付: 送る形の組み立て（画像パスの貼り付け用エスケープ・本文へのパスの一覧）・ペーストボードからの拾い出し・一時保存と掃除
       AttachmentPasteTextView.swift 添付を受ける文字欄（⌘V のメニュー検証・貼り付け・ドロップ）。入力欄の SubmitTextView の土台
-      PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの判定
+      PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去・「端末の画面」から送れるキーの表 `TerminalKey`）と、画面からの権限プロンプト / 選択メニューの判定
       MenuPrompt.swift            選択メニューの中身の読み取り（ChoiceMenu.parse）と、矢印で選択肢まで動かして Enter する手順（MenuNavigator）・問いのタブを移る手順（MenuTabMover）
       MenuScreenLog.swift         選択肢カードを出した・読めなかった画面の写しを直近数件残す
       ScreenPane.swift            画面の右に縦線で区切って出る別の欄（差分パネル）を除いて左だけにする
@@ -644,7 +645,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   - **見出しのボタンが入りきらない時**（会話の見出しも同じ）: 名前とパスは省略表示（最小 140px）まで縮め、それでも入らなければ優先度の低いボタンから
     「…」（`ellipsis.circle`。ホバーで「ほかの操作」と回したボタンの名前）のメニューにまとめる。メニューの項目は同じ動作を呼ぶ
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
-    回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
+    回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「端末の画面」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
     候補は `ViewThatFits` で入るものを選ぶ（`Views/Conversation/HeaderActions.swift`）。回す順の計算は `Sources/MonitorKit/Chat/HeaderOverflow.swift`（テストあり）。
   - **サイト**（先頭のタブ）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
     - 場所: 設定の `site`（下記「設定（settings.json）」）があればそれ、無ければプロジェクト直下と 2 階層までのサブフォルダから探す
@@ -743,7 +744,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」。表示の切替は無く、どのルームも常にチャット。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」。表示の切替は無く、どのルームも常にチャット。
+  「端末の画面」（`terminal`）はホスト中で claude が動いているルームだけに出し、「Xcode」と同じ段でその直前に「…」へ回る（下記「端末の画面」）。
   「別ウィンドウで開く」（`macwindow.badge.plus`）はメインの見出しにだけ出し、別ウィンドウの見出しには出さない。優先度は「GitHub」と同じ段でその直前に「…」へ回る。
   見出しのボタンはアイコンだけで、ホバーで名前と開く先を出す。「VS Code」は常に出す。
   「Xcode」「閉じる」はプロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリを含む）に `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層。
@@ -911,6 +913,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   キーは Claude Code v2.1.251 / v2.1.286 の実際の TUI で確認した。画面にプロンプトが無ければ何も送らない。
   押した時のカードの内容と今の画面のプロンプトが違う（別の確認に替わった）場合も何も送らず、カードを今の内容に更新する。
 - 押してから結果が出るまでは、そのカードのボタンを無効にして二度押しを防ぐ。
+- ホスト中のルームでは右下に「端末の画面」のボタンを出す（送信中でも押せる。下記「端末の画面」）。
 
 ### 選択肢カード
 
@@ -970,6 +973,21 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - 中身を読み取れないメニュー（`/auto-mode-setup` のウィザード等）は、その旨と「キャンセル（Esc）」だけのカードを出す。押した時のカードと今の画面が同じ「読めないメニュー」
   （メニューの範囲の行の写し `UnreadableMenu`）の時だけ送る。Esc が終了になるメニューでは同じく確認を挟む。
 - 押してから結果が出るまではカードのボタンを無効にして二度押しを防ぐ（端末ビューが途中で無くなっても送信中の印は外す）。外部セッションは対象外。
+- 選択肢カード・読めない選択肢のカードの右下に「端末の画面」のボタンを出す。カードの無効化の外に置くので、カードが「送信中…」のまま止まっても押せる（下記「端末の画面」）。
+
+### 端末の画面（カードで答えられない時の逃げ道）
+
+- カードの読み取りが TUI の変化に追いつかず答えられなくなった時に、アプリを再起動せずに抜け出すためのシート。ホスト中で claude が動いているルームの
+  見出しの「端末の画面」と、権限カード・選択肢カード・読めない選択肢のカードの「端末の画面」から開く（外部セッションには出さない。メイン・別ウィンドウのどちらでも開ける）。
+- 上半分に端末の今の表示を等幅で出す（罫線・❯ もそのまま。右の別の欄も含めた全幅で、末尾の空行は落とす。0.3 秒ごとに読み直し、変わった時だけ描き直す。
+  縦横にスクロールでき、「表示をコピー」で文字としてクリップボードに写せる）。claude が終わった後は最後の画面を出し、キーは押せない。
+- 下に送れるキーのボタン: ← ↑ ↓ → Enter Esc Tab Space と数字 1〜9。押した時だけ 1 回送る。シートにフォーカスがある間はキーボードの
+  矢印・Return（テンキーの Enter も）・Esc・Tab・Space・1〜9 も同じキーとして送る（押しっぱなしの繰り返しは送らない。⌘ / ⌃ / ⌥ 付きは拾わない）。
+  キーと送る列の対応は `PTYInput.swift` の `TerminalKey`（テストあり。矢印は端末のモードに合わせて CSI / SS3）。**文字の自由入力の口は無い**（入力欄の送信の守りを迂回しないため）。
+- 送らない時: カードから ❯ を動かしている最中（`isNavigatingMenu`）・入力欄からの送信の途中・権限カードの回答を送った直後（押せない間）・claude が動いていない時。
+  理由をシートの下に出す。矢印を送った後は、カードの矢印と同じ `PendingArrowHold` を残し、反映されるまでカードからの移動を「反映待ち」で待たせる。
+- Esc が claude の終了になるメニュー（選択肢カード・読めない選択肢のカードと同じ判定）では、Esc を送る前に確認ダイアログを挟む。
+- Esc は端末に送るキーなのでシートを閉じない。閉じるのは「閉じる」（⌘W）。
 
 ### 外部セッション（ターミナル等で起動したもの）
 

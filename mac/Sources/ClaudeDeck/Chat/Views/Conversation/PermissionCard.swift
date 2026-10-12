@@ -7,6 +7,8 @@ struct PermissionCard: View {
     let description: String
     let lines: [String]
     let busy: Bool
+    /// 「端末の画面」を開く（ホスト中のルームだけ）。
+    var onOpenTerminal: (() -> Void)? = nil
     let onDecide: (Bool) -> Void
 
     var body: some View {
@@ -27,23 +29,31 @@ struct PermissionCard: View {
                 CardCode(text: lines.prefix(10).joined(separator: "\n"))
             }
             HStack(spacing: 8) {
-                Button { onDecide(true) } label: {
-                    Text("許可")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(ChatTheme.onAccent)
-                        .frame(width: 84, height: 30)
-                        .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.accent))
-                }
-                .buttonStyle(.plain)
-                Button { onDecide(false) } label: {
-                    CardButtonLabel(title: "拒否", width: 84)
-                }
-                .buttonStyle(.plain)
-                if busy { SendingIndicator() }
+                answerButtons
+                    .disabled(busy)
+                    .opacity(busy ? 0.6 : 1)
+                Spacer(minLength: 8)
+                if let onOpenTerminal { CardTerminalButton(action: onOpenTerminal) }
             }
-            .disabled(busy)
-            .opacity(busy ? 0.6 : 1)
         }
         .cardFrame()
+    }
+
+    private var answerButtons: some View {
+        HStack(spacing: 8) {
+            Button { onDecide(true) } label: {
+                Text("許可")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ChatTheme.onAccent)
+                    .frame(width: 84, height: 30)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(ChatTheme.accent))
+            }
+            .buttonStyle(.plain)
+            Button { onDecide(false) } label: {
+                CardButtonLabel(title: "拒否", width: 84)
+            }
+            .buttonStyle(.plain)
+            if busy { SendingIndicator() }
+        }
     }
 }
