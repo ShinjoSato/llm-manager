@@ -56,9 +56,9 @@ public final class PromptCardBoard {
 
     /// キーを送り終えたカードを、描き替え待ちの間だけ送信中にする。
     @discardableResult
-    public func hold(key: String, identity: String?) -> UUID {
+    public func hold(key: String, identity: String?, blocksAll: Bool = false) -> UUID {
         expireStale()
-        let token = book.hold(key: key, identity: identity, now: clock())
+        let token = book.hold(key: key, identity: identity, blocksAll: blocksAll, now: clock())
         log("busy+", [("key", key), ("card", identity ?? "-"), ("token", Self.short(token)), ("phase", "settling")])
         scheduleSweep()
         return token
@@ -156,6 +156,7 @@ public final class PromptCardBoard {
         switch refusal {
         case .operating: return "operating"
         case .settling: return "settling"
+        case .keys: return "keys"
         }
     }
 
@@ -163,6 +164,7 @@ public final class PromptCardBoard {
         switch refusal {
         case .operating: return "前の操作を送っているところです。終わってからもう一度押してください。"
         case .settling: return "このカードへの操作は送ったところです。端末の表示が替わるのを待っています。"
+        case .keys: return "端末の画面から送ったキーが反映されるのを待っています。少し待ってからもう一度押してください。"
         }
     }
 }

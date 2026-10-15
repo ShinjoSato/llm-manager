@@ -77,8 +77,8 @@ final class PromptResponder {
     }
 
     /// キーを送ってから画面が替わるまで少し掛かるので、その間は押したカードを押せないままにする。`identity` が nil なら、どのカードも送信中には見せずに重ねての操作だけを断る。
-    private func holdBusy(_ key: String, identity: String? = nil) {
-        board.hold(key: key, identity: identity)
+    private func holdBusy(_ key: String, identity: String? = nil, blocksAll: Bool = false) {
+        board.hold(key: key, identity: identity, blocksAll: blocksAll)
     }
 
     static let busyResult = RemoteActionResult.failure("busy", "前の操作を送っているところです。少し待ってからもう一度押してください。")
@@ -140,6 +140,7 @@ final class PromptResponder {
     @MainActor
     private struct MenuOperation {
         let token: UUID
+        let card: String
         let delivery: OnceDelivery<RemoteActionResult>
 
         func deliver(_ result: RemoteActionResult) { delivery.deliver(result) }
@@ -169,7 +170,7 @@ final class PromptResponder {
             completion?(result)
         }
         delivery.deliver(after: PromptOperationBook.limit) { Self.timedOut }
-        return MenuOperation(token: token, delivery: delivery)
+        return MenuOperation(token: token, card: card, delivery: delivery)
     }
 
     /// 端末から結果が返った。時間切れの後に返った結果は受け手に渡さず、記録と失敗の一言だけ残す。
@@ -178,6 +179,8 @@ final class PromptResponder {
         board.log("outcome", [("key", key), ("outcome", Self.outcomeName(outcome)), ("late", operation.delivery.isDelivered ? "yes" : "no")])
         guard !operation.delivery.isDelivered else {
             if !result.ok, let message = result.message { board.showNotice(message, key: key) }
+            // 時間切れの後に Enter 等が届いた。描き替わるまではどのカードの画面が今のものか分からないので、ルームごと待たせる。
+            if result.ok { holdBusy(key, identity: operation.card, blocksAll: true) }
             return
         }
         if let notice {
@@ -244,7 +247,8 @@ final class PromptResponder {
         case .changed:
             return failed("changed", "端末の選択肢が替わったため送りませんでした。カードの内容を確かめてから操作してください。", key: key, report: report)
         }
-        holdBusy(key, identity: card)
+        // 描き替えの途中で行が少し変わると別のカードに見え、Esc が重なりうるのでルームごと待たせる。
+        holdBusy(key, identity: card, blocksAll: true)
         return .success("cancelled")
     }
 }

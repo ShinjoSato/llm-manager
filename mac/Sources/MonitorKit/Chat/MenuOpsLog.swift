@@ -47,11 +47,16 @@ public final class MenuOpsLog: @unchecked Sendable {
         try? SecureFile.write(Data(Self.appending(lines, to: existing, keep: keep).utf8), to: url)
     }
 
-    /// 1 行分（`時刻 出来事 名前=値 …`）。値の空白・改行・`=` は `_` に置き換え、長さを切る。
-    public static func line(_ event: String, _ fields: [(String, String)], date: Date) -> String {
+    // ISO8601DateFormatter はスレッドをまたいで使ってよく、行ごとに作ると重いので 1 つを使い回す。
+    nonisolated(unsafe) private static let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let parts = [formatter.string(from: date), clean(event)] + fields.map { "\(clean($0.0))=\(clean($0.1))" }
+        return formatter
+    }()
+
+    /// 1 行分（`時刻 出来事 名前=値 …`）。値の空白・改行・`=` は `_` に置き換え、長さを切る。
+    public static func line(_ event: String, _ fields: [(String, String)], date: Date) -> String {
+        let parts = [timestampFormatter.string(from: date), clean(event)] + fields.map { "\(clean($0.0))=\(clean($0.1))" }
         return parts.joined(separator: " ")
     }
 

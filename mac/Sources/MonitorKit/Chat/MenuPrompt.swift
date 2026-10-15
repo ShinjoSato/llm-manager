@@ -68,11 +68,11 @@ public struct MenuPrompt: Sendable, Hashable {
     }
 
     /// `choice` 番目を選ぶと claude が終了になるか（trust 確認の「No, exit」）。Esc と同じく確かめてから送るため。
+    /// Claude が書く AskUserQuestion の選択肢（「No, exit the loop」等）を終了と取り違えないよう、Esc が終了になるメニューに限る。
     public func choiceExits(_ choice: Int) -> Bool {
-        guard options.indices.contains(choice) else { return false }
+        guard cancelExits, options.indices.contains(choice) else { return false }
         let label = options[choice].label.lowercased()
-        if label.hasPrefix("no, exit") { return true }
-        return cancelExits && (label == "exit" || label.hasPrefix("exit ") || label.hasSuffix(", exit"))
+        return label.hasPrefix("no, exit") || label == "exit" || label.hasPrefix("exit ") || label.hasSuffix(", exit")
     }
 
     /// AskUserQuestion の「Type something.」・plan の「Tell Claude what to change」（v2.1.286）。
@@ -227,10 +227,12 @@ extension ChoiceMenu {
         }
         guard rows.count >= 2, let first = rows.first, let cursor = rows.firstIndex(where: { $0.index == cursorRow }) else { return nil }
         var (question, questionRow) = questionAbove(lines, before: first.index)
+        var trustNotes: [String] = []
         if rows.contains(where: { $0.option.label.lowercased().hasPrefix(trustOption) }),
-           let (trust, row) = trustQuestion(lines, before: first.index) {
+           let (trust, row, notes) = trustQuestion(lines, before: first.index) {
             question = trust
             questionRow = row
+            trustNotes = notes
         }
         let top = questionRow ?? first.index
         let footer = footerRow.map { lines[$0].trimmed } ?? ""
@@ -246,7 +248,8 @@ extension ChoiceMenu {
                 tabs?.current = ranges.firstIndex { range in range.contains { $0 < flags.count && flags[$0] } }
             }
         } else {
-            context = contextAbove(lines, before: top)
+            // trust 確認の「読み書き・実行できる」等の説明は問いの下にあるので、上の本文の後ろに残す。
+            context = contextAbove(lines, before: top) + trustNotes
         }
         return MenuPrompt(context: context, question: question, options: rows.map(\.option), cursor: cursor, footer: footer, tabs: tabs)
     }
@@ -433,9 +436,12 @@ extension ChoiceMenu {
 
     /// trust 確認の「信頼する」選択肢の頭（小文字）。
     static let trustOption = "yes, i trust this folder"
+    /// trust 確認の説明の下のリンクの文字（小文字）。カードでは開けないので本文に入れない。
+    static let trustLinkLabel = "security guide"
 
     /// trust 確認の問い。v2.1.300 は問いの段落の下に説明とリンク（Security guide）が入るので、選択肢の上で最も近い「?」を含む段落の「?」までを問いとする。
-    static func trustQuestion(_ lines: [String], before row: Int) -> (String, Int)? {
+    /// 「?」より後ろの文と下の説明（リンクの行は除く）は段落ごとに返す。
+    static func trustQuestion(_ lines: [String], before row: Int) -> (String, Int, [String])? {
         var index = row - 1
         var scanned = 0
         while index >= 0, scanned < contextScanLines {
@@ -443,9 +449,23 @@ extension ChoiceMenu {
             if lines[index].contains("?") {
                 var top = index
                 while top > 0, !lines[top - 1].trimmed.isEmpty, !PermissionPrompt.isSeparator(lines[top - 1]) { top -= 1 }
-                let paragraph = joinWrapped(lines[top...index].map { $0.trimmed })
+                var bottom = index
+                while bottom + 1 < row, !lines[bottom + 1].trimmed.isEmpty { bottom += 1 }
+                let paragraph = joinWrapped(lines[top...bottom].map { $0.trimmed })
                 guard let mark = paragraph.firstIndex(of: "?") else { return nil }
-                return (String(paragraph[...mark]), top)
+                var notes: [String] = []
+                let rest = paragraph[paragraph.index(after: mark)...].trimmingCharacters(in: .whitespaces)
+                if !rest.isEmpty { notes.append(rest) }
+                var block: [String] = []
+                for line in lines[min(bottom + 1, row)..<row].map(\.trimmed) {
+                    if line.isEmpty {
+                        if !block.isEmpty { notes.append(joinWrapped(block)); block = [] }
+                    } else if line.lowercased() != trustLinkLabel {
+                        block.append(line)
+                    }
+                }
+                if !block.isEmpty { notes.append(joinWrapped(block)) }
+                return (String(paragraph[...mark]), top, notes)
             }
             index -= 1
             scanned += 1

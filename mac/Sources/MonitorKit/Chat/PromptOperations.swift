@@ -16,9 +16,11 @@ public struct PromptOperationBook: Sendable, Equatable {
         public let identity: String?
         public let since: Date
         /// これを過ぎたら必ず外す。
-        public let deadline: Date
+        public var deadline: Date
         /// 送り終えた後に外す時刻。nil なら送っている最中。
         public var releaseAt: Date?
+        /// 描き替え待ちの間、別のカードへの操作も断る（どのカードの画面が今のものか分からない時）。
+        public var blocksAll = false
 
         public var isOperating: Bool { releaseAt == nil }
 
@@ -31,6 +33,8 @@ public struct PromptOperationBook: Sendable, Equatable {
         case operating
         /// 同じカードへの操作を送り終えたばかり（画面の描き替え待ち）。
         case settling
+        /// 端末の画面から送ったキーの反映待ち。
+        case keys
     }
 
     /// 期限を過ぎて外した印。`timedOut` は送っている最中のまま期限を迎えたもの。
@@ -54,7 +58,8 @@ public struct PromptOperationBook: Sendable, Equatable {
     public func refusal(key: String, identity: String?, now: Date) -> Refusal? {
         guard let entry = entry(key, now: now) else { return nil }
         if entry.isOperating { return .operating }
-        return entry.identity == nil || entry.identity == identity ? .settling : nil
+        if entry.identity == nil { return .keys }
+        return entry.blocksAll || entry.identity == identity ? .settling : nil
     }
 
     /// 送っている最中の印を付ける。断る時は理由を返す。
@@ -65,20 +70,25 @@ public struct PromptOperationBook: Sendable, Equatable {
         return .success(token)
     }
 
-    /// キーを送り終えた操作の印を、描き替え待ちの間だけ付ける。
+    /// キーを送り終えた操作の印を、描き替え待ちの間だけ付ける。送っている最中の印は上書きしない（そちらの守りが先に外れるため）。
     @discardableResult
-    public mutating func hold(key: String, identity: String?, now: Date) -> UUID {
+    public mutating func hold(key: String, identity: String?, blocksAll: Bool = false, now: Date) -> UUID {
+        if let current = entry(key, now: now), current.isOperating { return current.token }
         let token = UUID()
-        entries[key] = Entry(token: token, identity: identity, since: now, deadline: now.addingTimeInterval(Self.limit),
-                             releaseAt: now.addingTimeInterval(Self.settle))
+        var entry = Entry(token: token, identity: identity, since: now, deadline: now.addingTimeInterval(Self.limit),
+                          releaseAt: now.addingTimeInterval(Self.settle))
+        entry.blocksAll = blocksAll
+        entries[key] = entry
         return token
     }
 
-    /// 送り終えた。自分の印の時だけ、描き替え待ちに移す（上限は延ばさない）。
+    /// 送り終えた。自分の印の時だけ、描き替え待ちに移す（上限の間際でも描き替え待ちは削らない。削ると同じカードへ Enter が重なりうる）。
     @discardableResult
     public mutating func finish(key: String, token: UUID, now: Date) -> Bool {
         guard var entry = entries[key], entry.token == token else { return false }
-        entry.releaseAt = min(now.addingTimeInterval(Self.settle), entry.deadline)
+        let releaseAt = now.addingTimeInterval(Self.settle)
+        entry.releaseAt = releaseAt
+        entry.deadline = max(entry.deadline, releaseAt)
         entries[key] = entry
         return true
     }

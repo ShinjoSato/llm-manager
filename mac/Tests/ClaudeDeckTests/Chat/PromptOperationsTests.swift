@@ -59,14 +59,35 @@ final class PromptOperationBookTests: XCTestCase {
         XCTAssertTrue(book.entries.isEmpty)
     }
 
-    /// 上限の間際に送り終えても、描き替え待ちで上限を延ばさない。
-    func testFinishNearLimitDoesNotExtend() throws {
+    /// 上限の間際に送り終えても描き替え待ちは削らない（削ると同じカードへの Enter が重なりうる）。
+    func testFinishNearLimitKeepsFullSettle() throws {
         var book = PromptOperationBook()
         let token = try book.begin(key: key, identity: "q1", now: at(0)).get()
         book.finish(key: key, token: token, now: at(11.5))
-        XCTAssertEqual(book.entry(key, now: at(11.6))?.until, at(12))
-        XCTAssertFalse(book.isCardBusy(key: key, identity: "q1", now: at(12)))
-        XCTAssertFalse(book.expire(now: at(12))[0].timedOut)
+        XCTAssertEqual(book.entry(key, now: at(11.6))?.until, at(13))
+        XCTAssertTrue(book.isCardBusy(key: key, identity: "q1", now: at(12.5)))
+        XCTAssertEqual(book.refusal(key: key, identity: "q1", now: at(12.5)), .settling)
+        XCTAssertFalse(book.isCardBusy(key: key, identity: "q1", now: at(13)))
+        XCTAssertFalse(book.expire(now: at(13))[0].timedOut)
+    }
+
+    /// 描き替え待ちの印は、送っている最中の印を上書きしない。
+    func testHoldDoesNotOverrideOperating() throws {
+        var book = PromptOperationBook()
+        let token = try book.begin(key: key, identity: "q1", now: at(0)).get()
+        XCTAssertEqual(book.hold(key: key, identity: "p1", now: at(0.1)), token)
+        XCTAssertTrue(book.entry(key, now: at(0.2))?.isOperating == true)
+        XCTAssertEqual(book.refusal(key: key, identity: "q2", now: at(0.2)), .operating)
+    }
+
+    /// どのカードの画面が今のものか分からない間は、別のカードへの操作も断る。
+    func testHoldBlockingAllRefusesOtherCards() {
+        var book = PromptOperationBook()
+        book.hold(key: key, identity: "u1", blocksAll: true, now: at(0))
+        XCTAssertTrue(book.isCardBusy(key: key, identity: "u1", now: at(0.5)))
+        XCTAssertFalse(book.isCardBusy(key: key, identity: "u2", now: at(0.5)))
+        XCTAssertEqual(book.refusal(key: key, identity: "u2", now: at(0.5)), .settling)
+        XCTAssertNil(book.refusal(key: key, identity: "u2", now: at(PromptOperationBook.settle)))
     }
 
     /// 後から届いた古い操作の完了・解除は、今の操作の印を外さない。
@@ -99,7 +120,7 @@ final class PromptOperationBookTests: XCTestCase {
         var book = PromptOperationBook()
         book.hold(key: key, identity: nil, now: at(0))
         XCTAssertFalse(book.isCardBusy(key: key, identity: "q1", now: at(0.1)))
-        XCTAssertEqual(book.refusal(key: key, identity: "q1", now: at(0.1)), .settling)
+        XCTAssertEqual(book.refusal(key: key, identity: "q1", now: at(0.1)), .keys)
         XCTAssertEqual(book.activeKeys(now: at(0.1)), [key])
     }
 

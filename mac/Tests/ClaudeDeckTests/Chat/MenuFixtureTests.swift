@@ -51,6 +51,20 @@ final class MenuFixture2_1_300Tests: XCTestCase {
 
     // MARK: - trust 確認
 
+    /// Claude が書く選択肢の「No, exit …」は、Esc が終了になるメニューでなければ終了と読まない。
+    func testChoiceExitsOnlyInExitingMenus() {
+        let ask = MenuPrompt(context: [], question: "どうしますか？",
+                             options: [.init(number: 1, label: "No, exit the loop"), .init(number: 2, label: "Yes")],
+                             cursor: 0, footer: "Enter to select · Tab/Arrow keys to navigate · Esc to cancel", tabs: nil)
+        XCTAssertFalse(ask.choiceExits(0))
+    }
+
+    /// 問いの「?」より後ろと下の説明（リンクの行は除く）。
+    static let trustNotes = [
+        "(Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.",
+        "Claude Code'll be able to read, edit, and execute files here.",
+    ]
+
     /// 問いの下に説明とリンク（Security guide）が入っても、問いは「?」までの文。
     func testTrustDialogQuestionSkipsSecurityGuide() throws {
         for (name, cursor, context) in [
@@ -64,7 +78,7 @@ final class MenuFixture2_1_300Tests: XCTestCase {
         ] {
             let menu = try parse(name)
             XCTAssertEqual(menu.question, "Quick safety check: Is this a project you created or one you trust?", name)
-            XCTAssertEqual(menu.context, context, name)
+            XCTAssertEqual(menu.context, context + Self.trustNotes, name)
             XCTAssertEqual(menu.options, [.init(number: nil, label: "No, exit"), .init(number: nil, label: "Yes, I trust this folder")], name)
             XCTAssertEqual(menu.cursor, cursor, name)
             XCTAssertNil(menu.tabs, name)

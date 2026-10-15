@@ -105,9 +105,9 @@ final class BlankPaneTests: XCTestCase {
         XCTAssertEqual(TerminalScreen.mainPane(rows), rows)
     }
 
-    /// 縦線で始まる表の列は右の欄と読まない。
+    /// 縦線で始まる表の列は右の欄と読まない（罫線が区切りの手前で切れ、空白の桁もある形でも）。
     func testTableColumnsAreKept() {
-        var table = [String(repeating: "─", count: 40)]
+        var table = [String(repeating: "─", count: 28)]
         for index in 0..<10 {
             table.append(BlankPaneFixture.pad("  項目 \(index) の説明", to: 30) + "│ 値 \(index)")
         }
