@@ -59,7 +59,20 @@ public struct MenuPrompt: Sendable, Hashable {
 
     /// Esc が claude の終了になるメニュー（案内が「Esc to exit」か、フォルダの trust 確認）。
     public var cancelExits: Bool {
-        ChoiceMenu.footerExits(footer) || options.contains { $0.label.lowercased().hasPrefix("yes, i trust this folder") }
+        ChoiceMenu.footerExits(footer) || isTrust
+    }
+
+    /// フォルダの trust 確認か。
+    public var isTrust: Bool {
+        options.contains { $0.label.lowercased().hasPrefix(ChoiceMenu.trustOption) }
+    }
+
+    /// `choice` 番目を選ぶと claude が終了になるか（trust 確認の「No, exit」）。Esc と同じく確かめてから送るため。
+    public func choiceExits(_ choice: Int) -> Bool {
+        guard options.indices.contains(choice) else { return false }
+        let label = options[choice].label.lowercased()
+        if label.hasPrefix("no, exit") { return true }
+        return cancelExits && (label == "exit" || label.hasPrefix("exit ") || label.hasSuffix(", exit"))
     }
 
     /// AskUserQuestion の「Type something.」・plan の「Tell Claude what to change」（v2.1.286）。
@@ -213,7 +226,12 @@ extension ChoiceMenu {
             rows = plainRows(lines, cursorRow: cursorRow)
         }
         guard rows.count >= 2, let first = rows.first, let cursor = rows.firstIndex(where: { $0.index == cursorRow }) else { return nil }
-        let (question, questionRow) = questionAbove(lines, before: first.index)
+        var (question, questionRow) = questionAbove(lines, before: first.index)
+        if rows.contains(where: { $0.option.label.lowercased().hasPrefix(trustOption) }),
+           let (trust, row) = trustQuestion(lines, before: first.index) {
+            question = trust
+            questionRow = row
+        }
         let top = questionRow ?? first.index
         let footer = footerRow.map { lines[$0].trimmed } ?? ""
         let context: [String]
@@ -412,6 +430,28 @@ extension ChoiceMenu {
 
     /// 折り返した問いの左の縦線（Ink の borderLeft・single）。
     static let gutter = "│"
+
+    /// trust 確認の「信頼する」選択肢の頭（小文字）。
+    static let trustOption = "yes, i trust this folder"
+
+    /// trust 確認の問い。v2.1.300 は問いの段落の下に説明とリンク（Security guide）が入るので、選択肢の上で最も近い「?」を含む段落の「?」までを問いとする。
+    static func trustQuestion(_ lines: [String], before row: Int) -> (String, Int)? {
+        var index = row - 1
+        var scanned = 0
+        while index >= 0, scanned < contextScanLines {
+            if PermissionPrompt.isSeparator(lines[index]) { return nil }
+            if lines[index].contains("?") {
+                var top = index
+                while top > 0, !lines[top - 1].trimmed.isEmpty, !PermissionPrompt.isSeparator(lines[top - 1]) { top -= 1 }
+                let paragraph = joinWrapped(lines[top...index].map { $0.trimmed })
+                guard let mark = paragraph.firstIndex(of: "?") else { return nil }
+                return (String(paragraph[...mark]), top)
+            }
+            index -= 1
+            scanned += 1
+        }
+        return nil
+    }
 
     /// 折り返した行をつなぐ。英数字は空白の所で折り返されて空白が消えるので戻し、和文はそのままつなぐ。
     static func joinWrapped(_ parts: [String]) -> String {
