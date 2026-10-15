@@ -18,10 +18,12 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
     public var waitingFor: String?
     /// status を書いた時刻（Unix ミリ秒）。
     public var statusUpdatedAt: Double?
+    /// claude の版（`2.1.300` 等）。画面の読み取りを確かめた版かの案内に使う。
+    public var version: String?
 
     public init(pid: Int32, sessionId: String, cwd: String? = nil, startedAt: Double? = nil, procStart: String? = nil,
                 entrypoint: String? = nil, kind: String? = nil, status: String? = nil, waitingFor: String? = nil,
-                statusUpdatedAt: Double? = nil) {
+                statusUpdatedAt: Double? = nil, version: String? = nil) {
         self.pid = pid
         self.sessionId = sessionId
         self.cwd = cwd
@@ -32,6 +34,7 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
         self.status = status
         self.waitingFor = waitingFor
         self.statusUpdatedAt = statusUpdatedAt
+        self.version = version
     }
 
     // 返事待ちの欄は送信の判定にしか使わないので、型が変わってもレコード（引き継ぎ等で使う）ごと落とさない。
@@ -47,6 +50,7 @@ public struct ClaudeSessionRecord: Codable, Sendable, Hashable {
         status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil
         waitingFor = (try? c.decodeIfPresent(String.self, forKey: .waitingFor)) ?? nil
         statusUpdatedAt = (try? c.decodeIfPresent(Double.self, forKey: .statusUpdatedAt)) ?? nil
+        version = (try? c.decodeIfPresent(String.self, forKey: .version)) ?? nil
     }
 
     public var waiting: SessionWaiting {
