@@ -15,7 +15,12 @@ public protocol RemoteControl: AnyObject {
     func remoteMoveMenuTab(roomId: String, request: RemoteMenuTabRequest) async -> RemoteActionResult
     func remoteDismissMenu(roomId: String, request: RemoteMenuDismissRequest) async -> RemoteActionResult
     /// ホスト中のセッションなら入力欄へ（選択待ちなら送らない）、外部セッションなら伝言。
-    func remoteSendMessage(roomId: String, text: String) async -> RemoteActionResult
+    /// `images` は検証して一時保存先に書いた画像（mac の入力欄の添付と同じ形）。受け取った側が送った後か断った時に片付ける。
+    func remoteSendMessage(roomId: String, text: String, images: [Attachment]) async -> RemoteActionResult
+    /// 画像を書く一時保存先（送った後・断った時に消す側と同じもの）。
+    var remoteImageStore: AttachmentStore { get }
+    /// そのルームに画像を付けて送れないなら理由（ルームが無い・ホスト中でない）。画像を読み込む前に断るため。
+    func remoteImageTargetRefusal(roomId: String) -> RemoteActionResult?
 }
 
 /// ルームの識別子（`h:<UUID>` / `e:<sessionId>`）。
@@ -295,10 +300,23 @@ public enum RemoteChecks {
 
     /// 送る本文。空・長すぎれば失敗。
     public static func message(_ text: String) -> Result<String, RemoteActionResult> {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .failure(.failure("invalid", "本文が空です。")) }
+        message(RemoteMessageRequest(text: text))
+    }
+
+    /// 送る本文と画像の形。本文の上限は文字の分だけに掛け、画像があれば本文は空でよい（読めるか・寸法は `RemoteImageIntake`）。
+    public static func message(_ request: RemoteMessageRequest) -> Result<String, RemoteActionResult> {
+        let text = request.text
+        let images = request.images ?? []
+        if images.isEmpty, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .failure(.failure("invalid", "本文が空です。"))
+        }
         guard text.utf8.count <= maxMessageBytes else { return .failure(.failure("invalid", "本文が長すぎます（\(maxMessageBytes / 1024)KB まで）。")) }
+        if let problem = RemoteImageLimits.problem(images) { return .failure(problem) }
         return .success(text)
     }
+
+    /// 外部セッションへの伝言には画像を付けない（受信箱は文字だけを運ぶ）。
+    public static let imagesNotAccepted = RemoteActionResult.failure("images_not_accepted", "外部セッションへの伝言には画像を付けられません。")
 
     /// ホスト中のセッションへ送れない時の結果コード（終了・選択待ち）。
     public static func sendBlockedCode(ended: Bool, inputBlock: InputBlock?) -> String {
