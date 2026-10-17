@@ -339,7 +339,7 @@ final class RemoteMessagesTests: XCTestCase {
         XCTAssertEqual(RemoteIssue.localNetworkDenied.detail, "設定 → アプリ → claude-deck →『ローカルネットワーク』をオンにして、アプリに戻ってください。")
         XCTAssertFalse(RemoteIssue.localNetworkDenied.title.contains("Wi-Fi"), "許可が原因の時に Wi-Fi のせいにしない")
         XCTAssertEqual(RemoteIssue.offline.title, "Wi-Fi につながっていません")
-        XCTAssertEqual(RemoteIssue.offline.detail, "iPhone を Mac と同じ Wi-Fi につないでください。")
+        XCTAssertEqual(RemoteIssue.offline.detail, "この端末を Mac と同じ Wi-Fi につないでください。")
         XCTAssertFalse(RemoteIssue.offline.title.contains("許可"))
         let ambiguous = RemoteIssue.ambiguousOffline
         XCTAssertTrue(ambiguous.title.contains("ローカルネットワークの許可") && ambiguous.title.contains("Wi-Fi"), "両方を挙げる")
@@ -369,7 +369,7 @@ final class RemotePairingTests: XCTestCase {
         XCTAssertNotNil(payload.problem(now: 2_000), "期限切れ")
         var newer = payload
         newer.apiVersion = RemoteAPI.version + 1
-        XCTAssertTrue(newer.problem(now: 0)!.contains("iPhone アプリを更新"))
+        XCTAssertTrue(newer.problem(now: 0)!.contains("iPhone・iPad のアプリを更新"))
     }
 
     func testPairingKeepsFallbackHost() {

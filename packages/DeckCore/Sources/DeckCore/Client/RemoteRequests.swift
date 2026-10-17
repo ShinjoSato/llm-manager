@@ -46,7 +46,7 @@ extension RemotePairingPayload {
     public func problem(now: Double) -> String? {
         if apiVersion != RemoteAPI.version {
             return apiVersion > RemoteAPI.version
-                ? "mac アプリの方が新しい版です。iPhone アプリを更新してください。"
+                ? "mac アプリの方が新しい版です。iPhone・iPad のアプリを更新してください。"
                 : "mac アプリが古い版です。mac アプリを更新してください。"
         }
         if expiresAt <= now { return "この QR は期限切れです。mac で新しい QR を出してください。" }

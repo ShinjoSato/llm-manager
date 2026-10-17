@@ -54,6 +54,7 @@ final class AppModel {
     var pairingError: PairingError?
     /// 今開いている会話（未読を数えない・取り直す対象）。
     private(set) var openSessionId: String?
+    private var openViewer: UUID?
     /// 端末全体の経路が Wi-Fi（有線）か。最初の判定が届くまでは nil。
     private(set) var onWiFi: Bool?
     /// 起動直後に開くルーム（画面確認用）。
@@ -137,6 +138,9 @@ final class AppModel {
     /// 試験用: 切れた・つながって一覧が届いた、を起こす。
     func simulateDisconnected() { connection = .paused }
     func simulateReceived(_ state: RemoteState) { handle(.state(state)) }
+    func simulateReceived(_ transcript: TranscriptEvent) { handle(.transcript(transcript)) }
+    /// 試験用: 会話を全件取りに行った回数（接続していなくても数える）。
+    private(set) var transcriptFetchCount = 0
     #endif
 
     var serverName: String { pairing?.serverName ?? "Mac" }
@@ -395,23 +399,33 @@ final class AppModel {
 
     // MARK: - 会話
 
-    func open(sessionId: String?) {
+    /// `viewer` は会話の画面ごとの印。幅が変わって画面が作り直されると新旧の開く・閉じるが前後するので、最後に開いた画面だけが閉じられる。
+    func open(sessionId: String?, viewer: UUID) {
+        let reopened = sessionId != nil && openSessionId == sessionId
         openSessionId = sessionId
+        openViewer = viewer
         guard let sessionId else { return }
         unread[sessionId] = nil
         recentSessions.removeAll { $0 == sessionId }
         recentSessions.insert(sessionId, at: 0)
         for dropped in recentSessions.dropFirst(Self.keptTranscripts) { transcripts[dropped] = nil }
         recentSessions = Array(recentSessions.prefix(Self.keptTranscripts))
+        // 開いたままの会話には追記がストリームで届いているので、同じ会話の開き直しでは取り直さない。
+        guard !reopened, !loadingTranscripts.contains(sessionId) else { return }
         fetchTranscript(sessionId)
     }
 
-    func close(sessionId: String?) {
-        if openSessionId == sessionId { openSessionId = nil }
+    func close(viewer: UUID) {
+        guard openViewer == viewer else { return }
+        openViewer = nil
+        openSessionId = nil
     }
 
     /// ストリームを張った後に全件を取り、届いていた追記と id で重ねる。
     private func fetchTranscript(_ sessionId: String) {
+        #if DEBUG
+        transcriptFetchCount += 1
+        #endif
         guard let client, connection == .connected else { return }
         var buffer = transcripts[sessionId] ?? TranscriptBuffer()
         buffer.beginFetch()

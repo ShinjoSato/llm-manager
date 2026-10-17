@@ -6,7 +6,6 @@ import SwiftUI
 struct ComposerBar: View {
     @Bindable var model: AppModel
     let room: RemoteRoom
-    @FocusState private var focused: Bool
     @State private var pickerItems: [PhotosPickerItem] = []
 
     var body: some View {
@@ -44,15 +43,9 @@ struct ComposerBar: View {
                 if model.canAttachImages(room) {
                     photoPicker(disabled: reason != nil || sending)
                 }
-                TextField("", text: text, prompt: Text(reason ?? (relay ? "伝言を送信" : "メッセージを送信")).foregroundStyle(DeckTheme.tertiary),
-                          axis: .vertical)
-                    .font(DeckTheme.body)
-                    .foregroundStyle(DeckTheme.text)
-                    .lineLimit(1...6)
-                    .focused($focused)
-                    .disabled(reason != nil)
-                    .padding(.vertical, 9)
-                    .accessibilityIdentifier("composer")
+                ComposerTextView(text: text, placeholder: reason ?? (relay ? "伝言を送信" : "メッセージを送信"), isEnabled: reason == nil) {
+                    model.send(room)
+                }
                 Button { model.send(room) } label: {
                     Group {
                         if sending {
@@ -84,6 +77,8 @@ struct ComposerBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        .frame(maxWidth: DeckTheme.readableWidth)
+        .frame(maxWidth: .infinity)
         .background(DeckTheme.background)
         .overlay(alignment: .top) { Rectangle().fill(DeckTheme.border).frame(height: 1) }
     }
