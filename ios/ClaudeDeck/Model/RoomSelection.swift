@@ -1,10 +1,8 @@
-import DeckCore
-
 /// 2 列（iPad）で右に開いているルームの扱い。
 enum RoomSelection {
     /// 一覧から消えたルームは選んだままにせず、右を案内に戻す。
-    static func kept(_ selection: String?, in rooms: [RemoteRoom]) -> String? {
-        guard let selection, rooms.contains(where: { $0.id == selection }) else { return nil }
+    static func kept(_ selection: String?, among roomIds: [String]) -> String? {
+        guard let selection, roomIds.contains(selection) else { return nil }
         return selection
     }
 

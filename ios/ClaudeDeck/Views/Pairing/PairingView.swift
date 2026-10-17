@@ -16,7 +16,7 @@ struct PairingView: View {
                         Text("claude-deck")
                             .font(.system(size: 26, weight: .bold))
                             .foregroundStyle(DeckTheme.heading)
-                        Text("Mac の Claude Code を iPhone から")
+                        Text("Mac の Claude Code を \(DeviceKind.name) から")
                             .font(DeckTheme.body)
                             .foregroundStyle(DeckTheme.secondary)
                     }

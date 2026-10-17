@@ -5,7 +5,6 @@ import SwiftUI
 struct ComposerBar: View {
     @Bindable var model: AppModel
     let room: RemoteRoom
-    @FocusState private var focused: Bool
 
     var body: some View {
         let relay = room.send.mode == .relay
@@ -34,23 +33,9 @@ struct ComposerBar: View {
                 Text(reason).font(DeckTheme.caption).foregroundStyle(DeckTheme.permission).padding(.leading, 4)
             }
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("", text: text, prompt: Text(reason ?? (relay ? "伝言を送信" : "メッセージを送信")).foregroundStyle(DeckTheme.tertiary),
-                          axis: .vertical)
-                    .font(DeckTheme.body)
-                    .foregroundStyle(DeckTheme.text)
-                    .lineLimit(1...6)
-                    .focused($focused)
-                    .disabled(reason != nil)
-                    // 届くのはハードウェアキーボードの ⏎ だけ（ソフトウェアキーボードの改行キーはそのまま改行になる）。
-                    .onKeyPress(.return, phases: [.down, .repeat]) { press in
-                        if press.modifiers.contains(.shift) || press.modifiers.contains(.option) { return .ignored }
-                        // 変換中の ⏎ は確定に使うので送らない。
-                        if FocusedTextInput.hasMarkedText { return .ignored }
-                        if press.phase == .down, reason == nil { model.send(room) }
-                        return .handled
-                    }
-                    .padding(.vertical, 9)
-                    .accessibilityIdentifier("composer")
+                ComposerTextView(text: text, placeholder: reason ?? (relay ? "伝言を送信" : "メッセージを送信"), isEnabled: reason == nil) {
+                    model.send(room)
+                }
                 Button { model.send(room) } label: {
                     Group {
                         if sending {
@@ -95,23 +80,4 @@ struct ComposerBar: View {
         if room.send.mode == .unknown { return "このルームには送れません" }
         return nil
     }
-}
-
-/// 入力中の欄（SwiftUI からは変換中の文字が見えないので UIKit の応答者に尋ねる）。
-@MainActor
-enum FocusedTextInput {
-    private static weak var found: UIResponder?
-
-    static var hasMarkedText: Bool {
-        found = nil
-        UIApplication.shared.sendAction(#selector(UIResponder.deckCaptureFirstResponder), to: nil, from: nil, for: nil)
-        defer { found = nil }
-        return (found as? UITextInput)?.markedTextRange != nil
-    }
-
-    fileprivate static func capture(_ responder: UIResponder) { found = responder }
-}
-
-extension UIResponder {
-    @objc fileprivate func deckCaptureFirstResponder() { FocusedTextInput.capture(self) }
 }
