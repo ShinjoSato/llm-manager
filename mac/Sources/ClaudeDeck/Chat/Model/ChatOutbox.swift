@@ -69,6 +69,46 @@ final class ChatOutbox {
         }
     }
 
+    /// iPhone から届いた本文と画像を送る。mac の入力欄の書きかけ・添付には触れず、取りやめても入力欄には戻さない。
+    /// 画像の一時ファイルは入力欄の添付と同じく、端末に渡った分は残して（起動時の掃除に任せる）、渡らなかった分は消す。
+    func sendFromRemote(_ text: String, images: [Attachment], to room: Room,
+                        completion: @escaping (SendCompletion) -> Void) -> ClaudeTerminalView.SendResult? {
+        guard let session = room.hosted else {
+            discardRemoteImages(images)
+            return nil
+        }
+        let roomId = room.id
+        let outgoingId = UUID().uuidString
+        let sentAt = Date().timeIntervalSince1970 * 1000
+        let result = session.send(text, attachments: images) { [weak self] outcome in
+            self?.finishRemoteSend(outcome, images: images, outgoingId: outgoingId, in: roomId)
+            completion(outcome)
+        }
+        if case .started(let pastedImages, let body) = result {
+            if let outgoing = PendingImageMessages.outgoing(id: outgoingId, text: text, sentBody: body,
+                                                            pastedImagePaths: pastedImages, sentAt: sentAt) {
+                sentImages[roomId, default: []].append(outgoing)
+                scheduleSentImagesExpiry()
+            }
+        } else {
+            discardRemoteImages(images)
+        }
+        return result
+    }
+
+    private func finishRemoteSend(_ completion: SendCompletion, images: [Attachment], outgoingId: String, in roomId: RoomID) {
+        if completion != .submitted {
+            sentImages[roomId]?.removeAll { $0.id == outgoingId }
+            if sentImages[roomId]?.isEmpty == true { sentImages[roomId] = nil }
+        }
+        if !hostedRoomExists(roomId) || completion == .ended { discardRemoteImages(images) }
+    }
+
+    /// iPhone から届いた画像の一時ファイルを消す（一時保存先の外には触らない）。
+    func discardRemoteImages(_ images: [Attachment]) {
+        images.forEach(attachmentStore.discard)
+    }
+
     private func finishSend(_ completion: SendCompletion, text: String, attachments sent: [Attachment],
                             outgoingId: String, in roomId: RoomID) {
         let roomExists = hostedRoomExists(roomId)

@@ -91,6 +91,57 @@ final class RemoteRequestBuilderTests: XCTestCase {
         XCTAssertGreaterThan(decide.timeoutInterval, 30, "mac は操作を最大 30 秒待つ")
     }
 
+    func testMessageWithImagesKeepsTheOldShapeWhenThereAreNone() throws {
+        let room = "h:6F1C0C9E-0000-4000-8000-000000000000"
+        let plain = try XCTUnwrap(builder.message(roomId: room, text: "a").httpBody)
+        XCTAssertEqual(String(decoding: plain, as: UTF8.self), #"{"text":"a"}"#, "画像が無ければ前と同じ本文")
+        XCTAssertEqual(try JSONDecoder().decode(RemoteMessageRequest.self, from: Data(#"{"text":"old"}"#.utf8)),
+                       RemoteMessageRequest(text: "old"), "画像の無い古い要求も読める")
+
+        // `/` を含む base64 になる中身（0xff 0xff 0xff → "////"）。
+        let png = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xff, 0xff])
+        let req = try builder.message(roomId: room, text: "", images: [RemoteMessageImage(mediaType: "image/png", data: png)])
+        let body = try XCTUnwrap(req.httpBody)
+        XCTAssertFalse(String(decoding: body, as: UTF8.self).contains(#"\/"#), "base64 の / はそのまま")
+        let decoded = try JSONDecoder().decode(RemoteMessageRequest.self, from: body)
+        XCTAssertEqual(decoded.images, [RemoteMessageImage(mediaType: "image/png", data: png)])
+        XCTAssertEqual(decoded.text, "")
+        XCTAssertGreaterThan(req.timeoutInterval, try builder.message(roomId: room, text: "a").timeoutInterval, "画像付きは長めに待つ")
+    }
+
+    func testImageLimits() {
+        let png = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0])
+        let jpeg = Data([0xff, 0xd8, 0xff, 0xe0, 0])
+        XCTAssertEqual(RemoteImageLimits.sniffedMediaType(png), "image/png")
+        XCTAssertEqual(RemoteImageLimits.sniffedMediaType(jpeg), "image/jpeg")
+        XCTAssertNil(RemoteImageLimits.sniffedMediaType(Data("GIF89a".utf8)))
+        XCTAssertNil(RemoteImageLimits.sniffedMediaType(Data()))
+
+        XCTAssertNil(RemoteImageLimits.problem([]))
+        XCTAssertNil(RemoteImageLimits.problem([.init(mediaType: "image/png", data: png), .init(mediaType: "IMAGE/JPEG", data: jpeg)]))
+        let five = Array(repeating: RemoteMessageImage(mediaType: "image/png", data: png), count: RemoteImageLimits.maxCount + 1)
+        XCTAssertEqual(RemoteImageLimits.problem(five)?.code, "too_many_images")
+        XCTAssertEqual(RemoteImageLimits.problem([.init(mediaType: "image/gif", data: Data("GIF89a".utf8))])?.code, "unsupported_image")
+        XCTAssertEqual(RemoteImageLimits.problem([.init(mediaType: "image/heic", data: png)])?.code, "unsupported_image")
+        XCTAssertEqual(RemoteImageLimits.problem([.init(mediaType: "image/png", data: jpeg)])?.code, "unsupported_image", "宣言と中身が違う")
+
+        var big = png
+        big.append(Data(count: RemoteImageLimits.maxBytes))
+        XCTAssertEqual(RemoteImageLimits.problem([.init(mediaType: "image/png", data: big)])?.code, "image_too_large", "1 枚の上限")
+        var under = png
+        under.append(Data(count: RemoteImageLimits.maxBytes - png.count))
+        XCTAssertNil(RemoteImageLimits.problem([.init(mediaType: "image/png", data: under)]))
+        let overTotal = Array(repeating: RemoteMessageImage(mediaType: "image/png", data: under), count: 3)
+        XCTAssertEqual(RemoteImageLimits.problem(overTotal)?.code, "image_too_large", "合計の上限")
+
+        XCTAssertLessThanOrEqual(RemoteImageLimits.budgetBytes * RemoteImageLimits.maxCount, RemoteImageLimits.maxTotalBytes)
+        XCTAssertGreaterThan(RemoteImageLimits.maxEncodedBytes, RemoteImageLimits.maxTotalBytes * 4 / 3)
+        for code in ["too_many_images", "image_too_large", "unsupported_image"] {
+            XCTAssertNotNil(RemoteResultText.text(for: .failure(code, "x"), operation: .message), code)
+            XCTAssertNotEqual(RemoteResultText.text(for: .failure(code, "x"), operation: .message), "x", "日本語の文言を持つ")
+        }
+    }
+
     func testSlashInIdDoesNotBreakPath() throws {
         let req = try builder.message(roomId: "e:a/b?c", text: "x")
         XCTAssertEqual(req.url?.absoluteString, "https://192.168.1.5:8767/v1/rooms/e:a%2Fb%3Fc/messages")

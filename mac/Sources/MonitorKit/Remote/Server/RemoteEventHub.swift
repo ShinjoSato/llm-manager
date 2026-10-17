@@ -37,8 +37,15 @@ public final class RemoteControlRef {
 
     func state() -> RemoteState? { control?.remoteState() }
 
+    nonisolated static let unavailable = RemoteActionResult.failure("app_unavailable", "mac アプリの準備ができていません。")
+
     func run(_ body: @MainActor @Sendable (RemoteControl) async -> RemoteActionResult) async -> RemoteActionResult {
-        guard let control else { return .failure("app_unavailable", "mac アプリの準備ができていません。") }
+        await runIfAttached(body) ?? Self.unavailable
+    }
+
+    /// 受け手が無ければ nil（渡すはずだったものを呼び出し側で片付けるため）。
+    func runIfAttached(_ body: @MainActor @Sendable (RemoteControl) async -> RemoteActionResult) async -> RemoteActionResult? {
+        guard let control else { return nil }
         return await body(control)
     }
 }

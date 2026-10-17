@@ -9,9 +9,15 @@ public struct RemoteRoutes: Sendable {
     public let events: RemoteEventHub
     public let controlRef: RemoteControlRef
     public let serverName: String
+    /// iPhone から届いた画像を書く一時保存先（mac の入力欄の添付と同じ所・同じ掃除）。
+    public let imageStore: AttachmentStore
 
-    /// 本文の上限（添付は受けないので小さく）。
+    /// 本文の上限（画像付きのメッセージ以外）。
     public static let maxBodyBytes = 256 * 1024
+    /// 画像付きのメッセージの本文の上限（画像の分だけ広げる）。
+    public static let maxMessageBodyBytes = maxBodyBytes + RemoteImageLimits.maxEncodedBytes
+    /// 画像付きのメッセージを読み終えるまでの締め切り（Wi-Fi で数 MB を上げる分）。
+    public static let messageReadTimeout: TimeInterval = 60
     /// 同時接続の上限（ストリームの上限より余裕を持たせる）。
     public static let maxConnections = 32
     /// 接続元ごとの同時接続の上限（端末あたりのストリーム 4 本 + 操作の分）。未認証の相手 1 つで口を塞がせない。
@@ -22,13 +28,15 @@ public struct RemoteRoutes: Sendable {
     static let maxTranscriptSubscriptions = 32
 
     public init(pairing: RemotePairingStore, throttle: RemoteAuthThrottle, transcripts: RemoteTranscriptSource,
-                events: RemoteEventHub, controlRef: RemoteControlRef, serverName: String) {
+                events: RemoteEventHub, controlRef: RemoteControlRef, serverName: String,
+                imageStore: AttachmentStore = AttachmentStore()) {
         self.pairing = pairing
         self.throttle = throttle
         self.transcripts = transcripts
         self.events = events
         self.controlRef = controlRef
         self.serverName = serverName
+        self.imageStore = imageStore
     }
 
     /// 待ち受けの設定（TLS 必須・LAN のアドレスに限る）。
@@ -39,7 +47,16 @@ public struct RemoteRoutes: Sendable {
                                  maxBodyBytes: Self.maxBodyBytes, readTimeout: Self.readTimeout,
                                  maxConnectionsPerAddress: Self.maxConnectionsPerAddress,
                                  refuseAddress: { throttle.isBlocked($0) }, keepalive: true,
+                                 bodyAllowance: { Self.bodyAllowance($0) },
                                  rejection: { request, _ in routes.rejection(request) })
+    }
+
+    /// 本文の上限を広げるのは `POST /v1/rooms/{roomId}/messages` だけ。
+    static func bodyAllowance(_ request: HTTPRequest) -> HTTPBodyAllowance? {
+        let parts = request.path.split(separator: "/", omittingEmptySubsequences: false)
+        guard request.method == "POST", parts.count == 5, parts[0].isEmpty, parts[1] == "v1", parts[2] == "rooms",
+              !parts[3].isEmpty, parts[4] == "messages" else { return nil }
+        return HTTPBodyAllowance(maxBytes: maxMessageBodyBytes, readTimeout: messageReadTimeout)
     }
 
     // MARK: - 先に掛ける検査
@@ -133,12 +150,7 @@ public struct RemoteRoutes: Sendable {
                 await control.remoteDismissMenu(roomId: roomId, request: body)
             }
         case ["messages"]:
-            return await action(request, RemoteMessageRequest.self) { body, control in
-                switch RemoteChecks.message(body.text) {
-                case .failure(let result): return result
-                case .success(let text): return await control.remoteSendMessage(roomId: roomId, text: text)
-                }
-            }
+            return await message(request, roomId: roomId)
         default:
             return Self.error(404, "not_found", "not found")
         }
@@ -157,11 +169,43 @@ public struct RemoteRoutes: Sendable {
         return Self.encoded(Self.status(of: result), result)
     }
 
+    /// 画像は検証してから一時保存先に書き、そのパスを mac の入力欄の添付と同じ形で渡す。書いたファイルは渡した先が片付ける。
+    private func message(_ request: HTTPRequest, roomId: String) async -> HTTPResponse {
+        let body: RemoteMessageRequest
+        switch Self.decode(request, RemoteMessageRequest.self) {
+        case .rejected(let response): return response
+        case .value(let value): body = value
+        }
+        let images = body.images ?? []
+        let text: String
+        switch RemoteChecks.message(body) {
+        case .failure(let result): return Self.encoded(Self.status(of: result), result)
+        case .success(let value): text = value
+        }
+        if !images.isEmpty, case .external? = RemoteRoomID(roomId) {
+            return Self.encoded(409, RemoteChecks.relayImagesRefused)
+        }
+        let attachments: [Attachment]
+        switch RemoteImageIntake.store(images, in: imageStore) {
+        case .failure(let result): return Self.encoded(Self.status(of: result), result)
+        case .success(let stored): attachments = stored
+        }
+        guard let result = await controlRef.runIfAttached({ control in
+            await control.remoteSendMessage(roomId: roomId, text: text, images: attachments)
+        }) else {
+            attachments.forEach(imageStore.discard)
+            return Self.encoded(503, RemoteControlRef.unavailable)
+        }
+        return Self.encoded(Self.status(of: result), result)
+    }
+
     static func status(of result: RemoteActionResult) -> Int {
         if result.ok { return 200 }
         switch result.code {
         case "not_found": return 404
         case "invalid": return 400
+        case "too_many_images", "image_too_large": return 413
+        case "unsupported_image": return 415
         case "app_unavailable": return 503
         case "failed": return 502
         default: return 409

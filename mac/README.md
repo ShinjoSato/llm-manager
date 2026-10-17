@@ -138,13 +138,13 @@ mac/
       JSONLoose.swift             JSON の値を typeof の厳しさで読む（NSNumber の 1 を true と取り違えない）・行の絞り込みのバイト列検索
     Server/                     フック等を受けるアプリ内の HTTP サーバー
       HTTPServer.swift            最小の HTTP/1.1（Network.framework・外部ライブラリなし）。既定は 127.0.0.1・平文。
-                                  `HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限を変えられ、chunked で流し続ける応答（SSE）も出せる
+                                  `HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限（決まった要求だけ本文の上限と締め切りを広げる `HTTPBodyAllowance`）を変えられ、chunked で流し続ける応答（SSE）も出せる
       HookServerRoutes.swift      /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
       LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定
     Remote/                     iPhone 向けの口（同じ Wi-Fi・TLS・端末トークン）。仕様は docs/remote-api.md
       Server/                     SelfSignedCertificate（DER で X.509 を組む・鍵と証明書のファイル）・RemotePairingStore・
                                   RemoteAuthThrottle・RemoteRoutes（/v1 の振り分け）・RemoteEventHub（SSE）・RemoteControl（アプリへ頼む操作と照合）・
-                                  RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces
+                                  RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces・RemoteImageIntake（iPhone から届いた画像の検証と一時保存）
     Channel/                    チャネル（claude-deck-channel）の中身。実行ファイルからはこれを呼ぶだけ
       ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
@@ -286,7 +286,7 @@ mac/
 
 ## iPhone 連携（同じ Wi-Fi・`docs/remote-api.md`）
 
-同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信ができる口。
+同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信（画像も付けられる）ができる口。
 iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共有パッケージ `packages/DeckCore`。
 **既定は無効**で、設定画面の「iPhone 連携」タブ（メニュー「claude-deck → iPhone 連携…」でも開く）で有効にした時だけ開く。
 
@@ -306,7 +306,7 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   ウィンドウに端末一覧（名前・接続中・最後に使った時刻・ペアリング日時）と「取り消す」（確認あり。開いているストリームも切る）。
   取り消しを `devices.json` に書き出せなければ、メモリ上は取り消したままウィンドウに出し、5 秒ごとに書き直す。
 - **認証と上限**: 全 API で `Authorization: Bearer`。失敗（認証・ペアリング）は接続元ごとに 5 分で 10 回まで（超えたら 5 分、その接続元の接続は受け入れた時点で切る）。
-  `Origin` 付きは 403。本文 256KB・ヘッダー 64KB・同時接続 32（接続元ごとに 8）・読み取り 5 秒・TCP keepalive・
+  `Origin` 付きは 403。本文 256KB（画像付きのメッセージの口だけ画像の分を足し、認証を通った相手に限って読み取りも 60 秒まで延ばす。`HTTPBodyAllowance`）・ヘッダー 64KB・同時接続 32（接続元ごとに 8）・読み取り 5 秒・TCP keepalive・
   ストリームは端末あたり 4 本（超えたら同じ端末の最も古いものを閉じて受ける）/ 全体 16 本。
 - **操作は既存の経路だけ**: iPhone からの許可 / 拒否・選択肢・送信は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理
   （`MonitorStore.decide`・`answerOnTerminal`・`answerMenu`（`MenuNavigator`）・`HostedSession.send`・伝言）に渡す。
@@ -315,14 +315,21 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   答えた ID（mac・iPhone どちらから答えても）の押し直しは送らずに `answered` を返す。Channels の確認が出ている間は端末の権限・選択肢を iPhone から扱わない。
   操作の待ちは 30 秒で `timeout` を返す（操作自体は続きうる）。カードの組み立てと照合の純粋な部分は MonitorKit（`RemoteTerminalCard`・`RemoteRoomCards`・`RemoteChecks`）。
   選択待ちの間は送信しない。iPhone からの失敗は mac に警告を出さず結果で返す。mac の入力欄の書きかけ・添付には触れない。
+- **iPhone からの画像**: PNG / JPEG を 1 通 4 枚・1 枚 3MB・合計 8MB・一辺 8000 ピクセル（24 メガピクセル）まで（`RemoteImageLimits`）。
+  口で宣言した型と中身の一致・終わりの印・ImageIO で読めるかを確かめ（`RemoteImageIntake`）、入力欄の添付と同じ一時保存先（0700 / 0600）に書いて、
+  入力欄の添付と同じ経路（パスを貼って `[Image #N]` を確かめてから本文・Enter。`ChatOutbox.sendFromRemote`）で送る。
+  端末まで渡らずに終わった分はその場で消し、渡った分は入力欄の添付と同じく起動時の掃除に任せる。外部セッション（伝言）には付けられない（`unavailable`）。
+  ルームの `send.acceptsImages` で iPhone に付けられるかを知らせる。
   新しい claude を起動する口・headless の口は無い（料金事故ゼロの方針はそのまま）。
 - **実機で確かめること**: 初めて有効にした時の macOS の「受信接続を許可しますか？」（アプリケーションファイアウォールが有効な場合）と
   ローカルネットワークの許可（`NSLocalNetworkUsageDescription` を Info.plist に入れてある）。ad-hoc 署名のため、`.app` を作り直すと
   ファイアウォールの許可を取り直すことがある。
 - **テスト**: `RemoteAccessUnitTests`（証明書・DER・ペアリング・回数制限・照合・表示の世代と押し直し・カードの優先順・QR の中身・
-  インターフェースの除外・ネットワークの判定・鍵ファイルの権限・取り消しの書き直し・TLS の設定・操作の待ちの上限）と `RemoteServerTests`
+  インターフェースの除外・ネットワークの判定・鍵ファイルの権限・取り消しの書き直し・TLS の設定・操作の待ちの上限・本文と画像の形）と `RemoteServerTests`
   （ループバックの OS 割り当てのポートに TLS で立て、指紋でピン留めした URLSession / NWConnection で叩く。別の指紋・平文は繋がらない・
-  未認証 / 不正 / 取り消し後は 401・回数制限・接続元ごとの上限・ストリームの入れ替え・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること）。LAN には立てない。
+  未認証 / 不正 / 取り消し後は 401・回数制限・接続元ごとの上限・ストリームの入れ替え・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること・
+  本文の上限を広げるのはメッセージの口だけ）、`RemoteClientIntegrationTests`（DeckCore のクライアントで画像付きの送信が添付の形で受け手に渡るまで・
+  枚数 / 型違い / 壊れた画像 / 寸法 / 外部セッションでの拒否とファイルを残さないこと）。LAN には立てない。
 
 ## iPhone への通知（iCloud・CloudKit）
 

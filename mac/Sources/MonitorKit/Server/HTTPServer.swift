@@ -137,9 +137,22 @@ public struct TLSServerIdentity: @unchecked Sendable {
     }
 }
 
+/// 決まった要求にだけ認める大きな本文（上限と、読み終えるまでの締め切り）。
+public struct HTTPBodyAllowance: Sendable, Equatable {
+    public var maxBytes: Int
+    /// 接続を受けてから本文を読み終えるまでの締め切り。
+    public var readTimeout: TimeInterval
+
+    public init(maxBytes: Int, readTimeout: TimeInterval) {
+        self.maxBytes = maxBytes
+        self.readTimeout = readTimeout
+    }
+}
+
 /// 待ち受けの設定。既定はフック・チャネル用の口（ループバック・平文・Host / Origin / 接続元の検査）。
 public struct HTTPServerOptions: Sendable {
     public typealias Rejection = @Sendable (HTTPRequest, Int) -> HTTPResponse?
+    public typealias BodyAllowance = @Sendable (HTTPRequest) -> HTTPBodyAllowance?
 
     /// 待ち受けるアドレス。全インターフェース（0.0.0.0）にはしない。
     public var bindHost: NWEndpoint.Host
@@ -159,6 +172,8 @@ public struct HTTPServerOptions: Sendable {
     public var refuseAddress: (@Sendable (String) -> Bool)?
     /// 黙って消えた相手（Wi-Fi から外れた端末等）の接続を早めに見つけて片付ける。
     public var keepalive: Bool
+    /// `maxBodyBytes` を超える本文を認める要求（本文の無い要求で問い合わせる）。認めるのは `rejection` も通った時だけ。
+    public var bodyAllowance: BodyAllowance?
 
     public init(bindHost: NWEndpoint.Host = .ipv4(.loopback),
                 tls: TLSServerIdentity? = nil,
@@ -170,6 +185,7 @@ public struct HTTPServerOptions: Sendable {
                 maxConnectionsPerAddress: Int? = nil,
                 refuseAddress: (@Sendable (String) -> Bool)? = nil,
                 keepalive: Bool = false,
+                bodyAllowance: BodyAllowance? = nil,
                 rejection: @escaping Rejection = { HookServerRoutes.rejection($0, port: $1) }) {
         self.bindHost = bindHost
         self.tls = tls
@@ -181,6 +197,7 @@ public struct HTTPServerOptions: Sendable {
         self.maxConnectionsPerAddress = maxConnectionsPerAddress
         self.refuseAddress = refuseAddress
         self.keepalive = keepalive
+        self.bodyAllowance = bodyAllowance
         self.rejection = rejection
     }
 
@@ -411,6 +428,9 @@ private final class ConnectionSession: @unchecked Sendable {
     private var work: Task<Void, Never>?
     /// 流し続ける応答で、送ったがまだ相手に渡っていない量。
     private var pendingStreamBytes = 0
+    private let startedAt = DispatchTime.now()
+    /// 本文を読み終えるまでの締め切り（大きな本文を認めた要求だけ延ばす）。
+    private var deadline = DispatchTime.now()
 
     init(connection: NWConnection, queue: DispatchQueue, handler: @escaping HTTPServer.Handler,
          options: HTTPServerOptions, boundPort: @escaping () -> Int, onFinish: @escaping () -> Void) {
@@ -423,11 +443,17 @@ private final class ConnectionSession: @unchecked Sendable {
     }
 
     func begin() {
-        queue.asyncAfter(deadline: .now() + options.readTimeout) { [weak self] in
+        deadline = startedAt + options.readTimeout
+        armTimeout()
+        receive()
+    }
+
+    private func armTimeout() {
+        queue.asyncAfter(deadline: deadline) { [weak self] in
             guard let self, !self.finished, !self.dispatched else { return }
+            if DispatchTime.now() < self.deadline { return self.armTimeout() }
             self.respond(.json(408, ["ok": false, "error": "request timeout"]))
         }
-        receive()
     }
 
     func finish() {
@@ -491,11 +517,20 @@ private final class ConnectionSession: @unchecked Sendable {
                 }
                 length = n
             }
-            if length > options.maxBodyBytes {
-                respond(.json(413, ["ok": false, "error": "payload too large"]))
-                return true
-            }
             head = (parsed.method, parsed.target, parsed.headers, end.upperBound - buffer.startIndex, length)
+            if length > options.maxBodyBytes {
+                let probe = request(body: Data())
+                guard let allowance = options.bodyAllowance?(probe), length <= allowance.maxBytes else {
+                    respond(.json(413, ["ok": false, "error": "payload too large"]))
+                    return true
+                }
+                // 大きな本文を読み込む・待つのは、検査（認証）を通る相手だけにする。
+                if let rejected = options.rejection(probe, boundPort()) {
+                    respond(rejected)
+                    return true
+                }
+                deadline = max(deadline, startedAt + allowance.readTimeout)
+            }
             // curl は大きめの本文で `Expect: 100-continue` を付け、返事を待ってから本文を送る。弾く相手には本文を送らせない。
             if length > 0, parsed.headers["expect"]?.lowercased() == "100-continue", !sentContinue {
                 if let rejected = options.rejection(request(body: Data()), boundPort()) {

@@ -340,6 +340,15 @@ final class RemoteAccessUnitTests: XCTestCase {
         if case .failure(let f) = RemoteChecks.message("  \n") { XCTAssertEqual(f.code, "invalid") } else { XCTFail() }
         if case .failure = RemoteChecks.message(String(repeating: "a", count: RemoteChecks.maxMessageBytes + 1)) {} else { XCTFail() }
         if case .failure = RemoteChecks.message("hello") { XCTFail() }
+        let png = RemoteMessageImage(mediaType: "image/png", data: TestImages.png())
+        if case .failure = RemoteChecks.message(RemoteMessageRequest(text: " ", images: [png])) { XCTFail("画像があれば本文は空でよい") }
+        if case .failure(let f) = RemoteChecks.message(RemoteMessageRequest(text: String(repeating: "a", count: RemoteChecks.maxMessageBytes + 1),
+                                                                           images: [png])) {
+            XCTAssertEqual(f.code, "invalid", "本文の上限は画像があっても文字の分に掛かる")
+        } else { XCTFail() }
+        if case .failure(let f) = RemoteChecks.message(RemoteMessageRequest(text: "a", images: Array(repeating: png, count: 5))) {
+            XCTAssertEqual(f.code, "too_many_images")
+        } else { XCTFail() }
     }
 
     func testStatusMapping() {

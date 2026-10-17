@@ -27,6 +27,7 @@ public final class RemoteAccessService {
     @ObservationIgnored private let transcripts: RemoteTranscriptSource
     @ObservationIgnored private let serverName: String
     @ObservationIgnored private let localHostName: String?
+    @ObservationIgnored private let imageStore: AttachmentStore
     @ObservationIgnored private var server: HTTPServer?
     @ObservationIgnored private var identity: TLSIdentityFiles.Loaded?
     @ObservationIgnored private var offerExpiry: Task<Void, Never>?
@@ -36,9 +37,10 @@ public final class RemoteAccessService {
     /// 書き出しをやり直す間隔。
     @ObservationIgnored public var persistRetryInterval: Duration = .seconds(5)
 
-    /// `directory` に証明書・鍵・端末一覧を置く（0700 / 0600）。
+    /// `directory` に証明書・鍵・端末一覧を置く（0700 / 0600）。iPhone から届いた画像は `imageStore` に書く。
     public init(directory: URL, transcripts: RemoteTranscriptSource, control: RemoteControl?, serverName: String,
-                localHostName: String? = nil, throttle: RemoteAuthThrottle = RemoteAuthThrottle()) {
+                localHostName: String? = nil, throttle: RemoteAuthThrottle = RemoteAuthThrottle(),
+                imageStore: AttachmentStore = AttachmentStore()) {
         identityFiles = TLSIdentityFiles(directory: directory)
         let pairing = RemotePairingStore(directory: directory)
         self.pairing = pairing
@@ -46,6 +48,7 @@ public final class RemoteAccessService {
         self.transcripts = transcripts
         self.serverName = serverName
         self.localHostName = localHostName
+        self.imageStore = imageStore
         controlRef = RemoteControlRef(control)
         events = RemoteEventHub(controlRef: controlRef, transcripts: transcripts,
                                 isDeviceActive: { pairing.device(id: $0) != nil })
@@ -92,7 +95,7 @@ public final class RemoteAccessService {
             return
         }
         let routes = RemoteRoutes(pairing: pairing, throttle: throttle, transcripts: transcripts, events: events,
-                                  controlRef: controlRef, serverName: serverName)
+                                  controlRef: controlRef, serverName: serverName, imageStore: imageStore)
         let server = HTTPServer(options: routes.serverOptions(bindHost: host, tls: identity!.serverIdentity)) { request in
             await routes.handle(request)
         }

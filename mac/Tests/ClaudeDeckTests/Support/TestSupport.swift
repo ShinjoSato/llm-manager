@@ -9,6 +9,24 @@ func testPNGData() -> Data {
     return rep.representation(using: .png, properties: [:])!
 }
 
+/// 試験用の画像（ImageIO で書く本物の PNG / JPEG）。
+enum TestImages {
+    static func png(width: Int = 4, height: Int = 3) -> Data { encode(width: width, height: height, type: "public.png") }
+    static func jpeg(width: Int = 4, height: Int = 3) -> Data { encode(width: width, height: height, type: "public.jpeg") }
+
+    private static func encode(width: Int, height: Int, type: String) -> Data {
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let output = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(output, type as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        precondition(CGImageDestinationFinalize(destination))
+        return output as Data
+    }
+}
+
 /// ファイルの末尾に書き足す（無ければ作る）。ログの追記を模す。
 func appendToFile(_ data: Data, at url: URL) throws {
     if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
