@@ -17,8 +17,8 @@ final class RemoteServerTests: XCTestCase {
         control = FakeRemoteControl()
         transcripts = FakeTranscriptSource()
         service = RemoteAccessService(directory: dir, transcripts: transcripts, control: control, serverName: "test-mac",
-                                      throttle: RemoteAuthThrottle(window: 60, maxFailures: 5),
-                                      imageStore: AttachmentStore(directory: dir.appendingPathComponent("images")))
+                                      throttle: RemoteAuthThrottle(window: 60, maxFailures: 5))
+        control.imageStore = AttachmentStore(directory: dir.appendingPathComponent("images"))
         service.start(address: "127.0.0.1", port: 0)
         for _ in 0..<300 where service.boundPort == nil {
             if case .failed(let reason) = service.state { throw NSError(domain: reason, code: 1) }
@@ -564,6 +564,19 @@ final class FakeRemoteControl: RemoteControl {
         calls.append(images.isEmpty ? "send \(roomId) \(text)" : "send \(roomId) \(text) images=\(images.count)")
         receivedImages.append(images)
         return result
+    }
+
+    /// 試験ごとに差し替える（既定も一時ディレクトリ。利用者のキャッシュには書かない）。
+    var imageStore = AttachmentStore(directory: FileManager.default.temporaryDirectory
+        .appendingPathComponent("fake-remote-images-\(UUID().uuidString)", isDirectory: true))
+    /// 無いことにするルーム。
+    var missingRooms: Set<String> = []
+
+    var remoteImageStore: AttachmentStore { imageStore }
+
+    func remoteImageTargetRefusal(roomId: String) -> RemoteActionResult? {
+        if missingRooms.contains(roomId) { return .failure("not_found", "ルームが見つかりません。") }
+        return roomId.hasPrefix("e:") ? RemoteChecks.imagesNotAccepted : nil
     }
 }
 

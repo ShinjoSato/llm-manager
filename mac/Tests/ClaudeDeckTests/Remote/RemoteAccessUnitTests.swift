@@ -351,6 +351,36 @@ final class RemoteAccessUnitTests: XCTestCase {
         } else { XCTFail() }
     }
 
+    /// 一時ファイルを消すのは、送り始められなかった時・claude が終わった時・ルームが無くなった時だけ。
+    func testRemoteImageCleanup() {
+        XCTAssertFalse(RemoteImageCleanup.keepsFiles(.refused))
+        let kept: [SendCompletion] = [.submitted, .abortedBeforeBody(.menu), .abortedAfterBody(.permission),
+                                      .notPasted(imagesPasted: true), .notPasted(imagesPasted: false)]
+        for completion in kept {
+            XCTAssertTrue(RemoteImageCleanup.keepsFiles(.finished(completion, roomExists: true)), "\(completion)")
+            XCTAssertFalse(RemoteImageCleanup.keepsFiles(.finished(completion, roomExists: false)), "\(completion)")
+        }
+        XCTAssertFalse(RemoteImageCleanup.keepsFiles(.finished(.ended, roomExists: true)))
+    }
+
+    /// 取り込みの枠は同時に `limit` 本まで。溢れた分は待たせずに断り、終われば空く。
+    func testImageIntakeQueueLimitsConcurrency() async {
+        let queue = RemoteImageIntakeQueue(limit: 1)
+        let gate = DispatchSemaphore(value: 0)
+        let started = Box(false)
+        let first = Task { await queue.run { () -> Int in started.mutate { $0 = true }; gate.wait(); return 1 } }
+        while !started.value { try? await Task.sleep(for: .milliseconds(5)) }
+        let refused = await queue.run { 2 }
+        XCTAssertNil(refused, "埋まっていれば断る")
+        gate.signal()
+        let firstValue = await first.value
+        XCTAssertEqual(firstValue, 1)
+        let again = await queue.run { 3 }
+        XCTAssertEqual(again, 3, "終われば空く")
+        let none = await RemoteImageIntakeQueue(limit: 0).run { 4 }
+        XCTAssertNil(none)
+    }
+
     func testStatusMapping() {
         XCTAssertEqual(RemoteRoutes.status(of: .success("sent")), 200)
         XCTAssertEqual(RemoteRoutes.status(of: .failure("not_found", "")), 404)

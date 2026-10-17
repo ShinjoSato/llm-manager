@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// iPhone から届いた画像の検証と一時保存（保存先・形は mac の入力欄の添付と同じ `AttachmentStore`）。
 public enum RemoteImageIntake {
     static let unreadable = RemoteActionResult.failure("unsupported_image", "画像として読めませんでした（壊れているか、途中で切れています）。")
-    static let saveFailed = RemoteActionResult.failure("failed", "mac で画像を一時保存できませんでした。")
+    static let saveFailed = RemoteActionResult.failure("image_store_failed", "mac で画像を一時保存できませんでした。")
 
     /// ImageIO で読めて、宣言した型のとおりで、寸法が上限内か。通れば nil。
     public static func problem(_ image: RemoteMessageImage) -> RemoteActionResult? {
@@ -68,5 +68,54 @@ public enum RemoteImageIntake {
             }
         }
         return .success(stored)
+    }
+}
+
+/// 画像の取り込み（本文の読み込み・検証・書き込み）を Swift 並行処理の共有スレッドの外で回し、同時に `limit` 本までに絞る。
+public final class RemoteImageIntakeQueue: @unchecked Sendable {
+    public static let defaultLimit = 2
+    public static let busy = RemoteActionResult.failure("images_busy", "mac が他の画像を取り込んでいる最中です。少し待ってから送り直してください。")
+
+    public let limit: Int
+    private let queue = DispatchQueue(label: "claude-deck.remote-image-intake", qos: .userInitiated, attributes: .concurrent)
+    private let lock = NSLock()
+    private var running = 0
+
+    public init(limit: Int = RemoteImageIntakeQueue.defaultLimit) {
+        self.limit = limit
+    }
+
+    /// 空きが無ければ待たせずに nil。
+    public func run<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T? {
+        let admitted = lock.withLock {
+            guard running < limit else { return false }
+            running += 1
+            return true
+        }
+        guard admitted else { return nil }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<T, Never>) in
+            queue.async { [self] in
+                let value = work()
+                lock.withLock { running -= 1 }
+                continuation.resume(returning: value)
+            }
+        }
+    }
+}
+
+/// iPhone から届いた画像の一時ファイルを、送信のどの時点で消すか。
+public enum RemoteImageCleanup {
+    public enum Moment: Sendable, Equatable {
+        /// 送り始める前に断った・始められなかった（端末には何も書いていない）。
+        case refused
+        case finished(SendCompletion, roomExists: Bool)
+    }
+
+    /// 送り始めた後は、画像のパス（貼り付けか本文の一覧）が端末に書かれていて遅れて読まれうるので、claude が終わった時とルームが無くなった時だけ消す。
+    public static func keepsFiles(_ moment: Moment) -> Bool {
+        switch moment {
+        case .refused: return false
+        case .finished(let completion, let roomExists): return roomExists && completion != .ended
+        }
     }
 }

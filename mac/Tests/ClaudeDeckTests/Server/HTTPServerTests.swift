@@ -123,6 +123,13 @@ final class HTTPServerTests: XCTestCase {
         XCTAssertTrue(try post("/small", 8, delay: 1).hasPrefix("HTTP/1.1 408"), "他の要求の締め切りは延ばさない")
     }
 
+    func testReleasedBodyIsGoneFromEveryCopy() {
+        let request = HTTPRequest(method: "POST", path: "/x", body: Data(repeating: 1, count: 1024))
+        let copy = request
+        copy.releaseBody()
+        XCTAssertTrue(request.body.isEmpty, "写しから手放しても元から消える")
+    }
+
     func testExpectContinueIsAnswered() async throws {
         let body = F.json(["session_id": sessionId, "hook_event_name": "Stop"])
         let response = try rawRequest("POST /hook HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nExpect: 100-continue\r\n\r\n",

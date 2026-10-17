@@ -81,6 +81,23 @@ final class ComposerImagePreparerTests: XCTestCase {
     }
 }
 
+/// 開くまで待たせる（整えている途中を作るため）。
+private actor Gate {
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        opened = true
+        waiters.forEach { $0.resume() }
+        waiters = []
+    }
+}
+
 /// 入力欄の画像の並べ方と送り方。
 @MainActor
 final class AppModelImagesTests: XCTestCase {
@@ -161,6 +178,39 @@ final class AppModelImagesTests: XCTestCase {
         model.send(room)
         XCTAssertNil(model.relayNotes["s"], "画像付きの伝言は送らない")
         XCTAssertEqual(model.notices[room.id]?.isError, true)
+        XCTAssertTrue(model.notices[room.id]?.text.contains("伝言") == true)
+    }
+
+    func testOldMacIsToldApartFromRelay() {
+        let (model, room) = model(send: RemoteSendState(mode: .input, disabledReason: nil))
+        XCTAssertTrue(model.imageRefusal(room)?.contains("古い") == true, "伝言とは別の案内")
+        let (accepting, hosted) = self.model(send: RemoteSendState(mode: .input, disabledReason: nil, acceptsImages: true))
+        XCTAssertNil(accepting.imageRefusal(hosted))
+    }
+
+    func testImagesAreDroppedWhenTheRoomVanishesOrPairingIsForgotten() async throws {
+        let (model, room) = model(send: RemoteSendState(mode: .input, disabledReason: nil, acceptsImages: true))
+        model.attachImages([png()], to: room.id) { $0 }
+        try await waitUntil { model.images(room.id).count == 1 }
+        model.simulateReceived(RemoteState(rooms: [], usage: nil, monitoring: true))
+        XCTAssertTrue(model.images(room.id).isEmpty, "一覧から消えたルームの画像は捨てる")
+
+        model.simulateReceived(RemoteState(rooms: [room], usage: nil, monitoring: true))
+        let gate = Gate()
+        model.attachImages([png()], to: room.id) { data in await gate.wait(); return data }
+        XCTAssertEqual(model.preparingImages[room.id], 1)
+        model.simulateReceived(RemoteState(rooms: [], usage: nil, monitoring: true))
+        model.simulateReceived(RemoteState(rooms: [room], usage: nil, monitoring: true))
+        await gate.open()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(model.images(room.id).isEmpty, "整えている途中に消えたルームには足さない")
+        XCTAssertNil(model.preparingImages[room.id])
+
+        model.attachImages([png()], to: room.id) { $0 }
+        try await waitUntil { model.images(room.id).count == 1 }
+        model.forget()
+        XCTAssertTrue(model.composerImages.isEmpty, "ペアリングを捨てたら画像も捨てる")
+        XCTAssertTrue(model.preparingImages.isEmpty)
     }
     #endif
 }

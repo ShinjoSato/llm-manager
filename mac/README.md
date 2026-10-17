@@ -315,10 +315,12 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   答えた ID（mac・iPhone どちらから答えても）の押し直しは送らずに `answered` を返す。Channels の確認が出ている間は端末の権限・選択肢を iPhone から扱わない。
   操作の待ちは 30 秒で `timeout` を返す（操作自体は続きうる）。カードの組み立てと照合の純粋な部分は MonitorKit（`RemoteTerminalCard`・`RemoteRoomCards`・`RemoteChecks`）。
   選択待ちの間は送信しない。iPhone からの失敗は mac に警告を出さず結果で返す。mac の入力欄の書きかけ・添付には触れない。
-- **iPhone からの画像**: PNG / JPEG を 1 通 4 枚・1 枚 3MB・合計 8MB・一辺 8000 ピクセル（24 メガピクセル）まで（`RemoteImageLimits`）。
-  口で宣言した型と中身の一致・終わりの印・ImageIO で読めるかを確かめ（`RemoteImageIntake`）、入力欄の添付と同じ一時保存先（0700 / 0600）に書いて、
-  入力欄の添付と同じ経路（パスを貼って `[Image #N]` を確かめてから本文・Enter。`ChatOutbox.sendFromRemote`）で送る。
-  端末まで渡らずに終わった分はその場で消し、渡った分は入力欄の添付と同じく起動時の掃除に任せる。外部セッション（伝言）には付けられない（`unavailable`）。
+- **iPhone からの画像**: PNG / JPEG を 1 通 4 枚・1 枚 3MB・合計 8MB・一辺 8000 ピクセル（1600 万画素）まで（`RemoteImageLimits`）。
+  送り先（ルームがある・ホスト中）を先に確かめてから、宣言した型と中身の一致・終わりの印・ImageIO で読めるかを確かめ（`RemoteImageIntake`。
+  共有スレッドの外の専用キューで同時 2 本まで・溢れたら `images_busy`）、入力欄の添付と同じ一時保存先（`ChatOutbox.attachmentStore` と同じもの・0700 / 0600）に
+  受けたバイト列のまま書いて、入力欄の添付と同じ経路（パスを貼って `[Image #N]` を確かめてから本文・Enter。`ChatOutbox.sendFromRemote`）で送る。
+  一時ファイルは送り始められなかった時・claude が終わった時・ルームが無くなった時だけ消し、他は起動時の掃除に任せる（`RemoteImageCleanup`）。
+  外部セッション（伝言）には付けられない（`images_not_accepted`）。
   ルームの `send.acceptsImages` で iPhone に付けられるかを知らせる。
   新しい claude を起動する口・headless の口は無い（料金事故ゼロの方針はそのまま）。
 - **実機で確かめること**: 初めて有効にした時の macOS の「受信接続を許可しますか？」（アプリケーションファイアウォールが有効な場合）と

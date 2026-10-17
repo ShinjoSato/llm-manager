@@ -136,10 +136,17 @@ final class RemoteRequestBuilderTests: XCTestCase {
 
         XCTAssertLessThanOrEqual(RemoteImageLimits.budgetBytes * RemoteImageLimits.maxCount, RemoteImageLimits.maxTotalBytes)
         XCTAssertGreaterThan(RemoteImageLimits.maxEncodedBytes, RemoteImageLimits.maxTotalBytes * 4 / 3)
-        for code in ["too_many_images", "image_too_large", "unsupported_image"] {
+        for code in ["too_many_images", "image_too_large", "unsupported_image", "images_not_accepted", "images_busy", "image_store_failed"] {
             XCTAssertNotNil(RemoteResultText.text(for: .failure(code, "x"), operation: .message), code)
             XCTAssertNotEqual(RemoteResultText.text(for: .failure(code, "x"), operation: .message), "x", "日本語の文言を持つ")
         }
+    }
+
+    func testRelayUnavailableDoesNotMentionImages() {
+        let text = RemoteResultText.text(for: .failure("unavailable", "x"), operation: .relay) ?? ""
+        XCTAssertFalse(text.contains("画像"), "画像の拒否は専用のコードで伝える")
+        XCTAssertNotEqual(RemoteResultText.text(for: .failure("image_store_failed", "x"), operation: .message),
+                          RemoteResultText.text(for: .failure("failed", "x"), operation: .message), "保存の失敗は「答えを届けられない」に化けない")
     }
 
     func testSlashInIdDoesNotBreakPath() throws {

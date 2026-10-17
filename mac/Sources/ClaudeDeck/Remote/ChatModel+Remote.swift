@@ -128,7 +128,7 @@ extension ChatModel: RemoteControl {
         }
         guard let room = room(roomId) else { return refuse(Self.roomNotFound) }
         guard let session = room.hosted else {
-            if !images.isEmpty { return refuse(RemoteChecks.relayImagesRefused) }
+            if !images.isEmpty { return refuse(RemoteChecks.imagesNotAccepted) }
             return await relayFromRemote(text, to: room)
         }
         if let reason = ChatOutbox.inputDisabledReason(for: room) {
@@ -144,6 +144,13 @@ extension ChatModel: RemoteControl {
                 done(.failure(refusal.code, refusal.message))
             }
         }
+    }
+
+    var remoteImageStore: AttachmentStore { outbox.attachmentStore }
+
+    func remoteImageTargetRefusal(roomId: String) -> RemoteActionResult? {
+        guard let room = room(roomId) else { return Self.roomNotFound }
+        return room.hosted == nil ? RemoteChecks.imagesNotAccepted : nil
     }
 
     static func result(of completion: SendCompletion) -> RemoteActionResult {

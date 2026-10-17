@@ -43,6 +43,13 @@ public final class RemoteControlRef {
         await runIfAttached(body) ?? Self.unavailable
     }
 
+    /// 画像を付けて送れるルームなら、書く先の一時保存先。
+    func imageTarget(_ roomId: String) -> Result<AttachmentStore, RemoteActionResult> {
+        guard let control else { return .failure(Self.unavailable) }
+        if let refusal = control.remoteImageTargetRefusal(roomId: roomId) { return .failure(refusal) }
+        return .success(control.remoteImageStore)
+    }
+
     /// 受け手が無ければ nil（渡すはずだったものを呼び出し側で片付けるため）。
     func runIfAttached(_ body: @MainActor @Sendable (RemoteControl) async -> RemoteActionResult) async -> RemoteActionResult? {
         guard let control else { return nil }

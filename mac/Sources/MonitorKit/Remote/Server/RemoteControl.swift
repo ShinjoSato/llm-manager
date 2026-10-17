@@ -17,6 +17,10 @@ public protocol RemoteControl: AnyObject {
     /// ホスト中のセッションなら入力欄へ（選択待ちなら送らない）、外部セッションなら伝言。
     /// `images` は検証して一時保存先に書いた画像（mac の入力欄の添付と同じ形）。受け取った側が送った後か断った時に片付ける。
     func remoteSendMessage(roomId: String, text: String, images: [Attachment]) async -> RemoteActionResult
+    /// 画像を書く一時保存先（送った後・断った時に消す側と同じもの）。
+    var remoteImageStore: AttachmentStore { get }
+    /// そのルームに画像を付けて送れないなら理由（ルームが無い・ホスト中でない）。画像を読み込む前に断るため。
+    func remoteImageTargetRefusal(roomId: String) -> RemoteActionResult?
 }
 
 /// ルームの識別子（`h:<UUID>` / `e:<sessionId>`）。
@@ -312,7 +316,7 @@ public enum RemoteChecks {
     }
 
     /// 外部セッションへの伝言には画像を付けない（受信箱は文字だけを運ぶ）。
-    public static let relayImagesRefused = RemoteActionResult.failure("unavailable", "外部セッションへの伝言には画像を付けられません。")
+    public static let imagesNotAccepted = RemoteActionResult.failure("images_not_accepted", "外部セッションへの伝言には画像を付けられません。")
 
     /// ホスト中のセッションへ送れない時の結果コード（終了・選択待ち）。
     public static func sendBlockedCode(ended: Bool, inputBlock: InputBlock?) -> String {

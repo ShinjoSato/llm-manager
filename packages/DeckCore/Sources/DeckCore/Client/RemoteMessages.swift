@@ -49,11 +49,9 @@ public enum RemoteResultText {
         case "invalid":
             return operation == .message || operation == .relay ? "送れない本文です（空か長すぎます）。" : "要求の形が正しくありません。"
         case "unavailable":
-            switch operation {
-            case .menu: return "文字を入力する選択肢はここからは選べません。キャンセルしてから入力欄で伝えてください。"
-            case .relay: return "このルームには今は送れません（伝言には画像を付けられません）。"
-            default: return "このルームには今は送れません。"
-            }
+            return operation == .menu
+                ? "文字を入力する選択肢はここからは選べません。キャンセルしてから入力欄で伝えてください。"
+                : "このルームには今は送れません。"
         case "confirm_required":
             return "取り消すと claude が終了します。確認してから押してください。"
         case "blocked_permission":
@@ -71,6 +69,12 @@ public enum RemoteResultText {
                 + "合計 \(RemoteImageLimits.maxTotalBytes / 1024 / 1024)MB・一辺 \(RemoteImageLimits.maxPixelSide) ピクセルまで）。"
         case "unsupported_image":
             return "送れない画像です（PNG か JPEG で、壊れていないもの）。別の画像を選んでください。"
+        case "images_not_accepted":
+            return "このルームには画像を付けられません（外部セッションへの伝言は文字だけです）。画像を外してから送ってください。"
+        case "images_busy":
+            return "Mac が他の画像を受け取っている最中です。少し待ってから送り直してください。"
+        case "image_store_failed":
+            return "Mac で画像を一時保存できませんでした（ディスクの空きや権限を確かめてください）。"
         case "stuck", "vanished", "settling":
             return "端末の選択肢の動きを確かめられなかったので、途中でやめました。画面の様子を確かめてください。"
         default:

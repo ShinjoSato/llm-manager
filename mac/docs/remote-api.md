@@ -133,22 +133,32 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | 枚数 | 1 通 4 枚 | `too_many_images`（413） |
 | 1 枚の大きさ（base64 にする前） | 3MB | `image_too_large`（413） |
 | 1 通の合計（同上） | 8MB | `image_too_large`（413） |
-| 寸法 | 縦横それぞれ 8000 ピクセル・合計 24 メガピクセル | `image_too_large`（413） |
+| 寸法 | 縦横それぞれ 8000 ピクセル・合計 1600 万画素（検証で展開する時のメモリを抑えるため。iPhone は長辺 2048 に縮めて送る） | `image_too_large`（413） |
 | 形式 | PNG / JPEG のみ（HEIC は iPhone で JPEG にしてから送る） | `unsupported_image`（415） |
 | 中身 | 宣言した型と先頭の印が一致・終わりの印（PNG の IEND・JPEG の EOI）がある・ImageIO で読める | `unsupported_image`（415） |
-| 送り先 | ホスト中のセッション（`h:`）だけ。外部セッション（`e:`）への伝言は文字だけ | `unavailable`（409） |
+| 送り先 | ホスト中のセッションだけ。外部セッションへの伝言は文字だけ | `images_not_accepted`（409）。ルームが無ければ `not_found`（404） |
+| 同時に取り込む数 | 2 本（本文の読み込み・検証・書き込み） | `images_busy`（503）。待たせずに断るので、少し置いて送り直す |
+| 一時保存 | 書けること | `image_store_failed`（500） |
 
 - 型と上限は DeckCore の `RemoteImageLimits`（iPhone は送る前にこれに収める）、mac の検証は `RemoteImageIntake`（ImageIO）。
-  本文の 32KB は文字の分だけに掛ける。要求全体の上限は、この口だけ画像の分（base64 と区切りの余裕）を足して広げる（他の口は 256KB のまま）。
+  本文の 32KB は文字の分だけに掛ける。要求全体の上限は、この口だけ画像の分を足して広げる（他の口は 256KB のまま）。
+  足す分は base64（合計 8MB → 約 10.7MB）に 1/8 の余白と区切りの分。余白は base64 の `/`（中身が偏らなければ 64 文字に 1 つ）を `\/` と書く
+  クライアントの分で、DeckCore のクライアントは `/` をエスケープしない。全部の `/` が `\/` になるような偏った中身は 413 になりうる。
+- 順序: 送り先（ルームがあるか・ホスト中か）を、画像を検証・書き込みする前に確かめる。256KB を超える本文は画像付きなので、
+  JSON を読む前に確かめる。読み込み・ImageIO の検証・書き込みは Swift 並行処理の共有スレッドの外（専用のキュー）で同時に 2 本まで回す（`RemoteImageIntakeQueue`）。
+  読み終えた本文（`HTTPRequest.releaseBody`）と画像のバイト列は、mac の操作を待つ前に手放す。
+- mac は受けたバイト列を**そのまま**書いて端末に渡す（再エンコードもメタデータの除去もしない）。位置情報などのメタデータを落とすのは iPhone 側の役目
+  （iPhone アプリは送る前に書き直す。`ios/README.md`「画像を送る」）。
 - mac は検証を通った画像を、入力欄の添付と同じ一時保存先 `~/Library/Caches/claude-deck/attachments/`（ディレクトリ 0700・ファイル 0600・名前は UUID）に書き、
   入力欄の添付と同じ経路（画像のパスだけを先に貼り、`[Image #N]` が増えたのを画面で確かめてから本文を貼って Enter）で送る。
-  端末まで渡らずに終わった時（断った・ルームが無い・送り始める前に止めた・claude が終了した）はその場で消し、
-  端末に渡った分は受け手が後から読むことがあるので、入力欄の添付と同じく残して起動時の掃除（7 日より古いもの）に任せる。
+  消すのは、送り始められなかった時（断った・ルームが無い・選択待ち等で始めなかった）・claude が終了した時・ルームが無くなった時だけ（`RemoteImageCleanup`）。
+  送り始めた後は画像のパスが端末に書かれている（貼り付けモードの端末では先に貼ったパス、そうでない端末では本文末尾の「添付:」の一覧）ので、
+  入らなかったように見えても遅れて入って読まれうる（`.notPasted` を含む）。入力欄の添付と同じく残して起動時の掃除（7 日より古いもの）に任せる。
 
 ## 操作の結果（`RemoteActionResult`）
 
 `{"ok": true|false, "code": "<code>", "message": "<日本語|null>"}`。HTTP の状態は `ok` なら 200、
-`not_found` 404・`invalid` 400・`too_many_images` / `image_too_large` 413・`unsupported_image` 415・`app_unavailable` 503・`failed` 502・それ以外の失敗は 409。
+`not_found` 404・`invalid` 400・`too_many_images` / `image_too_large` 413・`unsupported_image` 415・`app_unavailable` / `images_busy` 503・`image_store_failed` 500・`failed` 502・それ以外の失敗は 409。
 
 | 操作 | 成功の code | 主な失敗の code |
 |---|---|---|
@@ -157,8 +167,8 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | 選択肢 | `confirmed` / `toggled`（複数選択のチェック切り替え）/ `cancelled` / `answered` | `gone`・`changed`（`menuId` 違い・途中で替わった・Channels で答える）・`unavailable`（文字入力の選択肢）・`confirm_required`（`cancelExits` なのに `confirmExit` が無い）・`stuck`・`vanished`・`settling`・`ended`・`busy`・`timeout` |
 | タブ | `moved` / `answered` | 同上 |
 | 読めない選択肢を閉じる | `cancelled` / `answered` | `gone`・`changed`・`confirm_required`・`busy` |
-| 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`・`aborted`・`busy`・`ended`・`unavailable`・`timeout`・`too_many_images`・`image_too_large`・`unsupported_image`・`failed`（画像を一時保存できない） |
-| 送信（外部） | `relayed` | `failed`（受信箱に届かない）・`unavailable`（画像を付けた時も） |
+| 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`・`aborted`・`busy`・`ended`・`unavailable`・`timeout`・`too_many_images`・`image_too_large`・`unsupported_image`・`images_busy`・`image_store_failed` |
+| 送信（外部） | `relayed` | `failed`（受信箱に届かない）・`unavailable`・`images_not_accepted`（画像を付けた） |
 | 共通 | | `not_found`（ルームが無い）・`invalid`（本文の形・空・長すぎ）・`app_unavailable`（mac の画面の準備ができていない） |
 
 結果コードの意味:
@@ -175,8 +185,11 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | `timeout` | false | mac での操作が 30 秒で戻らなかった。**操作は続いていて、後から反映されることがある**ので、再送の前に `state` で端末の様子を確かめる |
 | `busy` | false | 直前の操作を送っている最中（終わってから） |
 | `too_many_images` | false | 画像の枚数が上限（4 枚）を超えた |
-| `image_too_large` | false | 画像の大きさ（1 枚 3MB・合計 8MB）か寸法（一辺 8000 ピクセル・24 メガピクセル）が上限を超えた |
+| `image_too_large` | false | 画像の大きさ（1 枚 3MB・合計 8MB）か寸法（一辺 8000 ピクセル・1600 万画素）が上限を超えた |
 | `unsupported_image` | false | PNG / JPEG でない・宣言した型と中身が違う・壊れている（途中で切れている） |
+| `images_not_accepted` | false | 画像を付けられないルーム（外部セッションへの伝言） |
+| `images_busy` | false | mac が他の画像を取り込んでいる最中（同時 2 本まで）。少し置いて送り直す |
+| `image_store_failed` | false | mac で画像を一時保存できなかった |
 
 ## mac 側の安全策（iPhone からの操作も同じ経路）
 

@@ -39,8 +39,15 @@ final class AppModel {
     var drafts: [String: String] = [:]
     /// ルームごとの送る前の画像（送れる形に整えたもの）。
     private(set) var composerImages: [String: [ComposerImage]] = [:]
+    /// ルーム → 選んだ回 → 整えている最中の枚数。捨てた回の写真は整え終わっても足さない。
+    private var preparingBatches: [String: [UUID: Int]] = [:]
     /// ルームごとの、写真を読み込んで整えている最中の枚数。
-    private(set) var preparingImages: [String: Int] = [:]
+    var preparingImages: [String: Int] {
+        preparingBatches.compactMapValues { batches in
+            let count = batches.values.reduce(0, +)
+            return count > 0 ? count : nil
+        }
+    }
     /// 確認待ちのペアリング（読み取った・開かれたリンク）。確認するまで使わない。
     var pendingOffer: PairingOffer?
     private(set) var pairingInProgress = false
@@ -211,6 +218,7 @@ final class AppModel {
             let firstAfterConnect = connection != .connected
             state = newState
             stateUpdatedAt = Date()
+            dropImagesOfVanishedRooms()
             if firstAfterConnect {
                 connection = .connected
                 backoff.reset()
@@ -368,12 +376,21 @@ final class AppModel {
         connection = .unpaired
     }
 
-    /// 前の Mac の一覧と会話を捨てる。
+    /// 前の Mac の一覧と会話・送る前の画像を捨てる。
     private func clearRoomData() {
         state = nil
         stateUpdatedAt = nil
         transcripts = [:]
         recentSessions = []
+        composerImages = [:]
+        preparingBatches = [:]
+    }
+
+    /// 一覧から消えたルームの送る前の画像を捨てる（整えている途中の分は終わった時に足さない）。
+    private func dropImagesOfVanishedRooms() {
+        let alive = Set(rooms.map(\.id))
+        composerImages = composerImages.filter { alive.contains($0.key) }
+        preparingBatches = preparingBatches.filter { alive.contains($0.key) }
     }
 
     // MARK: - 会話
@@ -473,6 +490,13 @@ final class AppModel {
         room.send.mode == .input && room.send.acceptsImages == true
     }
 
+    /// 画像を付けて送れない理由（伝言だから・この Mac が画像を受けないから）。送れるなら nil。
+    func imageRefusal(_ room: RemoteRoom) -> String? {
+        if canAttachImages(room) { return nil }
+        if room.send.mode == .relay { return "伝言（外部セッション）には画像を付けられません。画像を外してから送ってください。" }
+        return "この Mac の claude-deck は画像を受け取れません（古い版の可能性があります）。Mac を更新するか、画像を外してから送ってください。"
+    }
+
     /// あと何枚添えられるか（整えている最中の分も数える）。
     func remainingImageSlots(_ roomId: String) -> Int {
         max(0, RemoteImageLimits.maxCount - images(roomId).count - (preparingImages[roomId] ?? 0))
@@ -486,14 +510,17 @@ final class AppModel {
             notices[roomId] = Notice(text: "画像は 1 通に \(RemoteImageLimits.maxCount) 枚までです。\(overflow) 枚は添えませんでした。", isError: true)
         }
         guard !accepted.isEmpty else { return }
-        preparingImages[roomId, default: 0] += accepted.count
+        let batch = UUID()
+        preparingBatches[roomId, default: [:]][batch] = accepted.count
         Task {
             var failed = 0
             for item in accepted {
                 let data = await load(item)
                 let prepared = await Task.detached(priority: .userInitiated) { data.flatMap { ComposerImagePreparer.prepare($0) } }.value
-                let left = (preparingImages[roomId] ?? 1) - 1
-                preparingImages[roomId] = left > 0 ? left : nil
+                // ペアリングが替わったか、ルームが一覧から消えていれば足さない（数も捨て済み）。
+                guard let count = preparingBatches[roomId]?[batch] else { return }
+                preparingBatches[roomId]?[batch] = count > 1 ? count - 1 : nil
+                if preparingBatches[roomId]?.isEmpty == true { preparingBatches[roomId] = nil }
                 if let prepared, let thumbnail = UIImage(data: prepared.thumbnail) {
                     composerImages[roomId, default: []].append(ComposerImage(payload: prepared.payload, thumbnail: thumbnail))
                 } else {
@@ -523,8 +550,8 @@ final class AppModel {
         let images = images(room.id)
         // 送っている最中は送らない（メモだけ残って送信中のままにならないよう、メモを作る前に確かめる）。
         guard hasSomethingToSend(room.id), !inFlight.contains(room.id) else { return }
-        if !images.isEmpty, !canAttachImages(room) {
-            notices[room.id] = Notice(text: "このルームには画像を送れません（伝言は文字だけです）。画像を外してから送ってください。", isError: true)
+        if !images.isEmpty, let reason = imageRefusal(room) {
+            notices[room.id] = Notice(text: reason, isError: true)
             return
         }
         let relay = room.send.mode == .relay

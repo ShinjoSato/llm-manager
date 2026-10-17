@@ -9,7 +9,8 @@ public struct HTTPRequest: Sendable {
     public var query: String?
     /// 名前は小文字にそろえる。
     public var headers: [String: String]
-    public var body: Data
+    /// 写しの間で共有する（どの写しから `releaseBody` しても大きな本文を手放せるように）。
+    private let bodyStorage: BodyStorage
     /// 接続元のアドレス（`127.0.0.1` / `::1` 等）。
     public var remoteAddress: String?
 
@@ -19,11 +20,28 @@ public struct HTTPRequest: Sendable {
         self.path = path
         self.query = query
         self.headers = headers
-        self.body = body
+        self.bodyStorage = BodyStorage(body)
         self.remoteAddress = remoteAddress
     }
 
+    public var body: Data { bodyStorage.data }
+
+    /// 読み終えた本文を手放す（応答を待つ間、数 MB の本文を持ち続けないため）。以降の `body` は空。
+    public func releaseBody() { bodyStorage.data = Data() }
+
     public func header(_ name: String) -> String? { headers[name.lowercased()] }
+
+    private final class BodyStorage: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: Data
+
+        init(_ data: Data) { stored = data }
+
+        var data: Data {
+            get { lock.withLock { stored } }
+            set { lock.withLock { stored = newValue } }
+        }
+    }
 
     /// 本文が JSON と名乗っているか（フォーム送信等で別オリジンから投げさせないため）。
     var isJSONContentType: Bool { header("content-type")?.lowercased().hasPrefix("application/json") == true }

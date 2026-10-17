@@ -458,15 +458,15 @@ public enum RemoteImageLimits {
     public static let maxTotalBytes = 8 * 1024 * 1024
     /// 縦横それぞれの画素数。
     public static let maxPixelSide = 8000
-    /// 画素の総数（mac で読み込む時のメモリを抑える）。
-    public static let maxPixels = 24_000_000
+    /// 画素の総数（mac が検証で展開する時のメモリを抑える。iPhone は長辺 2048 に縮めるので十分に収まる）。
+    public static let maxPixels = 16_000_000
     public static let mediaTypes: Set<String> = ["image/png", "image/jpeg"]
     /// iPhone が送る前に縮める長辺の目安。
     public static let preferredLongEdge = 2048
     /// iPhone が 1 枚に使う大きさ（4 枚付けても合計の上限に収まる）。
     public static let budgetBytes = min(maxBytes, maxTotalBytes / maxCount)
 
-    /// 要求全体に見込む画像の分（base64 と JSON の区切り・`\/` の書き方の揺れを含む）。
+    /// 要求全体に見込む画像の分。base64 の `/`（中身が偏らなければ 64 文字に 1 つ）を `\/` と書くクライアントの分として 1/8 を足す。
     public static var maxEncodedBytes: Int {
         let base64 = (maxTotalBytes + 2) / 3 * 4
         return base64 + base64 / 8 + maxCount * 1024

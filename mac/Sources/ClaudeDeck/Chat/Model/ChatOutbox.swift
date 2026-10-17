@@ -20,7 +20,8 @@ final class ChatOutbox {
     private(set) var importing: [RoomID: [UUID: String?]] = [:]
     /// 引き継ぎで移った後に元のルーム宛てに届く取り込みの結果を、移し先へ届けるための表。
     @ObservationIgnored private var redirects = RoomRedirects<RoomID, UUID>()
-    @ObservationIgnored private let attachmentStore = AttachmentStore()
+    /// 入力欄の添付と iPhone から届いた画像の一時保存先（書く側と消す側で同じものを使う）。
+    @ObservationIgnored let attachmentStore = AttachmentStore()
     /// 1 通に添えられる数。
     static let maxAttachments = 20
     /// ルーム → 画像を添えて送り、まだ transcript に載っていない発話（載るまで送った画像を吹き出しに出す）。
@@ -70,7 +71,7 @@ final class ChatOutbox {
     }
 
     /// iPhone から届いた本文と画像を送る。mac の入力欄の書きかけ・添付には触れず、取りやめても入力欄には戻さない。
-    /// 画像の一時ファイルは入力欄の添付と同じく、端末に渡った分は残して（起動時の掃除に任せる）、渡らなかった分は消す。
+    /// 画像の一時ファイルは送り始められなかった時・claude が終わった時・ルームが無くなった時だけ消し（`RemoteImageCleanup`）、他は起動時の掃除に任せる。
     func sendFromRemote(_ text: String, images: [Attachment], to room: Room,
                         completion: @escaping (SendCompletion) -> Void) -> ClaudeTerminalView.SendResult? {
         guard let session = room.hosted else {
@@ -90,7 +91,7 @@ final class ChatOutbox {
                 sentImages[roomId, default: []].append(outgoing)
                 scheduleSentImagesExpiry()
             }
-        } else {
+        } else if !RemoteImageCleanup.keepsFiles(.refused) {
             discardRemoteImages(images)
         }
         return result
@@ -101,7 +102,7 @@ final class ChatOutbox {
             sentImages[roomId]?.removeAll { $0.id == outgoingId }
             if sentImages[roomId]?.isEmpty == true { sentImages[roomId] = nil }
         }
-        if !hostedRoomExists(roomId) || completion == .ended { discardRemoteImages(images) }
+        if !RemoteImageCleanup.keepsFiles(.finished(completion, roomExists: hostedRoomExists(roomId))) { discardRemoteImages(images) }
     }
 
     /// iPhone から届いた画像の一時ファイルを消す（一時保存先の外には触らない）。

@@ -18,8 +18,8 @@ final class RemoteClientIntegrationTests: XCTestCase {
         control = FakeRemoteControl()
         transcripts = FakeTranscriptSource()
         service = RemoteAccessService(directory: dir, transcripts: transcripts, control: control, serverName: "test-mac",
-                                      throttle: RemoteAuthThrottle(window: 60, maxFailures: 50),
-                                      imageStore: AttachmentStore(directory: imagesDir))
+                                      throttle: RemoteAuthThrottle(window: 60, maxFailures: 50))
+        control.imageStore = AttachmentStore(directory: imagesDir)
         service.start(address: "127.0.0.1", port: 0)
         for _ in 0..<300 where service.boundPort == nil {
             if case .failed(let reason) = service.state { throw NSError(domain: reason, code: 1) }
@@ -165,6 +165,8 @@ final class RemoteClientIntegrationTests: XCTestCase {
         defer { client.invalidate() }
         let room = "h:\(UUID().uuidString)"
         let png = RemoteMessageImage(mediaType: "image/png", data: TestImages.png())
+        let missing = "h:\(UUID().uuidString)"
+        control.missingRooms = [missing]
         var truncated = TestImages.png(width: 64, height: 64)
         truncated = truncated.prefix(truncated.count / 2)
 
@@ -177,7 +179,11 @@ final class RemoteClientIntegrationTests: XCTestCase {
             ("途中で切れた PNG", [RemoteMessageImage(mediaType: "image/png", data: truncated)], room, "unsupported_image"),
             ("一辺が長すぎる", [RemoteMessageImage(mediaType: "image/png", data: TestImages.png(width: RemoteImageLimits.maxPixelSide + 1, height: 1))],
              room, "image_too_large"),
-            ("外部セッションへの伝言", [png], "e:\(FakeTranscriptSource.sessionId)", "unavailable"),
+            ("外部セッションへの伝言", [png], "e:\(FakeTranscriptSource.sessionId)", "images_not_accepted"),
+            // 送り先を先に確かめる（壊れた画像でも読み込む前に断る）。
+            ("外部セッションへの壊れた画像", [RemoteMessageImage(mediaType: "image/png", data: truncated)], "e:\(FakeTranscriptSource.sessionId)",
+             "images_not_accepted"),
+            ("無いルーム", [png], missing, "not_found"),
         ]
         for (label, images, target, code) in cases {
             let result = try await client.sendMessage(roomId: target, text: "見て", images: images)
@@ -192,6 +198,54 @@ final class RemoteClientIntegrationTests: XCTestCase {
         let relay = try await client.sendMessage(roomId: "e:\(FakeTranscriptSource.sessionId)", text: "伝言")
         XCTAssertTrue(relay.ok)
         XCTAssertEqual(control.calls, ["send e:\(FakeTranscriptSource.sessionId) 伝言"])
+    }
+
+    /// 256KB を超える本文（画像付き）は、送り先を確かめてから枠の中で読み込み、同じ形で渡す。
+    func testLargeImageBodies() async throws {
+        let client = RemoteClient(pairing: try await pairFromQR())
+        defer { client.invalidate() }
+        let noisy = TestImages.png(width: 320, height: 320, noise: true)
+        XCTAssertGreaterThan(noisy.count * 4 / 3, RemoteRoutes.maxBodyBytes, "大きな本文の経路を通る")
+        let image = RemoteMessageImage(mediaType: "image/png", data: noisy)
+        control.result = .success("submitted")
+        let room = "h:\(UUID().uuidString)"
+        let sent = try await client.sendMessage(roomId: room, text: "大きい", images: [image])
+        XCTAssertEqual(sent, .success("submitted"))
+        let stored = try XCTUnwrap(control.receivedImages.last)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: try XCTUnwrap(stored.first).path)), noisy)
+
+        let external = try await client.sendMessage(roomId: "e:\(FakeTranscriptSource.sessionId)", text: "", images: [image])
+        XCTAssertEqual(external.code, "images_not_accepted")
+        let missing = "h:\(UUID().uuidString)"
+        control.missingRooms = [missing]
+        let gone = try await client.sendMessage(roomId: missing, text: "", images: [image])
+        XCTAssertEqual(gone.code, "not_found")
+        XCTAssertEqual(control.calls.count, 1, "断った要求は mac の操作に届かない")
+        XCTAssertEqual(storedImageFiles().count, 1, "断った分は書かない")
+    }
+
+    /// 取り込みの枠が埋まっていれば、画像付きは待たせずに断る（文字だけの送信は通す）。
+    func testImageIntakeIsRefusedWhenBusy() async throws {
+        await service.stopAndWait()
+        service = RemoteAccessService(directory: dir, transcripts: transcripts, control: control, serverName: "test-mac",
+                                      throttle: RemoteAuthThrottle(window: 60, maxFailures: 50),
+                                      imageIntake: RemoteImageIntakeQueue(limit: 0))
+        service.start(address: "127.0.0.1", port: 0)
+        try await waitUntil { self.service.boundPort != nil }
+        let client = RemoteClient(pairing: try await pairFromQR())
+        defer { client.invalidate() }
+        let room = "h:\(UUID().uuidString)"
+        let small = try await client.sendMessage(roomId: room, text: "", images: [RemoteMessageImage(mediaType: "image/png", data: TestImages.png())])
+        XCTAssertEqual(small.code, "images_busy")
+        let large = try await client.sendMessage(roomId: room, text: "", images: [
+            RemoteMessageImage(mediaType: "image/png", data: TestImages.png(width: 320, height: 320, noise: true)),
+        ])
+        XCTAssertEqual(large.code, "images_busy")
+        XCTAssertNotNil(RemoteResultText.text(for: large, operation: .message))
+        XCTAssertEqual(storedImageFiles(), [])
+        let text = try await client.sendMessage(roomId: room, text: "文字だけ")
+        XCTAssertTrue(text.ok)
+        XCTAssertEqual(control.calls, ["send \(room) 文字だけ"])
     }
 
     /// mac の画面の受け手が無い時は、書いた画像を片付けて断る。
