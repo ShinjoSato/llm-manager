@@ -37,6 +37,17 @@ final class AppModel {
     /// 送っている最中の操作（二度押しさせない）。
     private(set) var inFlight: Set<String> = []
     var drafts: [String: String] = [:]
+    /// ルームごとの送る前の画像（送れる形に整えたもの）。
+    private(set) var composerImages: [String: [ComposerImage]] = [:]
+    /// ルーム → 選んだ回 → 整えている最中の枚数。捨てた回の写真は整え終わっても足さない。
+    private var preparingBatches: [String: [UUID: Int]] = [:]
+    /// ルームごとの、写真を読み込んで整えている最中の枚数。
+    var preparingImages: [String: Int] {
+        preparingBatches.compactMapValues { batches in
+            let count = batches.values.reduce(0, +)
+            return count > 0 ? count : nil
+        }
+    }
     /// 確認待ちのペアリング（読み取った・開かれたリンク）。確認するまで使わない。
     var pendingOffer: PairingOffer?
     private(set) var pairingInProgress = false
@@ -207,6 +218,7 @@ final class AppModel {
             let firstAfterConnect = connection != .connected
             state = newState
             stateUpdatedAt = Date()
+            dropImagesOfVanishedRooms()
             if firstAfterConnect {
                 connection = .connected
                 backoff.reset()
@@ -364,12 +376,21 @@ final class AppModel {
         connection = .unpaired
     }
 
-    /// 前の Mac の一覧と会話を捨てる。
+    /// 前の Mac の一覧と会話・送る前の画像を捨てる。
     private func clearRoomData() {
         state = nil
         stateUpdatedAt = nil
         transcripts = [:]
         recentSessions = []
+        composerImages = [:]
+        preparingBatches = [:]
+    }
+
+    /// 一覧から消えたルームの送る前の画像を捨てる（整えている途中の分は終わった時に足さない）。
+    private func dropImagesOfVanishedRooms() {
+        let alive = Set(rooms.map(\.id))
+        composerImages = composerImages.filter { alive.contains($0.key) }
+        preparingBatches = preparingBatches.filter { alive.contains($0.key) }
     }
 
     // MARK: - 会話
@@ -460,20 +481,94 @@ final class AppModel {
         (drafts[roomId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 送れたら（mac が受け付けたら）入力欄を空にする。
+    // MARK: - 画像
+
+    func images(_ roomId: String) -> [ComposerImage] { composerImages[roomId] ?? [] }
+
+    /// 画像を付けて送れるルームか（mac が受けると言っているホスト中のセッションだけ。伝言は文字だけ）。
+    func canAttachImages(_ room: RemoteRoom) -> Bool {
+        room.send.mode == .input && room.send.acceptsImages == true
+    }
+
+    /// 画像を付けて送れない理由（伝言だから・この Mac が画像を受けないから）。送れるなら nil。
+    func imageRefusal(_ room: RemoteRoom) -> String? {
+        if canAttachImages(room) { return nil }
+        if room.send.mode == .relay { return "伝言（外部セッション）には画像を付けられません。画像を外してから送ってください。" }
+        return "この Mac の claude-deck は画像を受け取れません（古い版の可能性があります）。Mac を更新するか、画像を外してから送ってください。"
+    }
+
+    /// あと何枚添えられるか（整えている最中の分も数える）。
+    func remainingImageSlots(_ roomId: String) -> Int {
+        max(0, RemoteImageLimits.maxCount - images(roomId).count - (preparingImages[roomId] ?? 0))
+    }
+
+    /// 選んだ写真を `load` で読み、送れる形（PNG / JPEG・上限内）に整えて並べる。上限を超えた分・整えられなかった分は理由を出す。
+    func attachImages<Item>(_ items: [Item], to roomId: String, load: @escaping (Item) async -> Data?) {
+        let accepted = Array(items.prefix(remainingImageSlots(roomId)))
+        let overflow = items.count - accepted.count
+        if overflow > 0 {
+            notices[roomId] = Notice(text: "画像は 1 通に \(RemoteImageLimits.maxCount) 枚までです。\(overflow) 枚は添えませんでした。", isError: true)
+        }
+        guard !accepted.isEmpty else { return }
+        let batch = UUID()
+        preparingBatches[roomId, default: [:]][batch] = accepted.count
+        Task {
+            var failed = 0
+            for item in accepted {
+                let data = await load(item)
+                let prepared = await Task.detached(priority: .userInitiated) { data.flatMap { ComposerImagePreparer.prepare($0) } }.value
+                // ペアリングが替わったか、ルームが一覧から消えていれば足さない（数も捨て済み）。
+                guard let count = preparingBatches[roomId]?[batch] else { return }
+                preparingBatches[roomId]?[batch] = count > 1 ? count - 1 : nil
+                if preparingBatches[roomId]?.isEmpty == true { preparingBatches[roomId] = nil }
+                if let prepared, let thumbnail = UIImage(data: prepared.thumbnail) {
+                    composerImages[roomId, default: []].append(ComposerImage(payload: prepared.payload, thumbnail: thumbnail))
+                } else {
+                    failed += 1
+                }
+            }
+            if failed > 0 {
+                notices[roomId] = Notice(text: "読み込めなかった写真が \(failed) 枚あります（送れる大きさに縮められないか、画像として読めません）。",
+                                         isError: true)
+            }
+        }
+    }
+
+    func removeImage(_ image: ComposerImage, from roomId: String) {
+        composerImages[roomId]?.removeAll { $0.id == image.id }
+        if composerImages[roomId]?.isEmpty == true { composerImages[roomId] = nil }
+    }
+
+    /// 送れる中身があるか（本文か画像。写真を整えている間は待つ）。
+    func hasSomethingToSend(_ roomId: String) -> Bool {
+        (preparingImages[roomId] ?? 0) == 0 && (!draftText(roomId).isEmpty || !images(roomId).isEmpty)
+    }
+
+    /// 送れたら（mac が受け付けたら）入力欄と送った画像を空にする。
     func send(_ room: RemoteRoom) {
         let text = draftText(room.id)
+        let images = images(room.id)
         // 送っている最中は送らない（メモだけ残って送信中のままにならないよう、メモを作る前に確かめる）。
-        guard !text.isEmpty, !inFlight.contains(room.id) else { return }
+        guard hasSomethingToSend(room.id), !inFlight.contains(room.id) else { return }
+        if !images.isEmpty, let reason = imageRefusal(room) {
+            notices[room.id] = Notice(text: reason, isError: true)
+            return
+        }
         let relay = room.send.mode == .relay
         let note = RelayNote(text: text, sentAt: Date().timeIntervalSince1970 * 1000)
         if relay, let sid = room.sessionId { relayNotes[sid, default: []].append(note) }
+        let payloads = images.map(\.payload)
+        let sentIds = Set(images.map(\.id))
         perform(room, relay ? .relay : .message) { client in
-            try await client.sendMessage(roomId: room.id, text: text)
+            try await client.sendMessage(roomId: room.id, text: text, images: payloads)
         } completion: { [weak self] result in
             guard let self else { return }
             if result?.ok == true, self.draftText(room.id) == text {
                 self.drafts[room.id] = ""
+            }
+            if result?.ok == true {
+                self.composerImages[room.id]?.removeAll { sentIds.contains($0.id) }
+                if self.composerImages[room.id]?.isEmpty == true { self.composerImages[room.id] = nil }
             }
             guard relay, let sid = room.sessionId, let index = self.relayNotes[sid]?.firstIndex(where: { $0.id == note.id }) else { return }
             if result?.ok == true {

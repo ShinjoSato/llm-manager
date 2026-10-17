@@ -9,9 +9,15 @@ public struct RemoteRoutes: Sendable {
     public let events: RemoteEventHub
     public let controlRef: RemoteControlRef
     public let serverName: String
+    /// 画像の取り込みの枠（同時に回す本数を絞る）。
+    public let imageIntake: RemoteImageIntakeQueue
 
-    /// 本文の上限（添付は受けないので小さく）。
+    /// 本文の上限（画像付きのメッセージ以外）。
     public static let maxBodyBytes = 256 * 1024
+    /// 画像付きのメッセージの本文の上限（画像の分だけ広げる）。
+    public static let maxMessageBodyBytes = maxBodyBytes + RemoteImageLimits.maxEncodedBytes
+    /// 画像付きのメッセージを読み終えるまでの締め切り（Wi-Fi で数 MB を上げる分）。
+    public static let messageReadTimeout: TimeInterval = 60
     /// 同時接続の上限（ストリームの上限より余裕を持たせる）。
     public static let maxConnections = 32
     /// 接続元ごとの同時接続の上限（端末あたりのストリーム 4 本 + 操作の分）。未認証の相手 1 つで口を塞がせない。
@@ -22,13 +28,15 @@ public struct RemoteRoutes: Sendable {
     static let maxTranscriptSubscriptions = 32
 
     public init(pairing: RemotePairingStore, throttle: RemoteAuthThrottle, transcripts: RemoteTranscriptSource,
-                events: RemoteEventHub, controlRef: RemoteControlRef, serverName: String) {
+                events: RemoteEventHub, controlRef: RemoteControlRef, serverName: String,
+                imageIntake: RemoteImageIntakeQueue = RemoteImageIntakeQueue()) {
         self.pairing = pairing
         self.throttle = throttle
         self.transcripts = transcripts
         self.events = events
         self.controlRef = controlRef
         self.serverName = serverName
+        self.imageIntake = imageIntake
     }
 
     /// 待ち受けの設定（TLS 必須・LAN のアドレスに限る）。
@@ -39,7 +47,16 @@ public struct RemoteRoutes: Sendable {
                                  maxBodyBytes: Self.maxBodyBytes, readTimeout: Self.readTimeout,
                                  maxConnectionsPerAddress: Self.maxConnectionsPerAddress,
                                  refuseAddress: { throttle.isBlocked($0) }, keepalive: true,
+                                 bodyAllowance: { Self.bodyAllowance($0) },
                                  rejection: { request, _ in routes.rejection(request) })
+    }
+
+    /// 本文の上限を広げるのは `POST /v1/rooms/{roomId}/messages` だけ。
+    static func bodyAllowance(_ request: HTTPRequest) -> HTTPBodyAllowance? {
+        let parts = request.path.split(separator: "/", omittingEmptySubsequences: false)
+        guard request.method == "POST", parts.count == 5, parts[0].isEmpty, parts[1] == "v1", parts[2] == "rooms",
+              !parts[3].isEmpty, parts[4] == "messages" else { return nil }
+        return HTTPBodyAllowance(maxBytes: maxMessageBodyBytes, readTimeout: messageReadTimeout)
     }
 
     // MARK: - 先に掛ける検査
@@ -133,12 +150,7 @@ public struct RemoteRoutes: Sendable {
                 await control.remoteDismissMenu(roomId: roomId, request: body)
             }
         case ["messages"]:
-            return await action(request, RemoteMessageRequest.self) { body, control in
-                switch RemoteChecks.message(body.text) {
-                case .failure(let result): return result
-                case .success(let text): return await control.remoteSendMessage(roomId: roomId, text: text)
-                }
-            }
+            return await message(request, roomId: roomId)
         default:
             return Self.error(404, "not_found", "not found")
         }
@@ -157,11 +169,93 @@ public struct RemoteRoutes: Sendable {
         return Self.encoded(Self.status(of: result), result)
     }
 
+    /// 取り込んだメッセージ。画像は一時保存先に書いたもの（渡した先が片付ける）。
+    enum MessageIntake: Sendable {
+        case ready(text: String, images: [Attachment], store: AttachmentStore?)
+        case rejected(HTTPResponse)
+    }
+
+    /// 画像は検証してから一時保存先に書き、そのパスを mac の入力欄の添付と同じ形で渡す。
+    private func message(_ request: HTTPRequest, roomId: String) async -> HTTPResponse {
+        switch await intakeMessage(request, roomId: roomId) {
+        case .rejected(let response):
+            return response
+        case .ready(let text, let images, let store):
+            guard let result = await controlRef.runIfAttached({ control in
+                await control.remoteSendMessage(roomId: roomId, text: text, images: images)
+            }) else {
+                if let store { images.forEach(store.discard) }
+                return Self.encoded(503, RemoteControlRef.unavailable)
+            }
+            return Self.encoded(Self.status(of: result), result)
+        }
+    }
+
+    /// 本文を読み、画像があれば送り先を確かめてから検証して書く。読み終えた本文と画像のバイト列はここを出る時に手放す。
+    private func intakeMessage(_ request: HTTPRequest, roomId: String) async -> MessageIntake {
+        guard request.isJSONContentType else {
+            return .rejected(Self.error(415, "unsupported_media_type", "content-type must be application/json"))
+        }
+        let data = request.body
+        request.releaseBody()
+        let intake = imageIntake
+        guard data.count <= Self.maxBodyBytes else {
+            // 上限を広げた大きな本文は画像付きなので、読み込む前に送り先を確かめ、読み込みから枠の中で回す。
+            let store: AttachmentStore
+            switch await controlRef.imageTarget(roomId) {
+            case .failure(let refusal): return .rejected(Self.result(refusal))
+            case .success(let target): store = target
+            }
+            return await intake.run { Self.decodeAndStore(data, store: store) } ?? .rejected(Self.result(RemoteImageIntakeQueue.busy))
+        }
+        guard let body = try? JSONDecoder().decode(RemoteMessageRequest.self, from: data) else {
+            return .rejected(Self.error(400, "invalid", "本文の形が不正です"))
+        }
+        let text: String
+        switch RemoteChecks.message(body) {
+        case .failure(let result): return .rejected(Self.result(result))
+        case .success(let value): text = value
+        }
+        let images = body.images ?? []
+        guard !images.isEmpty else { return .ready(text: text, images: [], store: nil) }
+        let store: AttachmentStore
+        switch await controlRef.imageTarget(roomId) {
+        case .failure(let refusal): return .rejected(Self.result(refusal))
+        case .success(let target): store = target
+        }
+        return await intake.run { Self.store(text: text, images: images, in: store) } ?? .rejected(Self.result(RemoteImageIntakeQueue.busy))
+    }
+
+    static func decodeAndStore(_ data: Data, store: AttachmentStore) -> MessageIntake {
+        guard let body = try? JSONDecoder().decode(RemoteMessageRequest.self, from: data) else {
+            return .rejected(error(400, "invalid", "本文の形が不正です"))
+        }
+        switch RemoteChecks.message(body) {
+        case .failure(let result): return .rejected(Self.result(result))
+        case .success(let text): return Self.store(text: text, images: body.images ?? [], in: store)
+        }
+    }
+
+    static func store(text: String, images: [RemoteMessageImage], in store: AttachmentStore) -> MessageIntake {
+        switch RemoteImageIntake.store(images, in: store) {
+        case .failure(let result): return .rejected(Self.result(result))
+        case .success(let stored): return .ready(text: text, images: stored, store: store)
+        }
+    }
+
+    static func result(_ result: RemoteActionResult) -> HTTPResponse {
+        encoded(status(of: result), result)
+    }
+
     static func status(of result: RemoteActionResult) -> Int {
         if result.ok { return 200 }
         switch result.code {
         case "not_found": return 404
         case "invalid": return 400
+        case "too_many_images", "image_too_large": return 413
+        case "unsupported_image": return 415
+        case "images_busy": return 503
+        case "image_store_failed": return 500
         case "app_unavailable": return 503
         case "failed": return 502
         default: return 409
