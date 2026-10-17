@@ -105,10 +105,10 @@ public struct RemoteIssue: Sendable, Equatable {
     }
 
     public static let unreachableHelp = """
-    ・iPhone と Mac が同じ Wi-Fi につながっているか
+    ・この端末と Mac が同じ Wi-Fi につながっているか
     ・Mac がスリープしていないか（蓋を閉じていないか）
     ・Mac の claude-deck で「iPhone 連携」が有効か（別のネットワークでは止まっています）
-    ・iPhone の 設定 → プライバシーとセキュリティ → ローカルネットワーク で claude-deck が許可されているか
+    ・この端末の 設定 → プライバシーとセキュリティ → ローカルネットワーク で claude-deck が許可されているか
     """
 
     public static let localNetworkDenied = RemoteIssue(
@@ -116,12 +116,12 @@ public struct RemoteIssue: Sendable, Equatable {
         detail: "設定 → アプリ → claude-deck →『ローカルネットワーク』をオンにして、アプリに戻ってください。")
 
     public static let offline = RemoteIssue(
-        kind: .offline, title: "Wi-Fi につながっていません", detail: "iPhone を Mac と同じ Wi-Fi につないでください。")
+        kind: .offline, title: "Wi-Fi につながっていません", detail: "この端末を Mac と同じ Wi-Fi につないでください。")
 
     /// 許可と Wi-Fi のどちらか確かめられなかった時。
     public static let ambiguousOffline = RemoteIssue(
         kind: .unreachable, title: "Mac に届きません（ローカルネットワークの許可か、Wi-Fi）",
-        detail: "iPhone の「設定 → アプリ → claude-deck → ローカルネットワーク」がオンかを確かめてください。"
+        detail: "この端末の「設定 → アプリ → claude-deck → ローカルネットワーク」がオンかを確かめてください。"
             + "オフならオンにしてアプリに戻ってください。\nWi-Fi につながっていない時は、Mac と同じ Wi-Fi につないでください。")
 
     /// 接続先への経路を確かめた結果（Network.framework の `NWPath.UnsatisfiedReason` を写したもの）。
@@ -160,7 +160,7 @@ public struct RemoteIssue: Sendable, Equatable {
                 return RemoteIssue(kind: .other, title: "ペアリングできませんでした",
                                    detail: "QR のコードが違うか、期限切れか、使用済みです。Mac で新しい QR を出してください。")
             }
-            return RemoteIssue(kind: .revoked, title: "この iPhone の登録が取り消されています",
+            return RemoteIssue(kind: .revoked, title: "この端末の登録が取り消されています",
                                detail: "Mac の「iPhone 連携」で取り消されたか、ペアリングし直されました。もう一度ペアリングしてください。")
         case .http(status: 429, _, _):
             return RemoteIssue(kind: .throttled, title: "Mac が一時的に接続を断っています",
@@ -185,7 +185,7 @@ public struct RemoteIssue: Sendable, Equatable {
             }
         case .decoding, .streamOverflow:
             return RemoteIssue(kind: .incompatible, title: "Mac からの応答を読めませんでした",
-                               detail: "iPhone アプリと Mac アプリの版が合っていない可能性があります。両方を最新にしてください。")
+                               detail: "iPhone・iPad のアプリと Mac アプリの版が合っていない可能性があります。両方を最新にしてください。")
         case .invalidAddress:
             return RemoteIssue(kind: .incompatible, title: "接続先の形が正しくありません", detail: "もう一度ペアリングしてください。")
         }

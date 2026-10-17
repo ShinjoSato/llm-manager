@@ -5,7 +5,6 @@ import SwiftUI
 struct ComposerBar: View {
     @Bindable var model: AppModel
     let room: RemoteRoom
-    @FocusState private var focused: Bool
 
     var body: some View {
         let relay = room.send.mode == .relay
@@ -34,15 +33,9 @@ struct ComposerBar: View {
                 Text(reason).font(DeckTheme.caption).foregroundStyle(DeckTheme.permission).padding(.leading, 4)
             }
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("", text: text, prompt: Text(reason ?? (relay ? "伝言を送信" : "メッセージを送信")).foregroundStyle(DeckTheme.tertiary),
-                          axis: .vertical)
-                    .font(DeckTheme.body)
-                    .foregroundStyle(DeckTheme.text)
-                    .lineLimit(1...6)
-                    .focused($focused)
-                    .disabled(reason != nil)
-                    .padding(.vertical, 9)
-                    .accessibilityIdentifier("composer")
+                ComposerTextView(text: text, placeholder: reason ?? (relay ? "伝言を送信" : "メッセージを送信"), isEnabled: reason == nil) {
+                    model.send(room)
+                }
                 Button { model.send(room) } label: {
                     Group {
                         if sending {
@@ -74,6 +67,8 @@ struct ComposerBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        .frame(maxWidth: DeckTheme.readableWidth)
+        .frame(maxWidth: .infinity)
         .background(DeckTheme.background)
         .overlay(alignment: .top) { Rectangle().fill(DeckTheme.border).frame(height: 1) }
     }

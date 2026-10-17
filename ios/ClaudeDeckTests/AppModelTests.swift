@@ -132,6 +132,58 @@ final class AppModelConnectionTests: XCTestCase {
         guard case .failed = notes[0].state else { return XCTFail("送れなかった伝言は送信中のまま残さない: \(notes[0].state)") }
         XCTAssertEqual(model.drafts[room.id], "hello", "送れなければ入力欄は残す")
     }
+
+    private func openModel() -> AppModel {
+        let send = RemoteSendState(mode: .input, disabledReason: nil)
+        let room = RemoteRoom(id: "h:1", kind: .hosted, phase: .active, name: "p", branch: nil, status: .working, line: "", activityAt: nil,
+                              sessionId: "s", cwd: "/", ended: nil, session: nil, permissions: [], terminalPermission: nil, menu: nil,
+                              unreadableMenu: nil, busy: false, send: send)
+        let pairing = RemotePairing(host: "192.168.1.5", port: 8767, localHostName: nil, fingerprint: String(repeating: "ab", count: 32),
+                                    serverName: "Mac", deviceId: "d", deviceToken: "t", pairedAt: 0)
+        return AppModel(demo: RemoteState(rooms: [room], usage: nil, monitoring: true), pairing: pairing, transcripts: [:], open: nil)
+    }
+
+    private func reply(_ id: String) -> TranscriptEvent {
+        TranscriptEvent(sessionId: "s", items: [TranscriptItem(id: id, kind: .assistant, at: 0, text: "x", tool: nil, parentId: nil)])
+    }
+
+    func testRebuiltScreenOpeningBeforeOldOneClosesKeepsConversationOpen() {
+        let model = openModel()
+        let old = UUID(), new = UUID()
+        model.open(sessionId: "s", viewer: old)
+        model.open(sessionId: "s", viewer: new)
+        model.close(viewer: old)
+        XCTAssertEqual(model.openSessionId, "s", "作り直した画面が先に開いても、古い画面の閉じるで閉じない")
+        XCTAssertEqual(model.openRoomId, "h:1", "開いている会話の知らせはアプリの中で出さない")
+        model.simulateReceived(reply("a1"))
+        XCTAssertNil(model.unread["s"], "見ている会話の応答を未読に数えない")
+        XCTAssertEqual(model.transcriptFetchCount, 1, "同じ会話の開き直しでは取り直さない")
+        model.close(viewer: new)
+        XCTAssertNil(model.openSessionId)
+        model.simulateReceived(reply("a2"))
+        XCTAssertEqual(model.unread["s"], 1)
+    }
+
+    func testRebuiltScreenClosingBeforeNewOneOpensKeepsConversationOpen() {
+        let model = openModel()
+        let old = UUID(), new = UUID()
+        model.open(sessionId: "s", viewer: old)
+        model.close(viewer: old)
+        model.open(sessionId: "s", viewer: new)
+        XCTAssertEqual(model.openSessionId, "s")
+        XCTAssertEqual(model.openRoomId, "h:1")
+        model.simulateReceived(reply("a1"))
+        XCTAssertNil(model.unread["s"])
+    }
+
+    func testSwitchingRoomsInTwoColumnsKeepsTheNewOne() {
+        let model = openModel()
+        let first = UUID(), second = UUID()
+        model.open(sessionId: "other", viewer: first)
+        model.open(sessionId: "s", viewer: second)
+        model.close(viewer: first)
+        XCTAssertEqual(model.openSessionId, "s", "前のルームの画面が後から閉じても、今のルームは開いたまま")
+    }
     #endif
 }
 
