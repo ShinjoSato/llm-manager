@@ -65,6 +65,8 @@ struct PairingView: View {
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 32)
+            .frame(maxWidth: DeckTheme.formWidth)
+            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.never)
         .background(DeckTheme.background.ignoresSafeArea())

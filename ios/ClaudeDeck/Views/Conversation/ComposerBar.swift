@@ -41,6 +41,14 @@ struct ComposerBar: View {
                     .lineLimit(1...6)
                     .focused($focused)
                     .disabled(reason != nil)
+                    // 届くのはハードウェアキーボードの ⏎ だけ（ソフトウェアキーボードの改行キーはそのまま改行になる）。
+                    .onKeyPress(.return, phases: [.down, .repeat]) { press in
+                        if press.modifiers.contains(.shift) || press.modifiers.contains(.option) { return .ignored }
+                        // 変換中の ⏎ は確定に使うので送らない。
+                        if FocusedTextInput.hasMarkedText { return .ignored }
+                        if press.phase == .down, reason == nil { model.send(room) }
+                        return .handled
+                    }
                     .padding(.vertical, 9)
                     .accessibilityIdentifier("composer")
                 Button { model.send(room) } label: {
@@ -74,6 +82,8 @@ struct ComposerBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        .frame(maxWidth: DeckTheme.readableWidth)
+        .frame(maxWidth: .infinity)
         .background(DeckTheme.background)
         .overlay(alignment: .top) { Rectangle().fill(DeckTheme.border).frame(height: 1) }
     }
@@ -85,4 +95,23 @@ struct ComposerBar: View {
         if room.send.mode == .unknown { return "このルームには送れません" }
         return nil
     }
+}
+
+/// 入力中の欄（SwiftUI からは変換中の文字が見えないので UIKit の応答者に尋ねる）。
+@MainActor
+enum FocusedTextInput {
+    private static weak var found: UIResponder?
+
+    static var hasMarkedText: Bool {
+        found = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.deckCaptureFirstResponder), to: nil, from: nil, for: nil)
+        defer { found = nil }
+        return (found as? UITextInput)?.markedTextRange != nil
+    }
+
+    fileprivate static func capture(_ responder: UIResponder) { found = responder }
+}
+
+extension UIResponder {
+    @objc fileprivate func deckCaptureFirstResponder() { FocusedTextInput.capture(self) }
 }

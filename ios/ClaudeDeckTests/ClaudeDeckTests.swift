@@ -142,6 +142,26 @@ final class RoomCardTests: XCTestCase {
         XCTAssertEqual(groups[0].rooms.map(\.id), ["a", "c"])
         XCTAssertEqual(groups[2].rooms.map(\.id), ["d"], "知らない区分は待機へ")
     }
+
+    func testSelectionIsDroppedWhenRoomLeavesList() {
+        func r(_ id: String) -> RemoteRoom {
+            let x = room()
+            return RemoteRoom(id: id, kind: x.kind, phase: .idle, name: id, branch: nil, status: .idle, line: "", activityAt: nil,
+                              sessionId: nil, cwd: "/", ended: nil, session: nil, permissions: [], terminalPermission: nil, menu: nil,
+                              unreadableMenu: nil, busy: false, send: x.send)
+        }
+        XCTAssertEqual(RoomSelection.kept("b", in: [r("a"), r("b")]), "b")
+        XCTAssertNil(RoomSelection.kept("b", in: [r("a")]), "一覧から消えたら右を案内に戻す")
+        XCTAssertNil(RoomSelection.kept("b", in: []), "一覧が空になった（別の Mac とペアリングし直した）時も外す")
+        XCTAssertNil(RoomSelection.kept(nil, in: [r("a")]), "何も選んでいなければ勝手に選ばない")
+    }
+
+    func testCompactPathFollowsSelection() {
+        XCTAssertEqual(RoomSelection.path(for: "h:1"), ["h:1"], "2 列から狭くしても開いていた会話のまま")
+        XCTAssertEqual(RoomSelection.path(for: nil), [])
+        XCTAssertNil(RoomSelection.selection(from: []), "一覧へ戻ったら選択を外す")
+        XCTAssertEqual(RoomSelection.selection(from: ["h:1"]), "h:1")
+    }
 }
 
 /// 共有パッケージの判定が iOS の上でも同じに動くか（Security・URL の組み立て・文言）。
