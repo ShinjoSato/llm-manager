@@ -48,7 +48,6 @@ final class AppStoreCandidatesTests: XCTestCase {
                   "App/Notes.xcodeproj/project.pbxproj")
         let hints = AppStoreCandidates.hints(projectPath: root.path)
         XCTAssertEqual(hints.configuredAppId, "333")
-        XCTAssertEqual(hints.configuredPlatform, "IOS")
         XCTAssertEqual(hints.bundleIdentifiers, ["com.example.notes", "com.example.notes.tests"])
         XCTAssertTrue(hints.bundleTemplates.isEmpty)
         let candidates = AppStoreCandidates.match(apps: apps, hints: hints)
@@ -109,6 +108,40 @@ final class AppStoreCandidatesTests: XCTestCase {
     func testConfiguredAppIdNotInListIsNotACandidate() {
         let hints = AppStoreProjectHints(configuredAppId: "999")
         XCTAssertTrue(AppStoreCandidates.match(apps: apps, hints: hints).isEmpty)
+    }
+
+    /// 条件付きの代入は `]` の後の `=` で分ける。
+    func testConditionalXcconfigAssignments() {
+        let pairs = BuildSettingTemplate.xcconfigAssignments("""
+        PREFIX[sdk=iphoneos*] = com.example.device
+        PREFIX[config=Debug][sdk=*] = com.example.debug
+        PLAIN = value // コメント
+        BROKEN[sdk=x = y
+        """)
+        XCTAssertEqual(pairs.map { "\($0.0)=\($0.1)" }, ["PREFIX=com.example.device", "PREFIX=com.example.debug", "PLAIN=value"])
+    }
+
+    func testAdjacentVariablesAreOneWildcardAndCountIsCapped() throws {
+        let merged = try XCTUnwrap(AppStoreCandidates.templateRegex("com.example.$(A)$(B).app"))
+        XCTAssertEqual(merged.components(separatedBy: "[A-Za-z0-9.-]+").count - 1, 1)
+        XCTAssertNotNil(AppStoreCandidates.templateRegex("com.example.$(A).$(B).$(C)"))
+        XCTAssertNil(AppStoreCandidates.templateRegex("com.example.$(A).$(B).$(C).$(D)"))
+    }
+
+    /// 互いに参照し合う設定でも、解決を覚えて使い回し、回り続けない。
+    func testResolverMemoizesAndStopsOnCycles() {
+        var settings: [String: [String]] = ["A": ["$(B)", "$(B)"], "B": ["$(C)"], "C": ["x", "x", "y"], "LOOP1": ["$(LOOP2)"], "LOOP2": ["$(LOOP1)"]]
+        for i in 0..<30 { settings["V\(i)"] = ["$(A)", "$(B)", "$(C)"] }
+        var resolver = BuildSettingTemplate.Resolver(settings: settings)
+        XCTAssertEqual(resolver.resolve("p.$(A)"), ["p.x", "p.y"])
+        XCTAssertEqual(resolver.resolve("p.$(V7)"), ["p.x", "p.y"])
+        XCTAssertNil(resolver.resolve("p.$(LOOP1)"))
+    }
+
+    func testScanStopsWhenCancelled() throws {
+        try write(pbxproj(["PRODUCT_BUNDLE_IDENTIFIER = com.example.notes"]), "App/Notes.xcodeproj/project.pbxproj")
+        let hints = AppStoreCandidates.hints(projectPath: root.path, isCancelled: { true })
+        XCTAssertTrue(hints.bundleIdentifiers.isEmpty)
     }
 
     func testTemplateSplitAndResolve() {

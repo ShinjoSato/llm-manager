@@ -32,7 +32,7 @@ public struct AppStoreRequest: Equatable, Sendable {
         case .appStoreVersions(let appId):
             guard isAppID(appId) else { return nil }
             path = "/v1/apps/\(appId)/appStoreVersions"
-            query = [("limit", "50")]
+            query = [("limit", "200")]
         case .versionLocalizations(let versionId):
             guard isResourceID(versionId) else { return nil }
             path = "/v1/appStoreVersions/\(versionId)/appStoreVersionLocalizations"
@@ -49,7 +49,7 @@ public struct AppStoreRequest: Equatable, Sendable {
         case .reviewSubmissions(let appId):
             guard isAppID(appId) else { return nil }
             path = "/v1/reviewSubmissions"
-            query = [("filter[app]", appId), ("limit", "20")]
+            query = [("filter[app]", appId), ("limit", "200")]
         }
         let encoded = query.map { "\(encode($0.0))=\(encode($0.1))" }.joined(separator: "&")
         return checked("\(scheme)://\(host)\(path)?\(encoded)")

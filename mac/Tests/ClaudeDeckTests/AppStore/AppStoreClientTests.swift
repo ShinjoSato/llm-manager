@@ -56,13 +56,13 @@ final class AppStoreRequestTests: XCTestCase {
     func testEndpointsAreFixedGETsToAppStoreConnect() throws {
         let cases: [(AppStoreRequest.Endpoint, String)] = [
             (.apps, "https://api.appstoreconnect.apple.com/v1/apps?limit=200&fields%5Bapps%5D=name,bundleId,sku,primaryLocale"),
-            (.appStoreVersions(appId: "123"), "https://api.appstoreconnect.apple.com/v1/apps/123/appStoreVersions?limit=50"),
+            (.appStoreVersions(appId: "123"), "https://api.appstoreconnect.apple.com/v1/apps/123/appStoreVersions?limit=200"),
             (.versionLocalizations(versionId: "ab-12"),
              "https://api.appstoreconnect.apple.com/v1/appStoreVersions/ab-12/appStoreVersionLocalizations?limit=50&fields%5BappStoreVersionLocalizations%5D=locale,description,keywords,promotionalText,whatsNew,supportUrl,marketingUrl"),
             (.appInfos(appId: "123"), "https://api.appstoreconnect.apple.com/v1/apps/123/appInfos?limit=10"),
             (.appInfoLocalizations(appInfoId: "cd-34"),
              "https://api.appstoreconnect.apple.com/v1/appInfos/cd-34/appInfoLocalizations?limit=50&fields%5BappInfoLocalizations%5D=locale,name,subtitle"),
-            (.reviewSubmissions(appId: "123"), "https://api.appstoreconnect.apple.com/v1/reviewSubmissions?filter%5Bapp%5D=123&limit=20"),
+            (.reviewSubmissions(appId: "123"), "https://api.appstoreconnect.apple.com/v1/reviewSubmissions?filter%5Bapp%5D=123&limit=200"),
         ]
         for (endpoint, expected) in cases {
             let request = try XCTUnwrap(AppStoreRequest.make(endpoint))
@@ -158,17 +158,38 @@ final class AppStoreResponseTests: XCTestCase {
     func testMetadataMergesLocalesWithLimits() throws {
         let version = try AppStoreResponse.versionLocalizations(Data(AppStoreFixtures.versionLocalizations.utf8)).items
         let info = try AppStoreResponse.appInfoLocalizations(Data(AppStoreFixtures.appInfoLocalizations.utf8)).items
-        let merged = AppStoreLocaleMetadata.merge(version: version, info: info, primaryLocale: "ja")
-        XCTAssertEqual(merged.map(\.locale), ["ja", "en-US", "fr-FR"])
-        let ja = merged[0]
+        let merged = AppStoreLocaleMetadata.merge(version: version, info: info)
+        XCTAssertEqual(merged.map(\.locale), ["en-US", "fr-FR", "ja"])
+        let ja = merged[2]
         XCTAssertEqual(ja.value(.name), "見本ノート")
         XCTAssertEqual(ja.value(.subtitle), "メモを書く")
         XCTAssertEqual(ja.value(.whatsNew), "修正しました。")
         XCTAssertEqual(ja.overLimitFields, [.keywords])
-        XCTAssertNil(merged[1].value(.promotionalText))
-        XCTAssertNil(merged[1].value(.name))
-        XCTAssertEqual(merged[2].value(.name), "Notes d'exemple")
-        XCTAssertNil(merged[2].value(.description))
+        XCTAssertNil(merged[0].value(.promotionalText))
+        XCTAssertNil(merged[0].value(.name))
+        XCTAssertEqual(merged[1].value(.name), "Notes d'exemple")
+        XCTAssertNil(merged[1].value(.description))
+    }
+
+    /// 主の言語は画面で先頭に出し、既定でも選ぶ。選んだものが残っていればそれを保つ。
+    func testLocaleOrderAndSelectionFollowPrimaryLocale() {
+        let list = ["en-US", "fr-FR", "ja"].map { AppStoreLocaleMetadata(locale: $0, values: [:]) }
+        XCTAssertEqual(AppStoreLocaleMetadata.ordered(list, primaryLocale: "ja").map(\.locale), ["ja", "en-US", "fr-FR"])
+        XCTAssertEqual(AppStoreLocaleMetadata.ordered(list, primaryLocale: "de-DE").map(\.locale), ["en-US", "fr-FR", "ja"])
+        XCTAssertEqual(AppStoreLocaleMetadata.ordered(list, primaryLocale: nil).map(\.locale), ["en-US", "fr-FR", "ja"])
+        XCTAssertEqual(AppStoreLocaleMetadata.selection(nil, in: list, primaryLocale: "ja")?.locale, "ja")
+        XCTAssertEqual(AppStoreLocaleMetadata.selection("fr-FR", in: list, primaryLocale: "ja")?.locale, "fr-FR")
+        XCTAssertEqual(AppStoreLocaleMetadata.selection("ko", in: list, primaryLocale: "ja")?.locale, "ja")
+        XCTAssertEqual(AppStoreLocaleMetadata.selection(nil, in: list, primaryLocale: nil)?.locale, "en-US")
+        XCTAssertNil(AppStoreLocaleMetadata.selection(nil, in: [], primaryLocale: "ja"))
+    }
+
+    func testEditableVersions() {
+        XCTAssertTrue(AppStoreVersion(id: "1", versionString: "1", state: "PREPARE_FOR_SUBMISSION").isEditable)
+        XCTAssertTrue(AppStoreVersion(id: "1", versionString: "1", state: "METADATA_REJECTED").isEditable)
+        XCTAssertFalse(AppStoreVersion(id: "1", versionString: "1", state: "WAITING_FOR_REVIEW").isEditable)
+        XCTAssertFalse(AppStoreVersion(id: "1", versionString: "1", state: "READY_FOR_DISTRIBUTION").isEditable)
+        XCTAssertFalse(AppStoreVersion(id: "1", versionString: "1", state: nil).isEditable)
     }
 
     func testFieldLimitsAndCounting() {
@@ -283,9 +304,9 @@ final class AppStoreClientTests: XCTestCase {
     private let key = P256.Signing.PrivateKey()
 
     private func client(_ fake: FakeAppStoreTransport,
-                        credentials: Result<AppStoreCredentials, AppStoreCredentialProblem>? = nil) -> AppStoreClient {
-        let creds = credentials ?? .success(AppStoreCredentials(keyID: "KID", issuerID: "ISS", privateKey: key))
-        return AppStoreClient(transport: fake.transport, credentials: { creds })
+                        settings: Result<AppStoreKeySettings, AppStoreCredentialProblem>? = nil) -> AppStoreClient {
+        let loaded = settings ?? .success(.inline(keyID: "KID", issuerID: "ISS", pem: key.pemRepresentation))
+        return AppStoreClient(transport: fake.transport, settings: { loaded })
     }
 
     func testOverviewSendsOnlySignedGETs() async throws {
@@ -312,7 +333,7 @@ final class AppStoreClientTests: XCTestCase {
         let fake = FakeAppStoreTransport()
         fake.on("/appStoreVersionLocalizations?", AppStoreFixtures.versionLocalizations)
         fake.on("/appInfoLocalizations?", AppStoreFixtures.appInfoLocalizations)
-        let list = try await client(fake).metadata(versionId: "ver-b", appInfoId: "info-edit", primaryLocale: "en-US")
+        let list = try await client(fake).metadata(versionId: "ver-b", appInfoId: "info-edit")
         XCTAssertEqual(list.map(\.locale), ["en-US", "fr-FR", "ja"])
         XCTAssertEqual(fake.sent.map { $0.url?.path ?? "" },
                        ["/v1/appStoreVersions/ver-b/appStoreVersionLocalizations", "/v1/appInfos/info-edit/appInfoLocalizations"])
@@ -357,7 +378,7 @@ final class AppStoreClientTests: XCTestCase {
     func testMissingCredentialsSendNothing() async {
         let fake = FakeAppStoreTransport()
         do throws(AppStoreFailure) {
-            _ = try await client(fake, credentials: .failure(.missingKeyID)).apps()
+            _ = try await client(fake, settings: .failure(.missingKeyID)).apps()
             XCTFail("失敗するはず")
         } catch {
             XCTAssertEqual(error, .credentials(.missingKeyID))
@@ -385,6 +406,60 @@ final class AppStoreClientTests: XCTestCase {
         } catch {
             XCTAssertEqual(error, .badResponse)
         }
+    }
+
+    func testOversizedBodyIsRefused() async {
+        let fake = FakeAppStoreTransport()
+        fake.on("/v1/apps", String(repeating: " ", count: AppStoreClient.maxResponseBytes + 1))
+        do throws(AppStoreFailure) {
+            _ = try await client(fake).apps()
+            XCTFail("失敗するはず")
+        } catch {
+            XCTAssertEqual(error, .responseTooLarge)
+        }
+    }
+
+    /// 鍵のファイルはトークンを作る時だけ読む（使い回す間は消えていても読みに行かない）。読み元は名前だけ残す。
+    func testKeyFileIsReadOnlyWhenMakingToken() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("asc-client-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let p8 = dir.appendingPathComponent("AuthKey.p8")
+        try key.pemRepresentation.write(to: p8, atomically: true, encoding: .utf8)
+        let env = dir.appendingPathComponent("appstore-meta.env")
+        try "ASC_KEY_ID=KID\nASC_ISSUER_ID=ISS\nASC_PRIVATE_KEY_PATH=\(p8.path)\n".write(to: env, atomically: true, encoding: .utf8)
+        let fake = FakeAppStoreTransport()
+        fake.on("/v1/apps", AppStoreFixtures.apps)
+        let client = AppStoreClient(transport: fake.transport, settings: { AppStoreEnvFile.settings(fileURL: env, environment: [:]) })
+        _ = try await client.apps()
+        try FileManager.default.removeItem(at: p8)
+        _ = try await client.apps()
+        let source = await client.lastSource
+        XCTAssertEqual(source, AppStoreCredentialSource(envFile: true))
+        await client.resetToken()
+        do throws(AppStoreFailure) {
+            _ = try await client.apps()
+            XCTFail("鍵を読み直すはず")
+        } catch {
+            XCTAssertEqual(error, .credentials(.privateKeyFileMissing(path: p8.path)))
+        }
+        XCTAssertEqual(fake.sent.count, 2)
+    }
+
+    /// 提出の一覧は並びを指定できないので、続きのページも辿って手元で新しい順にする。
+    func testSubmissionsFollowPagesAndSortLocally() async throws {
+        let fake = FakeAppStoreTransport()
+        fake.on("/appStoreVersions?", AppStoreFixtures.versions)
+        fake.on("/appInfos?", AppStoreFixtures.appInfos)
+        fake.on("/reviewSubmissions?", """
+        {"data":[{"type":"reviewSubmissions","id":"old","attributes":{"state":"COMPLETE","submittedDate":"2024-01-01T00:00:00Z"}}],
+         "links":{"next":"https://api.appstoreconnect.apple.com/v1/reviewSubmissions?cursor=Mg&filter%5Bapp%5D=1&limit=200"}}
+        """)
+        fake.on("cursor=Mg", """
+        {"data":[{"type":"reviewSubmissions","id":"new","attributes":{"state":"IN_REVIEW","submittedDate":"2026-03-01T00:00:00Z"}}]}
+        """)
+        let overview = try await client(fake).overview(appId: "1")
+        XCTAssertEqual(overview.submissions.map(\.id), ["new", "old"])
     }
 
     /// 案内の文言にトークンや鍵の ID を混ぜない。

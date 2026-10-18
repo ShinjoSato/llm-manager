@@ -85,6 +85,47 @@ final class AppStoreEnvFileTests: XCTestCase {
         }
     }
 
+    func testKeyPathMustBeAbsolute() throws {
+        let env = try write("ASC_KEY_ID=K\nASC_ISSUER_ID=I\nASC_PRIVATE_KEY_PATH=keys/AuthKey.p8\n", "rel.env")
+        XCTAssertEqual(AppStoreEnvFile.load(fileURL: env, environment: [:]).failure, .privateKeyPathNotAbsolute(path: "keys/AuthKey.p8"))
+        XCTAssertTrue(AppStoreCredentialProblem.privateKeyPathNotAbsolute(path: "x").message.contains("絶対パス"))
+    }
+
+    /// FIFO・フォルダは読まずに断る（開く時も読む時も待たない）。リンクは辿った先が通常のファイルなら読む。
+    func testOnlyRegularFilesAreRead() throws {
+        let fifo = dir.appendingPathComponent("fifo.env")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        XCTAssertEqual(AppStoreEnvFile.load(fileURL: fifo, environment: [:]).failure, .envFileUnreadable(path: fifo.path))
+        XCTAssertEqual(AppStoreEnvFile.load(fileURL: dir, environment: [:]).failure, .envFileUnreadable(path: dir.path))
+        let keyFifo = dir.appendingPathComponent("key.p8")
+        XCTAssertEqual(mkfifo(keyFifo.path, 0o600), 0)
+        let env = try write("ASC_KEY_ID=K\nASC_ISSUER_ID=I\nASC_PRIVATE_KEY_PATH=\(keyFifo.path)\n", "k.env")
+        XCTAssertEqual(AppStoreEnvFile.load(fileURL: env, environment: [:]).failure, .privateKeyFileUnreadable(path: keyFifo.path))
+
+        let key = P256.Signing.PrivateKey()
+        let real = try write(key.pemRepresentation, "real.p8")
+        let link = dir.appendingPathComponent("link.p8")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        let linked = try write("ASC_KEY_ID=K\nASC_ISSUER_ID=I\nASC_PRIVATE_KEY_PATH=\(link.path)\n", "l.env")
+        XCTAssertNotNil(try? AppStoreEnvFile.load(fileURL: linked, environment: [:]).get())
+    }
+
+    /// 読み元は名前だけを出す。プロジェクトの .env などは見ない。
+    func testSourceLabel() throws {
+        let key = P256.Signing.PrivateKey()
+        let p8 = try write(key.pemRepresentation, "s.p8")
+        let env = try write("ASC_ISSUER_ID=ISS\nASC_PRIVATE_KEY_PATH=\(p8.path)\nOTHER_SECRET=x\n", "s.env")
+        let settings = try AppStoreEnvFile.settings(fileURL: env, environment: ["ASC_KEY_ID": "SECRETKID"]).get()
+        XCTAssertEqual(settings.source, AppStoreCredentialSource(environmentKeys: ["ASC_KEY_ID"], envFile: true))
+        XCTAssertEqual(settings.source.label, "環境変数（ASC_KEY_ID） と ~/.claude/appstore-meta.env")
+        XCTAssertFalse(settings.source.label.contains("SECRETKID"))
+        XCTAssertEqual(AppStoreCredentialSource(envFile: true).label, "~/.claude/appstore-meta.env")
+        for text in [String(describing: settings), String(reflecting: settings)] { XCTAssertFalse(text.contains("SECRETKID"), text) }
+        let onlyEnv = try AppStoreEnvFile.settings(fileURL: dir.appendingPathComponent("none.env"),
+                                                   environment: ["ASC_KEY_ID": "K", "ASC_ISSUER_ID": "I", "ASC_PRIVATE_KEY": "x"]).get()
+        XCTAssertFalse(onlyEnv.source.envFile)
+    }
+
     func testCredentialsDoNotPrintSecrets() throws {
         let credentials = AppStoreCredentials(keyID: "SECRETKEYID", issuerID: "SECRETISSUER", privateKey: P256.Signing.PrivateKey())
         for text in [String(describing: credentials), String(reflecting: credentials), "\(credentials)"] {
@@ -137,6 +178,28 @@ final class AppStoreJWTTests: XCTestCase {
         let token = try AppStoreJWT.make(credentials: credentials, now: Date(timeIntervalSince1970: 1000), lifetime: 3600)
         let payload = try parts(token).payload
         XCTAssertEqual((payload["exp"] as? Int).map { $0 - 1000 }, 20 * 60)
+        // 既定は appstore-plugin と同じ 10 分。
+        let standard = try parts(AppStoreJWT.make(credentials: credentials, now: Date(timeIntervalSince1970: 1000))).payload
+        XCTAssertEqual((standard["exp"] as? Int).map { $0 - 1000 }, 10 * 60)
+    }
+
+    /// 鍵はトークンを作る時だけ読み、Key ID か Issuer ID が替われば作り直す。
+    func testCacheReadsKeyOnlyWhenMakingAndFollowsIDs() throws {
+        var cache = AppStoreTokenCache()
+        let start = Date(timeIntervalSince1970: 3_000_000)
+        var reads = 0
+        func load() -> Result<AppStoreCredentials, AppStoreCredentialProblem> {
+            reads += 1
+            return .success(credentials)
+        }
+        let first = try cache.token(keyID: "A", issuerID: "I", now: start, credentials: load)
+        XCTAssertEqual(try cache.token(keyID: "A", issuerID: "I", now: start.addingTimeInterval(10), credentials: load), first)
+        XCTAssertEqual(reads, 1)
+        XCTAssertNotEqual(try cache.token(keyID: "B", issuerID: "I", now: start.addingTimeInterval(20), credentials: load), first)
+        XCTAssertEqual(reads, 2)
+        _ = try cache.token(keyID: "B", issuerID: "J", now: start.addingTimeInterval(30), credentials: load)
+        XCTAssertEqual(reads, 3)
+        XCTAssertThrowsError(try cache.token(keyID: "C", issuerID: "J", now: start.addingTimeInterval(40)) { .failure(.privateKeyInvalid) })
     }
 
     func testCacheReusesUntilNearExpiry() throws {

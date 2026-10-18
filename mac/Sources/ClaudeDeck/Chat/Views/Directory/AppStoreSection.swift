@@ -28,7 +28,10 @@ struct AppStoreSection: View {
                 AppStoreAppCard(link: link, hidesCredentialFailure: store.apps.failure.map(isCredentials) ?? false)
                     .id(link.appId)
             }
-            SectionNote("読むだけです（書き換え・審査への提出は appstore-plugin の skill で行います）。鍵は \(AppStoreEnvFile.displayPath) から読みます。取った内容は 10 分覚えておき、「再読み込み」で取り直します。")
+            SectionNote("読むだけです（書き換え・審査への提出は appstore-plugin の skill で行います）。鍵は環境変数か \(AppStoreEnvFile.displayPath) から読みます（プロジェクトの .env は読みません）。取った内容は 10 分覚えておき、「再読み込み」で取り直します。")
+            if let source = store.credentialSource {
+                SectionNote("鍵の読み元: \(source.label)")
+            }
         }
         .detailCard()
         .task(id: project.appStoreApps) {
@@ -166,6 +169,12 @@ private struct AppStoreStatusBlock: View {
                     .textSelection(.enabled)
                 AppStoreStateChip(label: AppStoreStates.versionLabel(version.state),
                                   tone: AppStoreStates.versionTone(version.state), raw: version.state)
+                if version.isEditable {
+                    Text("文面を編集できる版")
+                        .font(.system(size: 11))
+                        .foregroundStyle(ChatTheme.tertiary)
+                        .help("この版の文面は appstore-plugin の skill で書き換えられます（ここでは読むだけ）")
+                }
                 if let date = version.createdDate {
                     Text("作成 \(date.formatted(date: .abbreviated, time: .omitted))")
                         .font(.system(size: 11))
@@ -254,8 +263,8 @@ private struct AppStoreMetadataBlock: View {
                     } else {
                         Text(versionTitle(version, showsPlatform: false)).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
                     }
-                    if let list = fetch?.value, !list.isEmpty {
-                        let current = list.first { $0.locale == locale } ?? list[0]
+                    if let list = fetch?.value.map({ AppStoreLocaleMetadata.ordered($0, primaryLocale: primaryLocale) }), !list.isEmpty,
+                       let current = AppStoreLocaleMetadata.selection(locale, in: list, primaryLocale: primaryLocale) {
                         Picker("ロケール", selection: Binding(get: { current.locale }, set: { locale = $0 })) {
                             ForEach(list) { item in
                                 Text(item.overLimitFields.isEmpty ? item.locale : "\(item.locale)  ⚠︎").tag(item.locale)
@@ -269,7 +278,7 @@ private struct AppStoreMetadataBlock: View {
                 }
                 content(fetch)
                     .task(id: "\(key)|\(store.reloadCount)") {
-                        store.loadMetadata(versionId: version.id, appInfoId: info?.id, primaryLocale: primaryLocale)
+                        store.loadMetadata(versionId: version.id, appInfoId: info?.id)
                     }
             } else {
                 SectionNote("文面を見られる版がありません")
@@ -281,10 +290,7 @@ private struct AppStoreMetadataBlock: View {
     private func content(_ fetch: AppStoreFetch<[AppStoreLocaleMetadata]>?) -> some View {
         if let list = fetch?.value {
             if let failure = fetch?.failure { AppStoreNotice(text: failure.message, color: ChatTheme.error) }
-            if list.isEmpty {
-                SectionNote("この版にはロケールの文面がありません")
-            } else {
-                let current = list.first { $0.locale == locale } ?? list[0]
+            if let current = AppStoreLocaleMetadata.selection(locale, in: list, primaryLocale: primaryLocale) {
                 let over = current.overLimitFields
                 if !over.isEmpty {
                     AppStoreNotice(text: "上限を超えています: " + over.map(\.label).joined(separator: "・"), color: ChatTheme.error)
@@ -294,6 +300,8 @@ private struct AppStoreMetadataBlock: View {
                         AppStoreFieldRow(field: field, value: current.value(field))
                     }
                 }
+            } else {
+                SectionNote("この版にはロケールの文面がありません")
             }
         } else if let failure = fetch?.failure {
             AppStoreNotice(text: failure.message, color: ChatTheme.error)

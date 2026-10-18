@@ -40,6 +40,8 @@ public struct AppStoreVersion: Equatable, Sendable, Identifiable {
     }
 
     public var isLive: Bool { AppStoreStates.isLive(state) }
+    /// 文面を書き換えられる状態か（書き換えは appstore-plugin で行う。ここでは印を出すだけ）。
+    public var isEditable: Bool { state.map(AppStoreStates.editableStates.contains) ?? false }
 }
 
 /// 版のロケールごとの文面。

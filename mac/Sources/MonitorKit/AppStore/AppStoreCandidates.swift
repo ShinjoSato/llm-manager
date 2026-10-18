@@ -3,15 +3,13 @@ import Foundation
 /// プロジェクトから拾った、紐づけるアプリの手掛かり（`.claude/appstore.json` と Xcode のバンドル ID）。
 public struct AppStoreProjectHints: Equatable, Sendable {
     public var configuredAppId: String?
-    public var configuredPlatform: String?
     /// 変数を解決できたバンドル ID。
     public var bundleIdentifiers: [String]
     /// 変数を解決できなかったバンドル ID の書き方（`com.example.$(PRODUCT_NAME)` など）。
     public var bundleTemplates: [String]
 
-    public init(configuredAppId: String? = nil, configuredPlatform: String? = nil, bundleIdentifiers: [String] = [], bundleTemplates: [String] = []) {
+    public init(configuredAppId: String? = nil, bundleIdentifiers: [String] = [], bundleTemplates: [String] = []) {
         self.configuredAppId = configuredAppId
-        self.configuredPlatform = configuredPlatform
         self.bundleIdentifiers = bundleIdentifiers
         self.bundleTemplates = bundleTemplates
     }
@@ -62,15 +60,28 @@ public enum AppStoreCandidates {
         return result
     }
 
+    /// 当てはめに使う変数の数の上限（隣り合う変数は 1 つと数える）。
+    static let maxTemplateVariables = 3
+
     /// 変数の前に「com.example.」のように区切り 2 つ以上の決まった部分がある時だけ、変数を 1 区間以上の英数字・`.`・`-` として当てる。
     static func templateRegex(_ template: String) -> String? {
         let parts = BuildSettingTemplate.split(template)
         guard case .literal(let head)? = parts.first, head.filter({ $0 == "." }).count >= 2, head.first != "." else { return nil }
         var pattern = "^"
+        var variables = 0
+        var previousWasVariable = false
         for part in parts {
             switch part {
-            case .literal(let text): pattern += NSRegularExpression.escapedPattern(for: text)
-            case .variable: pattern += "[A-Za-z0-9.-]+"
+            case .literal(let text):
+                pattern += NSRegularExpression.escapedPattern(for: text)
+                previousWasVariable = false
+            case .variable:
+                // 隣り合う変数を別々に当てると照合の手間が膨らむので 1 つにまとめる。
+                guard !previousWasVariable else { continue }
+                variables += 1
+                guard variables <= maxTemplateVariables else { return nil }
+                pattern += "[A-Za-z0-9.-]+"
+                previousWasVariable = true
             }
         }
         return pattern + "$"
@@ -91,9 +102,7 @@ public enum AppStoreCandidates {
         var hints = AppStoreProjectHints()
         let json = URL(fileURLWithPath: projectPath).appendingPathComponent(".claude/appstore.json")
         if let data = read(json.path, max: maxJSONBytes, fileManager: fileManager) {
-            let parsed = parseAppStoreJSON(data)
-            hints.configuredAppId = parsed.appId
-            hints.configuredPlatform = parsed.platform
+            hints.configuredAppId = parseAppStoreJSON(data)
         }
         var pbxprojs: [String] = []
         var configs: [String] = []
@@ -122,6 +131,7 @@ public enum AppStoreCandidates {
         var settings: [String: [String]] = [:]
         var templates: [String] = []
         for path in pbxprojs {
+            if isCancelled() { return hints }
             guard let data = read(path, max: maxProjectFileBytes, fileManager: fileManager),
                   let text = String(data: data, encoding: .utf8) else { continue }
             for (key, value) in BuildSettingTemplate.pbxprojAssignments(text) {
@@ -129,6 +139,7 @@ public enum AppStoreCandidates {
             }
         }
         for path in configs {
+            if isCancelled() { return hints }
             guard let data = read(path, max: maxConfigBytes, fileManager: fileManager),
                   let text = String(data: data, encoding: .utf8) else { continue }
             for (key, value) in BuildSettingTemplate.xcconfigAssignments(text) {
@@ -137,8 +148,10 @@ public enum AppStoreCandidates {
         }
         var resolved: [String] = []
         var unresolved: [String] = []
+        var resolver = BuildSettingTemplate.Resolver(settings: settings)
         for template in unique(templates) {
-            if let values = BuildSettingTemplate.resolve(template, settings: settings) {
+            if isCancelled() { return hints }
+            if let values = resolver.resolve(template) {
                 resolved += values
             } else {
                 unresolved.append(template)
@@ -149,9 +162,9 @@ public enum AppStoreCandidates {
         return hints
     }
 
-    /// `{"appId": "...", "platform": "IOS"}`（appId は数でもよい）。形が違えば無いものとして読む。
-    static func parseAppStoreJSON(_ data: Data) -> (appId: String?, platform: String?) {
-        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return (nil, nil) }
+    /// `{"appId": "...", "platform": "IOS"}` の appId（数でもよい）。形が違えば無いものとして読む。
+    static func parseAppStoreJSON(_ data: Data) -> String? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         var appId: String?
         if let text = object["appId"] as? String {
             appId = text.trimmingCharacters(in: .whitespaces)
@@ -159,8 +172,7 @@ public enum AppStoreCandidates {
             appId = number.stringValue
         }
         if let id = appId, !AppStoreRequest.isAppID(id) { appId = nil }
-        let platform = (object["platform"] as? String).flatMap { $0.isEmpty ? nil : $0.uppercased() }
-        return (appId, platform)
+        return appId
     }
 
     private static func skippedBundle(_ lower: String) -> Bool {
@@ -221,33 +233,67 @@ enum BuildSettingTemplate {
     }
 
     /// すべての変数を決まった値にできた時だけ返す（できなければ nil）。
-    static func resolve(_ template: String, settings: [String: [String]], depth: Int = 0) -> [String]? {
-        guard depth <= maxDepth else { return nil }
-        var results = [""]
-        for part in split(template) {
-            switch part {
-            case .literal(let text):
-                results = results.map { $0 + text }
-            case .variable(let name, let modifier):
-                guard let raw = settings[name], !raw.isEmpty else { return nil }
-                var values: [String] = []
-                for value in raw {
-                    let cleaned = value.replacingOccurrences(of: "$(inherited)", with: "").trimmingCharacters(in: .whitespaces)
-                    guard !cleaned.isEmpty, let expanded = resolve(cleaned, settings: settings, depth: depth + 1) else { continue }
-                    for item in expanded {
-                        guard let applied = apply(modifier, to: item) else { return nil }
-                        if !values.contains(applied) { values.append(applied) }
-                    }
-                }
-                guard !values.isEmpty else { return nil }
-                results = results.flatMap { prefix in values.map { prefix + $0 } }
-                if results.count > maxResults { return nil }
-            }
-        }
-        return results
+    static func resolve(_ template: String, settings: [String: [String]]) -> [String]? {
+        var resolver = Resolver(settings: settings)
+        return resolver.resolve(template)
     }
 
-    private static func apply(_ modifier: String?, to value: String) -> String? {
+    /// 値の重複を除き、変数ごとの解決を覚えて使い回す（互いに参照し合う設定で呼び出しが膨らまないため）。辿っている途中の変数に戻れば解決できないとする。
+    struct Resolver {
+        private let settings: [String: [String]]
+        private var memo: [String: [String]?] = [:]
+        private var resolving: Set<String> = []
+
+        init(settings: [String: [String]]) {
+            var unique: [String: [String]] = [:]
+            for (name, values) in settings {
+                var seen = Set<String>()
+                unique[name] = values
+                    .map { $0.replacingOccurrences(of: "$(inherited)", with: "").trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty && seen.insert($0).inserted }
+            }
+            self.settings = unique
+        }
+
+        mutating func resolve(_ template: String, depth: Int = 0) -> [String]? {
+            guard depth <= BuildSettingTemplate.maxDepth else { return nil }
+            var results = [""]
+            for part in BuildSettingTemplate.split(template) {
+                switch part {
+                case .literal(let text):
+                    results = results.map { $0 + text }
+                case .variable(let name, let modifier):
+                    guard let values = variable(name, depth: depth) else { return nil }
+                    var applied: [String] = []
+                    for value in values {
+                        guard let item = BuildSettingTemplate.apply(modifier, to: value) else { return nil }
+                        if !applied.contains(item) { applied.append(item) }
+                    }
+                    results = results.flatMap { prefix in applied.map { prefix + $0 } }
+                    if results.count > BuildSettingTemplate.maxResults { return nil }
+                }
+            }
+            return results
+        }
+
+        private mutating func variable(_ name: String, depth: Int) -> [String]? {
+            if let known = memo[name] { return known }
+            guard !resolving.contains(name), let raw = settings[name], !raw.isEmpty else { return nil }
+            resolving.insert(name)
+            var values: [String] = []
+            for value in raw {
+                guard let expanded = resolve(value, depth: depth + 1) else { continue }
+                for item in expanded where !values.contains(item) { values.append(item) }
+                if values.count > BuildSettingTemplate.maxResults { break }
+            }
+            resolving.remove(name)
+            let result: [String]? = values.isEmpty || values.count > BuildSettingTemplate.maxResults ? nil : values
+            memo[name] = .some(result)
+            return result
+        }
+    }
+
+    static func apply(_ modifier: String?, to value: String) -> String? {
         switch modifier {
         case nil: return value
         case "lower": return value.lowercased()
@@ -280,9 +326,20 @@ enum BuildSettingTemplate {
             var trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("#") || trimmed.hasPrefix("//") { continue }
             if let comment = trimmed.range(of: "//") { trimmed = String(trimmed[..<comment.lowerBound]) }
-            guard let eq = trimmed.firstIndex(of: "=") else { continue }
+            // 条件付きの `NAME[sdk=iphoneos*][config=Debug] = v` は条件の中にも `=` があるので、続く `[…]` を飛ばした後の `=` で分ける。
+            var searchFrom = trimmed.firstIndex { $0 == "[" || $0 == "=" } ?? trimmed.endIndex
+            var broken = false
+            while searchFrom < trimmed.endIndex, trimmed[searchFrom] == "[" {
+                guard let close = trimmed[searchFrom...].firstIndex(of: "]") else {
+                    broken = true
+                    break
+                }
+                searchFrom = trimmed.index(after: close)
+                while searchFrom < trimmed.endIndex, trimmed[searchFrom] == " " { searchFrom = trimmed.index(after: searchFrom) }
+            }
+            guard !broken, let eq = trimmed[searchFrom...].firstIndex(of: "=") else { continue }
             var key = trimmed[..<eq].trimmingCharacters(in: .whitespaces)
-            if let bracket = key.firstIndex(of: "[") { key = String(key[..<bracket]) }
+            if let bracket = key.firstIndex(of: "[") { key = String(key[..<bracket]).trimmingCharacters(in: .whitespaces) }
             guard isSettingName(key) else { continue }
             var value = trimmed[trimmed.index(after: eq)...].trimmingCharacters(in: .whitespaces)
             if value.hasSuffix(";") { value = String(value.dropLast()).trimmingCharacters(in: .whitespaces) }

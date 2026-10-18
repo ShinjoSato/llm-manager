@@ -159,9 +159,8 @@ public struct AppStoreLocaleMetadata: Equatable, Sendable, Identifiable {
         AppStoreMetadataField.allCases.filter { $0.isOver(values[$0]) }
     }
 
-    /// 版の文面のロケールを主に、名前・サブタイトルだけのロケールも足す。並びは主の言語を先に、あとは名前順。
-    public static func merge(version: [AppStoreVersionLocalization], info: [AppStoreAppInfoLocalization],
-                             primaryLocale: String?) -> [AppStoreLocaleMetadata] {
+    /// 版の文面のロケールを主に、名前・サブタイトルだけのロケールも足す。並びはロケールの名前順。
+    public static func merge(version: [AppStoreVersionLocalization], info: [AppStoreAppInfoLocalization]) -> [AppStoreLocaleMetadata] {
         var byLocale: [String: [AppStoreMetadataField: String]] = [:]
         func set(_ locale: String, _ field: AppStoreMetadataField, _ value: String?) {
             guard !locale.isEmpty else { return }
@@ -180,10 +179,19 @@ public struct AppStoreLocaleMetadata: Equatable, Sendable, Identifiable {
             set(loc.locale, .name, loc.name)
             set(loc.locale, .subtitle, loc.subtitle)
         }
-        return byLocale.keys.sorted { a, b in
-            if a == primaryLocale { return b != primaryLocale }
-            if b == primaryLocale { return false }
-            return a < b
-        }.map { AppStoreLocaleMetadata(locale: $0, values: byLocale[$0] ?? [:]) }
+        return byLocale.keys.sorted().map { AppStoreLocaleMetadata(locale: $0, values: byLocale[$0] ?? [:]) }
+    }
+
+    /// 画面の並び: 主の言語（アプリの一覧から分かった時）を先頭に、あとは名前順のまま。
+    public static func ordered(_ list: [AppStoreLocaleMetadata], primaryLocale: String?) -> [AppStoreLocaleMetadata] {
+        guard let primaryLocale, let index = list.firstIndex(where: { $0.locale == primaryLocale }) else { return list }
+        var result = list
+        result.insert(result.remove(at: index), at: 0)
+        return result
+    }
+
+    /// 既定で選ぶロケール: 選んだものが今もあればそれ、無ければ主の言語、それも無ければ先頭。
+    public static func selection(_ chosen: String?, in list: [AppStoreLocaleMetadata], primaryLocale: String?) -> AppStoreLocaleMetadata? {
+        list.first { $0.locale == chosen } ?? list.first { $0.locale == primaryLocale } ?? list.first
     }
 }

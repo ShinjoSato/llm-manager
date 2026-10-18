@@ -6,7 +6,11 @@ struct ProjectAppStoreEditor: View {
     let store: SettingsStore
     let project: ManagedProject
     @State private var draft: [AppStoreAppLink] = []
+    /// 最後に設定から欄へ入れた値。利用者が触るまでは書き直さない（開いただけで settings.json を書かないため）。
+    @State private var loaded: [AppStoreAppLink] = []
     @State private var hints: AppStoreProjectHints?
+    /// 候補はヒントか一覧が替わった時だけ作り直す（描くたびに照合しない）。
+    @State private var candidates: [AppStoreCandidate] = []
     @FocusState private var focused: Int?
 
     private var appStore: AppStoreStore { .shared }
@@ -46,23 +50,49 @@ struct ProjectAppStoreEditor: View {
         } header: {
             Text("App Store")
         } footer: {
-            Text("ディレクトリの詳細の「App Store」のタブで、版の状態・審査・メタデータの文面を App Store Connect から読んで出します（読むだけ）。鍵は appstore-plugin と同じ \(AppStoreEnvFile.displayPath) から読み、この設定には書きません。候補は .claude/appstore.json の appId と、Xcode のプロジェクトのバンドル ID が一致するアプリです。")
+            Text("ディレクトリの詳細の「App Store」のタブで、版の状態・審査・メタデータの文面を App Store Connect から読んで出します（読むだけ）。鍵は appstore-plugin と同じ書式で環境変数か \(AppStoreEnvFile.displayPath) から読み（プロジェクトの .env は読みません）、この設定には書きません。候補は .claude/appstore.json の appId と、Xcode のプロジェクトのバンドル ID が一致するアプリです。")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .onAppear { draft = project.appStoreApps }
+        .onAppear { load(project.appStoreApps) }
         // 外で変わった時は欄を外の値に合わせる（溜めていた入力はストアが捨てて案内を出す。自分の保存では値が一致するので何もしない）。
         .onChange(of: project.appStoreApps) { _, apps in
-            guard apps != trimmed(draft) else { return }
+            guard trimmed(apps) != trimmed(draft) else {
+                loaded = draft
+                return
+            }
             store.cancelPending(key: key)
-            draft = apps
+            load(apps)
         }
         .onChange(of: draft) { commit() }
         .onChange(of: focused) { store.flushPending() }
         .onDisappear { store.flushPending(force: true) }
-        .task(id: project.path) {
+        // 走査はアプリの一覧が取れてから始め、欄を離れたら取りやめる。
+        .task(id: ScanKey(path: project.path, ready: appStore.apps.value != nil)) {
+            guard appStore.apps.value != nil, hints == nil else { return }
             let path = project.path
-            hints = await Task.detached(priority: .userInitiated) { AppStoreCandidates.hints(projectPath: path) }.value
+            let scan = Task.detached(priority: .userInitiated) { AppStoreCandidates.hints(projectPath: path, isCancelled: { Task.isCancelled }) }
+            let found = await withTaskCancellationHandler { await scan.value } onCancel: { scan.cancel() }
+            guard !Task.isCancelled else { return }
+            hints = found
         }
+        .onChange(of: CandidateKey(hints: hints, apps: appStore.apps.value), initial: true) { _, key in
+            candidates = key.hints.flatMap { hints in key.apps.map { AppStoreCandidates.match(apps: $0, hints: hints) } } ?? []
+        }
+    }
+
+    private struct ScanKey: Equatable {
+        let path: String
+        let ready: Bool
+    }
+
+    private struct CandidateKey: Equatable {
+        let hints: AppStoreProjectHints?
+        let apps: [AppStoreApp]?
+    }
+
+    private func load(_ apps: [AppStoreAppLink]) {
+        loaded = apps
+        draft = apps
     }
 
     @ViewBuilder
@@ -71,7 +101,6 @@ struct ProjectAppStoreEditor: View {
         HStack(spacing: 8) {
             if let apps = fetch.value {
                 let linked = Set(draft.map(\.appId))
-                let candidates = hints.map { AppStoreCandidates.match(apps: apps, hints: $0) } ?? []
                 let rest = apps.filter { app in !candidates.contains { $0.app.id == app.id } }
                 Menu {
                     if !candidates.isEmpty {
@@ -101,10 +130,13 @@ struct ProjectAppStoreEditor: View {
             if fetch.loading { ProgressView().controlSize(.small) }
             Spacer(minLength: 4)
             if fetch.value != nil {
-                Button("一覧を取り直す") { appStore.reload(appIds: []) }
+                Button("一覧を取り直す") { appStore.reloadApps() }
                     .controlSize(.small)
                     .disabled(fetch.loading)
             }
+        }
+        if let source = appStore.credentialSource {
+            Text("鍵の読み元: \(source.label)").font(.caption).foregroundStyle(.secondary)
         }
         if let failure = fetch.failure {
             Text(failure.message).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
@@ -125,6 +157,10 @@ struct ProjectAppStoreEditor: View {
 
     /// 名前が空の行がある間は保存しない（前の内容のまま）。
     private func commit() {
+        guard draft != loaded else {
+            store.cancelPending(key: key)
+            return
+        }
         let next = trimmed(draft)
         guard !next.contains(where: { $0.name.isEmpty }) else {
             store.cancelPending(key: key)

@@ -22,6 +22,8 @@ final class AppStoreStore {
     private(set) var metadata: [String: AppStoreFetch<[AppStoreLocaleMetadata]>] = [:]
     /// 「再読み込み」の回数（開いている文面の取り直しの合図）。
     private(set) var reloadCount = 0
+    /// 鍵の設定を読んだ所（環境変数 / ~/.claude/appstore-meta.env。値は持たない）。
+    private(set) var credentialSource: AppStoreCredentialSource?
 
     @ObservationIgnored private let client: AppStoreClient
     @ObservationIgnored private var appsCache = AppStoreCache<String, [AppStoreApp]>()
@@ -49,6 +51,7 @@ final class AppStoreStore {
         Task {
             let result: Result<[AppStoreApp], AppStoreFailure>
             do throws(AppStoreFailure) { result = .success(try await client.apps()) } catch { result = .failure(error) }
+            await noteSource()
             guard generations[key] == generation else { return }
             apps.loading = false
             switch result {
@@ -73,6 +76,7 @@ final class AppStoreStore {
         Task {
             let result: Result<AppStoreAppOverview, AppStoreFailure>
             do throws(AppStoreFailure) { result = .success(try await client.overview(appId: appId)) } catch { result = .failure(error) }
+            await noteSource()
             guard generations[key] == generation else { return }
             switch result {
             case .success(let overview):
@@ -86,10 +90,11 @@ final class AppStoreStore {
         }
     }
 
-    func loadMetadata(versionId: String, appInfoId: String?, primaryLocale: String?, force: Bool = false) {
+    func loadMetadata(versionId: String, appInfoId: String?, force: Bool = false) {
         let key = Self.metadataKey(versionId: versionId, appInfoId: appInfoId)
         if !force, metadata[key]?.loading == true || metadataCache.fresh(key) != nil { return }
-        let generation = begin("metadata|\(key)")
+        let generationKey = Self.metadataGenerationKey(key)
+        let generation = begin(generationKey)
         var state = metadata[key] ?? AppStoreFetch()
         state.loading = true
         if force { state.failure = nil }
@@ -97,11 +102,12 @@ final class AppStoreStore {
         Task {
             let result: Result<[AppStoreLocaleMetadata], AppStoreFailure>
             do throws(AppStoreFailure) {
-                result = .success(try await client.metadata(versionId: versionId, appInfoId: appInfoId, primaryLocale: primaryLocale))
+                result = .success(try await client.metadata(versionId: versionId, appInfoId: appInfoId))
             } catch {
                 result = .failure(error)
             }
-            guard generations["metadata|\(key)"] == generation else { return }
+            await noteSource()
+            guard generations[generationKey] == generation else { return }
             switch result {
             case .success(let list):
                 let now = Date()
@@ -114,15 +120,34 @@ final class AppStoreStore {
         }
     }
 
-    /// 「再読み込み」: 鍵を読み直し、覚えた文面も捨てて取り直す（次に見た時に取る）。
+    /// 詳細の「再読み込み」: 鍵を読み直し、取得中の文面の結果も採らずに取り直す（開いている文面は次に見た時に取る）。
     func reload(appIds: [String]) {
         metadataCache.removeAll()
+        for key in metadata.keys {
+            _ = begin(Self.metadataGenerationKey(key))
+            metadata[key]?.loading = false
+        }
         Task {
             await client.resetToken()
             loadApps(force: true)
             for appId in appIds { loadOverview(appId: appId, force: true) }
             reloadCount += 1
         }
+    }
+
+    /// 設定画面の「一覧を取り直す」: アプリの一覧だけを取り直す（詳細の文面の覚えは残す）。
+    func reloadApps() {
+        Task {
+            await client.resetToken()
+            loadApps(force: true)
+        }
+    }
+
+    private static func metadataGenerationKey(_ key: String) -> String { "metadata|\(key)" }
+
+    private func noteSource() async {
+        let source = await client.lastSource
+        if source != credentialSource { credentialSource = source }
     }
 
     private func begin(_ key: String) -> Int {

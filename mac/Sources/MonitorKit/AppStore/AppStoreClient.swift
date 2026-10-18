@@ -11,6 +11,7 @@ public enum AppStoreFailure: Error, Equatable, Sendable {
     case http(Int, String?)
     case network(String)
     case badResponse
+    case responseTooLarge
     case invalidRequest
 
     public var message: String {
@@ -33,6 +34,8 @@ public enum AppStoreFailure: Error, Equatable, Sendable {
             return "App Store Connect につながりませんでした（\(reason)）"
         case .badResponse:
             return "App Store Connect の応答を読めませんでした"
+        case .responseTooLarge:
+            return "App Store Connect の応答が大きすぎるため読みませんでした"
         case .invalidRequest:
             return "appId の形が正しくありません（数字だけです）"
         }
@@ -55,25 +58,30 @@ public enum AppStoreFailure: Error, Equatable, Sendable {
 public actor AppStoreClient {
     /// 要求を送って本文と応答を返す（試験では差し替える）。
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
-    public typealias CredentialLoader = @Sendable () -> Result<AppStoreCredentials, AppStoreCredentialProblem>
+    /// 鍵の設定（Key ID・Issuer ID・鍵の場所）を読む。鍵そのものはトークンを作る時だけ読む。
+    public typealias SettingsLoader = @Sendable () -> Result<AppStoreKeySettings, AppStoreCredentialProblem>
 
     /// 一覧をたどる回数の上限（`links.next`）。
     static let maxPages = 4
+    /// 応答の本文の上限（一覧 1 ページでも数百 KB に収まる）。
+    public static let maxResponseBytes = 8 * 1024 * 1024
 
     private let transport: Transport
-    private let loadCredentials: CredentialLoader
+    private let loadSettings: SettingsLoader
     private let now: @Sendable () -> Date
     private var tokens = AppStoreTokenCache()
+    /// 直近に鍵の設定を読めた所（画面には名前だけを出す）。
+    public private(set) var lastSource: AppStoreCredentialSource?
 
     public init(transport: @escaping Transport = AppStoreClient.urlSessionTransport,
-                credentials: @escaping CredentialLoader = { AppStoreEnvFile.load() },
+                settings: @escaping SettingsLoader = { AppStoreEnvFile.settings() },
                 now: @escaping @Sendable () -> Date = { Date() }) {
         self.transport = transport
-        self.loadCredentials = credentials
+        self.loadSettings = settings
         self.now = now
     }
 
-    /// 次の要求で鍵を読み直す（env を直した後の「再読み込み」で効かせるため）。
+    /// 次の要求で鍵を読み直してトークンを作り直す（Key ID・Issuer ID が同じまま鍵だけ替えた時のため）。
     public func resetToken() {
         tokens.clear()
     }
@@ -86,17 +94,18 @@ public actor AppStoreClient {
     public func overview(appId: String) async throws(AppStoreFailure) -> AppStoreAppOverview {
         let versions = try await all(.appStoreVersions(appId: appId), parse: AppStoreResponse.versions)
         let infos = try await all(.appInfos(appId: appId), parse: AppStoreResponse.appInfos, pages: 1)
-        let submissions = try await all(.reviewSubmissions(appId: appId), parse: AppStoreResponse.reviewSubmissions, pages: 1)
+        // 提出の一覧は並びを指定できないので、新しい順は手元で並べる（そのため続きのページも辿る）。
+        let submissions = try await all(.reviewSubmissions(appId: appId), parse: AppStoreResponse.reviewSubmissions)
         return AppStoreAppOverview(versions: versions, appInfos: infos, submissions: submissions)
     }
 
-    public func metadata(versionId: String, appInfoId: String?, primaryLocale: String?) async throws(AppStoreFailure) -> [AppStoreLocaleMetadata] {
+    public func metadata(versionId: String, appInfoId: String?) async throws(AppStoreFailure) -> [AppStoreLocaleMetadata] {
         let version = try await all(.versionLocalizations(versionId: versionId), parse: AppStoreResponse.versionLocalizations)
         var info: [AppStoreAppInfoLocalization] = []
         if let appInfoId {
             info = try await all(.appInfoLocalizations(appInfoId: appInfoId), parse: AppStoreResponse.appInfoLocalizations)
         }
-        return AppStoreLocaleMetadata.merge(version: version, info: info, primaryLocale: primaryLocale)
+        return AppStoreLocaleMetadata.merge(version: version, info: info)
     }
 
     private func all<Item: Sendable>(_ endpoint: AppStoreRequest.Endpoint, parse: (Data) throws -> AppStoreResponse.Page<Item>,
@@ -115,22 +124,34 @@ public actor AppStoreClient {
     }
 
     private func send(_ request: AppStoreRequest) async throws(AppStoreFailure) -> Data {
-        let credentials: AppStoreCredentials
-        switch loadCredentials() {
-        case .success(let loaded): credentials = loaded
-        case .failure(let problem): throw .credentials(problem)
+        let settings: AppStoreKeySettings
+        switch loadSettings() {
+        case .success(let loaded): settings = loaded
+        case .failure(let problem):
+            lastSource = nil
+            throw .credentials(problem)
         }
+        lastSource = settings.source
         let token: String
-        do { token = try tokens.token(credentials: credentials, now: now()) } catch { throw .credentials(.privateKeyInvalid) }
+        do {
+            token = try tokens.token(keyID: settings.keyID, issuerID: settings.issuerID, now: now()) { settings.loadCredentials() }
+        } catch let problem as AppStoreCredentialProblem {
+            throw .credentials(problem)
+        } catch {
+            throw .credentials(.privateKeyInvalid)
+        }
         let data: Data
         let response: HTTPURLResponse
         do {
             (data, response) = try await transport(request.urlRequest(token: token))
+        } catch AppStoreTransportError.tooLarge {
+            throw .responseTooLarge
         } catch let error as URLError {
             throw .network(Self.networkReason(error))
         } catch {
             throw .network("通信の失敗")
         }
+        guard data.count <= Self.maxResponseBytes else { throw .responseTooLarge }
         if response.statusCode == 401 { tokens.clear() }
         guard (200..<300).contains(response.statusCode) else { throw AppStoreFailure.from(status: response.statusCode, body: data) }
         return data
@@ -159,11 +180,22 @@ public actor AppStoreClient {
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
-        let (data, response) = try await session.data(for: request)
+        defer { session.invalidateAndCancel() }
+        let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse, http.url?.host == AppStoreRequest.host else { throw URLError(.badServerResponse) }
+        if http.expectedContentLength > Int64(maxResponseBytes) { throw AppStoreTransportError.tooLarge }
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > maxResponseBytes { throw AppStoreTransportError.tooLarge }
+        }
         return (data, http)
     }
+}
+
+/// 通信の中で本文の上限を超えた時。
+public enum AppStoreTransportError: Error {
+    case tooLarge
 }
 
 private final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {

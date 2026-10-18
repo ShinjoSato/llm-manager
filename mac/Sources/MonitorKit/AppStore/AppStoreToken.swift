@@ -4,8 +4,8 @@ import Foundation
 /// App Store Connect API の ES256 の JWT。
 public enum AppStoreJWT {
     public static let audience = "appstoreconnect-v1"
-    /// Apple の上限（20 分）より短くする。
-    public static let lifetime: TimeInterval = 15 * 60
+    /// Apple の上限（20 分）より短く、appstore-plugin と同じ 10 分（時計のずれの分の余裕）。
+    public static let lifetime: TimeInterval = 10 * 60
     public static let maxLifetime: TimeInterval = 20 * 60
 
     /// `lifetime` は 20 分を超えない。署名は raw（r||s）表現。
@@ -37,26 +37,39 @@ public enum AppStoreJWT {
     }
 }
 
-/// 発行した JWT を期限の少し前まで使い回す（要求ごとに署名し直さない）。
+/// 発行した JWT を期限の少し前まで使い回す（要求ごとに鍵を読んで署名し直さない）。Key ID か Issuer ID が替われば作り直す。
 public struct AppStoreTokenCache: Sendable {
     /// 期限のこれだけ前に作り直す（時計のずれと通信の時間の分）。
     static let margin: TimeInterval = 60
 
     private var token: String?
+    private var keyID: String?
+    private var issuerID: String?
     private var expires: Date = .distantPast
 
     public init() {}
 
-    public mutating func token(credentials: AppStoreCredentials, now: Date = Date()) throws -> String {
-        if let token, now < expires.addingTimeInterval(-Self.margin) { return token }
-        let made = try AppStoreJWT.make(credentials: credentials, now: now)
+    /// `credentials` は作り直す時だけ呼ぶ（鍵のファイルはその時だけ読む）。
+    public mutating func token(keyID: String, issuerID: String, now: Date = Date(),
+                               credentials: () -> Result<AppStoreCredentials, AppStoreCredentialProblem>) throws -> String {
+        if let token, self.keyID == keyID, self.issuerID == issuerID, now < expires.addingTimeInterval(-Self.margin) { return token }
+        let loaded = try credentials().get()
+        let made = try AppStoreJWT.make(credentials: loaded, now: now)
         token = made
+        self.keyID = keyID
+        self.issuerID = issuerID
         expires = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970)).addingTimeInterval(AppStoreJWT.lifetime)
         return made
     }
 
+    public mutating func token(credentials: AppStoreCredentials, now: Date = Date()) throws -> String {
+        try token(keyID: credentials.keyID, issuerID: credentials.issuerID, now: now) { .success(credentials) }
+    }
+
     public mutating func clear() {
         token = nil
+        keyID = nil
+        issuerID = nil
         expires = .distantPast
     }
 }
