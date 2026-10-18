@@ -2,7 +2,7 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・アイコンと色・リンク・サイト。
+/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・アイコンと色・リンク・サイト・App Store。
 struct ProjectSettingsTab: View {
     let store: SettingsStore
     let navigation: SettingsNavigation
@@ -77,7 +77,7 @@ struct ProjectSettingsTab: View {
             }
             Button("キャンセル", role: .cancel) { deleting = nil }
         } message: {
-            Text("フォルダそのものは消えません。GitHub の紐づけとリンクもいっしょに外れます。")
+            Text("フォルダそのものは消えません。GitHub・App Store の紐づけとリンクもいっしょに外れます。")
         }
     }
 
@@ -144,6 +144,7 @@ private struct ProjectDetailForm: View {
             ProjectBadgeEditor(store: store, project: project)
             ProjectLinksEditor(store: store, project: project)
             ProjectSiteEditor(store: store, project: project)
+            ProjectAppStoreEditor(store: store, project: project)
             Section {
                 LabeledContent("並び順") {
                     HStack {

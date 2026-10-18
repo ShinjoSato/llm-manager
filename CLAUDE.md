@@ -27,6 +27,7 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 | iPhone アプリ（claude-deck iOS） | 実装済み（シミュレータで確認・実機と TestFlight は未確認） | `ios/`（詳細 `ios/README.md`） |
 | mac / iPhone の共有パッケージ（DeckCore） | 稼働 | `packages/DeckCore` |
 | 要対応の iPhone 通知（iCloud・CloudKit のプライベート DB） | 実装済み・**保留中（既定で無効）**。コンテナ・App ID・プロファイルの登録を見送っている（2026-10-05 ユーザー判断） | `mac/Sources/ClaudeDeck/Notify`・`ios/ClaudeDeck/Notify`・`packages/DeckCore/Sources/DeckCore/Notify`（手順 `mac/README.md`「iPhone への通知」） |
+| App Store Connect の版・審査・メタデータの表示（読むだけ） | 実装済み（本物の API で取得を確認・画面の目視は未確認） | `mac/Sources/MonitorKit/AppStore`・`mac/Sources/ClaudeDeck/Chat/Views/Directory/AppStoreSection.swift` |
 | スプレッドシート勉強管理 | 未着手 | - |
 
 構成は `mac/`（claude-deck）に一本化した。セッション監視・会話の記録・フックの受け口（127.0.0.1:8766）はアプリの中で動き、
@@ -42,6 +43,7 @@ Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts
     例: `jq -r '(.projects[] | select(.github.projectNumber) | [.name, .github.owner, .github.projectNumber, (.github.repo // "-")]), (.boards[] | [.name, .owner, .number, "-"]) | @tsv' <settings.json>`
   - リンク（LP 等）: `.projects[].links[]`（name / url と、省略できる kind / pinned / note / reminderDay。無いプロジェクトにはキー自体が無い）。
   - サイト（LP の場所）: `.projects[].site.path`（プロジェクトからの相対パス。無ければアプリが自動で探す。無いプロジェクトにはキー自体が無い）。
+  - App Store のアプリ: `.projects[].appStore[]`（appId（数字の文字列）/ name。本番・検証用など複数可。無いプロジェクトにはキー自体が無い）。
 - **管理対象の追加依頼を受けたら**: 基本はユーザーにアプリの設定画面（「claude-deck → 設定…」⌘,）で追加してもらう。頼まれたら settings.json を編集する（id は新しい UUID・パスは絶対パス・status は active / paused / archived・`version` は変えない）。アプリが動いていれば、ディレクトリとファイル自体の監視ですぐ読み直して反映される（`jq … > tmp && mv` の置き換えも、その場の書き換えも拾う。設定画面で編集中でも、アプリの保存は直前に読み直して外の変更を残したうえで書き、同じ欄の入力とぶつかれば外の変更を残す）。書き換えの途中を読んだ時は少し待って読み直す。一度作られた後に settings.json を消すと空の一覧として扱い（projects.json から移行し直さない）、次の変更で作り直す。壊れた JSON・知らない version・同じ id / path の重複・相対パスはアプリが上書きせず読めない旨を出すので、編集後は `jq . <settings.json>` で確かめる。
 - **旧 TSV（registry.tsv / github-projects.tsv）の移し替え**: 移行後に一度だけ、git の履歴から取り出して（`git show 34277bd~1:projects/registry.tsv > /tmp/registry.tsv`、`git show 34277bd~1:projects/github-projects.tsv > /tmp/github-projects.tsv`）設定画面の「書き出し・読み込み」で registry → github-projects の順に読み込む（手順は `mac/README.md`「設定（settings.json）」）。
 - 兄弟プロジェクトは `/Users/shinjo/project/` 配下にある。ローカルの様子を補足で見る時は `git -C <path> status -sb` 等を直接使う。
@@ -67,7 +69,7 @@ Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts
 - **上限到達で強制終了**: 公式の残量（アプリ内の監視が statusLine の書いた使用量ファイルから読む `MonitorStore.usage`。5 時間 / 7 日間が 100% 以上かつ取得 10 分以内）を主、端末の実画面の末尾に出た上限表示（Claude Code v2.1.286 のバイナリで確認した文言のみ・会話本文は見ない）を補助として、ホスト中の全セッションを `terminate()`。到達はリセット時刻まで覚え（`limit-state.json`）、その間の新規起動・再開・引き継ぎも止める。判定は `mac/Sources/MonitorKit/Limit/LimitGuard.swift`（テストあり）、購読は `mac/Sources/ClaudeDeck/App/LimitWatch.swift`。残量経路は statusLine（`mac/scripts/statusline.sh`）の設定が前提。
 - **画面の構成**:
   - 左端の切り替えバーで左の一覧を「ルーム」（監視のセッション + ホスト中のセッションを要対応 / 稼働中 / 待機で並べる）と「ディレクトリ」（設定に登録したプロジェクト。最上部の固定行「リンク」で横断のリンク一覧）に切り替える。「一覧の切り替えバー」「ルーム一覧」
-  - 中央は `ChatModel.center` で、会話（`TranscriptStore` から組み立てたチャット。端末ビューは画面に載せず、PTY の受信と画面読み取りだけに使う）・ディレクトリの詳細（見出しの操作と、その下のタブ（サイト・画像・iPhone・リンク・スレッド）で選んだ節だけを欄いっぱいに出す本文。サイトと iPhone は該当しないプロジェクトでは出さず、最後に開いたタブをプロジェクトごとに覚える。判定は `mac/Sources/MonitorKit/Projects/DirectoryTabs.swift`）・横断のリンク一覧を出し分ける。「会話（中央）」「ルーム一覧」
+  - 中央は `ChatModel.center` で、会話（`TranscriptStore` から組み立てたチャット。端末ビューは画面に載せず、PTY の受信と画面読み取りだけに使う）・ディレクトリの詳細（見出しの操作と、その下のタブ（サイト・画像・iPhone・App Store・リンク・スレッド）で選んだ節だけを欄いっぱいに出す本文。サイト・iPhone・App Store は該当しないプロジェクトでは出さず、最後に開いたタブをプロジェクトごとに覚える。判定は `mac/Sources/MonitorKit/Projects/DirectoryTabs.swift`）・横断のリンク一覧を出し分ける。「会話（中央）」「ルーム一覧」
   - 見出しのボタン（VS Code・GitHub・リンク・ピン・Xcode・閉じる・別ウィンドウで開く・ディレクトリでは起動・Finder・設定で編集）はアイコンだけで、入りきらなければ優先度の低いものから「…」へ回す。「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` がある時だけで、「閉じる」は AppleScript でそのワークスペースだけを閉じる（初回は macOS のオートメーション許可が要る）。
   - 右はステージパネル（360px。SceneKit の 3D ステージと、選択中のルームのプロジェクトの LP のプレビューを切り替える）。「ステージパネル」
   - ルームは一覧の右クリックか見出しのボタンで別ウィンドウにも開ける（`RoomWindows`・同じルームは 1 枚・中身は同じ `ConversationView` で送信と回答は同じ経路・下書きと添付はルームごとに共有・メインで他を見ている間も取得と既読を続ける・別ウィンドウ同士は macOS のタブにまとめられる・閉じてもセッションは止めない・復元しない）。「別ウィンドウ」
@@ -80,6 +82,10 @@ Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts
 - **終了と次の起動**: ホスト中のセッションを `hosted-sessions.json` に記録し（隣の `.lock` を flock で持ち、別の claude-deck が動いていれば再開も書き込みもしない）、次の起動で `claude --resume=<sessionId>` で再開して、稼働中だったものには続きを頼む。上限到達中・同じ会話が動いている・直前の自動再開で落ちた時は見送りとして帯に出す。⌘Q・ウィンドウを閉じる時に稼働中・権限待ちがあれば確認を出す。「終了と次の起動」
 - **サイト（LP）のプレビューと開発サーバー**: ディレクトリの詳細とステージパネルで、Next.js の書き出し（`out/`）をアプリ内の静的配信（サイトごとに 127.0.0.1 の OS が選ぶポート・GET / HEAD のみ・`out/` の配下だけ・LAN には出さない）で見る。開発サーバー（`npm run dev`）は ▶ を押した時だけ起動し（自動起動しない）、ルームではなくプロジェクトに付く（ルームを閉じても止めない）。停止・アプリの終了・設定からの削除でプロセスグループごと止めるが、アプリの強制終了・クラッシュでは残りうる。「ルーム一覧」の「サイト」
 - **iPhone のプレビュー**: `.xcodeproj` / `.xcworkspace` のあるプロジェクトの詳細で、Swift ソースの `#Preview` を静的に拾って並べ、**起動中の Xcode の MCP（`xcrun mcpbridge` の `RenderPreview`）**で 1 件ずつ描いて `~/Library/Caches/claude-deck/ios-previews/` に写す。**呼ぶツールは Open / Close / ListWorkspaces / Glob / RenderPreview の許可リストだけ**（書き換え・Run・テストは呼ばない）。mcpbridge は 1 本・プロセスグループで起動し、「iPhone」のタブを離れて 3 分・アプリの終了・設定からの削除で止める（タブを離れたプロジェクトの待ち行列は取りやめる）。走査も描画もタブを開いた時だけ。描くたびに動いている Xcode を数え直し、その Xcode の `DEVELOPER_DIR` を渡す（`MCP_XCODE_PID` は渡さない。渡すと GUI の Xcode へ直につなぎ、ウィンドウが無いと断られる）。利用者・他の相手が開いていたワークスペースは閉じない（開く前の `XcodeListWorkspaces`）。ソースは変えない。初回は Xcode のメニューバーの MCP のアイコンで許可が要る。「ルーム一覧」の「iPhone のプレビュー」
+- **App Store**: settings.json の `appStore` でアプリを紐づけたプロジェクトの詳細に「App Store」のタブ（判定は `DirectoryTabs`）。アプリごとに最新の版・公開中の版の状態（日本語。知らない値は原文）・審査の提出・ロケールごとの文面（文字数と上限 30 / 30 / 4000 / 100 / 170 / 4000）を出す。
+  **App Store Connect API には GET だけ**（宛先は api.appstoreconnect.apple.com だけで、要求は `AppStoreRequest` でしか組み立てられない。書き込みの口は作らない。書き込みは appstore-plugin の skill で）。
+  鍵は appstore-plugin と同じ `~/.claude/appstore-meta.env` を読むだけで、ES256 の JWT（CryptoKit・20 分以内）を作る。鍵・トークンは画面・ログ・設定に出さない。取得はタブを開いた時と「再読み込み」だけ（10 分覚える・定期取得なし・429 / 5xx も自動で取り直さない）。
+  紐づけは設定画面のプロジェクトの「App Store」の節で一覧から選ぶ（候補は `.claude/appstore.json` の appId と Xcode のバンドル ID が一致するもの）。「ルーム一覧」の「App Store」・「設定（settings.json）」
 - **リンク**: settings.json の `links`（名前・URL・種類・ピン・メモ・毎月の確認日）を見出しの「リンク」・ピンのボタン・ディレクトリの詳細・横断のリンク一覧から開く。開くのは http / https で host のあるものだけ。最終確認日は `link-visits.json`、確認の印はアプリの中だけ（通知はしない）。「会話（中央）」「ルーム一覧」「設定（settings.json）」
 - **アプリ内サーバー（:8766）**: `127.0.0.1:8766` で `POST /hook`・`POST /api/channel/permissions`・`GET /api/health` だけを出す（Host / Origin / 接続元はループバックのみ）。ポートは `CLAUDE_DECK_SERVER_PORT`（`off` で開かない）。**アプリ側の SIGTERM / SIGINT は `SIG_IGN` にしない**（exec を越えてホスト中の claude に残り、上限到達時の `terminate()` が効かなくなる。何もしないハンドラで捕捉して通常の終了経路に乗せる）。実装は `mac/Sources/MonitorKit/Server/`。「アプリ内サーバー（:8766）」
 - **iPhone 連携の口**: 設定画面の「iPhone 連携」タブで有効にした時だけ（**既定は無効**）、選んだ LAN のインターフェースの IPv4・既定ポート 8767 で **TLS のみ**で待ち受ける（0.0.0.0 にはしない。`/hook` 等は LAN に出さない）。自己署名の証明書を QR の指紋で iPhone にピン留めさせ、端末トークン（mac にはハッシュだけ）で全 API を Bearer で受ける。**iPhone からの操作は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理に渡す**（`promptId` / `menuId` が今のものと一致する時だけ・選択待ちでは送らない）。有効にした時と別のネットワークでは開かない。新しい claude の起動口・headless の口は無い。実機ではファイアウォールの「受信接続を許可」を確かめる。仕様は `mac/docs/remote-api.md`。「iPhone 連携」

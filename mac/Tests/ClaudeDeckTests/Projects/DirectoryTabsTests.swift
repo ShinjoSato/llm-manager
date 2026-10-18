@@ -18,8 +18,8 @@ final class DirectoryTabsTests: XCTestCase {
     }
 
     func testOrderAndLabels() {
-        XCTAssertEqual(DirectoryTab.allCases, [.site, .images, .iosPreviews, .links, .threads])
-        XCTAssertEqual(DirectoryTab.allCases.map(\.label), ["サイト", "画像", "iPhone", "リンク", "スレッド"])
+        XCTAssertEqual(DirectoryTab.allCases, [.site, .images, .iosPreviews, .appStore, .links, .threads])
+        XCTAssertEqual(DirectoryTab.allCases.map(\.label), ["サイト", "画像", "iPhone", "App Store", "リンク", "スレッド"])
         XCTAssertEqual(Set(DirectoryTab.allCases.map(\.symbol)).count, DirectoryTab.allCases.count)
     }
 
@@ -32,6 +32,20 @@ final class DirectoryTabsTests: XCTestCase {
                        [.site, .images, .links, .threads])
         XCTAssertEqual(DirectoryTabs.available(hasSite: false, hasXcodeProject: false),
                        [.images, .links, .threads])
+    }
+
+    /// App Store は紐づけたアプリがある時だけ、iPhone の後に出す。
+    func testAppStoreOnlyWithLinkedApps() {
+        XCTAssertEqual(DirectoryTabs.available(hasSite: false, hasXcodeProject: true, hasAppStoreApps: true),
+                       [.images, .iosPreviews, .appStore, .links, .threads])
+        XCTAssertEqual(DirectoryTabs.available(hasSite: true, hasXcodeProject: false, hasAppStoreApps: true),
+                       [.site, .images, .appStore, .links, .threads])
+        XCTAssertFalse(DirectoryTabs.available(hasSite: true, hasXcodeProject: true, hasAppStoreApps: false).contains(.appStore))
+        // 紐づけを外したら、覚えていた App Store から先頭へ戻る。
+        XCTAssertEqual(DirectoryTabs.resolve(remembered: .appStore,
+                                             available: DirectoryTabs.available(hasSite: false, hasXcodeProject: false)), .images)
+        XCTAssertEqual(DirectoryTabs.resolve(remembered: .appStore,
+                                             available: DirectoryTabs.available(hasSite: false, hasXcodeProject: false, hasAppStoreApps: true)), .appStore)
     }
 
     /// 探している間はサイトを出しておき、無いと分かってから消す（並びが後からずれない）。
