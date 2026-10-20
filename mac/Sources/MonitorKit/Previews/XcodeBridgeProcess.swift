@@ -59,7 +59,8 @@ public final class XcodeBridgeProcess: XcodeBridgeTransport, @unchecked Sendable
             (inFDs + outFDs).forEach { close($0) }
             throw PosixSpawnError.failed(errno)
         }
-        for fd in [inFDs[1], outFDs[0], errFDs[0]] { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+        // 子の側も dup2 で印が外れるので、両端に付けて PTY の子へ漏らさない。
+        for fd in inFDs + outFDs + errFDs { ChildProcessControl.setCloseOnExec(fd) }
         // 相手が先に終わっても書き込みで SIGPIPE を受けず、EPIPE で知る。
         _ = fcntl(inFDs[1], F_SETNOSIGPIPE, 1)
 

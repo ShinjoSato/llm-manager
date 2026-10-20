@@ -376,6 +376,11 @@ final class ChatModel {
         return session
     }
 
+    /// アプリの終了時。ホスト中の claude 全部に同時に切断（SIGHUP）を送り、後片付けを上限まで待つ（次の起動で同じ会話を再開できるように）。
+    func hangUpHostedSessions() {
+        ChildProcessControl.hangUp(hosted.filter { $0.end == nil }.compactMap(\.pid))
+    }
+
     /// 終了の確認に使う、動いているホスト中のルーム。
     var runningHostedRooms: [QuitConfirmation.Room] {
         hosted.compactMap { session in

@@ -65,6 +65,13 @@ struct RestoreNotice: View {
                 }
                 .foregroundStyle(ChatTheme.working)
             }
+            if let waiting = restorer.waitingSummary {
+                HStack(alignment: .top, spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text(waiting).fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(ChatTheme.working)
+            }
             if let summary = restorer.deferredSummary {
                 HStack(spacing: 8) {
                     Text(summary)

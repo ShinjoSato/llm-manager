@@ -59,6 +59,7 @@ public enum SessionMessaging {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return String(cString: strerror(errno)) }
         defer { close(fd) }
+        ChildProcessControl.setCloseOnExec(fd)
         var noSigPipe: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         var timeout = timeval(tv_sec: Int(idleTimeout), tv_usec: 0)

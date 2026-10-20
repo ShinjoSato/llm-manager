@@ -45,7 +45,7 @@ private final class NullTerminalDelegate: LocalProcessDelegate, @unchecked Senda
 }
 
 final class TerminationSignalsTests: XCTestCase {
-    private let signals: [Int32] = [SIGTERM, SIGINT]
+    private let signals: [Int32] = TerminationSignals.handled
     private var saved: [Int32: sigaction] = [:]
 
     override func setUp() {
@@ -73,6 +73,7 @@ final class TerminationSignalsTests: XCTestCase {
         let child = try XCTUnwrap(signalDispositions(pid))
         XCTAssertNotEqual(child.ignored & bit(SIGTERM), 0)
         XCTAssertNotEqual(child.ignored & bit(SIGINT), 0)
+        XCTAssertNotEqual(child.ignored & bit(SIGHUP), 0)
     }
 
     /// 何もしないハンドラなら、親は捕捉しつつ exec 後の子は既定（終了）に戻る。
@@ -108,7 +109,7 @@ final class TerminationSignalsTests: XCTestCase {
         }
         let child = try XCTUnwrap(signalDispositions(pid))
         XCTAssertEqual(child.caught & bit(SIGTERM), 0, "exec が終わっていない")
-        XCTAssertEqual(child.ignored & (bit(SIGTERM) | bit(SIGINT)), 0, "端末の子が SIGTERM / SIGINT を無視している")
+        XCTAssertEqual(child.ignored & (bit(SIGTERM) | bit(SIGINT) | bit(SIGHUP)), 0, "端末の子が SIGTERM / SIGINT / SIGHUP を無視している")
 
         process.terminate()
         let deadline = Date().addingTimeInterval(5)

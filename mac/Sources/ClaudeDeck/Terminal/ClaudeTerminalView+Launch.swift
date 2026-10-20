@@ -20,6 +20,8 @@ extension ClaudeTerminalView {
             execName: nil,
             currentDirectory: directory
         )
+        // forkpty は master に CLOEXEC を付けないので、後から起動する claude に持たせない（持たれるとアプリの終了で切断が届かない）。
+        if let master = process?.childfd, master >= 0 { ChildProcessControl.setCloseOnExec(master) }
         startStatusMonitoring()
         LimitWatch.shared.register(self)
         return true

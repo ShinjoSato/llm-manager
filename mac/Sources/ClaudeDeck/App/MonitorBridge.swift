@@ -19,11 +19,11 @@ enum MonitorBridge {
         store.stop()
     }
 
-    /// SIGTERM / SIGINT では applicationWillTerminate が呼ばれないので、通常の終了経路に乗せる。
+    /// SIGTERM / SIGINT / SIGHUP では applicationWillTerminate が呼ばれないので、通常の終了経路に乗せる。
     private static func installTerminationSignals() {
         guard signalSources.isEmpty else { return }
-        TerminationSignals.installNoopHandlers(for: [SIGTERM, SIGINT])
-        for sig in [SIGTERM, SIGINT] {
+        TerminationSignals.installNoopHandlers()
+        for sig in TerminationSignals.handled {
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             source.setEventHandler {
                 // 終了の確認や保留で applicationWillTerminate まで届かなくても、開発サーバーと mcpbridge は先に止める。

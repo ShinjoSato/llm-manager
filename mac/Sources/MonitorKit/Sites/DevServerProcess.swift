@@ -36,7 +36,8 @@ public final class DevServerProcess: @unchecked Sendable {
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { throw PosixSpawnError.failed(errno) }
         let (readFD, writeFD) = (fds[0], fds[1])
-        _ = fcntl(readFD, F_SETFD, FD_CLOEXEC)
+        // 子の側も dup2 で印が外れるので、両端に付けて PTY の子へ漏らさない。
+        [readFD, writeFD].forEach { ChildProcessControl.setCloseOnExec($0) }
         let (pid, rc) = ProcessGroup.spawn(executable: executable, arguments: arguments, environment: environment,
                                            directory: directory) { actions in
             posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)

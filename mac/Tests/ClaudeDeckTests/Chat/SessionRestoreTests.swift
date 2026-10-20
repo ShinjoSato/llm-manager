@@ -57,6 +57,20 @@ final class HostedSessionsFileTests: XCTestCase {
         XCTAssertNil(file.loadSnapshot()?.restoredAt)
     }
 
+    func testProcessIdentityRoundTripsAndOldRecordsHaveNone() throws {
+        let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
+        let record = HostedSessionRecord(name: "app", cwd: "/tmp/app", sessionId: sessionA, status: .idle,
+                                         pid: 4321, procStart: 1_800_000_000)
+        try file.save([record])
+        XCTAssertEqual(file.load(), [record])
+        // pid を書かなかった版の記録もそのまま読める（版は上げない）。
+        let json = #"{"version":1,"savedAt":0,"sessions":[{"name":"a","cwd":"/a","sessionId":"\#(sessionA)","status":"idle"}]}"#
+        try Data(json.utf8).write(to: file.url)
+        let old = try XCTUnwrap(file.load().first)
+        XCTAssertNil(old.pid)
+        XCTAssertNil(old.procStart)
+    }
+
     func testLockIsExclusiveUntilReleased() throws {
         let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
         let first = try XCTUnwrap(HostedSessionsLock.acquire(for: file))
@@ -87,9 +101,62 @@ final class SessionRestorePlanTests: XCTestCase {
 
     private func plan(_ records: [HostedSessionRecord], limit: Bool = false, ask: Bool = true, hosted: Set<String> = [],
                       exists: @escaping (String) -> Bool = { _ in true },
-                      duplicate: @escaping (String) -> Int32? = { _ in nil }) -> [SessionRestore.Decision] {
+                      duplicate: @escaping (String) -> Int32? = { _ in nil },
+                      previous: @escaping (HostedSessionRecord) -> Int32? = { _ in nil }) -> [SessionRestore.Decision] {
         SessionRestore.plan(records: records, limitReached: limit, askToContinue: ask, hostedSessionIds: hosted,
-                            directoryExists: exists, liveDuplicate: duplicate).map(\.decision)
+                            directoryExists: exists, liveDuplicate: duplicate, previousProcess: previous).map(\.decision)
+    }
+
+    func testPreviousOwnClaudeStillExitingIsAwaitedInsteadOfDeferred() {
+        // 前回の自分の claude は監視の在庫にも同じ会話として見えている。
+        XCTAssertEqual(plan([record(a, .working)], duplicate: { _ in 700 }, previous: { _ in 700 }), [.awaitingExit(700)])
+        XCTAssertEqual(plan([record(a, .working)], previous: { _ in 700 }), [.awaitingExit(700)])
+    }
+
+    func testOtherClaudeOnSameSessionIsStillDeferred() {
+        XCTAssertEqual(plan([record(a, .working)], duplicate: { _ in 800 }, previous: { _ in 700 }), [.runningElsewhere(800)])
+        XCTAssertEqual(plan([record(a, .working)], duplicate: { _ in 800 }), [.runningElsewhere(800)])
+    }
+
+    func testLimitStillDefersWhilePreviousIsExiting() {
+        XCTAssertEqual(plan([record(a, .working)], limit: true, duplicate: { _ in 700 }, previous: { _ in 700 }), [.deferredByLimit])
+    }
+
+    func testPreviousProcessNeedsMatchingPidStartAndOwner() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let facts = ProcessFacts(uid: 501, startedAt: start, executablePath: nil, argv0: nil, isZombie: false)
+        var record = HostedSessionRecord(name: "p", cwd: "/p", sessionId: a, status: .idle, pid: 700,
+                                         procStart: start.timeIntervalSince1970)
+        XCTAssertTrue(SessionRestore.isPreviousProcess(record, facts: facts, ownUid: 501))
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: nil, ownUid: 501))
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: facts, ownUid: 502))
+        var zombie = facts
+        zombie.isZombie = true
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: zombie, ownUid: 501))
+        // pid が再利用された別のプロセス（起動時刻が違う）は待たない。
+        var reused = facts
+        reused.startedAt = start + 5
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: reused, ownUid: 501))
+        // pid・起動時刻を持たない古い記録は待たない。
+        record.procStart = nil
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: facts, ownUid: 501))
+    }
+
+    func testPreviousExitWaitResumesOnExitAndGivesUpAfterTimeout() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let wait = PreviousExitWait(startedAt: start)
+        XCTAssertEqual(wait.step(alive: true, now: start + 1), .wait)
+        XCTAssertEqual(wait.step(alive: false, now: start + 1), .exited)
+        XCTAssertEqual(wait.step(alive: true, now: start + PreviousExitWait.timeout - 0.1), .wait)
+        XCTAssertEqual(wait.step(alive: true, now: start + PreviousExitWait.timeout), .giveUp)
+        // 上限を過ぎていても、終わっていれば再開する。
+        XCTAssertEqual(wait.step(alive: false, now: start + PreviousExitWait.timeout + 5), .exited)
+    }
+
+    func testWaitingSummary() {
+        XCTAssertNil(SessionRestore.waitingSummary(0))
+        XCTAssertEqual(SessionRestore.waitingSummary(2), "前回アプリでホストしていた claude 2 件が終わるのを待っています（終わったら再開します）")
+        XCTAssertEqual(SessionRestore.gaveUpSummary(1), "前回の claude 1 件が 15 秒待っても終わらないため、再開を見送りました")
     }
 
     func testOnlyWorkingSessionsAreAskedToContinue() {
