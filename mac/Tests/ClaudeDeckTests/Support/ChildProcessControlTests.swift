@@ -21,6 +21,27 @@ private func heldMasters(_ pid: pid_t, of masters: Set<Int32>) -> Int? {
     return count
 }
 
+/// `pid` が開いているパイプのうち、`handles`（カーネルのパイプの識別子）に入るものの数。
+private func heldPipes(_ pid: pid_t, of handles: Set<UInt64>) -> Int? {
+    let bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+    guard bytes > 0 else { return nil }
+    var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(bytes) / MemoryLayout<proc_fdinfo>.stride + 8)
+    let used = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, Int32(fds.count * MemoryLayout<proc_fdinfo>.stride))
+    guard used > 0 else { return nil }
+    return fds.prefix(Int(used) / MemoryLayout<proc_fdinfo>.stride)
+        .filter { $0.proc_fdtype == UInt32(PROX_FDTYPE_PIPE) }
+        .compactMap { pipeHandle(pid, $0.proc_fd) }
+        .filter { handles.contains($0) }
+        .count
+}
+
+private func pipeHandle(_ pid: pid_t, _ fd: Int32) -> UInt64? {
+    var info = pipe_fdinfo()
+    let size = Int32(MemoryLayout<pipe_fdinfo>.size)
+    guard proc_pidfdinfo(pid, fd, PROC_PIDFDPIPEINFO, &info, size) == size else { return nil }
+    return info.pipeinfo.pipe_handle
+}
+
 /// 親が持つ master のデバイス番号。
 private func masterDevice(_ fd: Int32) -> Int32? {
     var st = stat()
@@ -90,6 +111,65 @@ final class ChildProcessControlTests: XCTestCase {
         XCTFail("pid \(pid) が exec しない")
     }
 
+    private func targets(_ pids: [pid_t]) -> [ChildProcessControl.Target] {
+        pids.compactMap { pid in ProcessFacts.inspect(pid: pid).map { ChildProcessControl.Target(pid: pid, startedAt: $0.startedAt) } }
+    }
+
+    /// 起動時刻が合わない（pid が別物に替わった）相手と、もう終わった相手には撃たない。
+    func testHangUpSignalsOnlyMatchingLiveTargets() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let facts: [Int32: ProcessFacts] = [
+            700: ProcessFacts(uid: 501, startedAt: start, executablePath: nil, argv0: nil, isZombie: false),
+            701: ProcessFacts(uid: 501, startedAt: start + 30, executablePath: nil, argv0: nil, isZombie: false),
+            702: ProcessFacts(uid: 501, startedAt: start, executablePath: nil, argv0: nil, isZombie: true),
+        ]
+        var signaled: [Int32] = []
+        let pending = ChildProcessControl.sendHangUp(
+            [.init(pid: 700, startedAt: start), .init(pid: 701, startedAt: start), .init(pid: 702, startedAt: start),
+             .init(pid: 703, startedAt: start), .init(pid: 1, startedAt: start)],
+            grace: 0, inspect: { facts[$0] }, signal: { pid, sig in
+                XCTAssertEqual(sig, SIGHUP)
+                signaled.append(pid)
+            })
+        XCTAssertEqual(signaled, [700])
+        XCTAssertEqual(Array(pending.remaining.keys), [700])
+    }
+
+    /// 検査方法そのものの確認: Foundation の Pipe は印が無く、forkpty の子が持ってしまう。印を付けたものは持たない。
+    func testFoundationPipeLeaksIntoPtyChildUnlessMarked() throws {
+        let plain = Pipe()
+        let marked = ChildProcessControl.makeFoundationPipe()
+        let raw = try XCTUnwrap(ChildProcessControl.makePipe())
+        defer { [raw.read, raw.write].forEach { close($0) } }
+        func handles(_ fds: [Int32]) -> Set<UInt64> { Set(fds.compactMap { pipeHandle(getpid(), $0) }) }
+        let plainHandles = handles([plain.fileHandleForReading.fileDescriptor, plain.fileHandleForWriting.fileDescriptor])
+        let markedHandles = handles([marked.fileHandleForReading.fileDescriptor, marked.fileHandleForWriting.fileDescriptor,
+                                     raw.read, raw.write])
+        XCTAssertFalse(plainHandles.isEmpty)
+        XCTAssertFalse(markedHandles.isEmpty)
+        // 後のテストの子に漏らさないよう、確かめた後は印を付ける。
+        defer {
+            ChildProcessControl.setCloseOnExec(plain.fileHandleForReading.fileDescriptor)
+            ChildProcessControl.setCloseOnExec(plain.fileHandleForWriting.fileDescriptor)
+        }
+        let pid = try XCTUnwrap(try launchDummies(1, cloexec: true).first)
+        XCTAssertGreaterThan(heldPipes(pid, of: plainHandles) ?? 0, 0)
+        XCTAssertEqual(heldPipes(pid, of: markedHandles), 0)
+    }
+
+    /// 印を付けた Foundation の Pipe でも、Process の子の標準出力には今までどおり届く。
+    func testMarkedFoundationPipeStillCarriesChildOutput() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/echo")
+        process.arguments = ["hello"]
+        let output = ChildProcessControl.makeFoundationPipe()
+        process.standardOutput = output
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "hello\n")
+    }
+
     func testSetCloseOnExecMarksDescriptor() throws {
         var fds: [Int32] = [0, 0]
         XCTAssertEqual(pipe(&fds), 0)
@@ -126,7 +206,7 @@ final class ChildProcessControlTests: XCTestCase {
         let cleanup = 1.0
         let pids = try launchDummies(3, cloexec: true, cleanup: cleanup)
         let started = Date()
-        let remaining = ChildProcessControl.hangUp(pids, grace: 5)
+        let remaining = ChildProcessControl.hangUp(targets(pids), grace: 5)
         let elapsed = Date().timeIntervalSince(started)
         XCTAssertEqual(remaining, [])
         // 1 本ずつ届くなら 3 本分（3 秒）かかる。
@@ -141,7 +221,7 @@ final class ChildProcessControlTests: XCTestCase {
     func testHangUpStopsWaitingAtGrace() throws {
         let pids = try launchDummies(1, cloexec: true, cleanup: 10)
         let started = Date()
-        let remaining = ChildProcessControl.hangUp(pids, grace: 0.5)
+        let remaining = ChildProcessControl.hangUp(targets(pids), grace: 0.5)
         XCTAssertLessThan(Date().timeIntervalSince(started), 3)
         XCTAssertEqual(remaining, pids)
     }
@@ -166,7 +246,7 @@ final class ChildProcessControlTests: XCTestCase {
         let wait = PreviousExitWait(startedAt: Date())
         XCTAssertEqual(wait.step(alive: previous(record) != nil, now: Date()), .wait)
 
-        XCTAssertEqual(ChildProcessControl.hangUp([pid], grace: 5), [])
+        XCTAssertEqual(ChildProcessControl.hangUp(targets([pid]), grace: 5), [])
         XCTAssertEqual(wait.step(alive: previous(record) != nil, now: Date()), .exited)
         XCTAssertEqual(decide(), .launch(nudge: true))
     }

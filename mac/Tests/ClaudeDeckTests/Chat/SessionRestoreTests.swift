@@ -71,6 +71,27 @@ final class HostedSessionsFileTests: XCTestCase {
         XCTAssertNil(old.procStart)
     }
 
+    func testLockRetriesUntilPreviousAppReleases() async throws {
+        let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
+        let previous = try XCTUnwrap(HostedSessionsLock.acquire(for: file))
+        Task.detached {
+            try? await Task.sleep(for: .milliseconds(300))
+            previous.release()
+        }
+        let lock = await HostedSessionsLock.acquire(for: file, within: .seconds(5), pollInterval: .milliseconds(50))
+        XCTAssertNotNil(lock)
+    }
+
+    func testLockRetryGivesUpAfterLimit() async throws {
+        let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
+        let other = try XCTUnwrap(HostedSessionsLock.acquire(for: file))
+        defer { other.release() }
+        let started = ContinuousClock.now
+        let lock = await HostedSessionsLock.acquire(for: file, within: .milliseconds(300), pollInterval: .milliseconds(50))
+        XCTAssertNil(lock)
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(2))
+    }
+
     func testLockIsExclusiveUntilReleased() throws {
         let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
         let first = try XCTUnwrap(HostedSessionsLock.acquire(for: file))
@@ -116,6 +137,24 @@ final class SessionRestorePlanTests: XCTestCase {
     func testOtherClaudeOnSameSessionIsStillDeferred() {
         XCTAssertEqual(plan([record(a, .working)], duplicate: { _ in 800 }, previous: { _ in 700 }), [.runningElsewhere(800)])
         XCTAssertEqual(plan([record(a, .working)], duplicate: { _ in 800 }), [.runningElsewhere(800)])
+    }
+
+    /// 引き継ぎの途中に前の claude が終わっても、終了待ち側は起動せず（引き継ぎ側が起動する）、引き継ぎ後は二重に起動しない。
+    func testHandoverInProgressIsNotLaunchedTwice() {
+        func decide(handingOver: Set<String>, hosted: Set<String>) -> SessionRestore.Decision? {
+            SessionRestore.plan(records: [record(a, .working)], limitReached: false, askToContinue: true, hostedSessionIds: hosted,
+                                directoryExists: { _ in true }, liveDuplicate: { _ in nil }, previousProcess: { _ in nil },
+                                handingOver: handingOver).first?.decision
+        }
+        XCTAssertEqual(decide(handingOver: [a], hosted: []), .handingOver)
+        guard case .skipped = decide(handingOver: [], hosted: [a]) else { return XCTFail("引き継ぎ後に二重に起動する") }
+        XCTAssertEqual(decide(handingOver: [], hosted: []), .launch(nudge: true))
+    }
+
+    /// ホストを始める直前の最終確認: 同じ会話が動いていればそれを選び、終わったものは数えない。
+    func testRunningHostIndexFindsOnlyRunningSameSession() {
+        XCTAssertEqual(SessionRestore.runningHostIndex(sessionId: a, hosted: [(b, true), (a, false), (a, true)]), 2)
+        XCTAssertNil(SessionRestore.runningHostIndex(sessionId: a, hosted: [(a, false), (nil, true), (b, true)]))
     }
 
     func testLimitStillDefersWhilePreviousIsExiting() {

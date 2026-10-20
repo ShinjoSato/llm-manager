@@ -110,6 +110,20 @@ public final class HostedSessionsLock: @unchecked Sendable {
         return HostedSessionsLock(url: lockURL, fd: fd)
     }
 
+    /// 前のアプリの終了（ホスト中の claude の後片付けを最大数秒待つ）と余裕の分。
+    public static let previousAppGrace: Duration = .seconds(8)
+
+    /// 前のアプリが終わる途中だと取れないので、`within` まで取り直す。
+    public static func acquire(for file: HostedSessionsFile, within: Duration,
+                               pollInterval: Duration = .milliseconds(250)) async -> HostedSessionsLock? {
+        let deadline = ContinuousClock.now + within
+        while true {
+            if let lock = acquire(for: file) { return lock }
+            guard ContinuousClock.now < deadline else { return nil }
+            try? await Task.sleep(for: pollInterval)
+        }
+    }
+
     public func release() {
         guard fd >= 0 else { return }
         flock(fd, LOCK_UN)
@@ -132,6 +146,8 @@ public enum SessionRestore {
         case runningElsewhere(Int32)
         /// 前回このアプリがホストしていた claude（pid）がまだ終わる途中。終わるのを見張ってから再開する。
         case awaitingExit(Int32)
+        /// 同じ会話を「アプリに引き継ぐ」の途中。引き継ぎ側が起動するので、こちらは起動せず見送りに残す。
+        case handingOver
         /// 再開できない（sessionId の形が想定外・フォルダが無い・同じ会話を既にホストしている）。
         case skipped(String)
     }
@@ -151,29 +167,36 @@ public enum SessionRestore {
     public static func plan(records: [HostedSessionRecord], limitReached: Bool, askToContinue: Bool,
                             hostedSessionIds: Set<String>, directoryExists: (String) -> Bool,
                             liveDuplicate: (String) -> Int32?,
-                            previousProcess: (HostedSessionRecord) -> Int32? = { _ in nil }) -> [Plan] {
+                            previousProcess: (HostedSessionRecord) -> Int32? = { _ in nil },
+                            handingOver: Set<String> = []) -> [Plan] {
         var seen: Set<String> = []
         var plans: [Plan] = []
         for record in records where seen.insert(record.sessionId).inserted {
             plans.append(Plan(record: record, decision: decide(record, limitReached: limitReached, askToContinue: askToContinue,
                                                                hostedSessionIds: hostedSessionIds,
                                                                directoryExists: directoryExists, liveDuplicate: liveDuplicate,
-                                                               previousProcess: previousProcess)))
+                                                               previousProcess: previousProcess, handingOver: handingOver)))
         }
         return plans
     }
 
     static func decide(_ record: HostedSessionRecord, limitReached: Bool, askToContinue: Bool, hostedSessionIds: Set<String>,
                        directoryExists: (String) -> Bool, liveDuplicate: (String) -> Int32?,
-                       previousProcess: (HostedSessionRecord) -> Int32?) -> Decision {
+                       previousProcess: (HostedSessionRecord) -> Int32?, handingOver: Set<String>) -> Decision {
         guard SessionHandover.isResumableSessionId(record.sessionId) else { return .skipped("sessionId の形式が想定外です") }
         if hostedSessionIds.contains(record.sessionId) { return .skipped("すでにこのアプリで動いています") }
+        if handingOver.contains(record.sessionId) { return .handingOver }
         guard directoryExists(record.cwd) else { return .skipped("フォルダが見つかりません（\(record.cwd)）") }
         let previous = previousProcess(record)
         if let other = liveDuplicate(record.sessionId), other != previous { return .runningElsewhere(other) }
         if limitReached { return .deferredByLimit }
         if let previous { return .awaitingExit(previous) }
         return .launch(nudge: askToContinue && needsNudge(record.status))
+    }
+
+    /// ホストを始める直前の最終確認。同じ会話を動いているホスト中のセッションがあればその位置（二重に起動せずそれを選ぶ）。
+    public static func runningHostIndex(sessionId: String, hosted: [(sessionId: String?, running: Bool)]) -> Int? {
+        hosted.firstIndex { $0.running && $0.sessionId == sessionId }
     }
 
     /// 記録の pid が今も前回ホストしていたその claude か（自分のユーザーで、起動時刻がカーネルの値と合う時だけ）。

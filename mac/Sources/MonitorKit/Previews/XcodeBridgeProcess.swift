@@ -49,18 +49,18 @@ public final class XcodeBridgeProcess: XcodeBridgeTransport, @unchecked Sendable
 
     public static func spawn(executable: String, arguments: [String], environment: [String: String], directory: String,
                              events: AsyncStream<XcodeBridgeEvent>.Continuation) throws -> XcodeBridgeProcess {
-        var inFDs: [Int32] = [0, 0], outFDs: [Int32] = [0, 0], errFDs: [Int32] = [0, 0]
-        guard pipe(&inFDs) == 0 else { throw PosixSpawnError.failed(errno) }
-        guard pipe(&outFDs) == 0 else {
+        guard let inPipe = ChildProcessControl.makePipe() else { throw PosixSpawnError.failed(errno) }
+        let inFDs = [inPipe.read, inPipe.write]
+        guard let outPipe = ChildProcessControl.makePipe() else {
             inFDs.forEach { close($0) }
             throw PosixSpawnError.failed(errno)
         }
-        guard pipe(&errFDs) == 0 else {
+        let outFDs = [outPipe.read, outPipe.write]
+        guard let errPipe = ChildProcessControl.makePipe() else {
             (inFDs + outFDs).forEach { close($0) }
             throw PosixSpawnError.failed(errno)
         }
-        // 子の側も dup2 で印が外れるので、両端に付けて PTY の子へ漏らさない。
-        for fd in inFDs + outFDs + errFDs { ChildProcessControl.setCloseOnExec(fd) }
+        let errFDs = [errPipe.read, errPipe.write]
         // 相手が先に終わっても書き込みで SIGPIPE を受けず、EPIPE で知る。
         _ = fcntl(inFDs[1], F_SETNOSIGPIPE, 1)
 

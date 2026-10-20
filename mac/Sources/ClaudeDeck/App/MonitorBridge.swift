@@ -26,6 +26,8 @@ enum MonitorBridge {
         for sig in TerminationSignals.handled {
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             source.setEventHandler {
+                // 開発サーバー等を止めている間に強制終了されても、ホスト中のセッションの記録は残す。
+                QuitCoordinator.shared.model?.restorer.saveNow()
                 // 終了の確認や保留で applicationWillTerminate まで届かなくても、開発サーバーと mcpbridge は先に止める。
                 DevServerStore.shared.stopAllBlocking()
                 IOSPreviewService.shared.stopAllBlocking()
