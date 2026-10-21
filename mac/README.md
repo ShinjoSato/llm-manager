@@ -108,7 +108,8 @@ mac/
       StagePreviewPanel.swift     プレビュー（選択中のルームのプロジェクトの LP。開発サーバー → 書き出し → 案内）
       StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift）
+    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift。
+                                プロジェクトの紐づけの節は GitHubLinkEditor（GitHub タブと共通）・ProjectXcodeEditor・ProjectSiteEditor・ProjectLinksEditor）
     Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
     Notify/                     要対応を iCloud（CloudKit）に書いて解消したら消す AttentionNotifier と、設定画面に出す通知の設定・状態
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
@@ -133,7 +134,7 @@ mac/
       TranscriptStore.swift       会話履歴の取得と追記の購読（250ms）を持つ actor
       SessionMessaging.swift      受信箱ソケットへの伝言（Unix ソケット・自分の所有のソケットだけ）
       UsageReader.swift           使用量ファイル（statusline.sh が書く）の読み取り
-      XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探し（会話の見出しの「Xcode」「閉じる」・ディレクトリの詳細の「iPhone のプレビュー」と iPhone の API が使う）
+      XcodeFinder.swift           作業場所の .xcworkspace / .xcodeproj 探しと設定画面の候補（自動の紐づけ（XcodeLinks）と iPhone の API が使う）
       ClaudeHome.swift            ~/.claude のパス・スラッグ・transcript の場所
       JSONLoose.swift             JSON の値を typeof の厳しさで読む（NSNumber の 1 を true と取り違えない）・行の絞り込みのバイト列検索
     Server/                     フック等を受けるアプリ内の HTTP サーバー
@@ -153,6 +154,8 @@ mac/
                                 projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）
     Projects/                   ルームとプロジェクトの照合と、見出しのボタンの先
       GitHubLinks.swift           ルームの cwd と設定のプロジェクトの対応（ProjectMatcher）と GitHub の URL（ボード / リポジトリ）
+      GitRemotes.swift            フォルダの .git/config（作業ツリーの gitdir: と commondir も）から github.com の remote を拾う（設定画面の GitHub の候補）
+      XcodeLinks.swift            Xcode の紐づけの解決（自動・指定・使わない。見出しの「Xcode」「閉じる」・「iPhone」のタブ・iPhone のプレビューが通る）と指定の検証
       ProjectLinks.swift          設定のリンク（LP 等）の URL の検証（http / https で host のあるものだけ）と、見出しの「リンク」に出すもの
       ProjectBadge.swift          プロジェクトの印（色のキー `ProjectColor`・SF Symbol）の解決。無い時は名前のハッシュの色と `folder`、設定画面のアイコンの候補
       EditorActions.swift         見出しの「VS Code / GitHub / リンク / Xcode / 閉じる」の結果の文言と、Xcode からワークスペースだけを閉じる AppleScript（osascript）
@@ -554,14 +557,15 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   組み立て（節・絞り込み・確認が必要な数）は `Sources/MonitorKit/Projects/LinkOverview.swift`（テストあり）。
   - 行を押すと中央（会話の場所）にプロジェクトの**詳細**を出す（`Views/Directory/DirectoryDetailView.swift`）。見出しは名前・状態・パスと、
     アイコンだけのボタン「Claude Code を起動」（動いているルームがあれば「ルームへ移る」。「+」と同じ起動経路・`ChatModel.launch`）・「VS Code」・「Finder」・
-    「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「Xcode」「閉じる」（プロジェクトの path の配下に
-    `.xcworkspace` / `.xcodeproj` がある時だけ。会話の見出しと同じ処理で、検出の結果は cwd ごと、閉じる処理中の印は押した先（ルーム / プロジェクト）ごとに `EditorLauncher` が持つ）・
+    「GitHub」・「リンク」（会話の見出しと同じ部品と挙動。紐づけ・リンクが無ければ出さない）・「Xcode」「閉じる」（設定の Xcode の紐づけで決まる時だけ。
+    自動（`xcode` が無い）ならプロジェクトの path の配下に `.xcworkspace` / `.xcodeproj` がある時、指定ならその先が使える時、使わないなら出さない。
+    会話の見出しと同じ処理（`XcodeLinks.resolve`）で、自動の検出の結果は cwd ごと、閉じる処理中の印は押した先（ルーム / プロジェクト）ごとに `EditorLauncher` が持つ）・
     「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
     見出しの直下にタブの列（`Views/Directory/DirectoryTabBar.swift`）があり、本文は選んだタブの節だけを欄いっぱいに出す（画像やプレビューが多くても他の節へ 1 クリックで行ける）。
     タブはサイト（下記）・画像（下記）・iPhone（iPhone のプレビュー。下記）・リンク（下記）・スレッド（そのプロジェクトのスレッド。ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）の順。
     - 件数: 画像・iPhone は走査し終えた時だけ（それまでは数字なし）、リンク・スレッドは常に添える。
     - 出す条件: 「サイト」は LP の場所が見つかった時と、設定の `site` が使えない時（理由を見せるため）だけ。開いた時に場所だけを軽く探し（`SiteLocator.lookup`）、分かるまでは出しておいて無いと分かったら消す
-      （後から足すと並びがずれるため、消す向きにだけ動かす）。LP が無く公開リンクだけのプロジェクトでは出さない（リンクには請求やダッシュボードも混ざり、勝手に読み込まないため。リンクのタブからブラウザで開く）。調べるのは詳細を開いた時の 1 回で、開いている間に LP を作った時は別のディレクトリへ移って戻ると出る。「iPhone」は `.xcworkspace` / `.xcodeproj` がある時だけ。画像・リンク・スレッドは常に出す（空なら中で「なし」）。
+      （後から足すと並びがずれるため、消す向きにだけ動かす）。LP が無く公開リンクだけのプロジェクトでは出さない（リンクには請求やダッシュボードも混ざり、勝手に読み込まないため。リンクのタブからブラウザで開く）。調べるのは詳細を開いた時の 1 回で、開いている間に LP を作った時は別のディレクトリへ移って戻ると出る。「iPhone」は Xcode の紐づけで開く先が決まる時と、指定した先が使えない時（理由と「設定で編集」を出すため）だけ（使わないなら出さない）。画像・リンク・スレッドは常に出す（空なら中で「なし」）。
     - 覚え方: 最後に押したタブをプロジェクトごとに UserDefaults（`directory.tab.<プロジェクトの id>`）に覚え、次に開く時はそのタブ。初めては出せるタブの先頭、覚えたタブが出せなくなっていたら先頭に戻る（覚えた値は押した時だけ書き換える）。
     - 走査・描画はそのタブを開いた時に始め、タブを離れると画面ごと消えて走査中のものは取りやめる。走査の結果と「再読み込み」の回数は詳細（プロジェクトごと）が持つので、タブを行き来しても走査し直さない。
       タブを替えるとスクロールは先頭に戻る（サイトで選んだ見る元は詳細が持ち、タブを替えても保つ）。別のプロジェクトへ移れば選んだタブ・走査の結果・見る元を持ち越さない（`.id(project.id)`）。
@@ -599,7 +603,8 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     - タブを開いた時に初めて走査する（離れれば走査中のものは取りやめ、次に開いた時にやり直す）。グループは畳める（タブを開いている間だけ）。
       画像が無ければ「画像なし」。
     - 走査とグループ化は `Sources/MonitorKit/Projects/ProjectImages.swift`（テストあり）、ストアは `Chat/Model/ProjectImageStore.swift`。
-  - **iPhone のプレビュー**（詳細の「iPhone」のタブ。プロジェクトの path の配下に `.xcworkspace` / `.xcodeproj` がある時だけ。開くのは「Xcode」ボタンと同じもの（`XcodeFinder`））:
+  - **iPhone のプレビュー**（詳細の「iPhone」のタブ。開くのは「Xcode」ボタンと同じもの（設定の Xcode の紐づけ。自動なら `XcodeFinder`・指定ならその先・使わないならタブごと出さない）。
+    紐づけを替えたら、前の先で待っている分は取りやめる）:
     iOS アプリの SwiftUI の `#Preview` を、**起動中の Xcode の MCP（`xcrun mcpbridge` の `RenderPreview`）**で描いて並べる（`Views/Directory/IOSPreviewsSection.swift`）。iPhone 側には出していない。
     - 一覧（ビルド不要）: Xcode のプロジェクトのあるフォルダの下の Swift ファイルを浅い順に読み、`#Preview`（名前・`traits:` 付きも）をファイルごとに上から数える。
       コメント・文字列（複数行・raw・補間の入れ子。32 段を超えたらそこで読むのをやめる）の中は数えず、名前は最初の引数がラベルの無い文字列の時だけ。
@@ -746,8 +751,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」。表示の切替は無く、どのルームも常にチャット。
   「別ウィンドウで開く」（`macwindow.badge.plus`）はメインの見出しにだけ出し、別ウィンドウの見出しには出さない。優先度は「GitHub」と同じ段でその直前に「…」へ回る。
   見出しのボタンはアイコンだけで、ホバーで名前と開く先を出す。「VS Code」は常に出す。
-  「Xcode」「閉じる」はプロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリを含む）に `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層。
-  SPM だけのもの（claude-deck 自身等）では出さない）。「Xcode」は `NSWorkspace.open` で Xcode の GUI を開く（実行＝Cmd+R はユーザー操作。ワンクリックでのシミュレータ実行（`xcodebuild` / `simctl`）は将来）。「閉じる」は確認ダイアログの後、
+  「Xcode」「閉じる」は Xcode の紐づけ（設定のプロジェクトの「Xcode」。ルームの cwd を含む登録プロジェクトのもの）で開く先が決まるルームだけ出す（`XcodeLinks.resolve`）。
+  自動（既定）はプロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリを含む）の `.xcworkspace` / `.xcodeproj`（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層。
+  SPM だけのもの（claude-deck 自身等）では出さない）、指定はその先（作業ツリー（`.git` がファイルのフォルダ）で動くルームは、作業ツリーの同じ場所にあればそちら）、使わないなら出さない。「Xcode」は `NSWorkspace.open` で Xcode の GUI を開く（実行＝Cmd+R はユーザー操作。ワンクリックでのシミュレータ実行（`xcodebuild` / `simctl`）は将来）。「閉じる」は確認ダイアログの後、
   AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
   （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。ホスト中のルームでも使える。
   結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。
@@ -1065,6 +1071,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
                                "pinned": true, "note": "月初に請求を見る", "reminderDay": 1 },
                              { "name": "Figma", "url": "https://www.figma.com/file/…" } ],
                   "site": { "path": "site" },
+                  "xcode": { "path": "ios/App.xcodeproj" },
                   "icon": "iphone", "color": "blue" } ],
   "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
 ```
@@ -1088,6 +1095,11 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   `path` はプロジェクトからの相対パス（`.` はプロジェクト直下。静的書き出しはその下の `out/`）。絶対パス・`~`・`..` を含むものは警告として読み込み、使わない
   （シンボリックリンクでプロジェクトの外を指すものも使わない）。`site` の形が崩れている（オブジェクトでない・`path` の文字列が無い）時は、その `site` だけを無視して警告を出す（ファイル全体は読める。次に保存すると `site` は書かれない）。
   **サイトを指定したら、`site` を知らない前のビルドで設定を保存しない**（`site` を落として書くため）。
+  `xcode` は Xcode のプロジェクトの紐づけで、省略できる（省略なら自動で探す。自動ならアプリも書かない）。`{"path": "ios/App.xcodeproj"}`（プロジェクトからの相対パスの `.xcodeproj` / `.xcworkspace`）で指定、
+  `{"disabled": true}` で使わない（両方あれば使わない）。指定は存在・拡張子・フォルダの内側（シンボリックリンクの実体も）を確かめ、使えなければ自動に落とさず理由を出す
+  （ディレクトリの詳細の「iPhone」のタブと設定画面）。絶対パス・`~`・`..`・バンドルの中を指すものは警告として読み込み、使わない。形が崩れている時は `site` と同じくその `xcode` だけを無視して警告を出す。
+  ディレクトリとルームの見出しの「Xcode」「閉じる」・「iPhone」のタブ・iPhone のプレビューはすべてここ（`Sources/MonitorKit/Projects/XcodeLinks.swift`・テストあり）を通る。
+  **Xcode を指定したら、`xcode` を知らない前のビルドで設定を保存しない**（`xcode` を落として書くため）。
   `icon` / `color` はディレクトリ一覧・詳細の見出し・「+」の一覧に出る印で、どちらも省略できる（無ければアプリも書かない）。
   `icon` は SF Symbol の名前（無ければ `folder`。この OS に無い名前は読めて値も残るが、表示は `folder` に落ちる。空は警告）。
   `color` は `red` / `orange` / `yellow` / `green` / `teal` / `blue` / `indigo` / `purple` / `pink` / `brown` / `gray` のどれか（無ければ名前から決める。知らない値は警告として読み込み、値は残したまま名前から決めた色で出す）。
@@ -1124,6 +1136,13 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 **設定画面**（メニュー「claude-deck → 設定…」⌘,。ウィンドウは 1 つ）のタブ:
 - **プロジェクト**: 一覧（ドラッグ・「上へ / 下へ」で並べ替え）、「+」でフォルダを追加、「−」/右クリックで削除（確認あり）、名前・状態・メモの編集。
+  アイコンと色の下に**紐づけ**（ディレクトリの詳細の見出しに出るものを決めるもの）の節を GitHub・Xcode・サイト・リンクの順に並べ、節の見出しに「見出しの何が出るか」を添える。
+  「GitHub」の節は「GitHub」タブと同じ部品（`GitHubLinkEditor`。同じ値・同じ検証・同じ保存）。そのフォルダの git の remote にある github.com のリポジトリを候補のボタンに出し、
+  押すと owner / リポジトリに入れる（Project 番号はそのまま）。remote は `.git/config` を読むだけ（`git` / `gh` は実行しない）で、`.git` がファイル（作業ツリー・サブモジュール）なら `gitdir:` を辿り、
+  その中の `commondir` があれば共通の `config` を読む。フォルダの外へ出る `.git` のリンク・リンクの `config`・256KB を超える `config` は読まない。origin を先に、残りは設定の順で、
+  https / http / `git://` / `ssh://` / `git@github.com:owner/repo`（`.git` の有無を問わない）の github.com のものだけ候補にする（`Sources/MonitorKit/Projects/GitRemotes.swift`・テストあり）。
+  「Xcode」の節は「自動」（見つかったものを表示）・「指定する」（プロジェクトの中を `XcodeFinder` と同じ除外・深さで浅く探した候補（50 件まで）から選ぶか、「その他を選ぶ…」でフォルダの中のものを選ぶ。
+  外は選べない。初めは今自動で使っているもの）・「使わない」を選んだ時だけ保存する。指定した先が使えなければ理由を出す。
   「アイコンと色」の節で今の印のプレビューと、色のスウォッチ（11 色 + 「自動」）・アイコンのグリッド（`ProjectBadge.symbolChoices` の 40 個。既定の `folder` を押すか
   「既定に戻す」で `icon` を消す）から選ぶと即時に保存する（`ProjectBadgeEditor`）。
   「リンク」の節で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
@@ -1131,7 +1150,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
   「サイト」の節で LP の場所を指定（相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
   正しい相対パスの間だけ保存し、検出の結果（指定 / 自動で検出・書き出しの有無）を出す。
-- **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号と、リポジトリに紐づかないボードの追加・編集・削除。
+- **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号（プロジェクトタブの「GitHub」と同じ部品・git の remote の候補も同じ）と、リポジトリに紐づかないボードの追加・編集・削除。
   owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
 - **iPhone 連携**: 上の「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）と、「iPhone への通知」の入り切り・状態。
 - **キャラクター**: 2D のドット絵を全状態ぶんルーム一覧と同じ動きで並べ、3D はステージと同じ組み立てで見本のセッションを、状態・サブエージェントの職業の組・持ち物を選んで描く。
@@ -1149,7 +1168,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
     repo 付きは同じ名前のプロジェクトがあり、まだ紐づけが無ければその `github` に入れる。同じ名前のプロジェクトが無い行は取り込まず
     （ボードにすると repo が落ちるため）、件数と「先に registry.tsv を読み込んでください」を出す。
   - 書き出した settings.json: プロジェクトはパス・ボードは owner + 番号で重複を除く。同じパスのプロジェクトに紐づけが無ければ紐づけだけ足し、
-    `site` は手元に無い時だけ入れる。リンクは同じ名前（前後の空白は除く）の無いものだけ末尾に足す（同じ名前は手元を残す。ファイルの中で重なる名前も 1 つだけ）。
+    `site` / `xcode` は手元に無い時だけ入れる。リンクは同じ名前（前後の空白は除く）の無いものだけ末尾に足す（同じ名前は手元を残す。ファイルの中で重なる名前も 1 つだけ）。
     名前が空・URL が http / https でないリンクは足さず、件数を「不正 N 件は除外」と出す。
 
 型・読み書き・検証・移行・取り込みは `Sources/MonitorKit/Settings/`（テストあり）、画面は `Sources/ClaudeDeck/Settings/`。

@@ -117,6 +117,10 @@ public enum SettingsValidation {
             }
             if let site = project.site, let p = sitePathProblem(site.path) { result.append("「\(project.name)」のサイト: \(p)") }
             if project.ignoredSite.isSet { result.append("「\(project.name)」のサイト: 形が正しくないため無視しました（{\"path\": \"相対パス\"} の形で書いてください）") }
+            if let path = project.xcode?.configuredPath, let p = XcodeLinks.pathProblem(path) { result.append("「\(project.name)」の Xcode: \(p)") }
+            if project.ignoredXcode.isSet {
+                result.append("「\(project.name)」の Xcode: 形が正しくないため無視しました（{\"path\": \"相対パス\"} か {\"disabled\": true} の形で書いてください）")
+            }
             if let p = ProjectBadge.colorProblem(project.color) { result.append("「\(project.name)」の印: \(p)") }
             if let p = ProjectBadge.iconProblem(project.icon) { result.append("「\(project.name)」の印: \(p)") }
         }

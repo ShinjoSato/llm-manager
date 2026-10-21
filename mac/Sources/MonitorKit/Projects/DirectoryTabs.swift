@@ -54,6 +54,11 @@ public enum DirectoryTabs {
     public static func hasSite(_ lookup: SiteLookup) -> Bool {
         lookup.location != nil || lookup.problem != nil
     }
+
+    /// 指定した Xcode のプロジェクトが使えない時も、理由を見せるために iPhone のタブは出す。
+    public static func hasXcodeProject(_ resolution: XcodeResolution) -> Bool {
+        resolution.path != nil || resolution.problem != nil
+    }
 }
 
 /// 最後に開いたタブをプロジェクトごとに覚える。

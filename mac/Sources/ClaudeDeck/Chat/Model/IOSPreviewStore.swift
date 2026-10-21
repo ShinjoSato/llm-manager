@@ -117,6 +117,8 @@ final class IOSPreviewService {
     @ObservationIgnored private let processes = BridgeProcesses()
     @ObservationIgnored private var watchingSettings = false
     @ObservationIgnored private var knownProjects: Set<UUID> = []
+    /// プロジェクトごとの Xcode の紐づけ（替わったら前の先で待っている分を取りやめる）。
+    @ObservationIgnored private var knownXcodeLinks: [UUID: XcodeLink?] = [:]
 
     // MARK: - 頼まれること
 
@@ -427,19 +429,24 @@ final class IOSPreviewService {
         guard !watchingSettings else { return }
         watchingSettings = true
         knownProjects = Set(SettingsStore.shared.projects.map(\.id))
+        knownXcodeLinks = Dictionary(SettingsStore.shared.projects.map { ($0.id, $0.xcode) }, uniquingKeysWith: { a, _ in a })
         observeSettings()
     }
 
     private func observeSettings() {
-        let ids = withObservationTracking {
-            Set(SettingsStore.shared.projects.map(\.id))
+        let links = withObservationTracking {
+            Dictionary(SettingsStore.shared.projects.map { ($0.id, $0.xcode) }, uniquingKeysWith: { a, _ in a })
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observeSettings() }
         }
         // 読めない設定（壊れた JSON 等）の間は一覧が空に見えるので何もしない。
         guard SettingsStore.shared.problem == nil else { return }
+        let ids = Set(links.keys)
         let removed = knownProjects.subtracting(ids)
         knownProjects = ids
+        let relinked = ids.filter { id in knownXcodeLinks[id].map { $0 != (links[id] ?? nil) } ?? false }
+        knownXcodeLinks = links
+        for id in relinked { cancel(projectId: id) }
         guard !removed.isEmpty else { return }
         for id in removed { cancel(projectId: id) }
         states = states.filter { !removed.contains($0.key.projectId) }

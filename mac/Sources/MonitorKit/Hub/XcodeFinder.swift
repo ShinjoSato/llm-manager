@@ -7,6 +7,8 @@ public enum XcodeFinder {
     static let maxDirs = 2_000
     /// 潜っても無駄か、誤検出のもとになるディレクトリ。
     static let skip: Set<String> = [".git", "Pods", "node_modules", ".build", "DerivedData", "build", ".swiftpm"]
+    /// 設定画面に出す候補の上限。
+    public static let maxCandidates = 50
 
     private struct Candidate {
         var path: String
@@ -16,21 +18,47 @@ public enum XcodeFinder {
 
     /// `.xcworkspace` 優先・最も浅い階層のものを 1 つ返す。無ければ nil。
     public static func find(in dir: String) -> String? {
-        var queue: [(String, Int)] = [(dir, 0)]
         var best: Candidate?
-        var i = 0
-        while i < queue.count && i < maxDirs {
+        walk(dir) { candidate in
+            if better(best, than: candidate) { best = candidate }
             // 深さ 0 の候補は最初の 1 周で出揃い、それより浅いものは無いので打ち切れる。
-            if best?.depth == 0 { break }
+            return best?.depth != 0
+        }
+        // Xcode が返すのは実パスなので、symlink 配下だと未解決のままでは比較が外れる。
+        return best.map { FilePaths.realPath($0.path) ?? $0.path }
+    }
+
+    /// `find` と同じ範囲の候補を、`dir` からの相対パスで浅い順（同じ深さは `.xcworkspace` が先・名前順）に返す。
+    public static func candidates(in dir: String, limit: Int = maxCandidates) -> [String] {
+        var found: [Candidate] = []
+        walk(dir) { found.append($0); return true }
+        let base = dir.hasSuffix("/") ? dir : dir + "/"
+        return found
+            .sorted { a, b in
+                if a.depth != b.depth { return a.depth < b.depth }
+                if a.workspace != b.workspace { return a.workspace }
+                return a.path.localizedStandardCompare(b.path) == .orderedAscending
+            }
+            .prefix(limit)
+            .map { $0.path.hasPrefix(base) ? String($0.path.dropFirst(base.count)) : $0.path }
+    }
+
+    /// 見つけるたびに `visit` を呼ぶ。`visit` が false を返したら、その深さの周回を終えた所で打ち切る。
+    private static func walk(_ dir: String, visit: (Candidate) -> Bool) {
+        var queue: [(String, Int)] = [(dir, 0)]
+        var i = 0
+        var keepGoing = true
+        while i < queue.count && i < maxDirs {
             let (current, depth) = queue[i]
+            if !keepGoing && depth > 0 { break }
             i += 1
             guard let entries = try? FileManager.default.contentsOfDirectory(atPath: current) else { continue }
-            for name in entries {
+            for name in entries.sorted() {
                 let path = current.hasSuffix("/") ? current + name : current + "/" + name
                 let workspace = name.hasSuffix(".xcworkspace")
                 // バンドルには潜らない。`.xcodeproj/project.xcworkspace` は内部ファイルで開く対象ではない。
                 if workspace || name.hasSuffix(".xcodeproj") {
-                    if better(best, depth: depth, workspace: workspace) { best = Candidate(path: path, depth: depth, workspace: workspace) }
+                    if !visit(Candidate(path: path, depth: depth, workspace: workspace)) { keepGoing = false }
                     continue
                 }
                 // リンクは辿らない（循環で走査が終わらなくなるため）。
@@ -38,8 +66,6 @@ public enum XcodeFinder {
                 if depth < maxDepth { queue.append((path, depth + 1)) }
             }
         }
-        // Xcode が返すのは実パスなので、symlink 配下だと未解決のままでは比較が外れる。
-        return best.map { FilePaths.realPath($0.path) ?? $0.path }
     }
 
     private static func isDirectoryNoFollow(_ path: String) -> Bool {
@@ -48,9 +74,9 @@ public enum XcodeFinder {
         return (st.st_mode & S_IFMT) == S_IFDIR
     }
 
-    private static func better(_ best: Candidate?, depth: Int, workspace: Bool) -> Bool {
+    private static func better(_ best: Candidate?, than candidate: Candidate) -> Bool {
         guard let best else { return true }
-        if depth != best.depth { return depth < best.depth }
-        return workspace && !best.workspace
+        if candidate.depth != best.depth { return candidate.depth < best.depth }
+        return candidate.workspace && !best.workspace
     }
 }
