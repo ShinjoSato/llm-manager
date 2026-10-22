@@ -6,6 +6,7 @@ import Observation
 /// 「iPhone のプレビュー」の 1 件（プロジェクトと描く指定）。
 struct IOSPreviewItemKey: Hashable, Sendable {
     let projectId: UUID
+    let xcodeProject: String
     let request: PreviewRenderRequest
 }
 
@@ -21,6 +22,8 @@ struct IOSPreviewTarget: Sendable {
     let projectName: String
     /// 開く `.xcworkspace` / `.xcodeproj`。
     let xcodeProject: String
+    /// `xcodeProject` を決めた時の設定の紐づけ。
+    let xcodeLink: XcodeLink?
     let file: SwiftPreviewFile
     let preview: SwiftPreviewDefinition
 
@@ -29,11 +32,19 @@ struct IOSPreviewTarget: Sendable {
     /// 既定の指定（切り替えなし）。
     var defaultRequest: PreviewRenderRequest { PreviewRenderRequest(relativePath: file.relativePath, index: preview.index) }
 
-    func key(_ request: PreviewRenderRequest) -> IOSPreviewItemKey { IOSPreviewItemKey(projectId: projectId, request: request) }
+    func key(_ request: PreviewRenderRequest) -> IOSPreviewItemKey {
+        IOSPreviewItemKey(projectId: projectId, xcodeProject: xcodeProject, request: request)
+    }
 
     /// 今のソース（走査した時の更新時刻）を描いた絵の鍵。
     func cacheKey(_ request: PreviewRenderRequest) -> PreviewCacheKey {
-        PreviewCacheKey(projectId: projectId, request: request, sourceModified: file.modified)
+        PreviewCacheKey(projectId: projectId, request: request, sourceModified: file.modified, xcodeProject: xcodeProject)
+    }
+
+    /// 同じプレビューを今の Xcode の先で描く手がかり。
+    func relinked(xcodeProject: String, xcodeLink: XcodeLink?) -> IOSPreviewTarget {
+        IOSPreviewTarget(projectId: projectId, projectName: projectName, xcodeProject: xcodeProject, xcodeLink: xcodeLink,
+                         file: file, preview: preview)
     }
 }
 
@@ -126,6 +137,7 @@ final class IOSPreviewService {
     func render(_ target: IOSPreviewTarget, request: PreviewRenderRequest) {
         let key = target.key(request)
         if let state = states[key], state == .queued || state == .rendering { return }
+        guard Self.isCurrent(target) else { return }
         startWatchingSettings()
         cancelling.remove(target.projectId)
         problems[target.projectId] = nil
@@ -269,7 +281,8 @@ final class IOSPreviewService {
                 return
             }
             let info = PreviewSnapshotInfo(result: result, renderedAt: Date(), sourceModified: modified)
-            let cacheKey = PreviewCacheKey(projectId: job.key.projectId, request: request, sourceModified: modified)
+            let cacheKey = PreviewCacheKey(projectId: job.key.projectId, request: request, sourceModified: modified,
+                                           xcodeProject: job.key.xcodeProject)
             let image = try await Task.detached(priority: .utility) {
                 try PreviewSnapshotCache.store(snapshotPath: snapshot, info: info, key: cacheKey)
             }.value
@@ -425,6 +438,15 @@ final class IOSPreviewService {
 
     // MARK: - 設定からの削除
 
+    /// 描く先がそのプロジェクトの今の紐づけで決まる先と同じか（替わった後の古い頼みを描かないため）。
+    private static func isCurrent(_ target: IOSPreviewTarget) -> Bool {
+        guard let project = SettingsStore.shared.projects.first(where: { $0.id == target.projectId }),
+              project.xcode == target.xcodeLink else { return false }
+        // 自動の走査は詳細が cwd ごとに覚えた結果を渡すので、紐づけが同じなら同じ先とみなす。
+        guard project.xcode != nil else { return true }
+        return XcodeLinks.resolve(project: project, cwd: project.path).path == target.xcodeProject
+    }
+
     private func startWatchingSettings() {
         guard !watchingSettings else { return }
         watchingSettings = true
@@ -446,7 +468,10 @@ final class IOSPreviewService {
         knownProjects = ids
         let relinked = ids.filter { id in knownXcodeLinks[id].map { $0 != (links[id] ?? nil) } ?? false }
         knownXcodeLinks = links
-        for id in relinked { cancel(projectId: id) }
+        for id in relinked {
+            cancel(projectId: id)
+            problems[id] = nil
+        }
         guard !removed.isEmpty else { return }
         for id in removed { cancel(projectId: id) }
         states = states.filter { !removed.contains($0.key.projectId) }

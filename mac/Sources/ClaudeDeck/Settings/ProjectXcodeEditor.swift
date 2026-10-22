@@ -22,8 +22,10 @@ struct ProjectXcodeEditor: View {
     private enum Mode: Hashable { case auto, specified, disabled }
 
     private var mode: Mode {
+        // 保存前の「指定する」は今の紐づけ（自動・使わない）より先に見る（候補が無くても「その他を選ぶ…」へ進めるように）。
+        if choosingPath { return .specified }
         switch project.xcode {
-        case nil: return choosingPath ? .specified : .auto
+        case nil: return .auto
         case .path: return .specified
         case .disabled: return .disabled
         }
@@ -51,12 +53,14 @@ struct ProjectXcodeEditor: View {
         .onChange(of: project.xcode) { choosingPath = false }
         .task(id: "\(project.path)|\(String(describing: project.xcode))") {
             let project = project
-            scan = await Task.detached(priority: .userInitiated) {
+            let result = await Task.detached(priority: .userInitiated) {
                 let resolution = XcodeLinks.resolve(project: project, cwd: project.path)
                 let detected = XcodeLinks.detect(in: project.path).path
                     .flatMap { try? XcodeLinks.relativePath(of: $0, in: project.path).get() }
                 return Scan(candidates: XcodeLinks.candidates(in: project.path), resolution: resolution, detected: detected)
             }.value
+            guard !Task.isCancelled else { return }
+            scan = result
         }
     }
 
@@ -71,7 +75,11 @@ struct ProjectXcodeEditor: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             } else {
-                Picker("場所", selection: Binding(get: { current ?? "" }, set: { save(.path($0)) })) {
+                Picker("場所", selection: Binding(get: { current ?? "" }, set: { value in
+                    // 「選んでください」（空）や形の正しくないものは保存しない。
+                    guard let path = XcodeLinks.normalizedPath(value) else { return }
+                    save(.path(path))
+                })) {
                     if current == nil { Text("選んでください").tag("") }
                     ForEach(options, id: \.self) { Text($0).tag($0) }
                 }
@@ -126,6 +134,7 @@ struct ProjectXcodeEditor: View {
 
     private func save(_ link: XcodeLink?) {
         chooseProblem = nil
+        choosingPath = false
         store.updateProject(id: project.id) { $0.xcode = link }
     }
 

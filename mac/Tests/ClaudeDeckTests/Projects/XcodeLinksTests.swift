@@ -90,7 +90,8 @@ final class XcodeLinksTests: XCTestCase {
         try mkdir("ios/App.xcodeproj")
         let tree = (project as NSString).appendingPathComponent(".claude/worktrees/wt")
         try mkdir("ios/App.xcodeproj", in: tree)
-        FileManager.default.createFile(atPath: (tree as NSString).appendingPathComponent(".git"), contents: Data("gitdir: /x\n".utf8))
+        FileManager.default.createFile(atPath: (tree as NSString).appendingPathComponent(".git"),
+                                       contents: Data("gitdir: /main/.git/worktrees/wt\n".utf8))
         let link = managed(.path("ios/App.xcodeproj"))
         XCTAssertEqual(XcodeLinks.resolve(project: link, cwd: (tree as NSString).appendingPathComponent("ios")).path,
                        real("ios/App.xcodeproj", in: tree))
@@ -100,6 +101,39 @@ final class XcodeLinksTests: XCTestCase {
         // 作業ツリーでない下のフォルダはプロジェクトからの相対で引く。
         XCTAssertEqual(XcodeLinks.resolve(project: link, cwd: (project as NSString).appendingPathComponent("ios")).path,
                        real("ios/App.xcodeproj"))
+    }
+
+    func testSubmoduleIsNotTreatedAsWorktree() throws {
+        try mkdir("ios/App.xcodeproj")
+        let sub = (project as NSString).appendingPathComponent("vendor/sub")
+        try mkdir("ios/App.xcodeproj", in: sub)
+        FileManager.default.createFile(atPath: (sub as NSString).appendingPathComponent(".git"),
+                                       contents: Data("gitdir: ../../.git/modules/sub\n".utf8))
+        let link = managed(.path("ios/App.xcodeproj"))
+        XCTAssertEqual(XcodeLinks.resolve(project: link, cwd: sub).path, real("ios/App.xcodeproj"), "サブモジュールの中はプロジェクトのもの")
+
+        // 作業ツリーの中のサブモジュールからは、外側の作業ツリーのものを使う。
+        let tree = (project as NSString).appendingPathComponent(".claude/worktrees/wt")
+        try mkdir("ios/App.xcodeproj", in: tree)
+        FileManager.default.createFile(atPath: (tree as NSString).appendingPathComponent(".git"),
+                                       contents: Data("gitdir: /main/.git/worktrees/wt\n".utf8))
+        let treeSub = (tree as NSString).appendingPathComponent("vendor/sub")
+        try mkdir("ios/App.xcodeproj", in: treeSub)
+        FileManager.default.createFile(atPath: (treeSub as NSString).appendingPathComponent(".git"),
+                                       contents: Data("gitdir: /main/.git/worktrees/wt/modules/sub\n".utf8))
+        XCTAssertEqual(XcodeLinks.worktreeRoots(of: treeSub, inside: project), [tree])
+        XCTAssertEqual(XcodeLinks.resolve(project: link, cwd: treeSub).path, real("ios/App.xcodeproj", in: tree))
+    }
+
+    func testFinderAndCandidatesAgreeOnOrder() throws {
+        try mkdir("ios/B.xcodeproj")
+        try mkdir("ios/A.xcodeproj")
+        try mkdir("mac/A.xcworkspace")
+        let candidates = XcodeLinks.candidates(in: project)
+        XCTAssertEqual(candidates, ["mac/A.xcworkspace", "ios/A.xcodeproj", "ios/B.xcodeproj"])
+        XCTAssertEqual(XcodeFinder.find(in: project), real(candidates[0]))
+        try FileManager.default.removeItem(atPath: (project as NSString).appendingPathComponent("mac"))
+        XCTAssertEqual(XcodeFinder.find(in: project), real("ios/A.xcodeproj"), "同じ深さ・同じ種類は名前順")
     }
 
     func testPathProblemsAndNormalizing() {

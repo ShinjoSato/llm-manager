@@ -16,11 +16,11 @@ public enum XcodeFinder {
         var workspace: Bool
     }
 
-    /// `.xcworkspace` 優先・最も浅い階層のものを 1 つ返す。無ければ nil。
+    /// `candidates` の先頭と同じもの（浅い → `.xcworkspace` → 名前順）を 1 つ返す。無ければ nil。
     public static func find(in dir: String) -> String? {
         var best: Candidate?
         walk(dir) { candidate in
-            if better(best, than: candidate) { best = candidate }
+            if best.map({ precedes(candidate, $0) }) ?? true { best = candidate }
             // 深さ 0 の候補は最初の 1 周で出揃い、それより浅いものは無いので打ち切れる。
             return best?.depth != 0
         }
@@ -34,11 +34,7 @@ public enum XcodeFinder {
         walk(dir) { found.append($0); return true }
         let base = dir.hasSuffix("/") ? dir : dir + "/"
         return found
-            .sorted { a, b in
-                if a.depth != b.depth { return a.depth < b.depth }
-                if a.workspace != b.workspace { return a.workspace }
-                return a.path.localizedStandardCompare(b.path) == .orderedAscending
-            }
+            .sorted(by: precedes)
             .prefix(limit)
             .map { $0.path.hasPrefix(base) ? String($0.path.dropFirst(base.count)) : $0.path }
     }
@@ -74,9 +70,10 @@ public enum XcodeFinder {
         return (st.st_mode & S_IFMT) == S_IFDIR
     }
 
-    private static func better(_ best: Candidate?, than candidate: Candidate) -> Bool {
-        guard let best else { return true }
-        if candidate.depth != best.depth { return candidate.depth < best.depth }
-        return candidate.workspace && !best.workspace
+    /// 浅い方、同じ深さなら `.xcworkspace`、同じ種類なら名前順で先。
+    private static func precedes(_ a: Candidate, _ b: Candidate) -> Bool {
+        if a.depth != b.depth { return a.depth < b.depth }
+        if a.workspace != b.workspace { return a.workspace }
+        return a.path.localizedStandardCompare(b.path) == .orderedAscending
     }
 }

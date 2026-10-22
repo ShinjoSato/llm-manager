@@ -62,8 +62,8 @@ public enum XcodeLinks {
         case .disabled:
             return XcodeResolution(path: nil, source: .disabled)
         case .path(let raw):
-            // 作業ツリーで動くルームは、その作業ツリーの同じ場所を先に見る（自動の時と同じく手元のものを開くため）。
-            if let tree = worktreeRoot(of: cwd, inside: project.path) {
+            // 作業ツリーで動くルームは、その作業ツリーの同じ場所を内側から先に見る（自動の時と同じく手元のものを開くため）。
+            for tree in worktreeRoots(of: cwd, inside: project.path) {
                 let inTree = configured(raw, in: tree)
                 if inTree.path != nil { return inTree }
             }
@@ -106,15 +106,22 @@ public enum XcodeLinks {
         XcodeFinder.candidates(in: projectPath)
     }
 
-    /// cwd を含む作業ツリー（`.git` がファイルのフォルダ）のうち、プロジェクトのフォルダより下のもの。
-    static func worktreeRoot(of cwd: String, inside projectPath: String) -> String? {
-        guard let project = ProjectMatcher.normalized(projectPath), var current = ProjectMatcher.normalized(cwd) else { return nil }
+    /// cwd を含む作業ツリー（`.git` ファイルの `gitdir:` が `…/worktrees/<名前>`）のうち、プロジェクトのフォルダより下のものを内側から順に。
+    static func worktreeRoots(of cwd: String, inside projectPath: String) -> [String] {
+        guard let project = ProjectMatcher.normalized(projectPath), var current = ProjectMatcher.normalized(cwd) else { return [] }
+        var roots: [String] = []
         while current.hasPrefix(project + "/") {
+            let dotGit = current + "/.git"
             var st = stat()
-            if lstat(current + "/.git", &st) == 0, (st.st_mode & S_IFMT) == S_IFREG { return current }
+            // サブモジュール（`…/modules/<名前>`）は作業ツリーではないので混ぜない。
+            if lstat(dotGit, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG,
+               let gitDir = GitRemotes.pointedGitDir(dotGitFile: dotGit, base: current),
+               ((gitDir as NSString).deletingLastPathComponent as NSString).lastPathComponent == "worktrees" {
+                roots.append(current)
+            }
             current = (current as NSString).deletingLastPathComponent
         }
-        return nil
+        return roots
     }
 
     private static func components(_ path: String) -> [String] {

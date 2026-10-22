@@ -43,7 +43,9 @@ struct GitHubLinkEditor: View {
         .onDisappear { store.flushPending(force: true) }
         .task(id: project.path) {
             let path = project.path
-            remotes = await Task.detached(priority: .utility) { GitRemotes.githubCandidates(projectPath: path) }.value
+            let found = await Task.detached(priority: .utility) { GitRemotes.githubCandidates(projectPath: path) }.value
+            guard !Task.isCancelled else { return }
+            remotes = found
         }
     }
 
@@ -86,6 +88,17 @@ struct GitHubLinkEditor: View {
         problems = []
     }
 
+    /// 前後の空白と空のリポジトリを除いて同じ紐づけか。
+    private static func sameMeaning(_ a: GitHubLink?, _ b: GitHubLink?) -> Bool {
+        func normalized(_ link: GitHubLink?) -> GitHubLink? {
+            guard let link else { return nil }
+            let repo = link.repo?.trimmingCharacters(in: .whitespaces)
+            return GitHubLink(owner: link.owner.trimmingCharacters(in: .whitespaces),
+                              repo: repo?.isEmpty == true ? nil : repo, projectNumber: link.projectNumber)
+        }
+        return normalized(a) == normalized(b)
+    }
+
     private func use(_ candidate: GitHubRemoteCandidate) {
         owner = candidate.owner
         repo = candidate.repo
@@ -96,7 +109,8 @@ struct GitHubLinkEditor: View {
     private func commit() {
         let link = draft
         problems = link.map(SettingsValidation.linkProblems) ?? []
-        guard problems.isEmpty else {
+        // 開いた・読み込んだだけ（今の値と同じ意味）では書かない。
+        guard problems.isEmpty, !Self.sameMeaning(link, project.github) else {
             store.cancelPending(key: key)
             return
         }

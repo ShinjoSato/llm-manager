@@ -604,7 +604,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
       画像が無ければ「画像なし」。
     - 走査とグループ化は `Sources/MonitorKit/Projects/ProjectImages.swift`（テストあり）、ストアは `Chat/Model/ProjectImageStore.swift`。
   - **iPhone のプレビュー**（詳細の「iPhone」のタブ。開くのは「Xcode」ボタンと同じもの（設定の Xcode の紐づけ。自動なら `XcodeFinder`・指定ならその先・使わないならタブごと出さない）。
-    紐づけを替えたら、前の先で待っている分は取りやめる）:
+    紐づけを替えたら、前の先で待っている分と古い頼み（開いているシートの描き直しも今の先で頼む）は取りやめ、描いた絵は Xcode の先ごとに分けて覚える）:
     iOS アプリの SwiftUI の `#Preview` を、**起動中の Xcode の MCP（`xcrun mcpbridge` の `RenderPreview`）**で描いて並べる（`Views/Directory/IOSPreviewsSection.swift`）。iPhone 側には出していない。
     - 一覧（ビルド不要）: Xcode のプロジェクトのあるフォルダの下の Swift ファイルを浅い順に読み、`#Preview`（名前・`traits:` 付きも）をファイルごとに上から数える。
       コメント・文字列（複数行・raw・補間の入れ子。32 段を超えたらそこで読むのをやめる）の中は数えず、名前は最初の引数がラベルの無い文字列の時だけ。
@@ -752,8 +752,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   「別ウィンドウで開く」（`macwindow.badge.plus`）はメインの見出しにだけ出し、別ウィンドウの見出しには出さない。優先度は「GitHub」と同じ段でその直前に「…」へ回る。
   見出しのボタンはアイコンだけで、ホバーで名前と開く先を出す。「VS Code」は常に出す。
   「Xcode」「閉じる」は Xcode の紐づけ（設定のプロジェクトの「Xcode」。ルームの cwd を含む登録プロジェクトのもの）で開く先が決まるルームだけ出す（`XcodeLinks.resolve`）。
-  自動（既定）はプロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリを含む）の `.xcworkspace` / `.xcodeproj`（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層。
-  SPM だけのもの（claude-deck 自身等）では出さない）、指定はその先（作業ツリー（`.git` がファイルのフォルダ）で動くルームは、作業ツリーの同じ場所にあればそちら）、使わないなら出さない。「Xcode」は `NSWorkspace.open` で Xcode の GUI を開く（実行＝Cmd+R はユーザー操作。ワンクリックでのシミュレータ実行（`xcodebuild` / `simctl`）は将来）。「閉じる」は確認ダイアログの後、
+  自動（既定）はプロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリを含む）の `.xcworkspace` / `.xcodeproj`（`XcodeFinder`。最も浅い階層 → 同じ深さなら `.xcworkspace` → 同じ種類なら名前順の先頭で、設定画面の候補の並びも同じ決め方。
+  SPM だけのもの（claude-deck 自身等）では出さない）、指定はその先（作業ツリー（`.git` ファイルの `gitdir:` が `…/worktrees/<名前>`。サブモジュールは含めない）で動くルームは、内側の作業ツリーから順に同じ場所を見てあればそちら）、使わないなら出さない。「Xcode」は `NSWorkspace.open` で Xcode の GUI を開く（実行＝Cmd+R はユーザー操作。ワンクリックでのシミュレータ実行（`xcodebuild` / `simctl`）は将来）。「閉じる」は確認ダイアログの後、
   AppleScript をアプリから `osascript` で実行し、Xcode からそのワークスペースだけを閉じる
   （Xcode は終了しない・起動していなければ立ち上げない。パスは argv で渡す）。ホスト中のルームでも使える。
   結果（開きました / 閉じるよう伝えました / Xcode では開いていません / Xcode は起動していません / エラー）をボタンの左に数秒出す。

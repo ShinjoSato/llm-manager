@@ -57,11 +57,8 @@ public enum GitRemotes {
                   real.hasPrefix(realProject + "/"), FilePaths.isDirectory(real) else { return nil }
             gitDir = real
         case S_IFREG:
-            guard let text = readSmallFile(dotGit, limit: maxPointerBytes),
-                  let pointer = text.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix("gitdir:") }) else { return nil }
-            let target = pointer.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
-            guard !target.isEmpty else { return nil }
-            gitDir = absolute(target, from: projectPath)
+            guard let pointed = pointedGitDir(dotGitFile: dotGit, base: projectPath) else { return nil }
+            gitDir = pointed
         default:
             return nil
         }
@@ -71,6 +68,14 @@ public enum GitRemotes {
             configDir = absolute(common, from: gitDir)
         }
         return (configDir as NSString).appendingPathComponent("config")
+    }
+
+    /// `.git` ファイルの `gitdir:` が指す先（`base` からの相対も可）。読めなければ nil。
+    static func pointedGitDir(dotGitFile: String, base: String) -> String? {
+        guard let text = readSmallFile(dotGitFile, limit: maxPointerBytes),
+              let pointer = text.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix("gitdir:") }) else { return nil }
+        let target = pointer.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+        return target.isEmpty ? nil : absolute(target, from: base)
     }
 
     /// `[remote "name"]` の `url`（remote ごとに最初のもの・ファイルの順）。
