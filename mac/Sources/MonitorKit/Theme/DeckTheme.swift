@@ -83,6 +83,9 @@ public struct ThemePalette: Sendable, Equatable {
 
     public func avatar(_ key: ProjectColor) -> UInt32 { avatarPalette[key.paletteIndex] }
 
+    /// ブランチの図のレーンの色（決まった順に使う。パネルの地の上で線と点が見える濃さ）。
+    public var graphLanes: [UInt32]
+
     public var cardFill: ThemeFill
     public var cardBorder: ThemeFill
     /// 外部セッションの権限待ちの案内カードの地（答えられないので通常のカードより控えめ）。
@@ -116,6 +119,7 @@ public struct ThemePalette: Sendable, Equatable {
         accent: 0x34d399, onAccent: 0x053321, onPermission: 0x053321, codeSurface: 0x141c2d, stagePanel: 0x0b111d,
         feedTool: 0x7dd3fc, feedPrompt: 0xc4b5fd, feedStatus: 0xfcd34d, feedSession: 0x6ee7b7, feedAgent: 0xf0abfc,
         avatarPalette: [0xf87171, 0xfb923c, 0xfacc15, 0x34d399, 0x22d3ee, 0x60a5fa, 0x818cf8, 0xa78bfa, 0xf472b6, 0xd4a373, 0x9ca3af],
+        graphLanes: [0x60a5fa, 0x34d399, 0xfb923c, 0xc084fc, 0xf472b6, 0x22d3ee, 0xfacc15, 0xf87171],
         cardFill: .tint(0xfbbf24, 0.06), cardBorder: .solid(0xfbbf24), pendingCardFill: .tint(0xfbbf24, 0.04),
         permissionChip: .tint(0xfbbf24, 0.14), menuTabCurrent: .tint(0xfbbf24, 0.25),
         permissionBadge: .tint(0xfbbf24, 0.18), waitingBadge: .tint(0x7cc4ff, 0.18),
@@ -137,6 +141,7 @@ public struct ThemePalette: Sendable, Equatable {
         feedTool: 0x7a5600, feedPrompt: 0x1d5dbd, feedStatus: 0xb02a22, feedSession: 0x1b6b3a, feedAgent: 0x2a4a8c,
         // 印の色だけは利用者が選ぶ 11 色相で、ナイトと同じ色相の濃い版（白い面の上で 4.5 以上）。
         avatarPalette: [0xb02a22, 0xa3480c, 0x7a5600, 0x1b6b3a, 0x0e6b6b, 0x1d5dbd, 0x4140b5, 0x6d3db4, 0xb02a74, 0x74482a, 0x5a6472],
+        graphLanes: [0x1d5dbd, 0x1b6b3a, 0xa3480c, 0x6d3db4, 0xb02a74, 0x0e6b6b, 0x7a5600, 0xb02a22],
         cardFill: .solid(0xfff5d4), cardBorder: .solid(0xecd07a), pendingCardFill: .solid(0xfff9e6),
         permissionChip: .solid(0xfbe7a6), menuTabCurrent: .solid(0xf8e08f),
         permissionBadge: .solid(0xfdedb3), waitingBadge: .solid(0xdde9fc),

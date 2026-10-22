@@ -2,9 +2,9 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// 右パネルの見せ方（ステージ / プレビュー）。
+/// 右パネルの見せ方（ステージ / プレビュー / ブランチ）。
 enum StagePanelView: String, CaseIterable, Identifiable {
-    case stage, preview
+    case stage, preview, branches
 
     static let defaultsKey = "stagePanel.view"
 
@@ -14,6 +14,7 @@ enum StagePanelView: String, CaseIterable, Identifiable {
         switch self {
         case .stage: return "ステージ"
         case .preview: return "プレビュー"
+        case .branches: return "ブランチ"
         }
     }
 
@@ -21,6 +22,7 @@ enum StagePanelView: String, CaseIterable, Identifiable {
         switch self {
         case .stage: return "sparkles.tv"
         case .preview: return "globe"
+        case .branches: return "arrow.triangle.branch"
         }
     }
 
@@ -28,6 +30,7 @@ enum StagePanelView: String, CaseIterable, Identifiable {
         switch self {
         case .stage: return "選択中のセッションの 3D ステージと動き"
         case .preview: return "選択中のルームのプロジェクトの LP（開発サーバー、無ければ書き出し）"
+        case .branches: return "選択中のルームのフォルダの git のブランチとコミット"
         }
     }
 }
