@@ -14,12 +14,15 @@ public enum SettingsImport {
         public var linkedGitHub = 0
         public var addedLinks = 0
         public var addedBoards = 0
+        public var addedCommands = 0
         /// 既にあった・読めなかったため足さなかった行。
         public var skipped = 0
         /// repo 付きなのに同じ名前のプロジェクトが無く、取り込まなかった行。
         public var unmatched = 0
         /// 名前が空・URL が開ける形でないため足さなかったリンク。
         public var invalidLinks = 0
+        /// 名前か本文が空・長すぎるため足さなかった実行コマンド。
+        public var invalidCommands = 0
 
         public var message: String {
             var parts: [String] = []
@@ -27,6 +30,9 @@ public enum SettingsImport {
             if linkedGitHub > 0 { parts.append("GitHub の紐づけ \(linkedGitHub) 件") }
             if addedLinks > 0 {
                 parts.append(invalidLinks > 0 ? "リンク \(addedLinks) 件（不正 \(invalidLinks) 件は除外）" : "リンク \(addedLinks) 件")
+            }
+            if addedCommands > 0 {
+                parts.append(invalidCommands > 0 ? "実行コマンド \(addedCommands) 件（不正 \(invalidCommands) 件は除外）" : "実行コマンド \(addedCommands) 件")
             }
             if addedBoards > 0 { parts.append("ボード \(addedBoards) 件") }
             let added = parts.isEmpty ? "足したものはありません" : parts.joined(separator: "・") + "を足しました"
@@ -36,6 +42,9 @@ public enum SettingsImport {
             }
             if addedLinks == 0, invalidLinks > 0 {
                 result += "。名前が空・URL が http / https でないリンク \(invalidLinks) 件は取り込んでいません"
+            }
+            if addedCommands == 0, invalidCommands > 0 {
+                result += "。名前か本文が空・長すぎる実行コマンド \(invalidCommands) 件は取り込んでいません"
             }
             return result
         }
@@ -124,6 +133,11 @@ public enum SettingsImport {
                         summary.addedLinks += added
                         filled = true
                     }
+                    let addedCommands = addCommands(project.commands, to: &merged.projects[index].commands, summary: &summary)
+                    if addedCommands > 0 {
+                        summary.addedCommands += addedCommands
+                        filled = true
+                    }
                     if !filled { summary.skipped += 1 }
                     continue
                 }
@@ -131,6 +145,9 @@ public enum SettingsImport {
                 var links: [ProjectLink] = []
                 _ = addLinks(project.links, to: &links, summary: &summary)
                 project.links = links
+                var commands: [ProjectCommand] = []
+                _ = addCommands(project.commands, to: &commands, summary: &summary)
+                project.commands = commands
                 addProject(project, to: &merged, summary: &summary)
             }
             for board in incoming.boards { addBoard(board, to: &merged, summary: &summary) }
@@ -152,6 +169,19 @@ public enum SettingsImport {
             guard SettingsValidation.projectLinkProblems(link).isEmpty else { summary.invalidLinks += 1; continue }
             guard names.insert(link.name.trimmingCharacters(in: .whitespaces)).inserted else { continue }
             links.append(link)
+            added += 1
+        }
+        return added
+    }
+
+    /// 名前（前後の空白は除く）の無いものだけ末尾に足し、足した数を返す。名前か本文が正しくないものは数えるだけで足さない。
+    private static func addCommands(_ incoming: [ProjectCommand], to commands: inout [ProjectCommand], summary: inout Summary) -> Int {
+        var names = Set(commands.map { $0.name.trimmingCharacters(in: .whitespaces) })
+        var added = 0
+        for command in incoming {
+            guard SettingsValidation.projectCommandProblems(command).isEmpty else { summary.invalidCommands += 1; continue }
+            guard names.insert(command.name.trimmingCharacters(in: .whitespaces)).inserted else { continue }
+            commands.append(command)
             added += 1
         }
         return added

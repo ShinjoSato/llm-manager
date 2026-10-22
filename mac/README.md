@@ -50,6 +50,8 @@ mac/
         TranscriptCache.swift       開いたルームの会話の取得と追記の購読（直近 4 ルームと、メイン・別ウィンドウで出しているものを持つ）・吹き出しの画像の読み込み
         EditorLauncher.swift        見出し・詳細の「VS Code」「Finder」「GitHub」「リンク」「Xcode」「閉じる」と結果の短い一言（押した先ごと）
         HostedSession.swift         アプリが PTY でホストする claude 1 つ（端末ビューは画面に載せず、PTY の受信と画面読み取りに使う）
+        RoomShell.swift             ルームの「ターミナル」のシェル 1 つ（見える端末ビュー・起動 / 終了 / 実行コマンドの送信・端末を載せる 1 か所の切り替え（ShellHostView））
+        RoomShells.swift            ルームごとのシェルと最後に開いていたタブ（ルームを閉じる・外部ルームが消える・引き継ぎ・アプリの終了で止める / 移す）
         SessionRestorer.swift       ホスト中のセッションの記録（hosted-sessions.json）と起動時の再開・作業中だったものへの続きの頼み
         SiteThumbnailStore.swift    「ディレクトリ」の行の LP のサムネイル（オフスクリーンの WKWebView で撮って縮小・キャッシュ・1 つずつ）
         DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める。ルームを閉じても止めない）
@@ -81,8 +83,9 @@ mac/
         Links/
           LinkOverviewView.swift      中央の横断のリンク一覧と、「ディレクトリ」の固定行「リンク」（LinkOverviewListRow）
         Conversation/               中央の会話
-          ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）。メインの中央と別ウィンドウで共通
-          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」のボタン
+          ConversationView.swift      見出し + 「Claude」「ターミナル」のタブ + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）かターミナル。メインの中央と別ウィンドウで共通
+          ConversationHeader.swift    見出し（名前・状態・ブランチ）と実行コマンド・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」のボタン
+          ShellPane.swift             「ターミナル」のタブ（タブの列 RoomTabBar・端末を載せる NSViewRepresentable・別ウィンドウで表示中の案内・終わった時の「もう一度開く」）
           RoomWindowView.swift        別ウィンドウの中身（1 ルームの会話・会話の取得と既読・ルームが消えた時の案内・そのウィンドウで出す警告）
           BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文。大きさは会話の返答と同じ）
           HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
@@ -161,6 +164,7 @@ mac/
       LinkVisits.swift            リンクの最終確認日（link-visits.json）の型と読み書き
       LinkOverview.swift          横断のリンク一覧の組み立て（節・絞り込み・確認が必要な数）
       LinkTitle.swift             ページの <title> の読み取り（文字コードの判別・切れた UTF-8 の扱い）
+      ProjectCommands.swift       実行コマンドの見出しに出すもの・ホバーの本文・アイコン・名前と本文の上限
       ProjectImages.swift         ディレクトリの詳細の「画像」の走査とグループ化・浅い順の走査（ProjectTree。「iPhone のプレビュー」と共有）
       DirectoryTabs.swift         ディレクトリの詳細のタブ（並び・出せるタブ・覚えたタブの復元と先頭へ戻す・プロジェクトごとの記憶）
     Previews/                   ディレクトリの詳細の「iPhone のプレビュー」（Xcode の RenderPreview）
@@ -178,6 +182,11 @@ mac/
       SiteViewport.swift          表示幅（PC / タブレット / スマホ）と縮める率・欄の幅とタブの中で使える高さからの高さの上限・サムネイルのキャッシュの名前・プレビューの中で開いてよい行き先
       DevServerRules.swift        開発サーバーの起動条件（dev スクリプト）・子の環境・出力からのアドレスの読み取り・失敗の理由・出力の末尾・止める手順
       DevServerProcess.swift      開発サーバーの子プロセス（新しいプロセスグループで起動・出力と終了の通知・グループごとの停止。起動と停止の手順 ProcessGroup は mcpbridge と共有）
+    Shell/                      ルームの「ターミナル」（UI に依らない部分・テストあり）
+      ShellLaunch.swift           ログインシェルの起動（$SHELL か /bin/zsh・-l -i・API キーと子セッション印を除いた環境）と、zsh の起動ファイルを挟む ZshWrapper（設定の後で API キーを外す）
+      ShellInput.swift            実行コマンドの本文（bracketed paste・制御文字の除去）・起動直後に送ってよいか・前面のプロセスの判定（ShellForeground）
+      ShellSessionStop.swift      シェルのセッション（ジョブを含む）の停止（SIGHUP → SIGTERM → SIGKILL・同じ端末と最初のグループだけ）
+      RoomTabs.swift              ルームのタブ（Claude / ターミナル）とルームごとの記憶・端末を出す 1 か所（TerminalHostOwner）
     Limit/
       LimitGuard.swift            上限到達の判定（公式の残量 / 画面末尾の上限表示）
       LimitState.swift            上限到達の記録（limit-state.json）と、続けて止めた分をまとめた知らせの文言
@@ -217,7 +226,7 @@ mac/
       Concurrency.swift           一度だけ通す印（OnceFlag）と、持ち主が消えたら止まる繰り返し（repeatingTask）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
-                                Server / Remote / Settings / Sites / Previews / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
+                                Server / Remote / Settings / Sites / Previews / Notify / Stage / Shell / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift・Shell/ShellPTYTestSupport.swift（ダミーのシェルを PTY で起動）
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   docs/pty-daemon.md            アプリを閉じても claude を動かし続ける常駐プロセスの設計と試作の記録（未実装）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
@@ -743,7 +752,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」。表示の切替は無く、どのルームも常にチャット。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・実行コマンド・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」。見出しの下に「Claude」「ターミナル」のタブ（下の「ターミナル」）。
   「別ウィンドウで開く」（`macwindow.badge.plus`）はメインの見出しにだけ出し、別ウィンドウの見出しには出さない。優先度は「GitHub」と同じ段でその直前に「…」へ回る。
   見出しのボタンはアイコンだけで、ホバーで名前と開く先を出す。「VS Code」は常に出す。
   「Xcode」「閉じる」はプロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリを含む）に `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層。
@@ -779,11 +788,35 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   新着で末尾へ自動スクロールし、上に遡っている間は止める（macOS 15 以降）。
 - 作業中に送った指示は Claude Code 側でキューに入り、ログに「ユーザーの発話」として残らないため吹き出しには出ない（応答には反映される）。
 
+#### ターミナル（ルームのタブ）
+
+- 見出しの下のタブで「Claude」（会話）と「ターミナル」を切り替える。最後に開いていたタブはルームごとに覚える（アプリが動いている間だけ。引き継ぎで移ったルームにも持ち越す）。
+  ターミナルが動いている間はタブに緑の点。
+- ターミナルはそのルームの cwd で起動した**利用者のログインシェル**（`$SHELL` が実行できる絶対パスならそれ、無ければ `/bin/zsh`。`-l -i`）を SwiftTerm の見える端末（`LocalProcessTerminalView`）で出す。
+  キー入力・選択とコピー（⌘C）・ペースト・スクロール・サイズ変更ができる。ルームごとに 1 つで、初めてタブを開いた時か実行コマンドを押した時にだけ起動する（自動では起動しない）。
+  ホスト中・外部どちらのルームでも使える（cwd が分かり、フォルダがある時。無ければタブに理由を出す）。
+- **環境（料金事故ゼロ）**: claude と同じ `ChildEnvironment.sanitized` で `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`・`CLAUDE_CODE_*` 等の子セッション印を除いて起動する。
+  zsh では起動ファイルを挟み（`~/Library/Caches/claude-deck/shell-zsh/` の `.zshenv` / `.zprofile` / `.zshrc` / `.zlogin`。利用者の `ZDOTDIR`（無ければ HOME）の同名のファイルを順に読み、
+  /etc/zshrc が決めた履歴の場所も利用者の側へ戻す）、最後に `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN` する（利用者の設定が API キーを export しても、そのシェルで打った `claude` に渡らない）。
+  zsh 以外のシェルは環境から除くだけ（設定ファイルが export し直したものは外せない）。PTY の master には起動直後に CLOEXEC を付ける（後から起動する子に持たせない）。
+- **止める**: ルームを閉じた時・アプリの終了時は、シェルが先頭のセッションのうち同じ端末を持つプロセスのグループ（シェルとジョブ）を集めて SIGHUP を送り、PTY を閉じ、
+  1 秒後に残ったグループへ SIGTERM（と SIGCONT）、さらに 1.5 秒後に SIGKILL（`ShellSessionStop`・`ShellStopPlan`）。終了時は開発サーバー等の停止と並べて待つ。
+  一覧から消えた外部ルーム（引き継ぎの途中は除く）も同じく止める。シェルが自分で終わった時は残ったジョブを同じ手順で止め、「シェルは終了しました」と「もう一度開く」を出す。
+  `setsid` で自分からセッションを抜けたもの（デーモン化したもの）は追えない。
+- **別ウィンドウ**: 同じルームを別ウィンドウでも開いていれば同じシェルを使う。端末のビューは同時に 2 か所へ置けないので、最後に見え始めた・前に出た（キーになった）ウィンドウの方に出し、
+  もう片方には「このターミナルは別のウィンドウに表示しています」と「ここに表示」を出す（`TerminalHostOwner`）。出していた側が閉じれば残りの側へ戻る。
+- **実行コマンド**: 設定のプロジェクトの `commands`（下の「設定（settings.json）」）を、そのプロジェクトのルームの見出しにボタンで出す（設定の順・名前の重なりは先のものだけ・
+  ターミナルを開けないルームでは出さない）。優先度は既存のボタンより低く、入りきらなければ先に「…」へ回る。ホバーで本文（先頭 6 行と残りの行数）を出す。
+  押すと「ターミナル」のタブに切り替え、シェルが無ければ（終わっていれば）起動して、入力を受けられるようになってから（bracketed paste を宣言したか、出力が 0.5 秒止まったか、5 秒）送る。
+  **何かが動いている最中**（PTY の前面のプロセスグループ（`tcgetpgrp(master)`）がシェルのものでない・判定できない）は確認を出してから送る（`ShellForeground`）。
+  本文は改行を揃えて制御文字（改行とタブ以外）を落とし、bracketed paste で 1 回の貼り付けとして入れてから 0.1 秒後に Enter を送る（貼り付けモードでないシェル・プログラムには行ごとに改行で打ち込む。`ShellInput`）。
+
 ### 別ウィンドウ
 
 - ルーム一覧の行の右クリック「別ウィンドウで開く」か、会話の見出しのボタンで、そのルームの会話だけのウィンドウを開く。同じルームのウィンドウが既にあれば前に出す（二重に開かない）。
   メインでディレクトリの詳細・リンク一覧・他のルームを見ている間も、別ウィンドウの会話は更新され続ける。
-- 中身は中央と同じ `ConversationView`（見出し・外部セッションのバナー・吹き出し・権限カード・選択肢カード・入力欄）。送信・伝言・回答・引き継ぎは
+- 中身は中央と同じ `ConversationView`（見出し・「Claude」「ターミナル」のタブ・外部セッションのバナー・吹き出し・権限カード・選択肢カード・入力欄）。
+  ターミナルはメインと同じシェルで、端末の表示は今見ている（最後にキーになった）方にだけ出す（上の「ターミナル（ルームのタブ）」）。送信・伝言・回答・引き継ぎは
   メインと同じ部品（`ChatOutbox` / `ChatRelay` / `PromptResponder` / `ChatHandover`）を通るので、選択待ちの間は送らない・押した時のカードと今の画面が違えば送らない等の守りもそのまま効く。
 - **下書きと添付はルームごとに 1 つを共有する**（`ChatOutbox.drafts` / `attachments` はルームの id で引く）。メインと別ウィンドウで同じルームを出していれば、
   片方で書いた文面・添えた添付はもう片方にもそのまま映り、送れば両方から消える（変換中の文字は確定するまで書いている側にだけある。`ComposerSync`）。
@@ -1065,6 +1098,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
                                "pinned": true, "note": "月初に請求を見る", "reminderDay": 1 },
                              { "name": "Figma", "url": "https://www.figma.com/file/…" } ],
                   "site": { "path": "site" },
+                  "commands": [ { "name": "dev", "command": "npm run dev" },
+                                { "name": "test", "command": "cd web\nnpm test", "icon": "testtube.2" } ],
                   "icon": "iphone", "color": "blue" } ],
   "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
 ```
@@ -1092,6 +1127,10 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   `icon` は SF Symbol の名前（無ければ `folder`。この OS に無い名前は読めて値も残るが、表示は `folder` に落ちる。空は警告）。
   `color` は `red` / `orange` / `yellow` / `green` / `teal` / `blue` / `indigo` / `purple` / `pink` / `brown` / `gray` のどれか（無ければ名前から決める。知らない値は警告として読み込み、値は残したまま名前から決めた色で出す）。
   設定画面のプロジェクトタブの「アイコンと色」か、ディレクトリ一覧の行の右クリック「アイコンと色を変更…」から選ぶ（「自動」「既定」でキーを消す）。
+  `commands` はルームの見出しに出す実行コマンド（上の「ターミナル（ルームのタブ）」）で、省略できる（空ならアプリも書かない）。並びは配列の順。
+  `name`（1 行・40 文字まで・同じプロジェクトの中で重ねない）と `command`（空でない・4000 文字まで・複数行可）は文字列、`icon` は SF Symbol の名前で省略できる（無ければ `play`。この OS に無い名前は `play` で出す。空は警告）。
+  名前か本文が正しくないものは警告として読み込み、ボタンには出さない。`commands` の形が崩れている（配列でない・要素に `name` か `command` の文字列が無い）時は、その `commands` だけを無視して警告を出す（ファイル全体は読める。次に保存すると `commands` は書かれない）。
+  **実行コマンドを使い始めたら、`commands` を知らない前のビルドで設定を保存しない**（`commands` を落として書くため）。
   `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
 - 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600。ディレクトリを 0700 に締めるのは既定の場所（`~/Library/Application Support/claude-deck/`）の時だけで、
   `CLAUDE_DECK_SETTINGS` で向けた先のディレクトリの権限は変えない。
@@ -1129,6 +1168,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   「リンク」の節で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
   全行が正しい間だけ保存し、途中の行がある間はファイルは前の内容のまま（行ごとに理由を赤で出す）。名前と URL が両方空の行は画面に残すだけで保存しない。
   開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
+  「実行コマンド」の節で名前・アイコン（候補から選ぶ・「既定」でキーを消す）・コマンド（複数行の等幅の欄）を追加・編集・「∧ / ∨」で並べ替え・削除。
+  全行が正しい間だけ保存し（行ごとに理由を赤で出す）、名前とコマンドが両方空の行は画面に残すだけで保存しない。開いただけでは書き直さない。
   「サイト」の節で LP の場所を指定（相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
   正しい相対パスの間だけ保存し、検出の結果（指定 / 自動で検出・書き出しの有無）を出す。
 - **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号と、リポジトリに紐づかないボードの追加・編集・削除。
@@ -1150,7 +1191,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
     （ボードにすると repo が落ちるため）、件数と「先に registry.tsv を読み込んでください」を出す。
   - 書き出した settings.json: プロジェクトはパス・ボードは owner + 番号で重複を除く。同じパスのプロジェクトに紐づけが無ければ紐づけだけ足し、
     `site` は手元に無い時だけ入れる。リンクは同じ名前（前後の空白は除く）の無いものだけ末尾に足す（同じ名前は手元を残す。ファイルの中で重なる名前も 1 つだけ）。
-    名前が空・URL が http / https でないリンクは足さず、件数を「不正 N 件は除外」と出す。
+    名前が空・URL が http / https でないリンクは足さず、件数を「不正 N 件は除外」と出す。実行コマンドもリンクと同じく、同じ名前の無いものだけ末尾に足し、名前か本文が正しくないものは足さずに数える。
 
 型・読み書き・検証・移行・取り込みは `Sources/MonitorKit/Settings/`（テストあり）、画面は `Sources/ClaudeDeck/Settings/`。
 

@@ -52,12 +52,14 @@ struct StatusBadge: View {
     }
 }
 
-/// 見出しの「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」と、押した結果の短い一言。
+/// 見出しの実行コマンド・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」と、押した結果の短い一言。
 struct EditorButtons: View {
     let model: ChatModel
     let room: Room
     var opensWindow = true
     @State private var confirmingClose = false
+    /// 動いている最中に押した実行コマンド（確認を出している間）。
+    @State private var confirmingCommand: ProjectCommand?
 
     var body: some View {
         let editors = model.editors
@@ -70,11 +72,29 @@ struct EditorButtons: View {
         actions += HeaderAction.xcode(openPriority: 4, closePriority: 1, editors: editors, target: target,
                                       project: xcodeProject) { confirmingClose = true }
         if opensWindow { actions.append(HeaderAction.openInWindow(priority: 3, subpriority: -1) { [model, room] in model.openWindow(for: room.id) }) }
+        // 実行コマンドは既存のボタンより先に「…」へ回す。
+        let commands = HeaderAction.commands(priority: 0, commands: editors.projectCommands(for: target, cwd: room.cwd)) { [model, room] command in
+            if model.shells.needsConfirmation(for: room) {
+                confirmingCommand = command
+            } else {
+                model.runCommand(command, in: room)
+            }
+        }
         return HStack(spacing: 6) {
             EditorNoteText(note: editors.notes[target.key])
-            HeaderActionRow(actions: actions).layoutPriority(1)
+            HeaderActionRow(actions: commands + actions).layoutPriority(1)
         }
         .xcodeCloseConfirmation(isPresented: $confirmingClose, editors: editors, target: target, project: xcodeProject)
+        .confirmationDialog("ターミナルで何かが動いています", isPresented: Binding(get: { confirmingCommand != nil },
+                                                                         set: { if !$0 { confirmingCommand = nil } })) {
+            Button("送る") {
+                if let command = confirmingCommand { model.runCommand(command, in: room) }
+                confirmingCommand = nil
+            }
+            Button("やめる", role: .cancel) { confirmingCommand = nil }
+        } message: {
+            Text("シェルのプロンプトに戻っていないため、「\(confirmingCommand?.name ?? "")」の本文は動いているプログラムへの入力として渡ります。送りますか？")
+        }
     }
 }
 

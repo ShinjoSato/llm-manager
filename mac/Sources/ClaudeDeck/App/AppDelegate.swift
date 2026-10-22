@@ -82,11 +82,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         MainActor.assumeIsolated {
             // ホスト中の claude は終了で PTY ごと閉じるので、その前の状態を書き切る（正常な終了なので再開中の印は外す）。
             main?.model.restorer.saveOnTermination()
+            // ルームのターミナルのシェルとジョブもアプリの外に残さない（HUP を先に送り、下の停止と並べて待つ）。
+            let shellStops = main?.model.shells.beginStopAll() ?? []
             SettingsStore.shared.flushPending(force: true)
             SettingsStore.shared.stopWatching()
             // 開発サーバーと mcpbridge はアプリの外で動き続けないよう、プロセスグループごと止め切ってから終える。
             DevServerStore.shared.stopAllBlocking()
             IOSPreviewService.shared.stopAllBlocking()
+            ShellSessionStop.finishAllBlocking(shellStops)
         }
         RemoteAccessController.shared.shutdown()
         AttentionNotifier.shared.stop()

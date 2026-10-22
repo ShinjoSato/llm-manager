@@ -81,6 +81,8 @@ final class ChatModel {
     let editors: EditorLauncher
     /// ホスト中のセッションの記録と、起動時の再開。
     let restorer = SessionRestorer()
+    /// ルームのターミナルと、ルームごとに開いていたタブ。
+    let shells = RoomShells()
     /// 別ウィンドウで開いているルーム。
     private(set) var detached = DetachedRooms<RoomID>()
     /// 別ウィンドウを出す（無ければ作り、あれば前に出す）・閉じる。ウィンドウを持つ側が設定する。
@@ -164,7 +166,9 @@ final class ChatModel {
     /// 一覧から消えた外部ルームの添付を片付ける。未接続の間は一覧が古いので触らない。
     private func discardVanishedExternalRooms(_ all: [Room]) {
         guard store.connection.isConnected else { return }
-        outbox.discardVanishedExternalRooms(alive: Set(all.map(\.id)))
+        let alive = Set(all.map(\.id))
+        outbox.discardVanishedExternalRooms(alive: alive)
+        shells.closeVanishedExternalRooms(alive: alive) { [handover] in handover.inProgress.contains($0) }
     }
 
     private func buildRooms() -> [Room] {
@@ -294,6 +298,13 @@ final class ChatModel {
         return ShownSessions.sessionIds(main: main, detached: detached.rooms.map { room(id: $0)?.sessionId })
     }
 
+    // MARK: - ターミナル
+
+    /// 実行コマンドをルームのターミナルで流す（送れなければ警告を出す）。
+    func runCommand(_ command: ProjectCommand, in room: Room) {
+        if let failure = shells.run(command, in: room) { alerts.message = failure }
+    }
+
     // MARK: - 別ウィンドウ
 
     /// ルームを別ウィンドウで開く。既に開いていればそのウィンドウを前に出す。
@@ -347,6 +358,7 @@ final class ChatModel {
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         outbox.forgetRoom(.hosted(session.id))
+        shells.close(.hosted(session.id))
         restorer.saveNow()
     }
 
@@ -354,6 +366,7 @@ final class ChatModel {
     private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
         let session = host(project, resuming: sessionId)
         outbox.move(from: roomId, to: .hosted(session.id))
+        shells.move(from: roomId, to: .hosted(session.id))
         if let duplicate = detached.retarget(from: roomId, to: .hosted(session.id)) { dismissRoomWindow(duplicate) }
         select(.hosted(session.id))
         restorer.saveNow()

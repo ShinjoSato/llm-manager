@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 中央カラム（と別ウィンドウ）: 見出し + チャット。
+/// 中央カラム（と別ウィンドウ）: 見出し + 「Claude」「ターミナル」のタブ + チャットかターミナル。
 struct ConversationView: View {
     @Bindable var model: ChatModel
     let room: Room
@@ -9,11 +9,21 @@ struct ConversationView: View {
     var inWindow = false
 
     var body: some View {
+        let shells = model.shells
+        let tab = shells.tab(for: room.id)
         VStack(spacing: 0) {
             // ボタンの吹き出しを下の会話の上に重ねるため、見出しを前に出す。
             ConversationHeader(model: model, room: room, inWindow: inWindow).zIndex(1)
-            if room.isExternal { ExternalBanner(model: model, room: room) }
-            ChatPane(model: model, room: room)
+            RoomTabBar(selection: tab, shellRunning: shells.shell(for: room.id)?.isRunning == true) {
+                shells.select($0, for: room.id)
+            }
+            switch tab {
+            case .claude:
+                if room.isExternal { ExternalBanner(model: model, room: room) }
+                ChatPane(model: model, room: room)
+            case .terminal:
+                ShellPane(model: model, room: room)
+            }
         }
         // 吹き出しの本文は外部由来なので、http / https 以外のリンクは開かない。
         .environment(\.openURL, OpenURLAction { url in
