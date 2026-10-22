@@ -57,3 +57,12 @@ func minimalEnvironment(_ extra: [String: String] = [:]) -> [String: String] {
     env.merge(extra) { _, new in new }
     return env
 }
+
+/// セッションの中のプロセス（一覧を取れなければ失敗にする）。
+func sessionMembers(_ leader: pid_t, file: StaticString = #filePath, line: UInt = #line) -> [ShellSessionStop.Member] {
+    guard let members = ShellSessionStop.sessionProcesses(leader: leader) else {
+        XCTFail("プロセスの一覧を取れません", file: file, line: line)
+        return []
+    }
+    return members
+}

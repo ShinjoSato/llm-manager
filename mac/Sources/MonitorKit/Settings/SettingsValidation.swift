@@ -95,6 +95,12 @@ public enum SettingsValidation {
         } else if command.command.count > ProjectCommands.commandLimit {
             problems.append("コマンドは \(ProjectCommands.commandLimit) 文字までです")
         }
+        if ProjectCommands.containsHiddenCharacters(command.name) || ProjectCommands.containsHiddenCharacters(command.command) {
+            problems.append("見えない文字（方向制御・ゼロ幅）は使えません")
+        }
+        if ProjectCommands.launchesHeadlessClaude(command.command) {
+            problems.append("claude の headless 起動（-p / --print）は実行コマンドにできません（API 課金の経路になるため）")
+        }
         return problems
     }
 

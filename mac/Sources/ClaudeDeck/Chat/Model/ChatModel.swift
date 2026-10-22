@@ -166,9 +166,8 @@ final class ChatModel {
     /// 一覧から消えた外部ルームの添付を片付ける。未接続の間は一覧が古いので触らない。
     private func discardVanishedExternalRooms(_ all: [Room]) {
         guard store.connection.isConnected else { return }
-        let alive = Set(all.map(\.id))
-        outbox.discardVanishedExternalRooms(alive: alive)
-        shells.closeVanishedExternalRooms(alive: alive) { [handover] in handover.inProgress.contains($0) }
+        outbox.discardVanishedExternalRooms(alive: Set(all.map(\.id)))
+        shells.reconcile(rooms: all) { [handover] in handover.inProgress.contains($0) }
     }
 
     private func buildRooms() -> [Room] {
@@ -293,16 +292,32 @@ final class ChatModel {
     }
 
     /// メインと別ウィンドウで出している会話。`includingHiddenMain` ならメインが詳細等を出している間も選択中のルームを含める（戻った時のため）。
+    /// 既読にする時（`includingHiddenMain` が false）は、ターミナルのタブを出しているウィンドウの会話を数えない。
     func shownSessionIds(includingHiddenMain: Bool) -> [String] {
-        let main = includingHiddenMain || center == .room ? selectedRoom?.sessionId : nil
-        return ShownSessions.sessionIds(main: main, detached: detached.rooms.map { room(id: $0)?.sessionId })
+        let mainShowsChat = selection.map { shells.tab(for: $0, window: nil) == .claude } ?? true
+        let main = includingHiddenMain || (center == .room && mainShowsChat) ? selectedRoom?.sessionId : nil
+        let windows = detached.entries.map { entry -> String? in
+            guard includingHiddenMain || shells.tab(for: entry.room, window: entry.token) == .claude else { return nil }
+            return room(id: entry.room)?.sessionId
+        }
+        return ShownSessions.sessionIds(main: main, detached: windows)
     }
 
     // MARK: - ターミナル
 
-    /// 実行コマンドをルームのターミナルで流す（送れなければ警告を出す）。
-    func runCommand(_ command: ProjectCommand, in room: Room) {
-        if let failure = shells.run(command, in: room) { alerts.message = failure }
+    /// 実行コマンドを押した（確かめることがあれば確認を出す。送れなければ警告を出す）。`window` は押したウィンドウ（nil はメイン）。
+    func requestCommand(_ command: ProjectCommand, in room: Room, window: UUID?) {
+        if let failure = shells.request(command, in: room, window: window) { alerts.message = failure }
+    }
+
+    /// 確認で「送る」を押した。
+    func confirmCommand(_ confirmation: ShellConfirmation) {
+        if let failure = shells.confirm(confirmation, room: room(id: confirmation.room)) { alerts.message = failure }
+    }
+
+    /// ターミナルで何かが動いているルームの名前と、ルームの無くなったシェル（終了の確認に使う）。
+    var busyTerminalNames: [String] {
+        shells.busyRooms.compactMap { room(id: $0)?.name } + shells.busyOrphanNames.map { "\($0)（閉じたルーム）" }
     }
 
     // MARK: - 別ウィンドウ
@@ -316,6 +331,7 @@ final class ChatModel {
     /// 別ウィンドウが閉じられた（セッションはそのまま）。
     func roomWindowClosed(_ token: UUID) {
         detached.close(token)
+        shells.windowClosed(token)
     }
 
     /// 警告をメインに出すか（出したウィンドウが閉じられていればメインに回す）。

@@ -14,6 +14,8 @@ public enum ShellStopPlan {
     public static let hangupGrace: TimeInterval = 1
     public static let terminateGrace: TimeInterval = 1.5
     public static let killWait: TimeInterval = 1
+    /// 一覧を取れない時に待ち続けない上限。
+    public static let giveUpAfter: TimeInterval = hangupGrace + terminateGrace + killWait + 2
 
     public static func next(alive: Bool, hangupAt: Date?, terminateAt: Date?, killAt: Date?, now: Date) -> ShellStopStep {
         guard alive else { return .finished }
@@ -25,25 +27,36 @@ public enum ShellStopPlan {
 }
 
 /// PTY のシェルのセッション（シェルと、そこから起動したジョブ。ジョブは別のプロセスグループ）をまとめて止める。
-/// 対象はシェルが先頭のセッションで、最初は同じ端末を持つもの、以降は最初に見つけたグループのものだけ（番号の使い回しで他人を止めないため）。
+/// 対象はシェルが先頭のセッションのうち、同じ端末を持つものか、動いている間に記録したグループのもの（番号の使い回しで他人を止めないため）。
 public final class ShellSessionStop: @unchecked Sendable {
     public let leader: pid_t
     private let lock = NSLock()
+    private let reapLeader: Bool
+    private let startedAt: Date
     private var groups: Set<pid_t>
     private var hangupAt: Date?
     private var terminateAt: Date?
     private var killAt: Date?
     private var done = false
 
-    /// 端末（master）を閉じる前に呼ぶ。セッションの中のプロセスグループを集め、SIGHUP を送る。
-    public init(leader: pid_t, master: Int32, now: Date = Date()) {
+    /// 端末（master）を閉じる前に呼ぶ。対象のグループを集め、SIGHUP を送る。
+    /// `knownGroups` は動いている間に記録したもの（先頭が終わると端末の紐づけが外れるため）。`reapLeader` は先頭をまだ誰も刈り取っていない時。
+    public init(leader: pid_t, master: Int32, knownGroups: Set<pid_t> = [], reapLeader: Bool = false, now: Date = Date()) {
         self.leader = leader
-        let members = Self.sessionProcesses(leader: leader)
-        if let tty = master >= 0 ? Self.ttyDevice(master: master) : nil {
-            groups = Set(members.filter { $0.tty == tty }.map(\.group))
+        self.reapLeader = reapLeader
+        startedAt = now
+        let tty = master >= 0 ? Self.ttyDevice(master: master) : nil
+        var members: [Member]?
+        for _ in 0..<3 where members == nil { members = Self.sessionProcesses(leader: leader) }
+        if let members {
+            groups = Set(members.filter { member in
+                (tty != nil && member.tty == tty) || knownGroups.contains(member.group)
+            }.map(\.group))
+            // 端末で確かめられない時は、先頭がまだ自分の子である間だけ全体を止める。
+            if tty == nil, Self.isOwnChild(leader) { groups.formUnion(members.map(\.group)) }
         } else {
-            // 端末で確かめられない時は、先頭がまだ自分の子である間だけ止める。
-            groups = Self.isOwnChild(leader) ? Set(members.map(\.group)) : []
+            groups = knownGroups
+            if Self.isOwnChild(leader) { groups.insert(leader) }
         }
         _ = advance(now: now)
     }
@@ -53,23 +66,27 @@ public final class ShellSessionStop: @unchecked Sendable {
     public func advance(now: Date) -> Bool {
         lock.withLock {
             guard !done else { return true }
-            let alive = !groups.isEmpty && !livingGroups().isEmpty
-            switch ShellStopPlan.next(alive: alive, hangupAt: hangupAt, terminateAt: terminateAt, killAt: killAt, now: now) {
+            guard let living = livingGroups() else {
+                // 一覧を取れなかった。次の周回でやり直し、上限を過ぎたらあきらめる。
+                if now.timeIntervalSince(startedAt) >= ShellStopPlan.giveUpAfter { finish() }
+                return done
+            }
+            switch ShellStopPlan.next(alive: !living.isEmpty, hangupAt: hangupAt, terminateAt: terminateAt, killAt: killAt, now: now) {
             case .hangup:
-                signalGroups(SIGHUP)
+                signal(living, SIGHUP)
                 hangupAt = now
             case .terminate:
-                signalGroups(SIGTERM)
+                signal(living, SIGTERM)
                 // 一時停止中のジョブにも届くよう動かす。
-                signalGroups(SIGCONT)
+                signal(living, SIGCONT)
                 terminateAt = now
             case .kill:
-                signalGroups(SIGKILL)
+                signal(living, SIGKILL)
                 killAt = now
             case .wait:
                 break
             case .finished:
-                done = true
+                finish()
             }
             return done
         }
@@ -89,13 +106,27 @@ public final class ShellSessionStop: @unchecked Sendable {
         ProcessGroup.advanceAllBlocking(stops.map { stop in { stop.advance(now: $0) } })
     }
 
-    /// 最初に集めたグループのうち、まだセッションの中に生きているもの。
-    private func livingGroups() -> Set<pid_t> {
-        Set(Self.sessionProcesses(leader: leader).map(\.group)).intersection(groups)
+    private func finish() {
+        done = true
+        guard reapLeader else { return }
+        // SwiftTerm は terminate で終了の見張りをやめるので、先頭のゾンビはこちらで刈り取る。
+        var status: Int32 = 0
+        guard waitpid(leader, &status, WNOHANG) == 0 else { return }
+        let leader = leader
+        DispatchQueue.global(qos: .utility).async {
+            var status: Int32 = 0
+            waitpid(leader, &status, 0)
+        }
     }
 
-    private func signalGroups(_ signal: Int32) {
-        for group in livingGroups() { killpg(group, signal) }
+    /// 集めたグループのうち、まだセッションの中に生きているもの（一覧を取れなければ nil）。
+    private func livingGroups() -> Set<pid_t>? {
+        guard !groups.isEmpty else { return [] }
+        return Self.sessionProcesses(leader: leader).map { Set($0.map(\.group)).intersection(groups) }
+    }
+
+    private func signal(_ targets: Set<pid_t>, _ signal: Int32) {
+        for group in targets { killpg(group, signal) }
     }
 
     // MARK: - プロセスの一覧
@@ -106,20 +137,28 @@ public final class ShellSessionStop: @unchecked Sendable {
         var tty: dev_t
     }
 
-    /// 自分の uid のプロセスのうち、`leader` が先頭のセッションにいて終わっていないもの。
-    static func sessionProcesses(leader: pid_t) -> [Member] {
+    /// 動いているシェルのセッションのうち、同じ端末を持つグループ（記録用。一覧を取れなければ nil）。
+    public static func currentGroups(leader: pid_t, master: Int32) -> Set<pid_t>? {
+        guard master >= 0, let tty = ttyDevice(master: master) else { return nil }
+        return sessionProcesses(leader: leader, tty: tty).map { Set($0.map(\.group)) }
+    }
+
+    /// 自分の uid のプロセスのうち、`leader` が先頭のセッションにいて終わっていないもの（`tty` があればその端末のものだけ）。一覧を取れなければ nil。
+    static func sessionProcesses(leader: pid_t, tty: dev_t? = nil) -> [Member]? {
         guard leader > 1, leader != getpid() else { return [] }
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_UID, Int32(bitPattern: getuid())]
         var size = 0
-        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return nil }
         let stride = MemoryLayout<kinfo_proc>.stride
         // 測った後に増えても入るよう、少し余らせる。
         var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / stride + 16)
         size = procs.count * stride
-        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return [] }
+        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return nil }
         return procs.prefix(size / stride).compactMap { info in
             let pid = info.kp_proc.p_pid
-            guard pid > 1, info.kp_proc.p_stat != SZOMB, getsid(pid) == leader else { return nil }
+            guard pid > 1, info.kp_proc.p_stat != SZOMB else { return nil }
+            if let tty, info.kp_eproc.e_tdev != tty { return nil }
+            guard getsid(pid) == leader else { return nil }
             return Member(pid: pid, group: info.kp_eproc.e_pgid, tty: info.kp_eproc.e_tdev)
         }
     }

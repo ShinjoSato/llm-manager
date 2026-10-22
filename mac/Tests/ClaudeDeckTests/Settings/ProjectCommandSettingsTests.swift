@@ -82,6 +82,39 @@ final class ProjectCommandSettingsTests: XCTestCase {
         XCTAssertEqual(ProjectCommands.help(for: commands[0]), "npm run dev")
     }
 
+    func testHeadlessClaudeIsRejected() {
+        for text in ["claude -p 'hi'", "claude --print hi", "cd web && claude -c -p x", "command claude -p x", "exec claude --print",
+                     "/usr/local/bin/claude -p x", "~/.claude/local/claude -p", "npx @anthropic-ai/claude-code -p hi",
+                     "echo a | claude -cp", "FOO=1 claude --model opus -p", "(claude -p x)", "x=$(claude -p y)", "\"claude\" '-p'",
+                     "npm test\nclaude --print=json"] {
+            XCTAssertTrue(ProjectCommands.launchesHeadlessClaude(text), text)
+            XCTAssertTrue(SettingsValidation.projectCommandProblems(ProjectCommand(name: "a", command: text))
+                .contains { $0.contains("headless") }, text)
+        }
+        for text in ["claude", "claude --continue", "claude --model opus", "npm run dev -p 3000", "claude-deck -p", "git log -p",
+                     "claude mcp list"] {
+            XCTAssertFalse(ProjectCommands.launchesHeadlessClaude(text), text)
+        }
+        XCTAssertTrue(ProjectCommands.runnable([ProjectCommand(name: "a", command: "claude -p hi")]).isEmpty)
+    }
+
+    func testHiddenCharactersAreRejected() {
+        for scalar in [0x202E, 0x2066, 0x200B, 0x200F, 0xFEFF, 0x2060] {
+            let hidden = String(UnicodeScalar(scalar)!)
+            XCTAssertTrue(SettingsValidation.projectCommandProblems(ProjectCommand(name: "a", command: "ls \(hidden)-la"))
+                .contains("見えない文字（方向制御・ゼロ幅）は使えません"), String(scalar, radix: 16))
+            XCTAssertFalse(SettingsValidation.projectCommandProblems(ProjectCommand(name: "a\(hidden)", command: "ls")).isEmpty)
+        }
+        XCTAssertEqual(SettingsValidation.projectCommandProblems(ProjectCommand(name: "テスト", command: "echo 日本語 → ✓")), [])
+    }
+
+    func testApprovalKeyDependsOnBodyOnly() {
+        let a = ProjectCommands.approvalKey(ProjectCommand(name: "dev", command: "npm run dev"))
+        XCTAssertEqual(a, ProjectCommands.approvalKey(ProjectCommand(name: "other", command: "npm run dev", icon: "bolt")))
+        XCTAssertNotEqual(a, ProjectCommands.approvalKey(ProjectCommand(name: "dev", command: "npm run dev; rm -rf x")))
+        XCTAssertEqual(a.count, 64)
+    }
+
     func testImportAddsMissingCommandsOnly() throws {
         let incoming = DeckSettings(projects: [
             ManagedProject(name: "a", path: "/p/a", commands: [ProjectCommand(name: "dev", command: "incoming dev"),

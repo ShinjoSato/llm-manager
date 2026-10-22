@@ -58,8 +58,10 @@ private struct RoomTabButton: View {
 struct ShellPane: View {
     let model: ChatModel
     let room: Room
-    /// この画面（メインか別ウィンドウ）の印。端末は名乗り出た最後の 1 か所にだけ載る。
-    @State private var hostId = UUID()
+    /// 別ウィンドウの印（nil はメイン）。端末は名乗り出た最後の 1 か所にだけ載り、別ウィンドウを閉じた時はこの印で手放す。
+    let window: UUID?
+
+    private var hostId: UUID { window ?? RoomShells.mainWindow }
 
     var body: some View {
         let shells = model.shells
@@ -90,16 +92,23 @@ struct ShellPane: View {
                 .onAppear { shell.start() }
         case .running, .exited:
             VStack(spacing: 0) {
+                if !shell.scrubsEachCommand { UnguardedNotice() }
                 ZStack {
                     ShellTerminalHost(shell: shell, hostId: hostId)
                         .padding(.leading, 8)
                         .padding(.vertical, 4)
                     if let owner = shell.hosts.owner, owner != hostId {
-                        ShownElsewhere { shell.claim(hostId) }
+                        ShownElsewhere {
+                            shell.claim(hostId)
+                            shell.requestFocus()
+                        }
                     }
                 }
-                if case .exited(let code) = shell.phase {
-                    ShellEndedBar(code: code) { shell.start() }
+                if let message = shell.exitMessage {
+                    ShellEndedBar(message: message) {
+                        shell.start()
+                        shell.requestFocus()
+                    }
                 }
             }
         }
@@ -121,15 +130,32 @@ private struct ShownElsewhere: View {
     }
 }
 
+/// コマンドごとに API キーを外す守りが効いていない時の注意（zsh 以外・起動ファイルを用意できなかった）。
+private struct UnguardedNotice: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(ChatTheme.permission)
+            Text("このシェルでは、コマンドの実行ごとに API キーを外す守りが効いていません（起動時の環境からは外しています）。設定ファイルや direnv 等が ANTHROPIC_API_KEY を戻すと、ここで打った claude に渡ります。")
+                .font(ChatTheme.caption)
+                .foregroundStyle(ChatTheme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .headerBackground()
+    }
+}
+
 /// シェルが終わった時の帯。
 private struct ShellEndedBar: View {
-    let code: Int32?
+    let message: String
     let reopen: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "stop.circle").foregroundStyle(ChatTheme.tertiary)
-            Text(code.map { "シェルは終了しました（終了コード \($0)）" } ?? "シェルは終了しました")
+            Text(message)
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.secondary)
             Spacer()

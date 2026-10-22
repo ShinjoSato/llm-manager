@@ -240,6 +240,10 @@ final class QuitConfirmationTests: XCTestCase {
                        + "「作業が終わったら終了」は稼働中の作業が終わるのを待ちます（権限待ち・入力待ちのルームは待たずに中断します）。")
         XCTAssertTrue(QuitConfirmation.message(busy: [room("x", .permission)], resumesOnLaunch: false)
             .hasPrefix("権限待ち 1 件（x）。終了すると中断します。"))
+        XCTAssertEqual(QuitConfirmation.message(busy: [], terminals: ["web", "api"], resumesOnLaunch: true),
+                       "ターミナルで動いているもの 2 件（web、api）は、終了すると止めます（次の起動で再開しません）。")
+        XCTAssertTrue(QuitConfirmation.message(busy: [room("x", .working)], terminals: ["web"], resumesOnLaunch: true)
+            .hasSuffix("\nターミナルで動いているもの 1 件（web）は、終了すると止めます（次の起動で再開しません）。"))
     }
 
     func testSystemQuitReasons() {

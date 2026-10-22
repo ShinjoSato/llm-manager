@@ -89,7 +89,7 @@ struct ProjectCommandsEditor: View {
         } header: {
             Text("実行コマンド")
         } footer: {
-            Text("このプロジェクトのルームの見出しにボタンで出し、押すとルームの「ターミナル」のタブ（ルームのフォルダのログインシェル）で実行します。複数行も 1 回の貼り付けとして入れて Enter を送ります。何かが動いている最中は確認を出します。名前はプロジェクトの中で重ねられません（\(ProjectCommands.nameLimit) 文字まで）。")
+            Text("このプロジェクトのルームの見出しにボタンで出し、押すとルームの「ターミナル」のタブ（ルームのフォルダのログインシェル）で実行します。複数行も 1 回の貼り付けとして入れて Enter を送ります。何かが動いている最中・打ちかけの入力がある時・ここ以外で書き換わった本文を初めて送る時は確認を出します。claude の headless 起動（-p / --print）は登録できません。名前はプロジェクトの中で重ねられません（\(ProjectCommands.nameLimit) 文字まで）。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .onAppear { load(project.commands) }
@@ -157,7 +157,8 @@ struct ProjectCommandsEditor: View {
     private func load(_ commands: [ProjectCommand]) {
         rows = commands.map(Row.init)
         loaded = rows.map(\.raw)
-        problems = []
+        // 手で書いた不正な行も、開いた時から理由を出す。
+        problems = rowProblems
     }
 
     private func commit() {
@@ -173,6 +174,8 @@ struct ProjectCommandsEditor: View {
             store.cancelPending(key: key)
             return
         }
+        // 設定画面で書いた本文は、見ながら書いたものなので確かめ済みにする。
+        CommandApprovalStore.shared.approve(commands)
         store.scheduleProject(id: project.id, field: "commands", \.commands, commands)
     }
 }

@@ -4,7 +4,8 @@ import MonitorKit
 struct ConversationHeader: View {
     let model: ChatModel
     let room: Room
-    var inWindow = false
+    /// 別ウィンドウの印（nil はメイン）。
+    var window: UUID? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -33,7 +34,7 @@ struct ConversationHeader: View {
             .frame(minWidth: HeaderLayout.titleMinWidth, alignment: .leading)
             Spacer(minLength: 12)
             // 名前を最小幅まで縮めてからボタンを「…」に回す。
-            EditorButtons(model: model, room: room, opensWindow: !inWindow).layoutPriority(1)
+            EditorButtons(model: model, room: room, window: window).layoutPriority(1)
         }
         .centerHeaderBar()
     }
@@ -56,10 +57,9 @@ struct StatusBadge: View {
 struct EditorButtons: View {
     let model: ChatModel
     let room: Room
-    var opensWindow = true
+    /// 別ウィンドウの印（nil はメイン。別ウィンドウには「別ウィンドウで開く」を出さない）。
+    var window: UUID? = nil
     @State private var confirmingClose = false
-    /// 動いている最中に押した実行コマンド（確認を出している間）。
-    @State private var confirmingCommand: ProjectCommand?
 
     var body: some View {
         let editors = model.editors
@@ -71,30 +71,16 @@ struct EditorButtons: View {
         if let links = HeaderAction.links(priority: 2, editors: editors, target: target) { actions.append(links) }
         actions += HeaderAction.xcode(openPriority: 4, closePriority: 1, editors: editors, target: target,
                                       project: xcodeProject) { confirmingClose = true }
-        if opensWindow { actions.append(HeaderAction.openInWindow(priority: 3, subpriority: -1) { [model, room] in model.openWindow(for: room.id) }) }
+        if window == nil { actions.append(HeaderAction.openInWindow(priority: 3, subpriority: -1) { [model, room] in model.openWindow(for: room.id) }) }
         // 実行コマンドは既存のボタンより先に「…」へ回す。
-        let commands = HeaderAction.commands(priority: 0, commands: editors.projectCommands(for: target, cwd: room.cwd)) { [model, room] command in
-            if model.shells.needsConfirmation(for: room) {
-                confirmingCommand = command
-            } else {
-                model.runCommand(command, in: room)
-            }
+        let commands = HeaderAction.commands(priority: 0, commands: editors.projectCommands(for: target, cwd: room.cwd)) { [model, room, window] command in
+            model.requestCommand(command, in: room, window: window)
         }
         return HStack(spacing: 6) {
             EditorNoteText(note: editors.notes[target.key])
             HeaderActionRow(actions: commands + actions).layoutPriority(1)
         }
         .xcodeCloseConfirmation(isPresented: $confirmingClose, editors: editors, target: target, project: xcodeProject)
-        .confirmationDialog("ターミナルで何かが動いています", isPresented: Binding(get: { confirmingCommand != nil },
-                                                                         set: { if !$0 { confirmingCommand = nil } })) {
-            Button("送る") {
-                if let command = confirmingCommand { model.runCommand(command, in: room) }
-                confirmingCommand = nil
-            }
-            Button("やめる", role: .cancel) { confirmingCommand = nil }
-        } message: {
-            Text("シェルのプロンプトに戻っていないため、「\(confirmingCommand?.name ?? "")」の本文は動いているプログラムへの入力として渡ります。送りますか？")
-        }
     }
 }
 

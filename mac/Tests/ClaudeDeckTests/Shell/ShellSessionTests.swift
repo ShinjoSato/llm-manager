@@ -73,14 +73,14 @@ final class ShellSessionStopTests: XCTestCase {
         try await waitUntil { ShellForeground.current(master: master, shellPid: pid) == .prompt }
         pty.type("sleep 301 &\r")
         pty.type("/bin/sh -c 'trap \"\" HUP TERM; exec sleep 302' &!\r")
-        try await waitUntil { Set(ShellSessionStop.sessionProcesses(leader: pid).map(\.group)).count >= 3 }
-        let members = ShellSessionStop.sessionProcesses(leader: pid)
+        try await waitUntil { Set(sessionMembers(pid).map(\.group)).count >= 3 }
+        let members = sessionMembers(pid)
         XCTAssertTrue(members.contains { $0.pid == pid })
 
         let stop = ShellSessionStop(leader: pid, master: master)
         pty.process.terminate()
         await stop.finish()
-        XCTAssertTrue(ShellSessionStop.sessionProcesses(leader: pid).isEmpty, "\(ShellSessionStop.sessionProcesses(leader: pid))")
+        XCTAssertTrue(sessionMembers(pid).isEmpty, "\(sessionMembers(pid))")
         for member in members { XCTAssertFalse(isAlive(member.pid), "\(member.pid) が残っている") }
         XCTAssertTrue(isAlive(outsider), "セッションの外のプロセスまで止めた")
     }
@@ -96,16 +96,35 @@ final class ShellSessionStopTests: XCTestCase {
             try await waitUntil { ShellForeground.current(master: master, shellPid: pid) == .prompt }
             pty.type("sleep 303 &\r")
         }
-        try await waitUntil { ptys.allSatisfy { Set(ShellSessionStop.sessionProcesses(leader: $0.pid).map(\.group)).count >= 2 } }
+        try await waitUntil { ptys.allSatisfy { Set(sessionMembers($0.pid).map(\.group)).count >= 2 } }
         let stops = ptys.map { ShellSessionStop(leader: $0.pid, master: $0.master) }
         ptys.forEach { $0.process.terminate() }
         ShellSessionStop.finishAllBlocking(stops)
-        for pty in ptys { XCTAssertTrue(ShellSessionStop.sessionProcesses(leader: pty.pid).isEmpty) }
+        for pty in ptys { XCTAssertTrue(sessionMembers(pty.pid).isEmpty) }
+    }
+
+    /// シェルが自分で終わると端末の紐づけが外れるので、動いている間に記録したグループから残ったジョブを探して止める。
+    func testStopsJobsLeftAfterShellExitedUsingRecordedGroups() async throws {
+        let pty = DummyPTY(executable: "/bin/zsh", args: ["-f", "-i"], environment: ShellLaunch.make(base: minimalEnvironment(), wrapperDirectory: nil).environmentList)
+        defer { pty.kill() }
+        let master = pty.master, pid = pty.pid
+        try await waitUntil { ShellForeground.current(master: master, shellPid: pid) == .prompt }
+        pty.type("/bin/sh -c 'trap \"\" HUP; exec sleep 305' &!\r")
+        try await waitUntil { (ShellSessionStop.currentGroups(leader: pid, master: master)?.count ?? 0) >= 2 }
+        let recorded = try XCTUnwrap(ShellSessionStop.currentGroups(leader: pid, master: master))
+        let job = try XCTUnwrap(sessionMembers(pid).first { $0.pid != pid })
+        pty.type("exit\r")
+        try await waitUntil { pty.recorder.hasExited && !isAlive(pid) }
+        XCTAssertTrue(isAlive(job.pid), "HUP を無視するジョブが残っていない（試験の前提が崩れている）")
+
+        let stop = ShellSessionStop(leader: pid, master: master, knownGroups: recorded)
+        await stop.finish()
+        XCTAssertFalse(isAlive(job.pid), "残ったジョブが止まっていない")
     }
 
     func testLeaderOutsideOurSessionsIsLeftAlone() {
-        XCTAssertTrue(ShellSessionStop.sessionProcesses(leader: 1).isEmpty)
-        XCTAssertTrue(ShellSessionStop.sessionProcesses(leader: getpid()).isEmpty)
+        XCTAssertTrue(sessionMembers(1).isEmpty)
+        XCTAssertTrue(sessionMembers(getpid()).isEmpty)
         XCTAssertFalse(ShellSessionStop.isOwnChild(getsid(0)))
     }
 
@@ -123,5 +142,42 @@ final class ShellSessionStopTests: XCTestCase {
         kill(pid, SIGKILL)
         var status: Int32 = 0
         waitpid(pid, &status, 0)
+    }
+}
+
+final class ShellSendRulesTests: XCTestCase {
+    func testPendingLineInputFollowsKeys() {
+        XCTAssertTrue(ShellLineInput.pending(after: Array("ls".utf8), previous: false))
+        XCTAssertFalse(ShellLineInput.pending(after: [0x0D], previous: true))
+        XCTAssertFalse(ShellLineInput.pending(after: [0x03], previous: true))
+        XCTAssertTrue(ShellLineInput.pending(after: [0x1B, 0x5B, 0x41], previous: false), "履歴を呼び出した")
+        XCTAssertTrue(ShellLineInput.pending(after: [0x04], previous: true))
+        XCTAssertFalse(ShellLineInput.pending(after: [0x04], previous: false))
+        XCTAssertFalse(ShellLineInput.pending(after: [0x1B, 0x5B, 0x49], previous: false), "フォーカスの知らせ")
+        XCTAssertFalse(ShellLineInput.pending(after: Array("\u{1b}[200~npm test\u{1b}[201~\r".utf8), previous: true))
+    }
+
+    func testExitStatusMessage() {
+        XCTAssertEqual(ShellExitStatus.message(rawStatus: 0), "シェルは終了しました（終了コード 0）")
+        XCTAssertEqual(ShellExitStatus.message(rawStatus: 3 << 8), "シェルは終了しました（終了コード 3）")
+        XCTAssertEqual(ShellExitStatus.message(rawStatus: SIGKILL), "シェルは終了しました（シグナル 9 で終了）")
+        XCTAssertEqual(ShellExitStatus.message(rawStatus: nil), "シェルは終了しました")
+    }
+
+    func testSendReasons() {
+        let now = Date(timeIntervalSince1970: 100)
+        XCTAssertEqual(ShellSendCheck.reasons(approved: true, running: true, foreground: .prompt, pendingInput: false,
+                                              queued: false, lastSentAt: nil, now: now), [])
+        XCTAssertEqual(ShellSendCheck.reasons(approved: false, running: false, foreground: .unknown, pendingInput: true,
+                                              queued: true, lastSentAt: now, now: now), [.notApproved])
+        XCTAssertEqual(ShellSendCheck.reasons(approved: true, running: true, foreground: .busy, pendingInput: true,
+                                              queued: false, lastSentAt: now - 1, now: now), [.busy, .pendingInput, .queued])
+        XCTAssertEqual(ShellSendCheck.reasons(approved: true, running: true, foreground: .prompt, pendingInput: false,
+                                              queued: true, lastSentAt: nil, now: now), [.queued])
+        XCTAssertEqual(ShellSendCheck.reasons(approved: true, running: true, foreground: .prompt, pendingInput: false,
+                                              queued: false, lastSentAt: now - ShellSendCheck.repeatWindow, now: now), [])
+        XCTAssertTrue(ShellSendCheck.stillSafe(foreground: .prompt, pendingInput: false))
+        XCTAssertFalse(ShellSendCheck.stillSafe(foreground: .prompt, pendingInput: true))
+        XCTAssertFalse(ShellSendCheck.stillSafe(foreground: .busy, pendingInput: false))
     }
 }

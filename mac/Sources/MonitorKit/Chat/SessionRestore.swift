@@ -306,21 +306,28 @@ public enum QuitConfirmation {
         working(rooms).isEmpty
     }
 
-    /// 稼働中と権限待ちを分けて名前を 3 件まで並べ、待ちの扱いも書く。
-    public static func message(busy rooms: [Room], resumesOnLaunch: Bool) -> String {
-        var groups: [String] = []
-        let working = Self.working(rooms)
-        let permission = rooms.filter { $0.status == .permission }
-        if !working.isEmpty { groups.append("稼働中 \(working.count) 件（\(names(working))）") }
-        if !permission.isEmpty { groups.append("権限待ち \(permission.count) 件（\(names(permission))）") }
-        let tail = resumesOnLaunch ? "終了すると中断し、次の起動時に再開します。" : "終了すると中断します。"
-        return groups.joined(separator: "・") + "。" + tail
-            + "「作業が終わったら終了」は稼働中の作業が終わるのを待ちます（権限待ち・入力待ちのルームは待たずに中断します）。"
+    /// 稼働中と権限待ちを分けて名前を 3 件まで並べ、待ちの扱いも書く。`terminals` はルームのターミナルで何かが動いているもの（再開しない）。
+    public static func message(busy rooms: [Room], terminals: [String] = [], resumesOnLaunch: Bool) -> String {
+        var parts: [String] = []
+        if !rooms.isEmpty {
+            var groups: [String] = []
+            let working = Self.working(rooms)
+            let permission = rooms.filter { $0.status == .permission }
+            if !working.isEmpty { groups.append("稼働中 \(working.count) 件（\(names(working.map(\.name)))）") }
+            if !permission.isEmpty { groups.append("権限待ち \(permission.count) 件（\(names(permission.map(\.name)))）") }
+            let tail = resumesOnLaunch ? "終了すると中断し、次の起動時に再開します。" : "終了すると中断します。"
+            parts.append(groups.joined(separator: "・") + "。" + tail
+                + "「作業が終わったら終了」は稼働中の作業が終わるのを待ちます（権限待ち・入力待ちのルームは待たずに中断します）。")
+        }
+        if !terminals.isEmpty {
+            parts.append("ターミナルで動いているもの \(terminals.count) 件（\(names(terminals))）は、終了すると止めます（次の起動で再開しません）。")
+        }
+        return parts.joined(separator: "\n")
     }
 
-    private static func names(_ rooms: [Room]) -> String {
-        var list = rooms.prefix(3).map(\.name).joined(separator: "、")
-        if rooms.count > 3 { list += " ほか \(rooms.count - 3) 件" }
+    private static func names(_ names: [String]) -> String {
+        var list = names.prefix(3).joined(separator: "、")
+        if names.count > 3 { list += " ほか \(names.count - 3) 件" }
         return list
     }
 

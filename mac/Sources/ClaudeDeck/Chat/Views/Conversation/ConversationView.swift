@@ -5,30 +5,54 @@ import MonitorKit
 struct ConversationView: View {
     @Bindable var model: ChatModel
     let room: Room
-    /// 別ウィンドウの中か（見出しに「別ウィンドウで開く」を出さない）。
-    var inWindow = false
+    /// 別ウィンドウの印（nil はメイン）。見出しに「別ウィンドウで開く」を出さず、タブと確認はウィンドウごとに持つ。
+    var window: UUID? = nil
 
     var body: some View {
         let shells = model.shells
-        let tab = shells.tab(for: room.id)
+        let tab = shells.tab(for: room.id, window: window)
         VStack(spacing: 0) {
             // ボタンの吹き出しを下の会話の上に重ねるため、見出しを前に出す。
-            ConversationHeader(model: model, room: room, inWindow: inWindow).zIndex(1)
+            ConversationHeader(model: model, room: room, window: window).zIndex(1)
             RoomTabBar(selection: tab, shellRunning: shells.shell(for: room.id)?.isRunning == true) {
-                shells.select($0, for: room.id)
+                shells.select($0, for: room.id, window: window)
+                // 会話に戻ったら、そこまでを読んだことにする。
+                model.markShownSeen()
             }
             switch tab {
             case .claude:
                 if room.isExternal { ExternalBanner(model: model, room: room) }
                 ChatPane(model: model, room: room)
             case .terminal:
-                ShellPane(model: model, room: room)
+                ShellPane(model: model, room: room, window: window)
             }
+        }
+        .onAppear { shells.beginShowing(room.id, window: window) }
+        .alert("実行コマンドを送りますか？", isPresented: Binding(get: { pendingConfirmation != nil },
+                                                        set: { if !$0 { shells.confirmation = nil } }),
+               presenting: pendingConfirmation) { confirmation in
+            Button("送る") { model.confirmCommand(confirmation) }
+            Button("やめる", role: .cancel) { shells.confirmation = nil }
+        } message: { confirmation in
+            Text(Self.confirmationText(confirmation))
         }
         // 吹き出しの本文は外部由来なので、http / https 以外のリンクは開かない。
         .environment(\.openURL, OpenURLAction { url in
             ChatMarkdown.isOpenableLink(url) ? .systemAction : .discarded
         })
+    }
+
+    /// このウィンドウで答える確認（押したウィンドウが閉じられていればメインで答える）。
+    private var pendingConfirmation: ShellConfirmation? {
+        guard let confirmation = model.shells.confirmation, confirmation.room == room.id else { return nil }
+        if confirmation.window == window { return confirmation }
+        let orphaned = confirmation.window.map { model.detached.room(for: $0) == nil } ?? false
+        return window == nil && orphaned ? confirmation : nil
+    }
+
+    static func confirmationText(_ confirmation: ShellConfirmation) -> String {
+        let reasons = confirmation.reasons.map(\.message).joined(separator: "\n")
+        return "「\(confirmation.command.name)」\n\n\(confirmation.command.command)\n\n\(reasons)"
     }
 }
 
