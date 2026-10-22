@@ -8,6 +8,10 @@ struct JumpToLatestButton: View {
     @State private var hovering = false
 
     private static let size: CGFloat = 34
+    /// 欄の右端からボタンまで（重ね表示のスクロールバーを避ける）。
+    static let trailingInset: CGFloat = 14
+    /// 会話の列の右に空けておく幅（ボタンと、列との間の 6pt）。
+    static let reservedGutter: CGFloat = trailingInset + size + 6
 
     var body: some View {
         let badge = LatestJump.badge(for: newCount)

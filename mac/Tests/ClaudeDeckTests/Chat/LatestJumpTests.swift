@@ -37,68 +37,139 @@ final class LatestJumpTests: XCTestCase {
 
     // MARK: - 出す / 消す
 
+    private func items(_ ids: String...) -> [ChatEntry] {
+        ids.map { id in id.hasPrefix("outgoing:") ? entry(id, .outgoing) : entry(id) }
+    }
+
     func testShowsOnlyAfterGoingFarAndHidesBackAtBottom() {
         var jump = LatestJump()
         XCTAssertFalse(jump.showsButton)
-        jump.enter(.near, ids: ["a"])
+        XCTAssertTrue(jump.followsBottom)
+        jump.enter(.near, entries: items("a"))
         XCTAssertFalse(jump.showsButton)
-        jump.enter(.far, ids: ["a"])
+        XCTAssertFalse(jump.followsBottom)
+        jump.enter(.far, entries: items("a"))
         XCTAssertTrue(jump.showsButton)
-        jump.enter(.bottom, ids: ["a"])
+        jump.enter(.bottom, entries: items("a"))
         XCTAssertFalse(jump.showsButton)
+        XCTAssertTrue(jump.followsBottom)
         XCTAssertNil(jump.baseline)
     }
 
     func testStaysShownWhileWobblingInTheNearBand() {
         var jump = LatestJump()
-        jump.enter(.far, ids: ["a"])
-        jump.enter(.near, ids: ["a"])
+        jump.enter(.far, entries: items("a"))
+        jump.enter(.near, entries: items("a"))
         XCTAssertTrue(jump.showsButton)
-        jump.enter(.far, ids: ["a"])
-        jump.enter(.near, ids: ["a"])
+        jump.enter(.far, entries: items("a"))
+        jump.enter(.near, entries: items("a"))
         XCTAssertTrue(jump.showsButton)
+    }
+
+    func testEnteringTheSameZoneAgainChangesNothing() {
+        var jump = LatestJump()
+        jump.enter(.far, entries: items("a"))
+        let before = jump
+        jump.enter(.far, entries: items("a", "b"))
+        XCTAssertEqual(jump, before)
+    }
+
+    // MARK: - 押した後の動き
+
+    func testKeepsFollowingWhileJumpingThroughTheMiddleZones() {
+        var jump = LatestJump()
+        jump.enter(.far, entries: items("a"))
+        jump.startJump()
+        XCTAssertFalse(jump.showsButton)
+        XCTAssertTrue(jump.followsBottom)
+        jump.enter(.near, entries: items("a", "b"))
+        XCTAssertTrue(jump.followsBottom)
+        XCTAssertNil(jump.baseline)
+        jump.enter(.bottom, entries: items("a", "b"))
+        XCTAssertNil(jump.jumping)
+        XCTAssertTrue(jump.followsBottom)
+    }
+
+    func testTimeoutWithoutReachingTheBottomFallsBackToTheCurrentZone() {
+        var jump = LatestJump()
+        jump.enter(.far, entries: items("a"))
+        let generation = jump.startJump()
+        jump.enter(.far, entries: items("a"))
+        XCTAssertFalse(jump.showsButton)
+        jump.finishJump(generation, entries: items("a", "b"))
+        XCTAssertNil(jump.jumping)
+        XCTAssertFalse(jump.followsBottom)
+        XCTAssertTrue(jump.showsButton)
+        XCTAssertEqual(jump.newCount(entries: items("a", "b", "c")), 1)
+    }
+
+    func testStaleTimeoutDoesNotEndANewerJump() {
+        var jump = LatestJump()
+        let first = jump.startJump()
+        let second = jump.startJump()
+        jump.finishJump(first, entries: items("a"))
+        XCTAssertEqual(jump.jumping, second)
+    }
+
+    func testTimeoutAfterArrivingDoesNothing() {
+        var jump = LatestJump()
+        jump.enter(.far, entries: items("a"))
+        let generation = jump.startJump()
+        jump.enter(.bottom, entries: items("a"))
+        let arrived = jump
+        jump.finishJump(generation, entries: items("a"))
+        XCTAssertEqual(jump, arrived)
+    }
+
+    func testResetFollowsTheBottomAgain() {
+        var jump = LatestJump()
+        jump.enter(.far, entries: items("a"))
+        jump.reset()
+        XCTAssertFalse(jump.showsButton)
+        XCTAssertTrue(jump.followsBottom)
+        XCTAssertEqual(jump.newCount(entries: items("a", "b")), 0)
     }
 
     // MARK: - 新着の数
 
     func testCountsItemsAddedAfterLeavingTheBottom() {
         var jump = LatestJump()
-        jump.enter(.near, ids: ["a", "b"])
+        jump.enter(.near, entries: items("a", "b"))
         // 離れた時点より後に増えた分は、遠くへ行く前に届いても数える。
-        jump.enter(.far, ids: ["a", "b", "c"])
-        XCTAssertEqual(jump.newCount(ids: ["a", "b", "c", "d"]), 2)
+        jump.enter(.far, entries: items("a", "b", "c"))
+        XCTAssertEqual(jump.newCount(entries: items("a", "b", "c", "d")), 2)
     }
 
     func testCountIsZeroWhileTheButtonIsHidden() {
         var jump = LatestJump()
-        jump.enter(.near, ids: ["a"])
-        XCTAssertEqual(jump.newCount(ids: ["a", "b"]), 0)
+        jump.enter(.near, entries: items("a"))
+        XCTAssertEqual(jump.newCount(entries: items("a", "b")), 0)
     }
 
     func testReturningToBottomResetsTheCount() {
         var jump = LatestJump()
-        jump.enter(.far, ids: ["a"])
-        XCTAssertEqual(jump.newCount(ids: ["a", "b"]), 1)
-        jump.enter(.bottom, ids: ["a", "b"])
-        jump.enter(.far, ids: ["a", "b"])
-        XCTAssertEqual(jump.newCount(ids: ["a", "b"]), 0)
-        XCTAssertEqual(jump.newCount(ids: ["a", "b", "c"]), 1)
+        jump.enter(.far, entries: items("a"))
+        XCTAssertEqual(jump.newCount(entries: items("a", "b")), 1)
+        jump.enter(.bottom, entries: items("a", "b"))
+        jump.enter(.far, entries: items("a", "b"))
+        XCTAssertEqual(jump.newCount(entries: items("a", "b")), 0)
+        XCTAssertEqual(jump.newCount(entries: items("a", "b", "c")), 1)
     }
 
-    func testResetHidesAndClears() {
+    func testOutgoingSentAfterLeavingIsCountedOnceEvenWhenReplaced() {
         var jump = LatestJump()
-        jump.enter(.far, ids: ["a"])
-        jump.reset()
-        XCTAssertFalse(jump.showsButton)
-        XCTAssertEqual(jump.newCount(ids: ["a", "b"]), 0)
+        jump.enter(.far, entries: items("a"))
+        XCTAssertEqual(jump.newCount(entries: items("a", "outgoing:1")), 1)
+        XCTAssertEqual(jump.newCount(entries: items("a", "u1")), 1)
     }
 
-    func testReplacedItemIsNotCountedTwice() {
+    func testOutgoingSentBeforeLeavingIsNotCountedWhenReplaced() {
         var jump = LatestJump()
-        jump.enter(.far, ids: ["a"])
-        XCTAssertEqual(jump.newCount(ids: ["a", "outgoing:1"]), 1)
-        // 送信中の発話が記録に載って差し替わっても 1 件のまま。
-        XCTAssertEqual(jump.newCount(ids: ["a", "u1"]), 1)
+        jump.enter(.far, entries: items("a", "outgoing:1"))
+        XCTAssertEqual(jump.newCount(entries: items("a", "outgoing:1")), 0)
+        // 記録に載って差し替わっただけなので新着ではない。
+        XCTAssertEqual(jump.newCount(entries: items("a", "u1")), 0)
+        XCTAssertEqual(jump.newCount(entries: items("a", "u1", "m2")), 1)
     }
 
     func testToolsOnlyRowsAreNotCounted() {
