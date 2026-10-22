@@ -6,6 +6,7 @@ struct MessageList: View {
     let room: Room
     let items: [TranscriptItem]
     @State private var pinnedToBottom = true
+    @State private var jump = LatestJump()
 
     var body: some View {
         let entries = ChatTimeline.entries(from: items, notes: model.relay.notes(for: room.sessionId),
@@ -14,6 +15,7 @@ struct MessageList: View {
         let runningId = ChatTimeline.runningToolId(items: items, status: room.status)
         let prompts = model.prompts
         let permissions = prompts.monitorPermissions(for: room)
+        let countedIds = LatestJump.countedIds(entries)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
@@ -65,13 +67,31 @@ struct MessageList: View {
                 .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
-            .modifier(BottomTracking(pinned: $pinnedToBottom))
+            .modifier(BottomTracking { zone in
+                pinnedToBottom = zone == .bottom
+                jump.enter(zone, ids: countedIds)
+            })
+            .overlay(alignment: .bottomTrailing) {
+                if jump.showsButton {
+                    JumpToLatestButton(newCount: jump.newCount(ids: countedIds)) {
+                        // 動いている間に届いた新着にも付いていくよう、先に一番下にいる扱いにする。
+                        pinnedToBottom = true
+                        jump.reset()
+                        withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 16)
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: jump.showsButton)
             .onChange(of: scrollKey(entries: entries, permissions: permissions.count)) {
                 guard pinnedToBottom else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
             }
             .onChange(of: room.id) {
                 pinnedToBottom = true
+                jump.reset()
                 proxy.scrollTo(Self.bottomId, anchor: .bottom)
             }
         }
@@ -115,16 +135,17 @@ struct MessageList: View {
     }
 }
 
-/// ユーザーが上に遡っている間は自動スクロールを止めるための追跡。
+/// 一番下からの離れ具合の段。自動スクロールを止める判定と「最新へ」のボタンに使い、段が変わった時だけ知らせる。
 private struct BottomTracking: ViewModifier {
-    @Binding var pinned: Bool
+    let onZone: (ScrollZone) -> Void
 
     func body(content: Content) -> some View {
         if #available(macOS 15.0, *) {
-            content.onScrollGeometryChange(for: Bool.self) { geo in
-                geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height - 48
-            } action: { _, atBottom in
-                pinned = atBottom
+            content.onScrollGeometryChange(for: ScrollZone.self) { geo in
+                LatestJump.zone(contentHeight: geo.contentSize.height, offsetY: geo.contentOffset.y,
+                                viewportHeight: geo.containerSize.height)
+            } action: { _, zone in
+                onZone(zone)
             }
         } else {
             content
