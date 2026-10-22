@@ -89,12 +89,15 @@ public struct GitRepositoryReader: Sendable {
             let capped = min(max(limit, 1), Self.maxLimit)
             var commits: [GitCommit] = []
             if headOid != nil || !refs.isEmpty {
-                // --all はスタッシュとノートの履歴まで混ぜるので、ブランチ・リモート・タグと HEAD に限る。
-                var args = ["log", "--date-order", "-z", "-n", String(capped), "--format=\(GitLogParser.logFormat)",
-                            "--branches", "--remotes", "--tags"]
-                if headOid != nil { args.append("HEAD") }
-                args.append("--")
-                let log = try await runner.run(args, in: directory)
+                let log: GitOutput
+                do {
+                    log = try await runner.run(Self.logArguments(limit: capped, includeHead: headOid != nil, dateOrder: true),
+                                               in: directory)
+                } catch GitRunError.timedOut {
+                    // 大きなリポジトリで日付順の並べ替えが間に合わない時は、並べ替えを外して読み直す。
+                    log = try await runner.run(Self.logArguments(limit: capped, includeHead: headOid != nil, dateOrder: false),
+                                               in: directory)
+                }
                 guard log.status == 0 || log.truncated else { return .failed(Self.firstLine(log.stderr) ?? "履歴を読めませんでした") }
                 commits = GitLogParser.parseLog(log.stdout)
             }
@@ -105,6 +108,27 @@ public struct GitRepositoryReader: Sendable {
         } catch {
             return .failed(error.localizedDescription)
         }
+    }
+
+    /// --all はスタッシュとノートの履歴まで混ぜるので、ブランチ・リモート・タグと HEAD に限る。
+    static func logArguments(limit: Int, includeHead: Bool, dateOrder: Bool) -> [String] {
+        var args = ["log"] + (dateOrder ? ["--date-order"] : []) + ["-z", "-n", String(limit), "--format=\(GitLogParser.logFormat)",
+                                                                   "--branches", "--remotes", "--tags"]
+        if includeHead { args.append("HEAD") }
+        args.append("--")
+        return args
+    }
+
+    /// マージは最初の親との差分、根は空の木との差分。
+    static func diffTreeArguments(hash: String, firstParent: String?, renames: Bool) -> [String] {
+        var args = ["diff-tree", "--no-ext-diff", "--no-textconv", "-r", "-z", "--name-status"] + (renames ? ["-M"] : []) + ["--no-commit-id"]
+        if let firstParent {
+            args += [firstParent, hash]
+        } else {
+            args += ["--root", hash]
+        }
+        args.append("--")
+        return args
     }
 
     static func snapshot(location: GitRepositoryLocation, commits: [GitCommit], refs: [GitRef], headRef: String?,
@@ -119,7 +143,8 @@ public struct GitRepositoryReader: Sendable {
     public func detail(directory: String, hash: String) async -> Result<GitCommitDetail, GitRunErrorMessage> {
         guard GitLogParser.isObjectID(hash) else { return .failure(GitRunErrorMessage("コミットの ID が正しくありません")) }
         do {
-            let shown = try await runner.run(["show", "-s", "-z", "--format=\(GitLogParser.detailFormat)", hash, "--"],
+            let shown = try await runner.run(["show", "--no-ext-diff", "--no-textconv", "-s", "-z",
+                                              "--format=\(GitLogParser.detailFormat)", hash, "--"],
                                              in: directory, outputLimit: Self.detailOutputLimit)
             guard shown.status == 0 || shown.truncated else {
                 return .failure(GitRunErrorMessage(Self.firstLine(shown.stderr) ?? "コミットを読めませんでした"))
@@ -127,16 +152,16 @@ public struct GitRepositoryReader: Sendable {
             // 「-z」で本文の後ろに付く NUL は本文に含めない。
             var body = shown.stdout
             if body.last == 0 { body.removeLast() }
-            let parents = Self.parentList(body)
-            // マージは最初の親との差分、根は空の木との差分。
-            var args = ["diff-tree", "-r", "-z", "--name-status", "-M", "--no-commit-id"]
-            if let first = parents.first {
-                args += [first, hash]
-            } else {
-                args += ["--root", hash]
+            let firstParent = Self.parentList(body).first
+            let files: GitOutput
+            do {
+                files = try await runner.run(Self.diffTreeArguments(hash: hash, firstParent: firstParent, renames: true),
+                                             in: directory, outputLimit: Self.filesOutputLimit)
+            } catch GitRunError.timedOut {
+                // 名前の変更の判定は中身を比べるので重い。間に合わなければ判定を外して一覧だけ出す。
+                files = try await runner.run(Self.diffTreeArguments(hash: hash, firstParent: firstParent, renames: false),
+                                             in: directory, outputLimit: Self.filesOutputLimit)
             }
-            args.append("--")
-            let files = try await runner.run(args, in: directory, outputLimit: Self.filesOutputLimit)
             guard files.status == 0 || files.truncated else {
                 return .failure(GitRunErrorMessage(Self.firstLine(files.stderr) ?? "変わったファイルを読めませんでした"))
             }

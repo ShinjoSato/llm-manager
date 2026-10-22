@@ -79,12 +79,17 @@ public struct GitRunner: Sendable {
         return env
     }
 
-    /// どのコマンドにも付ける前置き（ページャ・fsmonitor・署名の確認・色・パスの引用を切る）。
+    /// どのコマンドにも付ける前置き（ページャ・fsmonitor・署名の確認・色・パスの引用を切り、出力は UTF-8 に固定する）。
     public static let commonArguments = [
         "--no-pager", "--no-optional-locks",
         "-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "log.showSignature=false",
-        "-c", "color.ui=false", "-c", "core.quotePath=false",
-    ]
+        "-c", "color.ui=false", "-c", "core.quotePath=false", "-c", "i18n.logOutputEncoding=UTF-8",
+    ] + networkGuardArguments
+
+    /// GIT_NO_LAZY_FETCH を知らない版でも、partial clone の遅延取得で通信や外部コマンドを走らせない（プロトコル別の許可より強く効くよう全部閉じる）。
+    static let networkGuardArguments = ["-c", "protocol.allow=never"]
+        + ["file", "git", "ssh", "http", "https", "ext"].flatMap { ["-c", "protocol.\($0).allow=never"] }
+        + ["-c", "core.sshCommand=false"]
 
     /// 読むだけのサブコマンドに限る（書き換え・ネットワークに出るものを通さない）。
     static let allowedSubcommands: Set<String> = ["rev-parse", "symbolic-ref", "for-each-ref", "log", "show", "diff-tree"]

@@ -8,7 +8,7 @@ enum BranchGraphMetrics {
 }
 
 /// テーマのレーンの色（Canvas に渡すので、外観に頼らず今のテーマの値で引く）。
-struct BranchGraphPalette {
+struct BranchGraphPalette: Equatable {
     let lanes: [Color]
     let surface: Color
 
@@ -50,7 +50,7 @@ struct StageBranchPanel: View {
         case .missingFolder:
             placeholder("このルームのフォルダが見つかりません", detail: directory, retry: true)
         case .noGit:
-            placeholder(GitRunError.gitNotFound.message)
+            placeholder(GitRunError.gitNotFound.message, retry: true)
         case .failed(let message):
             placeholder("ブランチを読めませんでした", detail: message, retry: true)
         case .loaded(let snapshot):
@@ -99,10 +99,11 @@ private struct BranchGraphView: View {
     let graph: BranchGraphModel
     let snapshot: GitGraphSnapshot
 
-    private var palette: BranchGraphPalette { BranchGraphPalette(theme: AppearanceSettings.shared.theme) }
     private var geometry: GitGraphGeometry { GitGraphGeometry(lanes: snapshot.maxWidth) }
 
     var body: some View {
+        // Lazy な行は body の外で組まれ、そこでの読み取りは変化を拾わないので、テーマはここで読んで下へ渡す。
+        let palette = BranchGraphPalette(theme: AppearanceSettings.shared.theme)
         VStack(alignment: .leading, spacing: 0) {
             toolbar
                 .padding(.horizontal, 14)
@@ -114,7 +115,7 @@ private struct BranchGraphView: View {
                     .foregroundStyle(ChatTheme.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                list
+                list(palette: palette)
             }
         }
     }
@@ -169,7 +170,7 @@ private struct BranchGraphView: View {
         .zIndex(1)
     }
 
-    private var list: some View {
+    private func list(palette: BranchGraphPalette) -> some View {
         let known = Set(snapshot.entries.map(\.commit.hash))
         return ScrollViewReader { proxy in
             ScrollView {

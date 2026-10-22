@@ -217,14 +217,144 @@ final class GitRepositoryTests: XCTestCase {
         XCTAssertFalse(watcher.isRunning)
     }
 
+    /// 古い版（遅延取得を止める環境変数を知らない）を模して、その変数を外しても欠けたオブジェクトを取りに行かない。
+    func testPartialCloneDoesNotFetchMissingObjects() async throws {
+        var server = try ScratchRepo(git: gitPath)
+        defer { server.remove() }
+        try server.run(["init", "-q", "-b", "main"])
+        try server.run(["config", "uploadpack.allowFilter", "true"])
+        _ = try server.commit("A", file: "a.txt", contents: "first")
+        let head = try server.commit("B", file: "a.txt", contents: "second")
+        let blob = try server.run(["rev-parse", "HEAD:a.txt"])
+        let client = server.root.appendingPathComponent("client").path
+        try server.run(["clone", "-q", "--no-checkout", "--filter=blob:none", "file://\(server.path)", client], in: server.root.path)
+        let packDir = client + "/.git/objects/pack"
+        let packs = try FileManager.default.contentsOfDirectory(atPath: packDir).sorted()
+
+        var env = GitRunner.environment()
+        env["GIT_NO_LAZY_FETCH"] = nil
+        let guarded = try GitRunner.execute(executable: gitPath, arguments: GitRunner.commonArguments + ["cat-file", "-p", blob],
+                                            environment: env, directory: client, timeout: 10, limit: 1 << 20,
+                                            cancelled: GitRunner.CancelFlag()).get()
+        XCTAssertNotEqual(guarded.status, 0)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: packDir).sorted(), packs, "取りに行った")
+        _ = try loaded(await reader.load(directory: client))
+        _ = try await reader.detail(directory: client, hash: head).get()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: packDir).sorted(), packs, "取りに行った")
+
+        // 対照: 守りの引数が無ければ、この準備で実際に取りに行く（試験が空振りしていない）。
+        let unguarded = try GitRunner.execute(executable: gitPath, arguments: ["cat-file", "-p", blob], environment: env,
+                                              directory: client, timeout: 10, limit: 1 << 20, cancelled: GitRunner.CancelFlag()).get()
+        XCTAssertEqual(unguarded.status, 0)
+        XCTAssertEqual(unguarded.text, "second")
+    }
+
+    /// 利用者の設定で出力の文字コードを変えていても、NUL の区切りが崩れない。
+    func testOutputEncodingSettingsDoNotBreakParsing() async throws {
+        var repo = try ScratchRepo(git: gitPath)
+        defer { repo.remove() }
+        try repo.run(["init", "-q", "-b", "main"])
+        let utf8 = try repo.commit("日本語 🚀 の説明", file: "a.txt")
+        let message = repo.root.appendingPathComponent("latin1.txt")
+        try Data([0x63, 0x61, 0x66, 0xE9, 0x0A]).write(to: message)
+        try "b".write(toFile: repo.path + "/b.txt", atomically: true, encoding: .utf8)
+        try repo.run(["add", "-A"])
+        try repo.run(["-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "-F", message.path], date: repo.tick())
+        let latin1 = try repo.run(["rev-parse", "HEAD"])
+        try repo.run(["config", "i18n.logOutputEncoding", "UTF-16"])
+
+        let snapshot = try loaded(await reader.load(directory: repo.path))
+        XCTAssertEqual(snapshot.entries.map(\.commit.hash), [latin1, utf8])
+        XCTAssertEqual(snapshot.entries.map(\.commit.subject), ["café", "日本語 🚀 の説明"])
+        XCTAssertEqual(snapshot.entries.last?.commit.authorName, "作者 🧑‍💻")
+        let detail = try await reader.detail(directory: repo.path, hash: latin1).get()
+        XCTAssertEqual(detail.message, "café")
+        XCTAssertEqual(detail.files, [GitFileChange(status: .added, path: "b.txt")])
+    }
+
+    /// 日付順の並べ替えや名前の変更の判定が間に合わない時は、それを外して読み直す。
+    func testTimeoutRetriesWithoutDateOrderAndRenameDetection() async throws {
+        var repo = try ScratchRepo(git: gitPath)
+        defer { repo.remove() }
+        try repo.run(["init", "-q", "-b", "main"])
+        let a = try repo.commit("A", file: "a.txt", contents: "same contents")
+        try repo.run(["mv", "a.txt", "renamed.txt"])
+        try repo.run(["commit", "-q", "-m", "B"], date: repo.tick())
+        let b = try repo.run(["rev-parse", "HEAD"])
+        // 並べ替えと名前の変更の判定を頼まれた時だけ止まる git を模す。
+        let fake = repo.root.appendingPathComponent("slow-git").path
+        try """
+        #!/bin/sh
+        for a in "$@"; do
+          case "$a" in --date-order|-M) /bin/sleep 10 ;; esac
+        done
+        exec "\(gitPath!)" "$@"
+        """.write(toFile: fake, atomically: true, encoding: .utf8)
+        chmod(fake, 0o755)
+        let slow = GitRepositoryReader(runner: GitRunner(executable: fake, timeout: 1))
+
+        let snapshot = try loaded(await slow.load(directory: repo.path))
+        XCTAssertEqual(snapshot.entries.map(\.commit.hash), [b, a])
+        let detail = try await slow.detail(directory: repo.path, hash: b).get()
+        XCTAssertEqual(detail.files.sorted { $0.path < $1.path }, [GitFileChange(status: .deleted, path: "a.txt"), GitFileChange(status: .added, path: "renamed.txt")])
+        // 速ければ名前の変更として出す。
+        let fast = try await reader.detail(directory: repo.path, hash: b).get()
+        XCTAssertEqual(fast.files, [GitFileChange(status: .renamed, path: "renamed.txt", oldPath: "a.txt")])
+    }
+
+    @MainActor
+    func testReftableRepositoryLoadsAndWatcherSeesRefChanges() async throws {
+        var repo = try ScratchRepo(git: gitPath)
+        defer { repo.remove() }
+        do {
+            try repo.run(["init", "-q", "-b", "main", "--ref-format=reftable"])
+        } catch {
+            throw XCTSkip("reftable を知らない git")
+        }
+        let a = try repo.commit("A", file: "a.txt")
+        try repo.run(["tag", "v1", a])
+        let snapshot = try loaded(await reader.load(directory: repo.path))
+        XCTAssertEqual(snapshot.entries.map(\.commit.hash), [a])
+        XCTAssertEqual(snapshot.entries[0].labels, [GitRefLabel(kind: .branch, name: "main", isCurrent: true), GitRefLabel(kind: .tag, name: "v1")])
+        let count = Box(0)
+        let watcher = GitRefWatcher(location: snapshot.location) { count.mutate { $0 += 1 } }
+        watcher.start()
+        defer { watcher.stop() }
+        try await Task.sleep(for: .milliseconds(400))
+        try repo.run(["branch", "topic"])
+        try await waitUntil(timeout: 5) { count.value > 0 }
+    }
+
+    func testReadOnlyArgumentsGuardAgainstExternalCommands() {
+        let common = GitRunner.commonArguments
+        func hasConfig(_ value: String) -> Bool {
+            zip(common, common.dropFirst()).contains { $0 == "-c" && $1 == value }
+        }
+        for value in ["protocol.allow=never", "protocol.file.allow=never", "protocol.ssh.allow=never", "protocol.https.allow=never",
+                      "protocol.ext.allow=never", "core.sshCommand=false", "i18n.logOutputEncoding=UTF-8", "core.fsmonitor=false"] {
+            XCTAssertTrue(hasConfig(value), value)
+        }
+        XCTAssertFalse(common.contains { $0.hasPrefix("safe.bareRepository") })
+        let diff = GitRepositoryReader.diffTreeArguments(hash: "h", firstParent: "p", renames: true)
+        XCTAssertTrue(diff.contains("--no-ext-diff") && diff.contains("--no-textconv") && diff.contains("-M"))
+        XCTAssertEqual(Array(diff.suffix(3)), ["p", "h", "--"])
+        XCTAssertFalse(GitRepositoryReader.diffTreeArguments(hash: "h", firstParent: nil, renames: false).contains("-M"))
+        XCTAssertTrue(GitRepositoryReader.diffTreeArguments(hash: "h", firstParent: nil, renames: false).contains("--root"))
+        XCTAssertTrue(GitRepositoryReader.logArguments(limit: 300, includeHead: true, dateOrder: true).contains("--date-order"))
+        let plain = GitRepositoryReader.logArguments(limit: 300, includeHead: false, dateOrder: false)
+        XCTAssertFalse(plain.contains("--date-order") || plain.contains("HEAD"))
+    }
+
     func testWatchFilter() {
         let location = GitRepositoryLocation(gitDir: "/r/.git/worktrees/wt", commonDir: "/r/.git")
         for path in ["/r/.git/worktrees/wt/HEAD", "/r/.git/refs/heads/feature/x", "/r/.git/packed-refs", "/r/.git/logs/HEAD",
-                     "/r/.git/HEAD", "/r/.git/refs", "/r/.git/worktrees/wt/logs/HEAD", "/r/.git"] {
+                     "/r/.git/HEAD", "/r/.git/refs", "/r/.git/worktrees/wt/logs/HEAD", "/r/.git",
+                     "/r/.git/reftable/tables.list", "/r/.git/reftable/0x000000000001-0x000000000002-abcd.ref", "/r/.git/reftable",
+                     "/r/.git/worktrees/wt/reftable/tables.list"] {
             XCTAssertTrue(GitWatchFilter.isRelevant(path, location: location), path)
         }
         for path in ["/r/.git/index", "/r/.git/objects/ab/cdef", "/r/.git/refs/heads/main.lock", "/r/.git/HEAD.lock",
-                     "/r/.git/FETCH_HEAD", "/r/.git/logs/refs/heads/main", "/r/.git/worktrees/other/HEAD", "/r/.gitx/HEAD", "/r/src/HEAD"] {
+                     "/r/.git/FETCH_HEAD", "/r/.git/logs/refs/heads/main", "/r/.git/reftable/tables.list.lock", "/r/.git/worktrees/other/HEAD", "/r/.gitx/HEAD", "/r/src/HEAD"] {
             XCTAssertFalse(GitWatchFilter.isRelevant(path, location: location), path)
         }
     }

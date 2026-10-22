@@ -185,6 +185,20 @@ final class GitGraphLayoutTests: XCTestCase {
         XCTAssertEqual(GitGraphGeometry(lanes: 0).visibleLanes, 1)
     }
 
+    /// 1〜40 本のどれでも、収まる本数までは列が重ならず、図の幅に収まる（割り算の誤差で最後の列を落とさない）。
+    func testGeometryKeepsEveryLaneSeparateUpToTheLimit() {
+        let limit = Int(GitGraphGeometry.targetWidth / GitGraphGeometry.minLaneWidth)
+        for lanes in 1...40 {
+            let geometry = GitGraphGeometry(lanes: lanes)
+            XCTAssertEqual(geometry.visibleLanes, min(lanes, limit), "\(lanes) 本")
+            let xs = (0..<lanes).map(geometry.x)
+            XCTAssertEqual(Set(xs).count, min(lanes, limit), "\(lanes) 本で列が重なった")
+            XCTAssertLessThanOrEqual(xs.max()! + geometry.dotRadius, geometry.width + 1e-9, "\(lanes) 本")
+            XCTAssertLessThanOrEqual(geometry.width, GitGraphGeometry.targetWidth + GitGraphGeometry.padding + 1e-9, "\(lanes) 本")
+        }
+        XCTAssertEqual(GitGraphGeometry(lanes: 11).visibleLanes, 11)
+    }
+
     func testParentsOutsideTheListRunToTheBottom() {
         let rows = GitGraphLayout.rows(for: [commit("B", ["A"]), commit("Y", ["X"])])
         XCTAssertEqual(rows[1].continuing.count, 2)

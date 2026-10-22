@@ -138,7 +138,8 @@ public struct GitGraphGeometry: Sendable, Equatable {
     public init(lanes: Int) {
         let count = max(lanes, 1)
         laneWidth = min(Self.maxLaneWidth, max(Self.minLaneWidth, Self.targetWidth / Double(count)))
-        visibleLanes = min(count, Int(Self.targetWidth / laneWidth))
+        // 割り算の誤差（100 / (100 / 11) が 10.999…）で最後の列を落とさないよう、詰め切った時だけ列を数える。
+        visibleLanes = laneWidth > Self.minLaneWidth ? count : min(count, Int((Self.targetWidth / Self.minLaneWidth).rounded()))
     }
 
     public var width: Double { Double(visibleLanes) * laneWidth + Self.padding }

@@ -36,9 +36,19 @@ final class BranchGraphModel {
     @ObservationIgnored private var pendingRefresh: Task<Void, Never>?
     @ObservationIgnored private var detailTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var generation = 0
-    @ObservationIgnored private let reader = BranchGraphModel.sharedReader
-    /// git の場所はアプリが動いている間は変わらないので 1 回だけ探す。
-    private static let sharedReader: GitRepositoryReader? = GitRunner.standard().map(GitRepositoryReader.init)
+    @ObservationIgnored private var reader: GitRepositoryReader?
+    /// 見つかった git は次のパネルでも使う（コマンドラインツールを後から入れた時は「読み直す」で探し直す）。
+    private static var foundReader: GitRepositoryReader?
+
+    init() {
+        reader = Self.locateReader()
+    }
+
+    private static func locateReader() -> GitRepositoryReader? {
+        if let foundReader { return foundReader }
+        foundReader = GitRunner.standard().map(GitRepositoryReader.init)
+        return foundReader
+    }
 
     /// rebase のように ref が続けて替わる間は描き直さず、落ち着いてから 1 回読む。
     static let coalesce: Duration = .milliseconds(600)
@@ -79,7 +89,12 @@ final class BranchGraphModel {
     }
 
     func reload() {
-        guard directory != nil, reader != nil else { return }
+        guard directory != nil else { return }
+        if reader == nil { reader = Self.locateReader() }
+        guard reader != nil else {
+            phase = .noGit
+            return
+        }
         if case .loaded = phase {} else { phase = .loading }
         load()
     }

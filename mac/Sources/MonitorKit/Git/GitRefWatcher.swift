@@ -12,6 +12,8 @@ public enum GitWatchFilter {
             if relative.hasSuffix(".lock") { continue }
             if relative == "HEAD" || relative == "packed-refs" || relative == "logs/HEAD" { return true }
             if relative == "refs" || relative.hasPrefix("refs/") { return true }
+            // reftable 形式では ref の変化は reftable/ の下（tables.list と *.ref の置き換え）にだけ現れる。
+            if relative == "reftable" || relative.hasPrefix("reftable/") { return true }
         }
         return false
     }

@@ -727,23 +727,28 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   開発サーバーの状態・起動 / 停止・出力、表示幅の切り替え・再読み込み・ブラウザで開くはサイトの欄と同じ部品（`SitePreviewParts.swift`）で、
   パネルの幅（360px）と残りの高さに収まるよう縮めて出す。ルームが無い・プロジェクトに入っていない時はその旨を出す。
 - **ブランチ**: 選択中のルームの cwd の git のリポジトリを、VS Code の Git Graph のような図で出す（`StageBranchPanel.swift`・判定と読み込みは `Sources/MonitorKit/Git/`・テストあり）。
-  作業ツリーなら共通のリポジトリの全ブランチと、その作業ツリーの HEAD。リポジトリでない・フォルダが無い・git が無い（Xcode のコマンドラインツールが無い）時はその旨と「読み直す」。
+  作業ツリーなら共通のリポジトリの全ブランチと、その作業ツリーの HEAD。リポジトリでない・フォルダが無い・git が無い（Xcode のコマンドラインツールが無い）時はその旨と「読み直す」（git が無い時は押すと git の場所を探し直す）。
   - **一覧**: ブランチ・リモート・タグと HEAD から新しい順（`log --date-order --branches --remotes --tags HEAD`。スタッシュとノートは混ぜない）に直近 300 件。
     上限に達していれば末尾の「もっと見る」で 300 件ずつ足す（3000 件まで）。行は 24px の固定で、一覧は Lazy に積む。
+    大きなリポジトリで時間切れになった時は `--date-order` を外して読み直す（もう一度時間切れならその旨を出す）。
   - **1 行**: 左にレーンの線と点（点はコミットの列・HEAD は二重丸・マージは白抜き。列が替わる所は曲線）、ref の札（2 枚まで・残りは「+N」）、
     説明の 1 行目、右に相対の日付（「3時間前」）。作者・日時・短い ID・札の全体はホバーで出す。見出しにリポジトリの名前（作業ツリーの印）・今のブランチ・件数・読み直し。
   - **札**: ローカルのブランチ・`origin/…` のリモート・タグ・切り離された HEAD。同じコミットを指す同じ名前のローカルとリモートは 1 枚（雲の印）にまとめ、
     今の HEAD のブランチは濃く塗って太字にし、先頭に並べる。長い名前は真ん中を「…」で詰める（16 文字）。色はそのコミットのレーンの色、タグは灰。
   - **レーン**: 子が待っている親の列を引き継ぎ、最初の親は同じ列・他の親はすでに待っている列があればそこへ合流、無ければ右の空いた列へ置き、
     終わった列は詰める（`GitGraphLayout`）。色はレーンごとに決まった順（`ThemePalette.graphLanes` の 8 色・ナイト / ライトでパネルの地に対して 3:1 以上）で、
-    今使っていない最初の色を取る。列が多い時は列の幅を 10px から 5px まで詰めて図の幅を 100px 前後に収め、それでも入らない列は右端に寄せて描く（`GitGraphGeometry`）。
+    今使っていない最初の色を取る。列が多い時は列の幅を 10px から 5px まで詰めて図の幅を 100px 前後に収め（20 列まで重ならない）、それでも入らない列は右端に寄せて描く（`GitGraphGeometry`）。
+    色は描くたびに今のテーマ（ナイト / ライト）から引く。
   - **詳細**: 行を押すとその下に開く（もう一度押すと閉じる）。本文（選択できる）・作者・日時・コミッター（作者と違う時）・ID とコピー・親（読み込んだ範囲なら押すとそこへ移る）・
-    変わったファイル（追加 / 変更 / 削除 / 名前の変更 / 複製。マージは最初の親との差分・根は全部が追加。300 件まで描く）。左には下へ続く線をそのまま伸ばす。
-  - **リアルタイム**: git dir と共通の dir を FSEvents で下層まで見張り、`HEAD`・`refs/` の下・`packed-refs`・`logs/HEAD` の変化（`.lock` は除く）だけで、
+    変わったファイル（追加 / 変更 / 削除 / 名前の変更 / 複製。マージは最初の親との差分・根は全部が追加。300 件まで描く。名前の変更の判定（`-M`）が時間切れなら判定を外して読み直す）。左には下へ続く線をそのまま伸ばす。
+  - **リアルタイム**: git dir と共通の dir を FSEvents で下層まで見張り、`HEAD`・`refs/` の下・`packed-refs`・`logs/HEAD`・reftable 形式の `reftable/` の下（`tables.list`・`*.ref`）の変化（`.lock` は除く）だけで、
     0.6 秒まとめてから読み直す（決まった間隔の取り直しはしない。index や objects の書き換えでは読まない）。見張るのは「ブランチ」を開いていてパネルが開いている間だけで、
     ルームを替えたら見張り直す。読み直しに失敗した時は前の図のまま見出しに印を出す。
   - **安全**: git は読むだけのサブコマンド（rev-parse・symbolic-ref・for-each-ref・log・show・diff-tree）だけを許可リストで通す（status・fetch 等は使わない）。
-    `--no-pager`・`--no-optional-locks`・`-c core.fsmonitor=false`・`-c core.pager=cat`・`-c log.showSignature=false`・`-c color.ui=false`・`-c core.quotePath=false` を付け、
+    `--no-pager`・`--no-optional-locks`・`-c core.fsmonitor=false`・`-c core.pager=cat`・`-c log.showSignature=false`・`-c color.ui=false`・`-c core.quotePath=false`・
+    `-c i18n.logOutputEncoding=UTF-8`（利用者の設定で NUL の区切りを崩さない）・`-c protocol.allow=never` とプロトコル別の `protocol.<名前>.allow=never`・`-c core.sshCommand=false`
+    （`GIT_NO_LAZY_FETCH` を知らない版でも partial clone の遅延取得で通信や外部コマンドを走らせない）を付け、`show` / `diff-tree` には `--no-ext-diff --no-textconv` も付ける。
+    `safe.bareRepository` は付けない（bare を cwd にしたルームを読めなくしないため）。
     環境は API キー・子セッション印・利用者の `GIT_*` を除いたうえで `GIT_OPTIONAL_LOCKS=0`・`GIT_TERMINAL_PROMPT=0`・`GIT_NO_LAZY_FETCH=1`・`LC_ALL=C`。
     1 回 5 秒・出力 16MB（詳細は 1MB）を上限に、新しいプロセスグループで起動し、時間切れ・取り消しではグループごと止める。git は `/usr/bin/git`（無い時に導入のダイアログを出す）ではなく、
     `DEVELOPER_DIR`・`xcode-select` の選択・コマンドラインツール・Xcode・Homebrew の実体を探す。コミットの ID は 16 進だけを受け付ける。
