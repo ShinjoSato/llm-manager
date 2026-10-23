@@ -87,7 +87,8 @@ struct TerminalKeyNotice: Equatable {
     let at: Date
 
     var text: String {
-        result.ok ? "\(key.label) を送りました（\(ChatTime.seconds(at))）" : (result.message ?? "送れませんでした。")
+        guard result.ok else { return result.message ?? "送れませんでした。" }
+        return key == .clearInput ? "入力欄を消すキーを送っています（\(ChatTime.seconds(at))）" : "\(key.label) を送りました（\(ChatTime.seconds(at))）"
     }
 }
 
@@ -112,7 +113,7 @@ struct TerminalScreenPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            Text("今の端末の表示です（0.3 秒ごとに更新）。カードで答えられない時に、下のボタンかキーボード（矢印・Return・Esc・Tab・Space・1〜9）で 1 回ずつキーを送れます。文字の入力はできません。")
+            Text("今の端末の表示です（0.3 秒ごとに更新）。カードで答えられない時に、下のボタンかキーボード（矢印・Return・Esc・Tab・Space・1〜9）で 1 回ずつキーを送れます。文字の入力はできません。「入力欄を消す」は端末の入力欄を空にします（作業は止めません）。")
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -179,6 +180,8 @@ struct TerminalScreenPanel: View {
             }
             HStack(spacing: 6) {
                 ForEach(Array(TerminalKey.all.dropFirst(8)), id: \.self) { key in TerminalKeyButton(key: key, enabled: running, action: onKey) }
+                Divider().frame(height: 22).padding(.horizontal, 4)
+                TerminalKeyButton(key: .clearInput, enabled: running, action: onKey)
             }
         }
     }
@@ -219,7 +222,7 @@ private struct TerminalKeyButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .help("\(key.label) を端末に 1 回送る")
+        .help(key == .clearInput ? "端末の入力欄を空にする（Ctrl-E・Ctrl-K・Ctrl-U を空になるまで送る。作業は中断しない）" : "\(key.label) を端末に 1 回送る")
         .onHover { hovering = $0 }
     }
 }

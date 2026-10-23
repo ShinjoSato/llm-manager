@@ -387,9 +387,12 @@ public enum PasteCheck {
 
     public static let pollInterval: TimeInterval = 0.1
 
+    /// 作業中に足す待ち。出力の描き替えに押されて貼り付けの反映が遅れることがあるため。
+    public static let workingExtraWait: TimeInterval = 3
+
     /// 最初の確認（`PTYInput.submitDelay` 後）で入っていない時に、描き替えを待つ時間。長文ほど取り込みが遅いので延ばす。
-    public static func extraWait(bodyLength: Int) -> TimeInterval {
-        min(1.0 + Double(bodyLength) / 2000, 4.0)
+    public static func extraWait(bodyLength: Int, working: Bool = false) -> TimeInterval {
+        min(1.0 + Double(bodyLength) / 2000, 4.0) + (working ? workingExtraWait : 0)
     }
 
     /// `before` は貼る前、`after` は今の入力欄の文字（`InputBox.text`。読めなければ nil）、`body` は貼った本文。
@@ -402,39 +405,10 @@ public enum PasteCheck {
         return .pasted
     }
 
-    static func plainText(_ body: String) -> String {
+    /// 貼り付けの印を外した本文。
+    public static func plainText(_ body: String) -> String {
         body.replacingOccurrences(of: PTYInput.pasteStart, with: "").replacingOccurrences(of: PTYInput.pasteEnd, with: "")
             .trimmingCharacters(in: .whitespaces)
-    }
-}
-
-/// 取りやめた送信の残りが端末の入力欄にあるかもしれない時の、次の送信の扱い。
-public enum LeftoverCheck: Sendable, Equatable {
-    case none
-    /// 残りがあれば 1 回だけ知らせる（未知の薄字表示を本文と誤認しても、もう一度送れば送れる）。
-    case warnOnce
-    /// 貼り付けが入らなかった送信の後。遅れて入った本文と戻した本文が二重にならないよう、入力欄が貼る前（`baseline`）か空と確かめるまで送らない。
-    case untilClear(baseline: String)
-
-    public enum Decision: Sendable, Equatable {
-        case send
-        /// `strict` は確かめられるまで何度でも止める側。
-        case refuse(strict: Bool)
-    }
-
-    /// 今の入力欄（読めなければ nil）から、送るかと次の状態を決める。
-    public func decide(box: String?) -> (Decision, next: LeftoverCheck) {
-        switch self {
-        case .none:
-            return (.send, .none)
-        case .warnOnce:
-            // 入力欄が読めない時は残りを確かめられないが、くっつく害は小さいので送る（印は残す）。
-            guard let box else { return (.send, .warnOnce) }
-            return (box.isEmpty ? .send : .refuse(strict: false), .none)
-        case .untilClear(let baseline):
-            guard let box, box.isEmpty || box == baseline else { return (.refuse(strict: true), self) }
-            return (.send, .none)
-        }
     }
 }
 

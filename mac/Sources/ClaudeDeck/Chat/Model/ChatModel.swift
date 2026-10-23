@@ -48,6 +48,8 @@ enum ChatCenter: Equatable {
 final class ChatAlerts {
     var message: String? {
         didSet {
+            // ボタンは `show` で出した警告にだけ付ける（別の警告に古いボタンを残さない）。
+            actions = []
             if message == nil {
                 target = nil
             } else if oldValue == nil {
@@ -55,10 +57,38 @@ final class ChatAlerts {
             }
         }
     }
+    /// 「OK」の他に出すボタン。
+    private(set) var actions: [ChatAlertAction] = []
+
+    /// ボタン付きで出す。
+    func show(_ text: String, actions: [ChatAlertAction]) {
+        message = text
+        self.actions = actions
+    }
+
+    /// ボタンを押した。警告を閉じてから、出ていたウィンドウの印を渡して実行する。
+    func perform(_ action: ChatAlertAction) {
+        let window = target
+        message = nil
+        // 閉じる処理が済む前に次の警告やシートを出すと、閉じる側に消されるので少し待つ。
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.followUpDelay) { action.perform(window) }
+    }
+
+    /// 警告を閉じてから、ボタンの処理（次の警告・シート）を始めるまでの間。
+    static let followUpDelay: TimeInterval = 0.3
     /// 出た時に前にあった別ウィンドウの印（nil ならメインに出す）。操作したウィンドウで知らせるため。
     private(set) var target: UUID?
     /// 前にある別ウィンドウの印。
     @ObservationIgnored var keyRoomWindow: () -> UUID? = { nil }
+}
+
+/// 警告に添えるボタン 1 つ。`perform` には警告が出ていたウィンドウの印（メインなら nil）が渡る。
+struct ChatAlertAction: Identifiable {
+    let id = UUID()
+    let title: String
+    /// 取り消せない操作（赤で出す）。
+    var destructive = false
+    let perform: @MainActor (_ window: UUID?) -> Void
 }
 
 /// チャット画面の状態。監視とホスト中のセッションからルーム一覧を組み立て、送信・伝言・引き継ぎ・回答・会話・エディタの部品を束ねる。
@@ -132,6 +162,7 @@ final class ChatModel {
         listMode = RoomListMode(saved: UserDefaults.standard.string(forKey: RoomListMode.defaultsKey))
         // 部品から ChatModel へは弱い参照のクロージャだけで戻る（循環参照を作らない）。引き継ぎは部品同士の一方向の参照。
         outbox.hostedRoomExists = { [weak self] roomId in self?.hosted.contains { RoomID.hosted($0.id) == roomId } ?? false }
+        outbox.room = { [weak self] roomId in self?.room(id: roomId) }
         outbox.roomIds = { [weak self] sessionId in self?.rooms.filter { $0.sessionId == sessionId }.map(\.id) ?? [] }
         outbox.isHandingOver = { handover.isHandingOver($0) }
         handover.onResume = { [weak self] project, sessionId, roomId, onlyIfSelected in

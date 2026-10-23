@@ -36,6 +36,20 @@ public enum PTYInput {
     /// 貼り付けと Enter を同時に送ると Enter が貼り付けに飲まれるので、少し空ける。
     public static let submitDelay: TimeInterval = 0.3
 
+    /// 入力欄を消す 1 組（Ctrl-E で行末へ・Ctrl-K で次の改行を消す・Ctrl-U で行頭までか前の改行を消す）。v2.1.309 の入力欄の実装で確認。
+    /// Esc と Ctrl-C は作業中だと中断になり、Ctrl-L は画面の消去と同じ処理に割り当てられていて入力欄だけを消すと確かめられないので使わない。空と読めるまで繰り返す。
+    public static let clearInputRound: [String] = ["\u{05}", "\u{0B}", "\u{15}"]
+    /// 消すキーを 1 つずつ送る間隔（まとめて書くと 1 回の入力として読まれうるため）。
+    public static let clearKeyInterval: TimeInterval = 0.03
+    /// 1 組を送った後、描き直しを待ってから入力欄を読むまでの間。
+    public static let clearCheckDelay: TimeInterval = 0.15
+    /// 繰り返す組の上限（行ごとに 2 組ほど要る）。
+    public static let clearMaxRounds = 40
+    /// 入力欄を読めないまま繰り返す組の上限。
+    public static let clearUnreadableRounds = 12
+    /// 入力欄の表示が変わらないまま続いたらやめる組の数（消えない薄字の表示を待ち続けないため）。
+    public static let clearStallRounds = 3
+
     /// 入力欄に入れる本文（送るものが無ければ nil）。bracketed paste なら改行を含めたまま 1 回の貼り付けとして届く。
     public static func messageBody(_ text: String, bracketedPaste: Bool) -> String? {
         var body = sanitize(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n"))
@@ -70,6 +84,8 @@ public enum TerminalKey: Hashable, Sendable {
     case enter, escape, tab, space
     /// 1〜9 だけ（範囲外は送らない）。
     case digit(Int)
+    /// 端末の入力欄を空にする（`PTYInput.clearInputRound` を空になるまで送る。1 回の列ではないので `sequence` は nil）。
+    case clearInput
 
     /// シートに並べる順。
     public static let all: [TerminalKey] = [.left, .up, .down, .right, .enter, .escape, .tab, .space] + (1...9).map { .digit($0) }
@@ -86,6 +102,7 @@ public enum TerminalKey: Hashable, Sendable {
         case .tab: return "\t"
         case .space: return " "
         case .digit(let number): return (1...9).contains(number) ? String(number) : nil
+        case .clearInput: return nil
         }
     }
 
@@ -101,6 +118,7 @@ public enum TerminalKey: Hashable, Sendable {
         case .tab: return "Tab"
         case .space: return "Space"
         case .digit(let number): return String(number)
+        case .clearInput: return "入力欄を消す"
         }
     }
 
@@ -108,7 +126,7 @@ public enum TerminalKey: Hashable, Sendable {
     public var movesCursor: Bool {
         switch self {
         case .up, .down, .left, .right: return true
-        case .enter, .escape, .tab, .space, .digit: return false
+        case .enter, .escape, .tab, .space, .digit, .clearInput: return false
         }
     }
 
@@ -330,9 +348,14 @@ public enum InputBox {
             if offset == 0 { t = t.dropFirst().drop(while: \.isWhitespace) }
             if !t.isEmpty { parts.append(String(t)) }
         }
-        let text = parts.joined(separator: "\n")
-        if parts.count == 1, isPlaceholder(text) { return "" }
-        return text
+        // 例文は折り返して 2 行になることもあるので、行をつないで見る。
+        if !parts.isEmpty, parts.count <= 2, isPlaceholder(parts.joined(separator: " ")) { return "" }
+        return parts.joined(separator: "\n")
+    }
+
+    /// 入力欄の ❯ 行の位置（`screen` の添字）。入力欄が見つからなければ nil。
+    public static func promptRow(screen: [String]) -> Int? {
+        promptIndex(TerminalScreen.droppingTrailingBlankLines(screen))
     }
 
     /// 通常の空の入力欄だけが見えているか。入力欄が空で、最後の会話・ステータス行との間に罫線（重ね表示の上端）が無い。
@@ -344,9 +367,21 @@ public enum InputBox {
         return above.lastIndex(where: ChoiceMenu.isConversationLine).map { $0 > separator } ?? false
     }
 
-    /// 空欄の時に出る例文（v2.1.286: `Try "fix lint errors"`）。
+    /// 空欄の時に薄字で出る案内（v2.1.309 のバイナリで確認）。作業中にキューへ積んだメッセージがあると出る。
+    static let placeholderTexts: Set<String> = [
+        "Press up to edit queued messages",
+        "Press up to select a queued message, then Enter to edit it",
+        "Press up to edit queued messages, Enter to send them immediately",
+        "Press up to select a queued message to edit, or Enter to send them now",
+        "Press Enter to edit the selected message, or up again for history",
+        "Press Enter to edit the selected message, or up again for an older one",
+    ]
+
+    /// 空欄の時に出る例文（v2.1.286: `Try "fix lint errors"`）と案内（キューの編集・`Message @<エージェント>…`）。
     static func isPlaceholder(_ text: String) -> Bool {
-        text.hasPrefix("Try \"") && text.hasSuffix("\"") && text.count > 6
+        if text.hasPrefix("Try \"") && text.hasSuffix("\"") && text.count > 6 { return true }
+        if placeholderTexts.contains(text) { return true }
+        return text.hasPrefix("Message @") && text.hasSuffix("…") && !text.contains("\n")
     }
 }
 

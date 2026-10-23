@@ -26,7 +26,7 @@ struct RoomWindowView: View {
             }
             .alert("claude-deck", isPresented: Binding(get: { model.alerts.message != nil && model.alerts.target == token },
                                                        set: { if !$0 { model.alerts.message = nil } })) {
-                Button("OK") { model.alerts.message = nil }
+                ChatAlertButtons(alerts: model.alerts)
             } message: {
                 Text(model.alerts.message ?? "")
             }

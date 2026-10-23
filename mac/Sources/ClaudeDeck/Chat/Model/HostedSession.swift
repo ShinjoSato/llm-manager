@@ -60,6 +60,10 @@ final class HostedSession: Identifiable {
     private(set) var lastChangeAt = Date()
 
     @ObservationIgnored var onLimitReached: ((HostedSession) -> Void)?
+    /// 入らなかった本文を端末の入力欄からそのまま送った（アプリの入力欄に戻した同じ本文を消すため）。
+    @ObservationIgnored var onLeftoverSubmitted: ((_ body: String) -> Void)?
+    /// 入らなかった本文の残りを確かめられるまで送らずにいる間の抜け道（送れるなら nil）。
+    var leftover: LeftoverEscape? { screen.leftover }
     /// iPhone に出すカードの世代と答えた ID（同じ文面で出し直された確認を古い表示から答えさせないため）。
     @ObservationIgnored private(set) var promptTracker = RemotePromptTracker()
     /// 外部から引き継いだ時の再開対象。
@@ -84,6 +88,9 @@ final class HostedSession: Identifiable {
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
         let menuKey = "menu:\(id.uuidString)"
         terminal.opsLog = { event, fields in MenuOpsLog.shared.record(event, [("key", menuKey)] + fields) }
+        let sendKey = "send:\(id.uuidString)"
+        terminal.sendLog = { event, fields in MenuOpsLog.send.record(event, [("key", sendKey)] + fields) }
+        terminal.onLeftoverSubmitted = { [weak self] body in self?.onLeftoverSubmitted?(body) }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
     }
 
@@ -162,6 +169,30 @@ final class HostedSession: Identifiable {
     func sendKey(_ key: TerminalKey) -> ClaudeTerminalView.KeySendResult {
         guard isRunning else { return .ended }
         return terminal.sendKey(key)
+    }
+
+    /// 入らなかった本文が端末の入力欄に見えている時に、そのまま Enter で送る。
+    func submitLeftover() -> ClaudeTerminalView.LeftoverActionResult {
+        guard isRunning else { return .ended }
+        return terminal.submitLeftover()
+    }
+
+    /// 端末の入力欄を空にする（結末は始めた時だけ `completion` に返る）。
+    func clearInput(completion: @escaping (ClaudeTerminalView.ClearOutcome) -> Void) -> ClaudeTerminalView.LeftoverActionResult {
+        guard isRunning else { return .ended }
+        return terminal.clearInput(completion: completion)
+    }
+
+    /// 入力欄を読めない状態が続いた時に、確かめられないまま次の送信を通す。
+    func overrideLeftover() -> ClaudeTerminalView.LeftoverActionResult {
+        guard isRunning else { return .ended }
+        return terminal.overrideLeftover()
+    }
+
+    /// 今の画面で読んだ抜け道（送らなかった直後のアラートに出すため、画面の監視を待たずに読む）。
+    func currentLeftover() -> LeftoverEscape? {
+        guard isRunning else { return nil }
+        return terminal.leftoverEscape(screen: terminal.screenLines(), blocked: terminal.currentInputBlock() != nil)
     }
 
     /// 端末の今の表示（終了後は最後の画面）。

@@ -57,7 +57,7 @@ extension ClaudeTerminalView {
         let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen, waiting: waiting, screenChangedAt: lastDataTime) : nil
         logMenuScreen(menu: menu, unreadable: unreadable, screen: screen)
         let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable,
-                               claudeVersion: sessionWaitingCache?.version)
+                               claudeVersion: sessionWaitingCache?.version, leftover: leftoverEscape(screen: screen, blocked: block != nil))
         guard next != screenState else { return }
         screenState = next
         onScreenStateChanged?(next)   // Timer は main runloop なのでメインスレッド
@@ -123,6 +123,35 @@ extension ClaudeTerminalView {
         lastLoggedMenu = key
         guard key != nil else { return }
         MenuScreenLog.record(kind: menu != nil ? .menu : .unreadable, columns: getTerminal().cols, screen: screen)
+    }
+
+    /// 残りを確かめられるまで送らずにいる間の抜け道。選択待ちの間は入力欄が隠れるので、読めない時間に数えない。
+    func leftoverEscape(screen: [String], blocked: Bool, now: Date = Date()) -> LeftoverEscape? {
+        guard case .untilClear = leftoverCheck else { return nil }
+        guard !blocked else {
+            leftoverUnreadable.reset()
+            return nil
+        }
+        let box = InputBox.text(screen: screen)
+        let unreadableFor = leftoverUnreadable.observe(readable: box != nil, now: now)
+        return leftoverCheck.escape(box: box, unreadableFor: unreadableFor)
+    }
+
+    /// 入力欄の ❯ 行の文字の描き方（薄字・色付きの文字の数。記録用で、例文や候補の薄字を本文と読み違えていないかの手がかり）。
+    func inputBoxStyle(screen: [String]) -> [(String, String)] {
+        let lines = rawScreenLines()
+        guard let row = InputBox.promptRow(screen: screen), lines.indices.contains(row) else { return [] }
+        var total = 0, dim = 0, colored = 0
+        _ = lines[row].translateToString(trimRight: true, skipNullCellsFollowingWide: true) { cell in
+            let character = cell.getCharacter()
+            if !character.isWhitespace, character != "❯" {
+                total += 1
+                if cell.attribute.style.contains(.dim) { dim += 1 }
+                if Self.isColored(cell.attribute.fg) { colored += 1 }
+            }
+            return character
+        }
+        return [("boxChars", "\(total)"), ("boxDim", "\(dim)"), ("boxColored", "\(colored)")]
     }
 
     /// 送信を止めるべき状態か。タイマーを待たず今の画面とセッションファイルで判定する。

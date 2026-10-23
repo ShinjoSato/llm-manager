@@ -34,6 +34,17 @@ final class ChatOutbox {
     @ObservationIgnored var roomIds: (_ sessionId: String) -> [RoomID] = { _ in assertionFailure("roomIds 未設定"); return [] }
     /// 引き継ぎ中の sessionId か。
     @ObservationIgnored var isHandingOver: (_ sessionId: String) -> Bool = { _ in assertionFailure("isHandingOver 未設定"); return false }
+    /// 今のルーム（抜け道のボタンを押した時に引き直す）。
+    @ObservationIgnored var room: (RoomID) -> Room? = { _ in assertionFailure("room 未設定"); return nil }
+
+    /// 端末の入力欄に入らず、この入力欄に戻した送信（端末からそのまま送られたら、同じ本文と添付をここから外す）。
+    private struct RestoredSend {
+        let text: String
+        let attachmentIds: Set<UUID>
+    }
+    @ObservationIgnored private var restoredLate: [RoomID: RestoredSend] = [:]
+    /// 「端末の画面」を開いてほしいルームとウィンドウ（警告のボタンから。会話の画面が受け取って消す）。
+    var terminalScreenRequest: TerminalScreenRequest?
 
     init(store: MonitorStore, alerts: ChatAlerts) {
         self.store = store
@@ -55,11 +66,13 @@ final class ChatOutbox {
         let sending = attachments[roomId] ?? []
         let outgoingId = UUID().uuidString
         let sentAt = Date().timeIntervalSince1970 * 1000
-        let result = session.send(text, attachments: sending) { [weak self] completion in
-            self?.finishSend(completion, text: text, attachments: sending, outgoingId: outgoingId, in: roomId)
+        let result = session.send(text, attachments: sending) { [weak self, weak session] completion in
+            self?.finishSend(completion, text: text, attachments: sending, outgoingId: outgoingId, in: roomId, session: session)
         }
         switch result {
         case .started(let pastedImages, let body):
+            // 戻した本文を送り直したので、端末から送られた時に外す印は要らない。
+            restoredLate[roomId] = nil
             // サムネイルは結末が出るまで残す（本文を貼る前にやめたら入力欄へ戻すため）。
             attachments[roomId] = nil
             if let outgoing = PendingImageMessages.outgoing(id: outgoingId, text: text, sentBody: body,
@@ -68,11 +81,150 @@ final class ChatOutbox {
                 scheduleSentImagesExpiry()
             }
             return true
-        case .leftover, .lateLeftover, .blocked:
+        case .leftover, .lateLeftover:
+            showLeftoverRefusal(strict: result == .lateLeftover, room: roomId, session: session)
+            return false
+        case .blocked:
             alerts.message = result?.refusal?.message
             return false
         case .busy, .empty, nil: return false
         }
+    }
+
+    // MARK: - 残りの抜け道
+
+    /// 端末の入力欄の残りを理由に送らなかった時の警告。選べる抜け道をボタンで添える。
+    private func showLeftoverRefusal(strict: Bool, room roomId: RoomID, session: HostedSession) {
+        let result: ClaudeTerminalView.SendResult = strict ? .lateLeftover : .leftover
+        let escape = strict ? session.currentLeftover() : nil
+        let detail = escape.map(Self.leftoverDetail).map { "\n\n" + $0 } ?? ""
+        alerts.show((result.refusal?.message ?? "") + detail,
+                    actions: LeftoverChoice.choices(strict: strict, escape: escape).map { leftoverAction($0, room: roomId) })
+    }
+
+    /// 今の端末の入力欄の様子の一言（警告と入力欄の上の案内で同じ文言）。
+    static func leftoverDetail(_ escape: LeftoverEscape) -> String {
+        switch escape.box {
+        case .showsBody:
+            return "端末の入力欄に、前回入らなかった本文が入っています。「そのまま送る」で送ると、この入力欄に戻した同じ本文は消します。"
+        case .other:
+            return "端末の入力欄に何か入っています。中身は「端末の画面」で確かめられます。"
+        case .unreadable:
+            return escape.canForce
+                ? "端末の入力欄を 30 秒以上読めていません。確かめずに送ることもできます（入っていれば二重に送られます）。"
+                : "端末の入力欄を読めません。読めない状態が 30 秒続くと、確かめずに送ることも選べます。"
+        }
+    }
+
+    /// 抜け道のボタン 1 つ。
+    func leftoverAction(_ choice: LeftoverChoice, room roomId: RoomID) -> ChatAlertAction {
+        switch choice {
+        case .openTerminal:
+            return ChatAlertAction(title: "端末の画面を開く") { [weak self] window in
+                self?.terminalScreenRequest = TerminalScreenRequest(room: roomId, window: window)
+            }
+        case .submitAsIs:
+            return ChatAlertAction(title: "そのまま送る（Enter）") { [weak self] _ in self?.submitLeftover(in: roomId) }
+        case .clearInput:
+            return ChatAlertAction(title: "端末の入力欄を消す") { [weak self] _ in self?.clearTerminalInput(in: roomId) }
+        case .forceSend:
+            return ChatAlertAction(title: "確かめられないまま送る…", destructive: true) { [weak self] _ in self?.confirmForceSend(in: roomId) }
+        }
+    }
+
+    /// 端末の入力欄に見えている本文をそのまま Enter で送る。
+    func submitLeftover(in roomId: RoomID) {
+        guard let session = room(roomId)?.hosted else { return }
+        let draftBefore = drafts[roomId]
+        let restored = restoredLate[roomId] != nil
+        switch session.submitLeftover() {
+        case .done:
+            // 外すのは `onLeftoverSubmitted` で済んでいる。書き換えていた時は本文を残すので、そう伝える。
+            if !restored || draftBefore == nil {
+                alerts.message = "端末の入力欄の本文を送りました。"
+            } else if drafts[roomId] == draftBefore {
+                alerts.message = "端末の入力欄の本文を送りました。この入力欄の本文は書き換えられていたので残しています。同じ内容なら消してください。"
+            } else {
+                alerts.message = "端末の入力欄の本文を送りました。この入力欄に戻していた同じ本文は二重に送らないよう消しました。"
+            }
+        case .notShown:
+            alerts.message = "端末の入力欄に前回の本文が見えなくなりました。「端末の画面」で確かめてください。"
+        case .blocked:
+            alerts.message = "確認や選択肢が出ているので送りませんでした（Enter がそちらに効くため）。先に答えてください。"
+        case .busy:
+            alerts.message = "送信か入力欄の消去の途中です。終わってからもう一度。"
+        case .notNeeded:
+            alerts.message = "端末の入力欄の残りはもう確かめられています。この入力欄から送れます。"
+        case .tooEarly, .ended:
+            alerts.message = "claude が動いていないため送れません。"
+        }
+    }
+
+    /// 端末の入力欄を空にする。この入力欄の本文は残すので、消えたらここから送り直せる。
+    func clearTerminalInput(in roomId: RoomID) {
+        guard let session = room(roomId)?.hosted else { return }
+        let started = session.clearInput { [weak self] outcome in
+            guard let self, self.hostedRoomExists(roomId) else { return }
+            // 端末の入力欄を片付けたので、端末から送られた時に外す印は要らない（本文はここから送り直す）。
+            if outcome != .blocked { self.restoredLate[roomId] = nil }
+            switch outcome {
+            case .cleared:
+                self.alerts.message = "端末の入力欄を消しました。この入力欄の本文から送り直せます。"
+            case .unverified, .stuck:
+                self.alerts.message = "消すキーを送りましたが、端末の入力欄が空になったか確かめられませんでした。「端末の画面」で確かめてください。"
+                    + "このまま送ると、残っていれば一度だけ知らせます。"
+            case .blocked:
+                self.alerts.message = "途中で確認や選択肢が出たので、消すのをやめました。先に答えてから、もう一度消してください。"
+            case .ended:
+                break
+            }
+        }
+        switch started {
+        case .done: break
+        case .blocked: alerts.message = "確認や選択肢が出ている間は入力欄を消しません（キーがそちらに効くため）。先に答えてください。"
+        case .busy: alerts.message = "送信か入力欄の消去の途中です。終わってからもう一度。"
+        case .ended, .notShown, .notNeeded, .tooEarly: alerts.message = "claude が動いていないため消せません。"
+        }
+    }
+
+    /// 確かめられないまま送るかを確かめる。
+    func confirmForceSend(in roomId: RoomID) {
+        alerts.show("端末の入力欄を確かめられないまま送りますか？\n\n前回の本文が端末の入力欄に入っていると、この入力欄の本文とつながって二重に送られます。",
+                     actions: [ChatAlertAction(title: "送る", destructive: true) { [weak self] _ in self?.forceSend(in: roomId) }])
+    }
+
+    private func forceSend(in roomId: RoomID) {
+        guard let room = room(roomId), let session = room.hosted else { return }
+        switch session.overrideLeftover() {
+        case .done, .notNeeded:
+            let text = drafts[roomId] ?? ""
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, (attachments[roomId] ?? []).isEmpty {
+                alerts.message = "この入力欄が空なので、確かめずに送れる状態にだけしました。"
+            } else if send(text, to: room) {
+                drafts[roomId] = nil
+            }
+        case .tooEarly:
+            alerts.message = "端末の入力欄が読めるようになりました。もう一度送るか、案内のボタンを使ってください。"
+        case .blocked:
+            alerts.message = "確認や選択肢が出ているので送りませんでした。先に答えてください。"
+        case .busy, .notShown, .ended:
+            alerts.message = "今は送れません。少し待ってからもう一度。"
+        }
+    }
+
+    /// 端末からそのまま送られた。戻していた同じ本文と添付をこの入力欄から外す（書き換えていれば本文は残す）。
+    /// 端末から送られた本文が戻したものと違えば（iPhone から送って入らなかった分など）何もしない。
+    private func dropRestored(in roomId: RoomID, submitted: String) {
+        guard let restored = restoredLate.removeValue(forKey: roomId),
+              ComposerRestore.isSameSend(restored: restored.text, submitted: submitted) else { return }
+        if let draft = drafts[roomId], let rest = ComposerRestore.draft(removing: restored.text, from: draft) {
+            drafts[roomId] = rest.isEmpty ? nil : rest
+        }
+        let current = attachments[roomId] ?? []
+        // 端末に渡った画像は受け手が後から読むので一時ファイルは残す。
+        for attachment in current where restored.attachmentIds.contains(attachment.id) { forget(attachment, deletingFile: false) }
+        let kept = current.filter { !restored.attachmentIds.contains($0.id) }
+        attachments[roomId] = kept.isEmpty ? nil : kept
     }
 
     /// iPhone から届いた本文と画像を送る。mac の入力欄の書きかけ・添付には触れず、取りやめても入力欄には戻さない。
@@ -116,7 +268,7 @@ final class ChatOutbox {
     }
 
     private func finishSend(_ completion: SendCompletion, text: String, attachments sent: [Attachment],
-                            outgoingId: String, in roomId: RoomID) {
+                            outgoingId: String, in roomId: RoomID, session: HostedSession?) {
         let roomExists = hostedRoomExists(roomId)
         // Enter まで届かなかった送信は記録されないので、仮の吹き出しを下げる。
         if completion != .submitted {
@@ -128,6 +280,11 @@ final class ChatOutbox {
             let restored = ComposerRestore.attachments(restoring: sent, current: attachments[roomId] ?? [])
             for attachment in restored.dropped { forget(attachment, deletingFile: true) }
             attachments[roomId] = restored.merged.isEmpty ? nil : restored.merged
+            if case .notPasted = completion {
+                // 遅れて端末に入った本文がそこから送られたら、ここに戻した同じものを外して二重送信を防ぐ。
+                restoredLate[roomId] = RestoredSend(text: text, attachmentIds: Set(sent.map(\.id)))
+                session?.onLeftoverSubmitted = { [weak self] body in self?.dropRestored(in: roomId, submitted: body) }
+            }
         } else {
             // 端末に渡った画像は受け手が後から読むことがあるので一時ファイルは残す（起動時の掃除に任せる）。
             let keepFiles = roomExists && completion != .ended
@@ -326,6 +483,14 @@ private struct ImportResult: @unchecked Sendable {
     }
 }
 
+/// 警告のボタンから「端末の画面」を開いてほしい時の宛先。
+struct TerminalScreenRequest: Equatable {
+    let id = UUID()
+    let room: RoomID
+    /// 警告が出ていたウィンドウ（メインなら nil）。
+    let window: UUID?
+}
+
 extension ClaudeTerminalView.SendResult {
     /// 送らなかった理由（画面の案内と iPhone への応答で同じ文言を使う）。送り始めたなら nil。
     var refusal: (code: String, message: String)? {
@@ -334,10 +499,10 @@ extension ClaudeTerminalView.SendResult {
             return nil
         case .leftover:
             return ("leftover", "端末側の入力欄に前回の本文や画像が残っているようです。"
-                + "このままもう一度送ると、残っているものの後ろにつながって送られます。")
+                + "このままもう一度送ると、残っているものの後ろにつながって送られます（「端末の入力欄を消す」で消せます）。")
         case .lateLeftover:
             return ("leftover", "前回入らなかった本文が遅れて端末側の入力欄に入ったか、入力欄を確かめられません。"
-                + "二重に送らないよう、端末側の入力欄が空になるまで送りません（ターミナルで送るか消してください）。")
+                + "二重に送らないよう、端末側の入力欄が空になるまで送りません（「端末の入力欄を消す」か、入っている本文を「そのまま送る」で片付けられます）。")
         case .blocked(.permission):
             return ("blocked_permission", "権限の確認に答えてから送ってください（今 Enter を送ると確認への「Yes」になります）。")
         case .blocked(.menu):
