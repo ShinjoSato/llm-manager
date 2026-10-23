@@ -45,7 +45,7 @@ mac/
         ChatModel.swift             ルーム一覧（監視のセッション + ホスト中のセッション）・選択・別ウィンドウで開いているルーム・既読・claude の起動と終了。下の部品を束ねる
         ChatOutbox.swift            下書き・添付・ホスト中のセッションへの送信・送った画像の仮の吹き出し（ルームごと）
         ChatRelay.swift             外部セッションへの伝言と、手元で持つ点線の吹き出し
-        ChatHandover.swift          外部セッションの claude を止めてアプリで再開する（引き継ぎ）
+        ChatHandover.swift          外部セッションの claude を止めて（または VS Code のタブが閉じられるのを待って）アプリで再開する（引き継ぎ）・同じ会話が外で動き出した時の見張り
         PromptResponder.swift       権限確認（Channels・端末）と選択肢メニューへの回答（画面のカードと iPhone が同じ経路）
         TranscriptCache.swift       開いたルームの会話の取得と追記の購読（直近 4 ルームと、メイン・別ウィンドウで出しているものを持つ）・吹き出しの画像の読み込み
         EditorLauncher.swift        見出し・詳細の「VS Code」「Finder」「GitHub」「リンク」「Xcode」「閉じる」と結果の短い一言（押した先ごと）
@@ -106,7 +106,7 @@ mac/
           ComposerTextView.swift      Return を横取りする NSTextView（⌘V の添付は MonitorKit の AttachmentPasteTextView）
         ChatImageViews.swift        吹き出しの画像（サムネイルの格子・拡大表示のシート・表示時に読み込んで NSCache に持つ ChatImageLoader）
         MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・コードブロックのコピーのボタン・解析結果のキャッシュ）
-        ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
+        ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ・VS Code のタブを閉じたら / 今すぐ止めて）・同じ会話が外で動き出した時の警告の帯・伝言の点線吹き出し・Channels 未設定の案内
         PixelAvatar.swift           ルーム一覧と見出しのドット絵キャラ（絵は DeckCore の PixelCharacter）
         ChatTheme.swift             色・文字・時刻の書式のトークン（色はテーマ（ナイト / ライト）ごとの値を描く時の外観で選ぶ。AppKit 側の色も）
     Stage/                      右側のステージパネル（360px）
@@ -211,7 +211,8 @@ mac/
       LimitState.swift            上限到達の記録（limit-state.json）と、続けて止めた分をまとめた知らせの文言
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       RelayNotes+Failure.swift    伝言の送信失敗の理由（監視の失敗種別を言葉にする。伝言そのものは DeckCore）
-      SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
+      SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・起動元の確かめ（ターミナル / VS Code 系の拡張）・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
+      HandoverWatch.swift         VS Code のタブを閉じたら引き継ぐ待ち（HandoverCloseWait）・引き継いだ後に同じ会話が外で動き出したかの判定（ExternalDuplicate）
       RoomRedirects.swift         引き継ぎで移った後に元のルーム宛てに届く取り込みの結果を、移し先のルームへ付け替える表
       SessionRestore.swift        前回のセッションの記録の読み書き（HostedSessionsFile・HostedSessionsLock）・再開するかの判定・
                                   再開の直後に落ちたかの判定・続きを頼む時機（ResumeNudgeGate）・
@@ -1160,15 +1161,20 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - Esc が claude の終了になるメニュー（選択肢カード・読めない選択肢のカードと同じ判定）では、Esc を送る前に確認ダイアログを挟む。
 - Esc は端末に送るキーなのでシートを閉じない。閉じるのは「閉じる」（⌘W）。
 
-### 外部セッション（ターミナル等で起動したもの）
+### 外部セッション（ターミナル・VS Code 等で起動したもの）
 
 アプリの外で起動した claude には本人の入力として届く経路が無い。ここから出来るのは **伝言** と **権限の許可・拒否（Channels のみ）**、
 そして **アプリに引き継ぐ**（アプリの PTY で同じ会話を再開して、以降は通常のルームとして操作する）の 3 つ。
 
-- 見出しに「外部セッション」タグ、その下にバナー（起動元に応じた説明と「アプリに引き継ぐ」ボタン）。
-- **引き継げるのはターミナルで対話起動した claude だけ**（`~/.claude/sessions/<pid>.json` の `entrypoint` が `cli` で、`kind` があれば `interactive`）。
-  VS Code 拡張（`claude-vscode`）等で動いているセッションは止めると元の画面が壊れるので、ボタンを出さずに理由を表示する（`SessionHandover.unsupportedSourceReason`）。
-  `entrypoint` は環境変数 `CLAUDE_CODE_ENTRYPOINT` を引き継ぐので、Claude Code の中（VS Code 拡張の Bash 等）から起動した claude は `cli` にならず引き継げない。
+- 見出しに「外部セッション」タグ、その下にバナー（起動元に応じた説明と引き継ぎのボタン）。
+- **引き継げるのはターミナルで対話起動した claude と、VS Code 系のエディタの Claude 拡張の claude**（`SessionHandover.checkSource`）。
+  - ターミナル: `~/.claude/sessions/<pid>.json` の `entrypoint` が `cli` で、`kind` があれば `interactive`。ボタンは［アプリに引き継ぐ］。
+  - VS Code: `entrypoint` が `claude-vscode` で、**かつ**プロセスの実行ファイルがエディタの設定フォルダの下の拡張の claude
+    （`~/.vscode/extensions/anthropic.claude-code-<版>/…/claude`。`.vscode-insiders`・`.cursor`・`.windsurf` 等の `.<名前>/extensions/anthropic.claude-code-*/` の下も同じ。
+    `SessionHandover.isEditorExtensionBinary`）。entrypoint だけでは決めない。ボタンは［VS Code のタブを閉じたら引き継ぐ］と［今すぐ止めて引き継ぐ］。
+  - それ以外（Claude デスクトップアプリ・SDK 等）はボタンを出さずに理由を表示する。
+  `entrypoint` は環境変数 `CLAUDE_CODE_ENTRYPOINT` を引き継ぐので、Claude Code の中（VS Code 拡張の Bash 等）から起動した claude は
+  `claude-vscode` になりうるが、実行ファイルが拡張の場所に無いので引き継がない。
 - **伝言**: 入力欄が黄色の「伝言」モードになり（注記「受け手には別セッションからのメッセージとして届きます」）、アプリ内の監視が
   受信箱ソケットへ直接書く（`MonitorStore.sendMessage`）。受け手には `Another Claude session sent a message:` に続けて
   届き、**本人の指示にはならない**（権限承認・スラッシュコマンド・設定変更は不可。v2.1.286 で確認）。
@@ -1179,9 +1185,10 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   - 送信失敗は吹き出しの下とダイアログに理由を出す（`not_found` / `not_alive` / `no_socket` / `unreachable`）。
 - **権限**: 監視の `permissions`（Channels を載せたセッションのみ。アプリ内サーバーの `/api/channel/permissions` に届く）があれば許可 / 拒否カードを出して `store.decide` で返す（二度押し不可）。
   状態が権限待ちのまま 3 秒経っても permissions が無い時は「確認がまだ届いていません。Channels を載せていないセッションは、ここからは答えられません（ターミナルで答えてください）」を出す。
-- **アプリに引き継ぐ**: 確認ダイアログ（終了する pid・中断されること・再開すること・元のウィンドウは閉じないこと）→ キャンセルなら何もしない。
+- **アプリに引き継ぐ・今すぐ止めて引き継ぐ**: 確認ダイアログ（終了する pid・中断されること・再開すること・元のウィンドウは閉じないこと。
+  VS Code の時は「VS Code 側の claude を止めてアプリで再開します。VS Code のタブはそのまま残るので、そこでは打たないでください。打つと同じ会話が 2 本動きます」）→ キャンセルなら何もしない。
   1. 終了対象を確かめる（`SessionHandover.verify`）: 自分の uid / プロセスが claude（argv[0] か実行ファイルの場所）/ `~/.claude/sessions/<pid>.json` が
-     その pid で同じ sessionId / 起動元が `cli` の対話セッション / レジストリの `procStart`（無い版は `startedAt`）とカーネルの起動時刻が一致（pid の再利用を見分ける）。
+     その pid で同じ sessionId / 起動元が上の条件を満たす対話セッション / レジストリの `procStart`（無い版は `startedAt`）とカーネルの起動時刻が一致（pid の再利用を見分ける）。
      どれかが外れたら何も送らずに中止する。
   2. SIGINT → 最大 5 秒待つ → 残っていて**同じプロセスのまま**（uid と起動時刻が同じ。実行パスは取れないことがあるので見ない）なら SIGTERM → 最大 3 秒待つ。
      終了を確認できなければ再開しない（同じ会話の二重起動を避ける）。
@@ -1192,7 +1199,19 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
      外部ルームの書きかけと添付は新しいルームへ移す（`ChatOutbox.move`）。取り込み中だった添付もそのまま新しいルームの取り込み中として扱い、
      後から元のルーム宛てに届く取り込みの結果は `RoomRedirects` で新しいルームへ付け替える（全部届いたら表は空になる）。
      引き継ぎが失敗・取りやめになって新しいルームが無い時は従来どおり、外部ルームが一覧から消えた時点で片付ける。
-  - 上限到達中（`LimitWatch.isLimitReached`）は引き継がない（確認ダイアログの間・終了待ちの間に到達した場合も、止める前／再開前に判定し直す）。
+  - 上限到達中（`LimitWatch.isLimitReached`）・終了の確認中は引き継がない（確認ダイアログの間・終了待ちの間にそうなった場合も、止める前／再開前に判定し直し、
+    止めた後なら再開を見送って知らせる）。プロセスが居ない（実行ファイルを読めない）セッションはボタンを出さず「このセッションは終了しています」で断る。
+- **VS Code のタブを閉じたら引き継ぐ**（安全側。アプリは VS Code のプロセスにシグナルを送らない）: 押した時に上と同じ確かめ（`SessionHandover.checkTarget`）をして、
+  その pid の素性（uid と起動時刻）を覚えて待ちに入る。帯は「VS Code でこの会話のタブを閉じてください（閉じたら自動でアプリに引き継ぎます）」と［やめる］。
+  0.5 秒ごとに見張り（`HandoverCloseWait`。`~/.claude/sessions` の読み取りはメインの外）、元の claude が終わり（ゾンビ・pid の再利用・同じプロセスの記録が別の sessionId に
+  替わったのも終わったとみなす）、同じ sessionId の生きた claude（記録と起動時刻が合うもの）が他に無い状態が 2.5 秒続いたら（拡張が起動し直した時の記録が出るのを待つ）、
+  同じ cwd で同じ経路の `claude --resume=<sessionId>` を起動する。選択は元の外部ルームを選んでいた時だけ新しいルームへ移す（中央の表示は変えない）。
+  別の claude が同じ会話を動かしている間は、その旨を帯に出して待ち続ける。
+  上限に達したら待ちをやめて知らせ、終了の確認中は再開しない。同じ会話をアプリがホストし始めたら黙って外す。待ちは記録しない（アプリの終了で消える）。
+  待っている間は外部ルームの入力欄を「引き継ぎ中…」にし、ルームが消えても書きかけと添付を片付けない（再開したルームへ移す）。
+- **引き継いだ後の守り**: ホスト中のルームの会話と同じ sessionId を、アプリの外の claude（ホスト中の pid 以外で記録と起動時刻が合うもの）が動かし始めたら（`ExternalDuplicate`。1 秒ごと・読み取りはメインの外）、
+  ホストのルームに警告の帯（「VS Code で同じ会話が動き出しました（pid N）。VS Code のタブを閉じてください。…」。ターミナル等なら起動元に合わせた文言）を出し、
+  入力欄を無効にして理由を出す（iPhone からの送信・再開後の続きの頼みも止める）。止まったら帯と止めを外す。権限・選択肢のカードへの回答は止めない。
   - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
     安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。
 

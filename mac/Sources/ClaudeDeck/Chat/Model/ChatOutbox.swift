@@ -46,6 +46,11 @@ final class ChatOutbox {
 
     func send(_ text: String, to room: Room) -> Bool {
         guard let session = room.hosted, sendBlockedReason(for: room) == nil else { return false }
+        // 同じ会話が外でも動いている間は、二重に書き込まないよう送らない（入力欄は無効にしてあるが、押した直後に見つかった時のため）。
+        if let duplicate = session.externalDuplicate {
+            alerts.message = duplicate.sendBlockedReason
+            return false
+        }
         let roomId = room.id
         let sending = attachments[roomId] ?? []
         let outgoingId = UUID().uuidString
@@ -153,6 +158,7 @@ final class ChatOutbox {
         guard let session = room.hosted else { return "外部セッションにはここから送れません" }
         if let end = session.end { return end.message }
         if session.pid == nil { return "起動中…" }
+        if let duplicate = session.externalDuplicate { return duplicate.sendBlockedReason }
         switch session.inputBlock {
         case .permission: return "権限の確認に答えると送れます"
         case .menu: return "上の選択肢に答えると送れます"
