@@ -27,19 +27,24 @@ final class ExitConfirmationTests: XCTestCase {
     }
 
     #if DEBUG
-    private func model(menu: RemoteMenu) -> (AppModel, RemoteRoom) {
+    private func model(menu: RemoteMenu, open: String? = "s") -> (AppModel, RemoteRoom) {
         let room = RemoteRoom(id: "h:1", kind: .hosted, phase: .attention, name: "p", branch: nil, status: .waiting, line: "",
                               activityAt: nil, sessionId: "s", cwd: "/", ended: nil, session: nil, permissions: [], terminalPermission: nil,
                               menu: menu, unreadableMenu: nil, busy: false, send: RemoteSendState(mode: .input, disabledReason: nil))
         let pairing = RemotePairing(host: "192.168.1.5", port: 8767, localHostName: nil, fingerprint: String(repeating: "ab", count: 32),
                                     serverName: "Mac", deviceId: "d", deviceToken: "t", pairedAt: 0)
-        return (AppModel(demo: RemoteState(rooms: [room], usage: nil, monitoring: true), pairing: pairing, transcripts: [:], open: nil), room)
+        return (AppModel(demo: RemoteState(rooms: [room], usage: nil, monitoring: true), pairing: pairing, transcripts: [:], open: open), room)
+    }
+
+    private func refuse(_ model: AppModel, _ room: RemoteRoom, _ menu: RemoteMenu, choice: Int? = 0, confirmedExit: Bool = false,
+                        result: RemoteActionResult? = .failure("confirm_required", "x")) {
+        model.menuAnswered(result, roomId: room.id, menu: menu, choice: choice, confirmedExit: confirmedExit, sentTo: model.pairing)
     }
 
     func testOldMacRefusalAsksTheSameConfirmation() throws {
         let old = menu(exits: nil)
         let (model, room) = model(menu: old)
-        model.menuAnswered(.failure("confirm_required", "x"), roomId: room.id, menu: old, choice: 0, confirmedExit: false)
+        refuse(model, room, old)
         XCTAssertEqual(model.exitConfirmation(room, old), ExitConfirmation(menuId: "m1", choice: 0, label: "No, exit"))
         XCTAssertNil(model.notices[room.id], "断られた文ではなく確認を出す")
         XCTAssertNil(model.exitConfirmation(room, menu(id: "m2", exits: nil)), "別のメニューには出さない")
@@ -47,7 +52,7 @@ final class ExitConfirmationTests: XCTestCase {
         model.dismissExitConfirmation(room.id)
         XCTAssertNil(model.exitConfirmation(room, old), "やめたら消す")
 
-        model.menuAnswered(.failure("confirm_required", "x"), roomId: room.id, menu: old, choice: nil, confirmedExit: false)
+        refuse(model, room, old, choice: nil)
         XCTAssertEqual(model.exitConfirmation(room, old), .cancel("m1"), "取り消しを断られた時も Esc の確認を出す")
         model.answerMenu(room, old, choice: nil, confirmExit: true)
         XCTAssertNil(model.exitConfirmation(room, old), "了承して送り直したら消す")
@@ -56,18 +61,18 @@ final class ExitConfirmationTests: XCTestCase {
     func testOtherResultsDoNotAsk() {
         let old = menu(exits: nil)
         let (model, room) = model(menu: old)
-        model.menuAnswered(.failure("confirm_required", "x"), roomId: room.id, menu: old, choice: 0, confirmedExit: true)
+        refuse(model, room, old, confirmedExit: true)
         XCTAssertNil(model.exitConfirmation(room, old), "了承済みで断られたら確認を繰り返さない")
-        model.menuAnswered(.failure("changed", "x"), roomId: room.id, menu: old, choice: 0, confirmedExit: false)
-        model.menuAnswered(.success("confirmed"), roomId: room.id, menu: old, choice: 0, confirmedExit: false)
-        model.menuAnswered(nil, roomId: room.id, menu: old, choice: 0, confirmedExit: false)
+        refuse(model, room, old, result: .failure("changed", "x"))
+        refuse(model, room, old, result: .success("confirmed"))
+        refuse(model, room, old, result: nil)
         XCTAssertNil(model.exitConfirmation(room, old))
     }
 
     func testConfirmationIsDroppedWhenTheMenuChanges() {
         let old = menu(exits: nil)
         let (model, room) = model(menu: old)
-        model.menuAnswered(.failure("confirm_required", "x"), roomId: room.id, menu: old, choice: 0, confirmedExit: false)
+        refuse(model, room, old)
         model.simulateReceived(RemoteState(rooms: [room], usage: nil, monitoring: true))
         XCTAssertNotNil(model.exitConfirmation(room, old), "同じメニューのままなら残す")
 
@@ -75,6 +80,39 @@ final class ExitConfirmationTests: XCTestCase {
         changed.menu = menu(id: "m2", exits: nil)
         model.simulateReceived(RemoteState(rooms: [changed], usage: nil, monitoring: true))
         XCTAssertNil(model.exitConfirmations[room.id], "メニューが替わったら確認も捨てる")
+    }
+
+    func testConfirmationExpires() {
+        let old = menu(exits: nil)
+        let (model, room) = model(menu: old)
+        var now = Date(timeIntervalSince1970: 1_000)
+        model.clock = { now }
+        refuse(model, room, old)
+        now += AppModel.exitConfirmationLifetime
+        XCTAssertNotNil(model.exitConfirmation(room, old), "期限までは出す")
+        now += 1
+        XCTAssertNil(model.exitConfirmation(room, old), "時間が経ってから急に出さない")
+        model.simulateReceived(RemoteState(rooms: [room], usage: nil, monitoring: true))
+        XCTAssertNil(model.exitConfirmations[room.id], "期限切れは捨てる")
+    }
+
+    func testClosedConversationKeepsOnlyTheNotice() {
+        let old = menu(exits: nil)
+        let (model, room) = model(menu: old, open: nil)
+        model.menuAnswered(.failure("confirm_required", "x"), roomId: room.id, menu: old, choice: 0, confirmedExit: false,
+                           sentTo: model.pairing)
+        XCTAssertNil(model.exitConfirmations[room.id], "返事の時に開いていなかった会話には、後で開いても確認を出さない")
+    }
+
+    func testRefusalFromThePreviousPairingIsIgnored() {
+        let old = menu(exits: nil)
+        let (model, room) = model(menu: old)
+        let previous = RemotePairing(host: "192.168.1.9", port: 8767, localHostName: nil, fingerprint: String(repeating: "cd", count: 32),
+                                     serverName: "Old Mac", deviceId: "d0", deviceToken: "t0", pairedAt: 0)
+        model.menuAnswered(.failure("confirm_required", "x"), roomId: room.id, menu: old, choice: 0, confirmedExit: false, sentTo: previous)
+        XCTAssertNil(model.exitConfirmations[room.id], "ペアリングを替えた後に前の Mac の確認を書き戻さない")
+        model.menuAnswered(.failure("confirm_required", "x"), roomId: room.id, menu: old, choice: 0, confirmedExit: false, sentTo: nil)
+        XCTAssertNil(model.exitConfirmations[room.id])
     }
     #endif
 }
