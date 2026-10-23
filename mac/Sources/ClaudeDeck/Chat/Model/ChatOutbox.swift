@@ -26,6 +26,8 @@ final class ChatOutbox {
     static let maxAttachments = 20
     /// ルーム → 画像を添えて送り、まだ transcript に載っていない発話（載るまで送った画像を吹き出しに出す）。
     private(set) var sentImages: [RoomID: [PendingImageMessage]] = [:]
+    /// ルーム → 送り始めてまだ transcript に載っていないかもしれない発話（入力欄の履歴に含める）。
+    @ObservationIgnored private var sentTexts: [RoomID: [ComposerHistory.Sent]] = [:]
 
     // MARK: ChatModel・引き継ぎへの問い合わせ（循環参照を避けてクロージャで受け、設定し忘れは assert で止める）
     /// ホスト中のルームがまだあるか（閉じた後に届いた送信の結末で下書きを戻さないため）。
@@ -62,6 +64,7 @@ final class ChatOutbox {
         case .started(let pastedImages, let body):
             // サムネイルは結末が出るまで残す（本文を貼る前にやめたら入力欄へ戻すため）。
             attachments[roomId] = nil
+            rememberSent(text, id: outgoingId, at: sentAt, in: roomId)
             if let outgoing = PendingImageMessages.outgoing(id: outgoingId, text: text, sentBody: body,
                                                             pastedImagePaths: pastedImages, sentAt: sentAt) {
                 sentImages[roomId, default: []].append(outgoing)
@@ -91,6 +94,7 @@ final class ChatOutbox {
             completion(outcome)
         }
         if case .started(let pastedImages, let body) = result {
+            rememberSent(text, id: outgoingId, at: sentAt, in: roomId)
             if let outgoing = PendingImageMessages.outgoing(id: outgoingId, text: text, sentBody: body,
                                                             pastedImagePaths: pastedImages, sentAt: sentAt) {
                 sentImages[roomId, default: []].append(outgoing)
@@ -104,6 +108,7 @@ final class ChatOutbox {
 
     private func finishRemoteSend(_ completion: SendCompletion, images: [Attachment], outgoingId: String, in roomId: RoomID) {
         if completion != .submitted {
+            forgetSent(outgoingId, in: roomId)
             sentImages[roomId]?.removeAll { $0.id == outgoingId }
             if sentImages[roomId]?.isEmpty == true { sentImages[roomId] = nil }
         }
@@ -120,6 +125,7 @@ final class ChatOutbox {
         let roomExists = hostedRoomExists(roomId)
         // Enter まで届かなかった送信は記録されないので、仮の吹き出しを下げる。
         if completion != .submitted {
+            forgetSent(outgoingId, in: roomId)
             sentImages[roomId]?.removeAll { $0.id == outgoingId }
             if sentImages[roomId]?.isEmpty == true { sentImages[roomId] = nil }
         }
@@ -164,6 +170,23 @@ final class ChatOutbox {
         case .menu: return "上の選択肢に答えると送れます"
         case nil: return nil
         }
+    }
+
+    // MARK: - 入力欄の履歴
+
+    /// 入力欄の ↑ / ↓ で呼び出す、そのルームで前に送った発話（新しい順）。
+    func history(for roomId: RoomID, items: [TranscriptItem], notes: [RelayNote]) -> [String] {
+        ComposerHistory.entries(items: items, notes: notes, sent: sentTexts[roomId] ?? [])
+    }
+
+    private func rememberSent(_ text: String, id: String, at sentAt: Double, in roomId: RoomID) {
+        sentTexts[roomId] = ComposerHistory.appending(ComposerHistory.Sent(id: id, text: text, sentAt: sentAt),
+                                                      to: sentTexts[roomId] ?? [])
+    }
+
+    private func forgetSent(_ id: String, in roomId: RoomID) {
+        sentTexts[roomId]?.removeAll { $0.id == id }
+        if sentTexts[roomId]?.isEmpty == true { sentTexts[roomId] = nil }
     }
 
     // MARK: - 送った画像の仮の吹き出し
@@ -288,12 +311,14 @@ final class ChatOutbox {
     func forgetRoom(_ roomId: RoomID) {
         drafts[roomId] = nil
         sentImages[roomId] = nil
+        sentTexts[roomId] = nil
         discardPendingAttachments(of: roomId)
     }
 
     /// 引き継ぎで外部ルームからホスト中のルームへ移った。書きかけと添付（取り込み中のものも）を移し先へ渡す。
     func move(from roomId: RoomID, to newRoomId: RoomID) {
         if let draft = drafts.removeValue(forKey: roomId) { drafts[newRoomId] = draft }
+        if let sent = sentTexts.removeValue(forKey: roomId) { sentTexts[newRoomId, default: []].append(contentsOf: sent) }
         if let pending = attachments.removeValue(forKey: roomId) { attachments[newRoomId, default: []].append(contentsOf: pending) }
         if let pending = importing.removeValue(forKey: roomId) {
             importing[newRoomId, default: [:]].merge(pending) { _, moved in moved }

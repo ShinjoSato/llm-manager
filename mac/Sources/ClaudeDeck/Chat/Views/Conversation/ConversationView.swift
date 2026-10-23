@@ -86,7 +86,12 @@ struct ChatPane: View {
                      importingCount: outbox.importingCount(for: room.id),
                      thumbnail: { outbox.thumbnails[$0.id] },
                      onAttach: { outbox.attach($0, to: room.id) },
-                     onRemoveAttachment: { outbox.removeAttachment($0, from: room.id) }) { text in
+                     onRemoveAttachment: { outbox.removeAttachment($0, from: room.id) },
+                     history: { [transcripts = model.transcripts, relay = model.relay] in
+                         outbox.history(for: room.id, items: transcripts.items(for: room.sessionId),
+                                        notes: relay.notes(for: room.sessionId))
+                     },
+                     historyScope: room.id) { text in
                 room.isExternal ? model.relay.send(text, to: room) : outbox.send(text, to: room)
             }
         }

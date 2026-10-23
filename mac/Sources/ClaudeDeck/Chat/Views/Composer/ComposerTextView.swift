@@ -11,6 +11,8 @@ struct ComposerTextView: NSViewRepresentable {
     var placeholder = ""
     let onSubmit: () -> Void
     var onAttach: ([AttachmentSource]) -> Void = { _ in }
+    var history: () -> [String] = { [] }
+    var historyScope: AnyHashable?
 
     static let maxHeight: CGFloat = 160
 
@@ -49,12 +51,21 @@ struct ComposerTextView: NSViewRepresentable {
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.onSubmit = { context.coordinator.parent.onSubmit() }
         textView.onAttach = { context.coordinator.parent.onAttach($0) }
+        textView.onRecall = { [weak coordinator = context.coordinator] direction, current in
+            coordinator?.recall(direction, current: current) ?? .pass
+        }
+        context.coordinator.recallScope = historyScope
         scroll.documentView = textView
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
+        // 同じ入力欄のまま別のルームに替わることがあるので、呼び出しの位置はルームが変わったら初めに戻す。
+        if context.coordinator.recallScope != historyScope {
+            context.coordinator.recallScope = historyScope
+            context.coordinator.recallState.reset()
+        }
         guard let textView = scroll.documentView as? SubmitTextView else { return }
         // 変換中の文字は下書きに入っていないので、再描画のたびに書き戻すと消える。本当の外部変更（送信後の空など）だけ反映する。
         if context.coordinator.sync.shouldApply(external: text, shown: textView.string) {
@@ -72,8 +83,14 @@ struct ComposerTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
         var sync = ComposerSync()
+        var recallState = ComposerRecall()
+        var recallScope: AnyHashable?
 
         init(_ parent: ComposerTextView) { self.parent = parent }
+
+        func recall(_ direction: ComposerRecall.Direction, current: String) -> ComposerRecall.Outcome {
+            recallState.move(direction, history: parent.history(), current: current)
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
@@ -107,6 +124,8 @@ final class FocusingScrollView: NSScrollView {
 
 final class SubmitTextView: AttachmentPasteTextView {
     var onSubmit: (() -> Void)?
+    /// 先頭での ↑ / ↓ をどう扱うか（履歴の呼び出し）。
+    var onRecall: ((ComposerRecall.Direction, String) -> ComposerRecall.Outcome)?
     /// 空欄の案内。下書きではなく表示内容で判定して自前で描くので、変換中（marked text）も重ならない。
     var placeholder = "" {
         didSet {
@@ -170,5 +189,28 @@ final class SubmitTextView: AttachmentPasteTextView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func moveUp(_ sender: Any?) {
+        if recall(.older) { return }
+        super.moveUp(sender)
+    }
+
+    override func moveDown(_ sender: Any?) {
+        if recall(.newer) { return }
+        super.moveDown(sender)
+    }
+
+    /// 先頭でだけ履歴に回し、受けたら true。それ以外は既定の行の移動にする。
+    private func recall(_ direction: ComposerRecall.Direction) -> Bool {
+        guard isEditable, let onRecall,
+              ComposerRecall.isAtStart(selection: selectedRange(), hasMarkedText: hasMarkedText()) else { return false }
+        switch onRecall(direction, string) {
+        case .pass: return false
+        case .stay: return true
+        case .show(let text):
+            replaceAllForRecall(with: text)
+            return true
+        }
     }
 }
