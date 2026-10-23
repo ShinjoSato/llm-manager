@@ -1,59 +1,89 @@
 import DeckCore
 import SwiftUI
 
-/// ルーム一覧（要対応 / 稼働中 / 待機）。行を押すと会話へ。
+/// ルーム一覧（要対応 / 稼働中 / 待機）。横幅が regular なら左に一覧・右に会話の 2 列、compact なら行を押すと会話へ進む。
 struct RoomListScreen: View {
     @Bindable var model: AppModel
-    @State private var path: [String] = []
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    /// 開いている会話。2 列と積み上げで共有し、幅が変わっても同じ会話を開いたままにする。
+    @State private var selection: String?
+    @State private var columns: NavigationSplitViewVisibility = .all
     @State private var showingSettings = false
 
     var body: some View {
-        NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                ConnectionBanner(model: model)
-                if model.state?.monitoring == false {
-                    InlineNotice(symbol: "bolt.horizontal.circle", text: "Mac のセッション監視が止まっています。一覧が古い可能性があります。")
-                }
-                if let hint = model.noticeHint {
-                    Button { model.noticeHint = nil } label: {
-                        InlineNotice(symbol: "bell.badge", text: hint)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("押すと閉じます")
-                }
-                list
-            }
-            .background(DeckTheme.sidebar.ignoresSafeArea())
-            .navigationTitle("ルーム")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(DeckTheme.sidebar, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingSettings = true } label: { Image(systemName: "gearshape") }
-                        .accessibilityLabel("接続の設定")
-                }
-            }
-            .navigationDestination(for: String.self) { roomId in
-                ConversationScreen(model: model, roomId: roomId)
-            }
-            .sheet(isPresented: $showingSettings) { SettingsScreen(model: model) }
-            .refreshable { model.connect() }
+        Group {
+            if sizeClass == .regular { split } else { stack }
         }
+        .sheet(isPresented: $showingSettings) { SettingsScreen(model: model) }
         .onAppear {
             if let id = model.launchRoomId {
-                path = [id]
+                selection = id
                 model.launchRoomId = nil
             }
             openRequestedRoom()
         }
         .onChange(of: model.requestedRoomId) { _, _ in openRequestedRoom() }
+        .onChange(of: model.rooms.map(\.id)) { _, ids in dropVanishedSelection(ids: ids, sizeClass: sizeClass) }
+        .onChange(of: sizeClass) { _, newClass in dropVanishedSelection(ids: model.rooms.map(\.id), sizeClass: newClass) }
+    }
+
+    private var stack: some View {
+        let path = Binding(get: { RoomSelection.path(for: selection) }, set: { selection = RoomSelection.selection(from: $0) })
+        return NavigationStack(path: path) {
+            sidebar
+                .navigationDestination(for: String.self) { roomId in
+                    ConversationScreen(model: model, roomId: roomId)
+                }
+        }
+    }
+
+    private var split: some View {
+        NavigationSplitView(columnVisibility: $columns) {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 420)
+        } detail: {
+            // 一覧を畳んでいる間は左の帯や案内が見えないので、右の側に出す。
+            let listHidden = columns == .detailOnly
+            if let roomId = selection {
+                ConversationScreen(model: model, roomId: roomId, showsBanner: listHidden, showsListNotices: listHidden)
+                    .id(roomId)
+            } else {
+                NoRoomSelected(model: model, showsListNotices: listHidden)
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            ConnectionBanner(model: model)
+            ListNotices(model: model)
+            list
+        }
+        .background(DeckTheme.sidebar.ignoresSafeArea())
+        .navigationTitle("ルーム")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbarBackground(DeckTheme.sidebar, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showingSettings = true } label: { Image(systemName: "gearshape") }
+                    .accessibilityLabel("接続の設定")
+            }
+        }
+        .refreshable { model.connect() }
     }
 
     /// 通知から開くルーム。開いている会話の上に積まず、一覧から入り直す。
     private func openRequestedRoom() {
         guard let id = model.requestedRoomId else { return }
         model.requestedRoomId = nil
-        path = [id]
+        selection = id
+    }
+
+    /// 積み上げの画面は消えたルームでも「もう一覧にありません」を出したままにするので、外すのは 2 列の時だけ。
+    private func dropVanishedSelection(ids: [String], sizeClass: UserInterfaceSizeClass?) {
+        guard sizeClass == .regular else { return }
+        selection = RoomSelection.kept(selection, among: ids)
     }
 
     private var list: some View {
@@ -79,12 +109,8 @@ struct RoomListScreen: View {
                         .padding(.top, 14)
                         .padding(.bottom, 4)
                     ForEach(group.rooms) { room in
-                        NavigationLink(value: room.id) {
-                            RoomRow(room: room, unread: room.sessionId.flatMap { model.unread[$0] } ?? 0)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(RowButtonStyle())
-                        .accessibilityIdentifier("room-\(room.name)")
+                        row(room)
+                            .accessibilityIdentifier("room-\(room.name)")
                     }
                 }
             }
@@ -92,6 +118,20 @@ struct RoomListScreen: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.never)
+    }
+
+    @ViewBuilder
+    private func row(_ room: RemoteRoom) -> some View {
+        let label = RoomRow(room: room, unread: room.sessionId.flatMap { model.unread[$0] } ?? 0).contentShape(Rectangle())
+        if sizeClass == .regular {
+            let selected = selection == room.id
+            Button { selection = room.id } label: { label }
+                .buttonStyle(RowButtonStyle(selected: selected))
+                .accessibilityAddTraits(selected ? .isSelected : [])
+        } else {
+            NavigationLink(value: room.id) { label }
+                .buttonStyle(RowButtonStyle())
+        }
     }
 
     @ViewBuilder
@@ -121,9 +161,55 @@ struct RoomListScreen: View {
 }
 
 private struct RowButtonStyle: ButtonStyle {
+    var selected = false
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(RoundedRectangle(cornerRadius: 10).fill(configuration.isPressed ? DeckTheme.selectedRow : .clear))
+            .background(RoundedRectangle(cornerRadius: 10).fill(configuration.isPressed || selected ? DeckTheme.selectedRow : .clear))
+    }
+}
+
+/// 2 列で何も選んでいない時の右側。
+private struct NoRoomSelected: View {
+    @Bindable var model: AppModel
+    let showsListNotices: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if showsListNotices {
+                ConnectionBanner(model: model)
+                ListNotices(model: model)
+            }
+            VStack(spacing: 10) {
+                Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 28)).foregroundStyle(DeckTheme.tertiary)
+                Text("左の一覧からルームを選ぶと、ここに会話が出ます。")
+                    .font(DeckTheme.body)
+                    .foregroundStyle(DeckTheme.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(DeckTheme.background.ignoresSafeArea())
+        .toolbarBackground(DeckTheme.background, for: .navigationBar)
+    }
+}
+
+/// 一覧の上に出す案内（監視が止まっている・通知のルームを開けなかった）。
+struct ListNotices: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        if model.state?.monitoring == false {
+            InlineNotice(symbol: "bolt.horizontal.circle", text: "Mac のセッション監視が止まっています。一覧が古い可能性があります。")
+        }
+        if let hint = model.noticeHint {
+            Button { model.noticeHint = nil } label: {
+                InlineNotice(symbol: "bell.badge", text: hint)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("押すと閉じます")
+        }
     }
 }
 

@@ -93,6 +93,9 @@ final class QRCameraController: UIViewController, AVCaptureMetadataOutputObjects
     private let session = AVCaptureSession()
     private var preview: AVCaptureVideoPreviewLayer?
     private var delivered = false
+    /// iPad の横向き・逆さでも映像を水平に保つ。
+    private var rotation: AVCaptureDevice.RotationCoordinator?
+    private var rotationObservation: NSKeyValueObservation?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -120,8 +123,21 @@ final class QRCameraController: UIViewController, AVCaptureMetadataOutputObjects
         layer.videoGravity = .resizeAspectFill
         view.layer.addSublayer(layer)
         preview = layer
+        followRotation(of: device, in: layer)
         NotificationCenter.default.addObserver(self, selector: #selector(sessionFailed), name: AVCaptureSession.runtimeErrorNotification, object: session)
         #endif
+    }
+
+    private func followRotation(of device: AVCaptureDevice, in layer: AVCaptureVideoPreviewLayer) {
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
+        rotation = coordinator
+        rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]) { [weak layer] coordinator, _ in
+            let angle = coordinator.videoRotationAngleForHorizonLevelPreview
+            DispatchQueue.main.async {
+                guard let connection = layer?.connection, connection.isVideoRotationAngleSupported(angle) else { return }
+                connection.videoRotationAngle = angle
+            }
+        }
     }
 
     @objc private func sessionFailed(_ note: Notification) {

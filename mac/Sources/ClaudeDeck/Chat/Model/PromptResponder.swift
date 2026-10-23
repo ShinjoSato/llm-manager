@@ -9,10 +9,11 @@ final class PromptResponder {
     private let store: MonitorStore
     private let alerts: ChatAlerts
 
-    /// 送信中の権限確認（Channels の key か "pty:<ルーム>" / "menu:<ルーム>"）。二度押しさせない。
-    private(set) var busyKeys: Set<String> = []
-    /// 選択肢カードに数秒だけ出す結果（"menu:<ルーム>" → 文言）。複数選択でチェックを切り替えた時など。
-    private(set) var menuNotices: [String: String] = [:]
+    /// 送信中の印と、カードに数秒だけ出す一言。印は押したカードにだけ付き、カードは自分の body でここを読む。
+    let board = PromptCardBoard(log: { event, fields in MenuOpsLog.shared.record(event, fields) })
+
+    /// 何かの操作を送っている鍵（Channels の key か "pty:<ルーム>" / "menu:<ルーム>"）。iPhone の一覧の「送信中」に使う。
+    var busyKeys: Set<String> { board.activeKeys }
 
     init(store: MonitorStore, alerts: ChatAlerts) {
         self.store = store
@@ -27,10 +28,10 @@ final class PromptResponder {
     }
 
     func decide(_ permission: PendingPermission, _ decision: PermissionDecision) {
-        guard !busyKeys.contains(permission.key) else { return }
-        busyKeys.insert(permission.key)
+        board.log("press", [("key", permission.key), ("decision", decision == .allow ? "allow" : "deny")])
+        guard case .success(let token) = board.begin(key: permission.key, identity: permission.key) else { return }
         Task {
-            defer { busyKeys.remove(permission.key) }
+            defer { board.release(key: permission.key, token: token, reason: "decided") }
             do {
                 try await store.decide(permission, decision)
             } catch {
@@ -41,49 +42,78 @@ final class PromptResponder {
 
     /// Channels の確認に答えて結果を返す（iPhone から。mac に警告は出さない）。
     func decide(key: String, _ decision: PermissionDecision) async -> RemoteActionResult {
-        guard !busyKeys.contains(key) else { return Self.busyResult }
-        busyKeys.insert(key)
-        defer { busyKeys.remove(key) }
+        guard case .success(let token) = board.begin(key: key, identity: key) else { return Self.busyResult }
+        defer { board.release(key: key, token: token, reason: "decided") }
         return await store.remoteDecide(key: key, decision: decision)
     }
 
     static func ptyPermissionKey(_ session: HostedSession) -> String { "pty:\(session.id.uuidString)" }
 
+    /// 端末の権限プロンプトのカードの印（同じ文面が続けて出ても別のカードにする）。
+    static func permissionCard(_ session: HostedSession, _ prompt: PermissionPrompt) -> String {
+        PromptCardIdentity.permission(prompt, generation: session.promptTracker.generation)
+    }
+
     /// `prompt`（カードに出していたもの）が今のプロンプトと違えば送らない（別の確認を承認しない）。`report` が false なら警告を出さない。
     @discardableResult
     func answerOnTerminal(_ session: HostedSession, prompt: PermissionPrompt, allow: Bool, report: Bool = true) -> RemoteActionResult {
         let key = Self.ptyPermissionKey(session)
-        guard !busyKeys.contains(key) else { return Self.busyResult }
+        let card = Self.permissionCard(session, prompt)
+        board.log("press", [("key", key), ("card", card), ("decision", allow ? "allow" : "deny")])
+        guard board.admit(key: key, identity: card) else { return Self.busyResult }
         let answeredId = RemoteTerminalPermission.promptId(prompt, generation: session.promptTracker.generation)
         switch session.answerPermission(prompt, allow: allow) {
         case .sent:
             // 同じ表示への押し直し（mac・iPhone どちらからでも）を送らないため。
             session.markAnswered(answeredId)
+            board.log("key", [("key", key), ("card", card), ("send", allow ? "1" : "esc")])
         case .noPrompt:
-            return failed("gone", "端末に権限確認が見当たりません。既に答え終わっている可能性があります。", report: report)
+            return failed("gone", "端末に権限確認が見当たりません。既に答え終わっている可能性があります。", key: key, report: report)
         case .changed:
-            return failed("changed", "権限の確認の内容が替わったため送りませんでした。カードの内容を確かめてから答えてください。", report: report)
+            return failed("changed", "権限の確認の内容が替わったため送りませんでした。カードの内容を確かめてから答えてください。", key: key, report: report)
         }
-        holdBusy(key)
+        holdBusy(key, identity: card)
         return .success(allow ? "allowed" : "denied")
     }
 
-    /// キーを送ってから画面が替わるまで少し掛かるので、その間は押せないままにする。
-    private func holdBusy(_ key: String) {
-        busyKeys.insert(key)
-        releaseBusyLater(key)
-    }
-
-    private func releaseBusyLater(_ key: String) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.busyKeys.remove(key) }
+    /// キーを送ってから画面が替わるまで少し掛かるので、その間は押したカードを押せないままにする。`identity` が nil なら、どのカードも送信中には見せずに重ねての操作だけを断る。
+    private func holdBusy(_ key: String, identity: String? = nil, blocksAll: Bool = false) {
+        board.hold(key: key, identity: identity, blocksAll: blocksAll)
     }
 
     static let busyResult = RemoteActionResult.failure("busy", "前の操作を送っているところです。少し待ってからもう一度押してください。")
 
-    /// 失敗を返す。`report` なら mac にも警告を出す。
-    private func failed(_ code: String, _ message: String, report: Bool) -> RemoteActionResult {
+    /// 失敗を返す。カードに一言を出し、`report` なら mac にも警告を出す。
+    private func failed(_ code: String, _ message: String, key: String, report: Bool) -> RemoteActionResult {
+        board.log("result", [("key", key), ("code", code)])
+        board.showNotice(message, key: key)
         if report { alerts.message = message }
         return .failure(code, message)
+    }
+
+    // MARK: - 端末の画面
+
+    /// 「端末の画面」からキーを 1 回送る。権限の回答を送っている間・選択肢を動かしている間は送らない（二重操作で行き過ぎないため）。
+    func sendTerminalKey(_ session: HostedSession, _ key: TerminalKey) -> RemoteActionResult {
+        guard !busyKeys.contains(Self.ptyPermissionKey(session)) else {
+            return .failure("busy", "権限の回答を送っているところです。少し待ってからもう一度押してください。")
+        }
+        let answering = !key.movesCursor && (session.permissionPrompt != nil || session.menuPrompt != nil || session.unreadableMenu != nil)
+        switch session.sendKey(key) {
+        case .sent:
+            // 画面が描き替わるまでは古いカードが今の画面と一致して見えるので、別ウィンドウや iPhone から重ねて答えさせない。
+            if answering {
+                holdBusy(Self.ptyPermissionKey(session))
+                holdBusy(Self.ptyMenuKey(session))
+            }
+            return .success("sent")
+        case .navigating:
+            return .failure("navigating", "カードから選択肢を動かしているところです。終わってからもう一度押してください。")
+        case .sending:
+            return .failure("sending", "入力欄からの送信の途中です。終わってからもう一度押してください。")
+        case .ended:
+            return .failure("ended", "claude が動いていないため送れません。")
+        }
     }
 
     // MARK: - 選択肢
@@ -93,61 +123,114 @@ final class PromptResponder {
     /// `menu`（カードに出していたもの）の `choice` 番目を選ぶ（nil は Esc）。今のメニューと違えば送らず、結果は `completion` に 1 回返す。
     func answerMenu(_ session: HostedSession, menu: MenuPrompt, choice: Int?, report: Bool = true,
                     completion: ((RemoteActionResult) -> Void)? = nil) {
-        guard let (key, answeredId) = beginMenuOperation(session, menu: menu, completion: completion) else { return }
+        let key = Self.ptyMenuKey(session)
+        let card = PromptCardIdentity.menu(menu)
+        board.log("press", [("key", key), ("card", card), ("choice", choice.map(String.init) ?? "esc")])
+        guard let operation = beginMenuOperation(key: key, card: card, report: report, completion: completion) else { return }
+        let answeredId = RemoteMenu.menuId(menu, generation: session.promptTracker.generation)
         session.answerMenu(menu, choice: choice) { [weak self, weak session] outcome in
-            guard let self else { completion?(Self.appClosed); return }
+            guard let self else { operation.deliver(Self.appClosed); return }
             if Self.result(of: outcome).ok { session?.markAnswered(answeredId) }
             if outcome == .confirmed, let choice, menu.options[choice].checked != nil {
                 // 複数選択では Enter はチェックの切り替えで、メニューは閉じない。
                 let text = "「\(menu.options[choice].label)」のチェックを切り替えました。"
-                self.showMenuNotice(key, text)
-                self.finishMenuOperation(key, outcome: outcome, report: report)
-                completion?(.success("toggled", text))
+                self.complete(operation, key: key, outcome: outcome, result: .success("toggled", text), notice: text, report: report)
                 return
             }
-            completion?(self.finishMenuOperation(key, outcome: outcome, report: report))
+            self.complete(operation, key: key, outcome: outcome, result: Self.result(of: outcome), notice: nil, report: report)
         }
     }
 
     /// AskUserQuestion の問いのタブを 1 つ移る（→ / ←）。`menu` はカードに出していたもの。
     func moveMenuTab(_ session: HostedSession, menu: MenuPrompt, direction: MenuTabMover.Direction, report: Bool = true,
                      completion: ((RemoteActionResult) -> Void)? = nil) {
-        guard let (key, answeredId) = beginMenuOperation(session, menu: menu, completion: completion) else { return }
+        let key = Self.ptyMenuKey(session)
+        let card = PromptCardIdentity.menu(menu)
+        board.log("press", [("key", key), ("card", card), ("tab", direction == .next ? "next" : "previous")])
+        guard let operation = beginMenuOperation(key: key, card: card, report: report, completion: completion) else { return }
+        let answeredId = RemoteMenu.menuId(menu, generation: session.promptTracker.generation)
         session.moveMenuTab(menu, direction: direction) { [weak self, weak session] outcome in
-            guard let self else { completion?(Self.appClosed); return }
+            guard let self else { operation.deliver(Self.appClosed); return }
             if Self.result(of: outcome).ok { session?.markAnswered(answeredId) }
-            completion?(self.finishMenuOperation(key, outcome: outcome, report: report))
+            self.complete(operation, key: key, outcome: outcome, result: Self.result(of: outcome), notice: nil, report: report)
         }
     }
 
     private static let appClosed = RemoteActionResult.failure("ended", "アプリが閉じられました。")
 
-    /// 選択肢の操作を始める（二度押しなら busy を返して始めない）。押せない間の鍵と、答えた印にする ID を返す。
-    private func beginMenuOperation(_ session: HostedSession, menu: MenuPrompt,
-                                    completion: ((RemoteActionResult) -> Void)?) -> (key: String, answeredId: String)? {
-        let key = Self.ptyMenuKey(session)
-        guard !busyKeys.contains(key) else {
-            completion?(Self.busyResult)
+    /// 時間内に端末から結果が返らなかった時（送信中を外し、カードに案内を出す）。
+    static let timedOut = RemoteActionResult.failure("unconfirmed", PromptCardBoard.timeoutNotice)
+
+    /// 選択肢の操作 1 回分。結果は完了と時間切れのどちらか先の 1 回だけ受け手に渡す。
+    @MainActor
+    private struct MenuOperation {
+        let token: UUID
+        let card: String
+        let delivery: OnceDelivery<RemoteActionResult>
+
+        func deliver(_ result: RemoteActionResult) { delivery.deliver(result) }
+    }
+
+    /// 選択肢の操作を始める（重なる操作なら一言を出して始めない）。送信中の印を押したカードに付け、上限の時間切れを仕掛ける。
+    private func beginMenuOperation(key: String, card: String, report: Bool,
+                                    completion: ((RemoteActionResult) -> Void)?) -> MenuOperation? {
+        let token: UUID
+        switch board.begin(key: key, identity: card) {
+        case .success(let begun):
+            token = begun
+        case .failure(let refusal):
+            completion?(.failure("busy", PromptCardBoard.message(refusal)))
             return nil
         }
-        busyKeys.insert(key)
-        return (key, RemoteMenu.menuId(menu, generation: session.promptTracker.generation))
-    }
-
-    private func showMenuNotice(_ key: String, _ text: String) {
-        menuNotices[key] = text
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            if self?.menuNotices[key] == text { self?.menuNotices[key] = nil }
+        let delivery = OnceDelivery<RemoteActionResult> { [weak self] result in
+            if result.code == Self.timedOut.code {
+                self?.board.release(key: key, token: token, reason: "timeout")
+                self?.board.showNotice(PromptCardBoard.timeoutNotice, key: key, duration: PromptCardBoard.timeoutNoticeDuration)
+            } else {
+                // やめた移動の矢印も遅れて反映されうるので、押したカードはすぐには押せるようにしない。
+                self?.board.finish(key: key, token: token)
+            }
+            self?.board.log("result", [("key", key), ("card", card), ("token", String(token.uuidString.prefix(8))),
+                                       ("code", result.code)])
+            completion?(result)
         }
+        delivery.deliver(after: PromptOperationBook.limit) { Self.timedOut }
+        return MenuOperation(token: token, card: card, delivery: delivery)
     }
 
-    @discardableResult
-    private func finishMenuOperation(_ key: String, outcome: ClaudeTerminalView.MenuAnswerOutcome, report: Bool) -> RemoteActionResult {
-        let result = Self.result(of: outcome)
-        if report, !result.ok, let message = result.message { alerts.message = message }
-        // やめた移動の矢印も遅れて反映されうるので、失敗でもすぐには押せるようにしない。
-        releaseBusyLater(key)
-        return result
+    /// 端末から結果が返った。時間切れの後に返った結果は受け手に渡さず、記録と失敗の一言だけ残す。
+    private func complete(_ operation: MenuOperation, key: String, outcome: ClaudeTerminalView.MenuAnswerOutcome,
+                          result: RemoteActionResult, notice: String?, report: Bool) {
+        board.log("outcome", [("key", key), ("outcome", Self.outcomeName(outcome)), ("late", operation.delivery.isDelivered ? "yes" : "no")])
+        guard !operation.delivery.isDelivered else {
+            if !result.ok, let message = result.message { board.showNotice(message, key: key) }
+            // 時間切れの後に Enter 等が届いた。描き替わるまではどのカードの画面が今のものか分からないので、ルームごと待たせる。
+            if result.ok { holdBusy(key, identity: operation.card, blocksAll: true) }
+            return
+        }
+        if let notice {
+            board.showNotice(notice, key: key, duration: 3)
+        } else if !result.ok, let message = result.message {
+            board.showNotice(message, key: key)
+            if report, !Self.quietFailures.contains(where: { $0 == outcome }) { alerts.message = message }
+        }
+        operation.deliver(result)
+    }
+
+    /// カードの一言だけで足りる失敗（押し直せば済む）。
+    private static let quietFailures: [ClaudeTerminalView.MenuAnswerOutcome] = [.navigating, .settling]
+
+    static func outcomeName(_ outcome: ClaudeTerminalView.MenuAnswerOutcome) -> String {
+        switch outcome {
+        case .confirmed: return "confirmed"
+        case .cancelled: return "cancelled"
+        case .moved: return "moved"
+        case .failed(let failure): return "failed(\(failure))"
+        case .ended: return "ended"
+        case .unavailable: return "unavailable"
+        case .navigating: return "navigating"
+        case .settling: return "settling"
+        }
     }
 
     static func result(of outcome: ClaudeTerminalView.MenuAnswerOutcome) -> RemoteActionResult {
@@ -167,6 +250,8 @@ final class PromptResponder {
             return .failure("ended", "claude が終了した（終了・上限到達など）ため、選択肢を確定できませんでした。Enter は押していません。")
         case .unavailable:
             return .failure("unavailable", "この操作はここからはできません（文字入力の行に ❯ がある時はタブを移れません）。")
+        case .navigating:
+            return .failure("navigating", "前の操作で選択肢を動かしているところです。終わってからもう一度押してください。")
         case .settling:
             return .failure("settling", "直前に送った矢印キーが端末に反映されるのを待っています。少し待ってからもう一度押してください。")
         }
@@ -176,16 +261,19 @@ final class PromptResponder {
     @discardableResult
     func cancelUnreadableMenu(_ session: HostedSession, menu: UnreadableMenu, report: Bool = true) -> RemoteActionResult {
         let key = Self.ptyMenuKey(session)
-        guard !busyKeys.contains(key) else { return Self.busyResult }
+        let card = PromptCardIdentity.unreadable(menu)
+        board.log("press", [("key", key), ("card", card), ("choice", "esc")])
+        guard board.admit(key: key, identity: card) else { return Self.busyResult }
         let answeredId = RemoteUnreadableMenu.menuId(menu, generation: session.promptTracker.generation)
         switch session.cancelUnreadableMenu(menu) {
         case .sent: session.markAnswered(answeredId)
         case .gone:
-            return failed("gone", "端末に読み取れない選択肢が見当たりません。既に答え終わったか、カードで答えられる形になった可能性があります。", report: report)
+            return failed("gone", "端末に読み取れない選択肢が見当たりません。既に答え終わったか、カードで答えられる形になった可能性があります。", key: key, report: report)
         case .changed:
-            return failed("changed", "端末の選択肢が替わったため送りませんでした。カードの内容を確かめてから操作してください。", report: report)
+            return failed("changed", "端末の選択肢が替わったため送りませんでした。カードの内容を確かめてから操作してください。", key: key, report: report)
         }
-        holdBusy(key)
+        // 描き替えの途中で行が少し変わると別のカードに見え、Esc が重なりうるのでルームごと待たせる。
+        holdBusy(key, identity: card, blocksAll: true)
         return .success("cancelled")
     }
 }

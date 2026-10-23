@@ -62,16 +62,20 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
     public var icon: String?
     /// 印の色（`ProjectColor` のキー。無ければ名前から決める）。
     public var color: String?
+    /// 紐づけた App Store Connect のアプリ（本番・検証用など。並びは配列の順）。
+    public var appStoreApps: [AppStoreAppLink]
     /// 形が読めずに捨てた `site`（警告に出すだけで、保存・比較には含めない）。
     public var ignoredSite = IgnoredField()
     /// 形が読めずに捨てた `xcode`（警告に出すだけで、保存・比較には含めない）。
     public var ignoredXcode = IgnoredField()
+    /// 形が読めずに捨てた `appStore`。
+    public var ignoredAppStore = IgnoredField()
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links, site, xcode, icon, color }
+    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links, site, xcode, icon, color, appStoreApps = "appStore" }
 
     public init(id: UUID = UUID(), name: String, path: String, status: ProjectStatus = .active, note: String = "",
                 github: GitHubLink? = nil, links: [ProjectLink] = [], site: ProjectSite? = nil,
-                xcode: XcodeLink? = nil, icon: String? = nil, color: String? = nil) {
+                xcode: XcodeLink? = nil, icon: String? = nil, color: String? = nil, appStoreApps: [AppStoreAppLink] = []) {
         self.id = id
         self.name = name
         self.path = path
@@ -83,6 +87,7 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         self.xcode = xcode
         self.icon = icon
         self.color = color
+        self.appStoreApps = appStoreApps
     }
 
     public init(from decoder: Decoder) throws {
@@ -109,9 +114,17 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         }
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         color = try c.decodeIfPresent(String.self, forKey: .color)
+        // `site` と同じく、手で書いた形が違っても設定全体は読む。
+        if c.contains(.appStoreApps), (try? c.decodeNil(forKey: .appStoreApps)) != true {
+            let decoded = try? c.decode([AppStoreAppLink].self, forKey: .appStoreApps)
+            appStoreApps = decoded ?? []
+            ignoredAppStore.isSet = decoded == nil
+        } else {
+            appStoreApps = []
+        }
     }
 
-    /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。`site` / `xcode` / `icon` / `color` も無ければ書かない。
+    /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。`site` / `xcode` / `icon` / `color` / `appStore` も無ければ書かない。
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
@@ -125,6 +138,7 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         try c.encodeIfPresent(xcode, forKey: .xcode)
         try c.encodeIfPresent(icon, forKey: .icon)
         try c.encodeIfPresent(color, forKey: .color)
+        if !appStoreApps.isEmpty { try c.encode(appStoreApps, forKey: .appStoreApps) }
     }
 
     /// フォルダから作る（表示名はフォルダ名）。
@@ -268,6 +282,30 @@ public struct ProjectSite: Codable, Equatable, Sendable {
     public init(path: String) {
         self.path = path
     }
+}
+
+/// プロジェクトに紐づけた App Store Connect のアプリ。`appId` は数字の文字列、`name` は画面に出す名前。
+public struct AppStoreAppLink: Codable, Equatable, Hashable, Sendable {
+    public var appId: String
+    public var name: String
+
+    public init(appId: String, name: String) {
+        self.appId = appId
+        self.name = name
+    }
+
+    /// 数でも書けるようにする（手で書いた `"appId": 123` を読めなくしない）。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let text = try? c.decode(String.self, forKey: .appId) {
+            appId = text
+        } else {
+            appId = String(try c.decode(Int.self, forKey: .appId))
+        }
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+    }
+
+    private enum CodingKeys: String, CodingKey { case appId, name }
 }
 
 /// Xcode のプロジェクトの紐づけ。`{"path": "ios/App.xcodeproj"}`（プロジェクトからの相対）か `{"disabled": true}`。

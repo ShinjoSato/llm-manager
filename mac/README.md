@@ -37,8 +37,8 @@ mac/
     Terminal/                   Claude Code を PTY でホストする端末ビュー（1 つの型を役割ごとの extension に分ける）
       ClaudeTerminalView.swift    本体（ClaudeStatus・ScreenState・持ち物・PTY 受信の傍受）
       ClaudeTerminalView+Launch.swift  claude の起動（環境からの API キー除去・--resume）
-      ClaudeTerminalView+Input.swift   入力（貼り付け・Enter・画像の取り込み待ち・権限 / 選択メニュー / タブへの回答）
-      ClaudeTerminalView+Screen.swift  画面の読み取り（状態の監視・実画面の行・背景色・選択メニューの解析・画面の写し）
+      ClaudeTerminalView+Input.swift   入力（貼り付け・Enter・画像の取り込み待ち・権限 / 選択メニュー / タブへの回答・「端末の画面」のキー）
+      ClaudeTerminalView+Screen.swift  画面の読み取り（状態の監視・実画面の行・背景色・選択メニューの解析・画面の写し・「端末の画面」に出す全幅の行）
       ClaudeTerminalView+Limit.swift   画面末尾の上限表示の監視と強制終了
     Chat/                       チャット画面（ルーム一覧・会話・入力欄・権限カード・選択肢カード）
       Model/                      ChatModel と、それが束ねる部品（@Observable・画面に依らない）
@@ -55,6 +55,7 @@ mac/
         DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める。ルームを閉じても止めない）
         ProjectImageStore.swift     ディレクトリの詳細の「画像」（走査・サムネイルの縮小をバックグラウンドで・NSCache）・節の走査の持ち手（BackgroundScan。走り切った鍵と「再読み込み」の回数を持つ。「iPhone のプレビュー」と共有）
         IOSPreviewStore.swift       ディレクトリの詳細の「iPhone のプレビュー」（mcpbridge を 1 本持って 1 件ずつ描く・待ち行列・キャッシュへ写す・タブを離れて 3 分で止める）
+        AppStoreStore.swift         App Store Connect から読んだもの（アプリの一覧・版と審査・文面）の持ち手（10 分覚える・「再読み込み」で取り直す・古い結果で上書きしない）
         LinkVisitStore.swift        リンクの最終確認日（link-visits.json）の読み書き
         LinkTitleFetcher.swift      リンクの名前の候補にするページの <title> の取得（3 秒・資格情報なし）
         ImageDecoding.swift         ImageIO での縮小（吹き出しの画像・ディレクトリの詳細の画像・iPhone のプレビューで共有）
@@ -70,11 +71,12 @@ mac/
           RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・プロジェクトの印（ProjectBadgeView）
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
-        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・タブで切り替える本文（サイト・画像・iPhone のプレビュー・リンク・スレッド））
+        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・タブで切り替える本文（サイト・画像・iPhone のプレビュー・App Store・リンク・スレッド））
           DirectoryTabBar.swift       見出しの下のタブの列（アイコン・名前・件数。入りきらなければアイコンを外し、それでも入らなければ横スクロール）
           ProjectLinkEditor.swift     「リンク」の節の追加・編集のポップオーバー（種類と名前の提案・<title> の取得）
           ProjectImagesSection.swift  「画像」: フォルダごとのサムネイルのグリッド・拡大のシート
           IOSPreviewsSection.swift    「iPhone のプレビュー」: 全ファイルの #Preview を 1 つのグリッド（枠にファイル名と行）・すべて描く・拡大して切り替えて描き直すシート
+          AppStoreSection.swift       「App Store」: アプリごとの版の状態・審査の提出・ロケールごとの文面（文字数と上限）
           SitePreviewSection.swift    「サイト」: 見る元（開発サーバー / 書き出し / 公開 URL）・表示幅・再読み込み・ブラウザで開く・書き出しの更新時刻
           SitePreviewParts.swift      サイトの欄とステージパネルのプレビューで共有する部品（場所の読み込み・表示幅の切り替え・縮める枠・開発サーバーの操作と出力）
           SiteWebView.swift           プレビューの WKWebView（pageZoom で縮めて表示幅ぶんを収める・file: / javascript: へは遷移しない）
@@ -82,7 +84,7 @@ mac/
           LinkOverviewView.swift      中央の横断のリンク一覧と、「ディレクトリ」の固定行「リンク」（LinkOverviewListRow）
         Conversation/               中央の会話
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）。メインの中央と別ウィンドウで共通
-          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」のボタン
+          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」のボタン
           RoomWindowView.swift        別ウィンドウの中身（1 ルームの会話・会話の取得と既読・ルームが消えた時の案内・そのウィンドウで出す警告）
           BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文。大きさは会話の返答と同じ）
           HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
@@ -93,6 +95,7 @@ mac/
           MenuCard.swift              選択肢のカード（選択肢の行・AskUserQuestion のタブ）
           UnreadableMenuCard.swift    選択肢が読めない時のカード
           PromptCardParts.swift       カードの共通部品（見出し・等幅の抜粋・控えめなボタン・枠・終了の確認）
+          TerminalScreenSheet.swift   「端末の画面」のシート（端末の今の表示・送れるキーのボタンとキーボード）と、カード・見出しから開く口
         Composer/                   入力欄
           Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード・添付ボタン）
           AttachmentStrip.swift       入力欄の上の添付チップ
@@ -139,13 +142,13 @@ mac/
       JSONLoose.swift             JSON の値を typeof の厳しさで読む（NSNumber の 1 を true と取り違えない）・行の絞り込みのバイト列検索
     Server/                     フック等を受けるアプリ内の HTTP サーバー
       HTTPServer.swift            最小の HTTP/1.1（Network.framework・外部ライブラリなし）。既定は 127.0.0.1・平文。
-                                  `HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限を変えられ、chunked で流し続ける応答（SSE）も出せる
+                                  `HTTPServerOptions` で待ち受けるアドレス・TLS・検査・上限（決まった要求だけ本文の上限と締め切りを広げる `HTTPBodyAllowance`）を変えられ、chunked で流し続ける応答（SSE）も出せる
       HookServerRoutes.swift      /hook・/api/channel/permissions・/api/health と、全口に掛ける Host / Origin / 接続元の検査
       LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定
     Remote/                     iPhone 向けの口（同じ Wi-Fi・TLS・端末トークン）。仕様は docs/remote-api.md
       Server/                     SelfSignedCertificate（DER で X.509 を組む・鍵と証明書のファイル）・RemotePairingStore・
                                   RemoteAuthThrottle・RemoteRoutes（/v1 の振り分け）・RemoteEventHub（SSE）・RemoteControl（アプリへ頼む操作と照合）・
-                                  RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces
+                                  RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces・RemoteImageIntake（iPhone から届いた画像の検証と一時保存）
     Channel/                    チャネル（claude-deck-channel）の中身。実行ファイルからはこれを呼ぶだけ
       ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
@@ -174,6 +177,16 @@ mac/
       PreviewQueueRules.swift     待ち行列の止め方（時間切れ・読み込み待ちが続いた時・節が閉じた時）
       XcodeBridgeProcess.swift    `xcrun mcpbridge` の子プロセス（新しいプロセスグループ・stdin / stdout の 1 行 1 メッセージ・グループごとの停止）
       PreviewSnapshotCache.swift  描いた PNG と添え書きのキャッシュ（鍵・置き場・写す前の絵の確かめ・古い版と消えたプロジェクトの片付け）
+    AppStore/                   ディレクトリの詳細の「App Store」（App Store Connect API を読むだけ）
+      AppStoreCredentials.swift   環境変数と ~/.claude/appstore-meta.env の読み取り（appstore-plugin と同じ書式・環境変数が先・プロジェクトの .env は読まない・通常のファイルだけ）・読み元・足りないものの案内。鍵は文字列にしない
+      AppStoreToken.swift         ES256 の JWT（CryptoKit・有効 10 分・20 分を超えない）と期限の少し前までの使い回し（鍵はトークンを作る時だけ読む・Key ID / Issuer ID が替われば作り直す）
+      AppStoreRequest.swift       要求の組み立て（宛先は api.appstoreconnect.apple.com の https・GET だけ・ID は数字 / 英数字とハイフンだけ・links.next も同じ宛先の /v1/ だけ）
+      AppStoreClient.swift        読み取りのクライアント（通信は差し替えられる・リダイレクトは辿らない・本文は 8MB まで・401 / 403 / 404 / 429 / 5xx の案内・自動で取り直さない）
+      AppStoreModels.swift        JSON:API の応答の読み取り（アプリ・版・文面・アプリの情報・審査の提出）
+      AppStoreOverview.swift      版の並び（版番号の数で新しい順）・プラットフォームごとの最新と公開中・版に合うアプリの情報・文面の欄と文字数の上限
+      AppStoreStates.swift        状態の日本語と色分け（知らない値は原文）
+      AppStoreCandidates.swift    紐づけの候補（.claude/appstore.json の appId・Xcode のバンドル ID。変数は pbxproj / xcconfig から解決し、できなければ控えめに当てる）
+      AppStoreCache.swift         取った結果を 10 分覚える
     Sites/                      ディレクトリの詳細の「サイト」（LP のプレビュー）
       SiteLocator.swift           LP の場所の自動検出と、設定の `site`（相対パス）の検証・解決（プロジェクトの外を指さない）
       SiteFiles.swift             配信のパスの解決（書き出しの外・隠しファイルは返さない・フォルダは index.html・拡張子なしは .html）と Content-Type
@@ -193,10 +206,14 @@ mac/
                                   終了の確認の要否と文言（QuitConfirmation）・「作業が終わったら終了」の待ち（QuitWait）
       Attachments.swift           添付: 送る形の組み立て（画像パスの貼り付け用エスケープ・本文へのパスの一覧）・ペーストボードからの拾い出し・一時保存と掃除
       AttachmentPasteTextView.swift 添付を受ける文字欄（⌘V のメニュー検証・貼り付け・ドロップ）。入力欄の SubmitTextView の土台
-      PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの判定
+      PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去・「端末の画面」から送れるキーの表 `TerminalKey`）と、画面からの権限プロンプト / 選択メニューの判定
       MenuPrompt.swift            選択メニューの中身の読み取り（ChoiceMenu.parse）と、矢印で選択肢まで動かして Enter する手順（MenuNavigator）・問いのタブを移る手順（MenuTabMover）
       MenuScreenLog.swift         選択肢カードを出した・読めなかった画面の写しを直近数件残す
-      ScreenPane.swift            画面の右に縦線で区切って出る別の欄（差分パネル）を除いて左だけにする
+      MenuOpsLog.swift            カードの操作の各段階（押した・送信中の付け外し・矢印や Enter の一手・結果）を直近 500 行残す（本文は入れない）
+      PromptOperations.swift      カードの送信中の台帳（押したカードの印にだけ付ける・12 秒の上限・自分の印の時だけ外す）・結果を 1 回だけ渡す箱・カードの印
+      PromptCardBoard.swift       カードが自分の body で読む送信中と一言の置き場（期限で外す掃除・操作の記録）
+      ClaudeCodeVersions.swift    画面の読み取りを確かめた Claude Code の版の一覧（無い版のカードに案内を出す）
+      ScreenPane.swift            画面の右に出る別の欄（差分パネル。縦線か空白の桁で区切られる）を除いて左だけにする
       ComposerSync.swift          入力欄とモデルの下書きの同期判定（変換中は本当の外部変更の時だけ書き戻す）
       ComposerPlaceholder.swift   入力欄の空欄の案内の出し分け（端末ビューの表示内容で見る・変換中は隠す）
       RoomListMode.swift          左の一覧の見方（ルーム / ディレクトリ）と要対応の件数
@@ -212,7 +229,8 @@ mac/
     Support/                    共通の下回り
       DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
                                   Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
-      TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
+      TerminationSignals.swift    SIGTERM / SIGINT / SIGHUP を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
+      ChildProcessControl.swift   PTY の master・パイプ・ソケットに CLOEXEC を付ける（forkpty と同じロックで）・終了時にホスト中の claude へ同時に SIGHUP を送って待つ
       ChildEnvironment.swift      子プロセス（claude・開発サーバー・mcpbridge）の環境から API キーと Claude Code の子セッション印を除く
       SecureFile.swift            0600・置き換えで書く
       DeckPaths.swift             Application Support / Caches / Logs の claude-deck と、環境変数で差し替える設定ファイルの場所
@@ -220,11 +238,12 @@ mac/
       Concurrency.swift           一度だけ通す印（OnceFlag）と、持ち主が消えたら止まる繰り返し（repeatingTask）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
-                                Server / Remote / Settings / Sites / Previews / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
+                                Server / Remote / Settings / Sites / Previews / AppStore / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   docs/pty-daemon.md            アプリを閉じても claude を動かし続ける常駐プロセスの設計と試作の記録（未実装）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
   scripts/bundle.sh             claude-deck.app を組み立てて署名する（プロファイルがあれば Apple Development + iCloud、無ければ ad-hoc。チャネルの実行ファイルも同梱）
+  scripts/install.sh            develop を最新にして組み立て、動いている claude-deck を普通に終了させてから /Applications のものと入れ替えて起動し直す
   scripts/statusline.sh         Claude Code の statusLine。表示に加えて使用量を Application Support に残す
 ```
 
@@ -283,13 +302,13 @@ mac/
   監視（一覧・会話・使用量）は続ける。5 秒ごとに取り直すので、そのプロセスを止めれば自動で引き継ぐ（`MonitorStore.serverState`）
 - アプリが起動していない間のフックは届かない（curl は `--max-time 1` で諦めるだけで、Claude Code 側は止まらない）。
   取りこぼしてよい扱いにしている: 権限待ち・入力待ちはフックでしか分からないが、次のフックかログの追記で状態は戻る
-- SIGTERM / SIGINT は `SIG_IGN` ではなく何もしないハンドラ（`TerminationSignals`）で既定動作だけ外し、通常の終了経路に乗せる。
+- SIGTERM / SIGINT / SIGHUP は `SIG_IGN` ではなく何もしないハンドラ（`TerminationSignals`）で既定動作だけ外し、通常の終了経路に乗せる。
   `SIG_IGN` は exec を越えて子に残り、ホスト中の claude（SwiftTerm の forkpty 経路）が SIGTERM を無視して
   上限到達時の `terminate()` が効かなくなるため。ハンドラは exec で既定に戻るので子に漏れない（`TerminationSignalsTests`）
 
 ## iPhone 連携（同じ Wi-Fi・`docs/remote-api.md`）
 
-同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信ができる口。
+同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信（画像も付けられる）ができる口。
 iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共有パッケージ `packages/DeckCore`。
 **既定は無効**で、設定画面の「iPhone 連携」タブ（メニュー「claude-deck → iPhone 連携…」でも開く）で有効にした時だけ開く。
 
@@ -309,7 +328,7 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   ウィンドウに端末一覧（名前・接続中・最後に使った時刻・ペアリング日時）と「取り消す」（確認あり。開いているストリームも切る）。
   取り消しを `devices.json` に書き出せなければ、メモリ上は取り消したままウィンドウに出し、5 秒ごとに書き直す。
 - **認証と上限**: 全 API で `Authorization: Bearer`。失敗（認証・ペアリング）は接続元ごとに 5 分で 10 回まで（超えたら 5 分、その接続元の接続は受け入れた時点で切る）。
-  `Origin` 付きは 403。本文 256KB・ヘッダー 64KB・同時接続 32（接続元ごとに 8）・読み取り 5 秒・TCP keepalive・
+  `Origin` 付きは 403。本文 256KB（画像付きのメッセージの口だけ画像の分を足し、認証を通った相手に限って読み取りも 60 秒まで延ばす。`HTTPBodyAllowance`）・ヘッダー 64KB・同時接続 32（接続元ごとに 8）・読み取り 5 秒・TCP keepalive・
   ストリームは端末あたり 4 本（超えたら同じ端末の最も古いものを閉じて受ける）/ 全体 16 本。
 - **操作は既存の経路だけ**: iPhone からの許可 / 拒否・選択肢・送信は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理
   （`MonitorStore.decide`・`answerOnTerminal`・`answerMenu`（`MenuNavigator`）・`HostedSession.send`・伝言）に渡す。
@@ -318,14 +337,23 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   答えた ID（mac・iPhone どちらから答えても）の押し直しは送らずに `answered` を返す。Channels の確認が出ている間は端末の権限・選択肢を iPhone から扱わない。
   操作の待ちは 30 秒で `timeout` を返す（操作自体は続きうる）。カードの組み立てと照合の純粋な部分は MonitorKit（`RemoteTerminalCard`・`RemoteRoomCards`・`RemoteChecks`）。
   選択待ちの間は送信しない。iPhone からの失敗は mac に警告を出さず結果で返す。mac の入力欄の書きかけ・添付には触れない。
+- **iPhone からの画像**: PNG / JPEG を 1 通 4 枚・1 枚 3MB・合計 8MB・一辺 8000 ピクセル（1600 万画素）まで（`RemoteImageLimits`）。
+  送り先（ルームがある・ホスト中）を先に確かめてから、宣言した型と中身の一致・終わりの印・ImageIO で読めるかを確かめ（`RemoteImageIntake`。
+  共有スレッドの外の専用キューで同時 2 本まで・溢れたら `images_busy`）、入力欄の添付と同じ一時保存先（`ChatOutbox.attachmentStore` と同じもの・0700 / 0600）に
+  受けたバイト列のまま書いて、入力欄の添付と同じ経路（パスを貼って `[Image #N]` を確かめてから本文・Enter。`ChatOutbox.sendFromRemote`）で送る。
+  一時ファイルは送り始められなかった時・claude が終わった時・ルームが無くなった時だけ消し、他は起動時の掃除に任せる（`RemoteImageCleanup`）。
+  外部セッション（伝言）には付けられない（`images_not_accepted`）。
+  ルームの `send.acceptsImages` で iPhone に付けられるかを知らせる。
   新しい claude を起動する口・headless の口は無い（料金事故ゼロの方針はそのまま）。
 - **実機で確かめること**: 初めて有効にした時の macOS の「受信接続を許可しますか？」（アプリケーションファイアウォールが有効な場合）と
   ローカルネットワークの許可（`NSLocalNetworkUsageDescription` を Info.plist に入れてある）。ad-hoc 署名のため、`.app` を作り直すと
   ファイアウォールの許可を取り直すことがある。
 - **テスト**: `RemoteAccessUnitTests`（証明書・DER・ペアリング・回数制限・照合・表示の世代と押し直し・カードの優先順・QR の中身・
-  インターフェースの除外・ネットワークの判定・鍵ファイルの権限・取り消しの書き直し・TLS の設定・操作の待ちの上限）と `RemoteServerTests`
+  インターフェースの除外・ネットワークの判定・鍵ファイルの権限・取り消しの書き直し・TLS の設定・操作の待ちの上限・本文と画像の形）と `RemoteServerTests`
   （ループバックの OS 割り当てのポートに TLS で立て、指紋でピン留めした URLSession / NWConnection で叩く。別の指紋・平文は繋がらない・
-  未認証 / 不正 / 取り消し後は 401・回数制限・接続元ごとの上限・ストリームの入れ替え・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること）。LAN には立てない。
+  未認証 / 不正 / 取り消し後は 401・回数制限・接続元ごとの上限・ストリームの入れ替え・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること・
+  本文の上限を広げるのはメッセージの口だけ）、`RemoteClientIntegrationTests`（DeckCore のクライアントで画像付きの送信が添付の形で受け手に渡るまで・
+  枚数 / 型違い / 壊れた画像 / 寸法 / 外部セッションでの拒否とファイルを残さないこと）。LAN には立てない。
 
 ## iPhone への通知（iCloud・CloudKit）
 
@@ -562,10 +590,10 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     会話の見出しと同じ処理（`XcodeLinks.resolve`）で、自動の検出の結果は cwd ごと、閉じる処理中の印は押した先（ルーム / プロジェクト）ごとに `EditorLauncher` が持つ）・
     「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
     見出しの直下にタブの列（`Views/Directory/DirectoryTabBar.swift`）があり、本文は選んだタブの節だけを欄いっぱいに出す（画像やプレビューが多くても他の節へ 1 クリックで行ける）。
-    タブはサイト（下記）・画像（下記）・iPhone（iPhone のプレビュー。下記）・リンク（下記）・スレッド（そのプロジェクトのスレッド。ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）の順。
-    - 件数: 画像・iPhone は走査し終えた時だけ（それまでは数字なし）、リンク・スレッドは常に添える。
+    タブはサイト（下記）・画像（下記）・iPhone（iPhone のプレビュー。下記）・App Store（下記）・リンク（下記）・スレッド（そのプロジェクトのスレッド。ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）の順。
+    - 件数: 画像・iPhone は走査し終えた時だけ（それまでは数字なし）、App Store（紐づけたアプリの数）・リンク・スレッドは常に添える。
     - 出す条件: 「サイト」は LP の場所が見つかった時と、設定の `site` が使えない時（理由を見せるため）だけ。開いた時に場所だけを軽く探し（`SiteLocator.lookup`）、分かるまでは出しておいて無いと分かったら消す
-      （後から足すと並びがずれるため、消す向きにだけ動かす）。LP が無く公開リンクだけのプロジェクトでは出さない（リンクには請求やダッシュボードも混ざり、勝手に読み込まないため。リンクのタブからブラウザで開く）。調べるのは詳細を開いた時の 1 回で、開いている間に LP を作った時は別のディレクトリへ移って戻ると出る。「iPhone」は Xcode の紐づけで開く先が決まる時と、指定した先が使えない時（理由と「設定で編集」を出すため）だけ（使わないなら出さない）。画像・リンク・スレッドは常に出す（空なら中で「なし」）。
+      （後から足すと並びがずれるため、消す向きにだけ動かす）。LP が無く公開リンクだけのプロジェクトでは出さない（リンクには請求やダッシュボードも混ざり、勝手に読み込まないため。リンクのタブからブラウザで開く）。調べるのは詳細を開いた時の 1 回で、開いている間に LP を作った時は別のディレクトリへ移って戻ると出る。「iPhone」は Xcode の紐づけで開く先が決まる時と、指定した先が使えない時（理由と「設定で編集」を出すため）だけ（使わないなら出さない）。「App Store」は設定でアプリを紐づけた（`appStore` がある）時だけ。画像・リンク・スレッドは常に出す（空なら中で「なし」）。
     - 覚え方: 最後に押したタブをプロジェクトごとに UserDefaults（`directory.tab.<プロジェクトの id>`）に覚え、次に開く時はそのタブ。初めては出せるタブの先頭、覚えたタブが出せなくなっていたら先頭に戻る（覚えた値は押した時だけ書き換える）。
     - 走査・描画はそのタブを開いた時に始め、タブを離れると画面ごと消えて走査中のものは取りやめる。走査の結果と「再読み込み」の回数は詳細（プロジェクトごと）が持つので、タブを行き来しても走査し直さない。
       タブを替えるとスクロールは先頭に戻る（サイトで選んだ見る元は詳細が持ち、タブを替えても保つ）。別のプロジェクトへ移れば選んだタブ・走査の結果・見る元を持ち越さない（`.id(project.id)`）。
@@ -649,8 +677,28 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   - **見出しのボタンが入りきらない時**（会話の見出しも同じ）: 名前とパスは省略表示（最小 140px）まで縮め、それでも入らなければ優先度の低いボタンから
     「…」（`ellipsis.circle`。ホバーで「ほかの操作」と回したボタンの名前）のメニューにまとめる。メニューの項目は同じ動作を呼ぶ
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
-    回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
+    回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「端末の画面」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
     候補は `ViewThatFits` で入るものを選ぶ（`Views/Conversation/HeaderActions.swift`）。回す順の計算は `Sources/MonitorKit/Chat/HeaderOverflow.swift`（テストあり）。
+  - **App Store**（詳細のタブ。設定の `appStore` でアプリを紐づけたプロジェクトだけ）: App Store Connect API から読んだ、アプリごとの版の状態・審査・メタデータの文面を出す（`Views/Directory/AppStoreSection.swift`）。
+    - **読むだけ**: 送るのは `https://api.appstoreconnect.apple.com` への GET だけ。要求は `AppStoreRequest` でしか組み立てられず（他の宛先・メソッドは作れない。appId は数字だけ、版などの ID は英数字とハイフンだけ）、
+      一覧の続き（`links.next`）も同じ宛先の `/v1/` の下だけを辿る。リダイレクトは辿らない。書き換え・版の作成・審査への提出の口は無い（appstore-plugin の skill で確認を挟んで行う）。
+    - **認証**: appstore-plugin と同じ書式の `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_PRIVATE_KEY_PATH` か `ASC_PRIVATE_KEY` を、**環境変数 → `~/.claude/appstore-meta.env` の順**に読む
+      （plugin は間にプロジェクトの `./.env` も読むが、**アプリはプロジェクトの `.env` を読まない**。他の秘密を読み込まないため）。`ASC_PRIVATE_KEY_PATH` は `~` を展開した後も絶対パスでなければ断る。
+      env と .p8 は、リンクを辿った先が通常のファイル（64KB まで）の時だけ読む（FIFO やフォルダは開いて待たずに断る）。
+      CryptoKit で ES256 の JWT（alg ES256・kid・typ JWT / iss・iat・exp（plugin と同じ 10 分。20 分を超えない）・aud `appstoreconnect-v1`）を作って期限の 1 分前まで使い回す。
+      .p8 はトークンを作る時だけ読み、要求のたびには env の Key ID・Issuer ID だけを読んで、替わっていればトークンを作り直す。
+      ファイルは読むだけで、鍵・トークンは画面・ログ・設定に出さない。画面には読み元（「環境変数（ASC_KEY_ID）」/ `~/.claude/appstore-meta.env`）の名前だけを出す。
+      ファイルが無い・キーが足りない・鍵が読めない時は足りないものの名前だけを出す（鍵を貼らせない）。
+    - 見出しの「再読み込み」で取り直す（鍵も読み直す）。取るのはタブを開いた時と「再読み込み」だけで、自動の定期取得はしない。取った結果はアプリ全体で 10 分覚え（`AppStoreCache`）、その間はタブを行き来しても取り直さない。アプリごとに取得の時刻を出す。
+    - 失敗の案内: 401（キーの組み合わせ・取り消し）・403（役割・アプリへのアクセス）・404（appId）・429 / 5xx（しばらく待ってから「再読み込み」。**自動では取り直さない**）・通信の失敗・応答が読めない・応答が 8MB を超える（読まない）。
+      「再読み込み」の前に取りに行っていた文面の結果は採らない。
+    - アプリごとに: 名前（設定の名前と、違えば App Store Connect の名前）・バンドル ID・appId、プラットフォームごとの**最新の版**（版番号の数で新しい順・同じなら作った日）と**公開中の版**（最新が公開中なら出さない）の版番号・状態・作った日、
+      **審査の提出**（`reviewSubmissions` の新しい 3 件。下書きを先に、提出の日時）。版の一覧も提出の一覧も API に並びの指定（`sort`）が無いので、1 ページ 200 件で 4 ページまで辿って手元で並べる。
+      文面を書き換えられる状態の版（提出準備中・リジェクトなど）には「文面を編集できる版」と添える（書き換えは plugin で）。状態は日本語にし（提出準備中 / 審査の提出待ち / 審査待ち / 審査中 / リジェクト / メタデータのリジェクト / 取り下げ（開発者）/
+      公開待ち（手動で公開）/ 公開中 など。印の色で分け、ホバーで原文）、知らない値は原文のまま出す。版の状態は `appVersionState` を先に、無ければ `appStoreState`。
+    - **文面**: 最新の版（公開中の版が別にあれば選び替え）とロケール（アプリの主の言語を先頭に並べ、既定でも選ぶ）を選んで、名前・サブタイトル（アプリの情報。公開中の版には公開中の情報、それ以外には編集中の情報）・説明文・キーワード・プロモーションテキスト・What's New・サポート / マーケティング URL を、
+      文字数と上限（30 / 30 / 4000 / 100 / 170 / 4000。数え方は appstore-plugin と同じ Unicode のコードポイントの数）付きで出す。上限を超えた欄は赤と「上限超え」の印、ロケールの選択肢にも ⚠︎。長い本文は畳んで「全文」で開く。URL は http / https のものだけ押すとブラウザで開く。
+    - 組み立てと判定（env の読み取り・JWT・要求・応答の読み取り・状態の日本語・文字数・候補の当て方・キャッシュ）は `Sources/MonitorKit/AppStore/`（テストあり。本物の API は呼ばず、作った見本の JSON と偽の通信で確かめる）、持ち手は `Chat/Model/AppStoreStore.swift`。
   - **サイト**（先頭のタブ）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
     - 場所: 設定の `site`（下記「設定（settings.json）」）があればそれ、無ければプロジェクト直下と 2 階層までのサブフォルダから探す
       （`next.config.{js,mjs,ts,cjs}` があるか、`package.json` と `out/index.html` がある所。`node_modules`・`.next`・`out`・隠しフォルダ等の中は見ず、
@@ -748,7 +796,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」。表示の切替は無く、どのルームも常にチャット。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」。表示の切替は無く、どのルームも常にチャット。
+  「端末の画面」（`terminal`）はホスト中で claude が動いているルームだけに出し、「Xcode」と同じ段でその直前に「…」へ回る（下記「端末の画面」）。
   「別ウィンドウで開く」（`macwindow.badge.plus`）はメインの見出しにだけ出し、別ウィンドウの見出しには出さない。優先度は「GitHub」と同じ段でその直前に「…」へ回る。
   見出しのボタンはアイコンだけで、ホバーで名前と開く先を出す。「VS Code」は常に出す。
   「Xcode」「閉じる」は Xcode の紐づけ（設定のプロジェクトの「Xcode」。ルームの cwd を含む登録プロジェクトのもの）で開く先が決まるルームだけ出す（`XcodeLinks.resolve`）。
@@ -916,7 +965,11 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   プロンプトを読み取り、**許可 = `1`（1. Yes）/ 拒否 = `Esc`** を PTY に送る（選択肢の数で「No」の番号が変わるため拒否は Esc）。
   キーは Claude Code v2.1.251 / v2.1.286 の実際の TUI で確認した。画面にプロンプトが無ければ何も送らない。
   押した時のカードの内容と今の画面のプロンプトが違う（別の確認に替わった）場合も何も送らず、カードを今の内容に更新する。
-- 押してから結果が出るまでは、そのカードのボタンを無効にして二度押しを防ぐ。
+- 押してから結果が出るまでは、**押したカードだけ**ボタンを無効にして二度押しを防ぐ（下の「選択肢カード」の「送信中」と同じ仕組み）。
+  端末のプロンプトのカードの印は中身と表示の世代（同じ文面が続けて出ても別のカード）、Channels のカードの印は確認の key。
+  押しても送れない時（送っている最中・送り終えた直後の同じカード・答え終わった・内容が替わった）はカードに理由を出す。
+- 端末の画面から読んだカードは、claude の版が確かめた版（`ClaudeCodeVersions`）に無ければ「この版の Claude Code は未確認です。うまく答えられない時は端末の画面から答えてください。」を出す。
+- ホスト中のルームでは右下に「端末の画面」のボタンを出す（送信中でも押せる。下記「端末の画面」）。
 
 ### 選択肢カード
 
@@ -925,6 +978,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   問いより上の本文（plan の中身・trust 確認のフォルダ・質問の見出し）、問い（選択肢の直前の行）、選択肢（番号・文言・下の字下げの説明行）、
   今「❯」が付いている行。選択肢は「❯ n.」から番号が 1 ずつ続く範囲だけを取る（plan 本文の番号付きリストを混ぜない）。
   番号の無いメニュー（trust 確認）は「❯」の行と、空行を挟まずに同じ字下げで並ぶ行を選択肢とする。
+  trust 確認（v2.1.300）は問いの段落の「?」までを問いにし、その後ろの文と下の説明（「読み書き・実行できる」等。リンクの「Security guide」は除く）は本文の後ろに残す。
+  「No, exit」のように選ぶと claude が終了する選択肢は、Esc と同じく確認を挟む（iPhone からは `confirmExit` が要る。Claude が書く選択肢は Esc が終了になるメニューの時だけ終了と読む）。
   「❯」の行は操作案内（`Enter to … · Esc to …`。無ければ画面の末尾）から上へ 24 行以内だけ探し、会話の返答（`⏺`）の行に当たれば探すのをやめる
   （履歴の発話 `❯ …` を選択肢と読まないため）。番号の無い「❯」の行は操作案内が出ている時だけ選択肢とみなす。
   本文は上の罫線までの囲み。罫線が見当たらなければ空行・会話の行（`⏺` / `❯`）・経過表示（`✻ … (3s)` 等）の手前で止める（照合に使うので変わる行を入れない）。
@@ -937,7 +992,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   未反映の矢印は常に 0 か 1 個で、これは**ナビゲーションをまたいでも**保つ: 約 1 秒待っても「❯」が動かなければ**再送せずに**やめ、
   未反映の矢印を残してやめた時は印（`PendingArrowHold`）を残して、次に押しても「反映待ち」として動かさない。印は「❯」が動いた
   （残りの矢印が反映された）・端末の出力が 1.5 秒止まった・5 秒経った時に外す（残りの矢印を次の移動の 1 歩と数えて 1 行先で確定しないため）。
-  やめた後もカードのボタンは 1.5 秒押せないままにする。
+  送り終えた（やめた）後も、押したカードのボタンは 1.5 秒押せないままにする（画面が描き替わるまで古いカードが今の画面と一致して見えるため）。
 - 最初に、押した時のカードと今の画面のメニュー（本文・問い・選択肢の文言。「❯」の位置は除く）が同じかを確かめ、違えば何も送らない。
   動かしている途中で問い・本文・選択肢の数が変わったら Enter を押さずにやめる。着いた時も全体を照合してから Enter を送る。
   「❯」が動かない・メニューが消えた時も Enter を押さずにやめて理由を出す（矢印で「❯」を動かした分は端末に残る）。
@@ -975,7 +1030,40 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - 入力欄の上に重なったメニュー（上の「入力欄の上に重なるダイアログ」）はその範囲だけを読み、番号付きの選択肢が読めれば通常のカードにする。
 - 中身を読み取れないメニュー（`/auto-mode-setup` のウィザード等）は、その旨と「キャンセル（Esc）」だけのカードを出す。押した時のカードと今の画面が同じ「読めないメニュー」
   （メニューの範囲の行の写し `UnreadableMenu`）の時だけ送る。Esc が終了になるメニューでは同じく確認を挟む。
-- 押してから結果が出るまではカードのボタンを無効にして二度押しを防ぐ（端末ビューが途中で無くなっても送信中の印は外す）。外部セッションは対象外。
+- **送信中（二度押しの防止）はカード単位**（`PromptOperationBook` / `PromptCardBoard`。判定は MonitorKit でテストあり）:
+  - 押すと、押したカードの印（`PromptCardIdentity`: 本文・問い・選択肢・チェック・タブ。「❯」の位置は含めないので、動かしている途中で別のカードにならない）にだけ
+    「送信中…」を付ける。結果が返ってから 1.5 秒は同じカードを押せないままにするが、**次に出た問いのカード（印が違う）は送信中を引き継がずに生まれ、すぐ押せる**。
+  - 送っている最中（矢印で動かしている間）は、同じルームの別のカードも押させない（`isNavigatingMenu`・`PendingArrowHold` と合わせて、矢印を重ねない）。
+  - 送信中には**上限 12 秒**と操作の印（UUID）を持たせ、上限を過ぎたら必ず外して「応答を確かめられませんでした。端末の画面で確かめてください。」を出す。
+    結果は「1 回だけ渡す箱」（`OnceDelivery`）で受け、端末から結果が返らなくても 12 秒で時間切れの結果（iPhone には `unconfirmed`）を返す。後から返った結果は渡さない（失敗なら一言だけ出す）。
+    送信中を外すのは自分の印の時だけ（遅れて届いた古い操作の完了で、今の操作の印を外さない）。
+  - カードは自分の body で送信中と一言を読み（親の `MessageList` の描き直しに頼らない）、期限の時刻に描き直す時計も持つ。期限切れの印は板の掃除でも外す。
+  - **押しても送れない時は必ずカードに理由を出す**（送っている最中・同じカードの描き替え待ち・前の矢印の反映待ち・動かしている最中・文字入力の行など）。
+    答え終わった・内容が替わった・位置を合わせられない等は従来どおり警告も出す。端末ビューが途中で無くなっても結果は返し、送信中は外す。外部セッションは対象外。
+- **trust 確認**（v2.1.300 は問いの下に説明とリンク「Security guide」が入る）は、選択肢の上で最も近い「?」を含む段落の「?」までを問いとして読む
+  （`Quick safety check: Is this a project you created or one you trust?`）。「❯」の初期位置は「No, exit」で、**claude の終了になる選択肢（「No, exit」）を押した時も
+  Esc と同じ終了の確認を挟む**（`MenuPrompt.choiceExits`）。
+- **操作の記録**: 押した時刻・カードの印・選んだ番号、navigator / tab mover の各手（待った回数をまとめる）・送ったキー（矢印・Enter・Esc）・結果・送信中の付け外し・
+  カードを出した時の送信中の値を `~/Library/Logs/claude-deck/menu-ops.log` に**直近 500 行**残す（`MenuOpsLog`。会話の本文は入れない・0600・外へは送らない）。
+  固まった時はこの記録と `menu-screens.log` を突き合わせる。
+- **確かめていない版の案内**: セッションファイル（`~/.claude/sessions/<pid>.json`）の `version` が確かめた版（`ClaudeCodeVersions.verified`: 2.1.286・2.1.288・2.1.300）に
+  無ければ、カードに「この版の Claude Code（版）は未確認です。うまく答えられない時は端末の画面から答えてください。」を出す（版が読めない時は出さない）。
+  TUI を確かめた版を足す時は、この一覧とテストの写し（`Tests/ClaudeDeckTests/Fixtures/ClaudeCode-<版>/`）を足す。
+- 選択肢カード・読めない選択肢のカードの右下に「端末の画面」のボタンを出す。カードの無効化の外に置くので、カードが「送信中…」のまま止まっても押せる（下記「端末の画面」）。
+
+### 端末の画面（カードで答えられない時の逃げ道）
+
+- カードの読み取りが TUI の変化に追いつかず答えられなくなった時に、アプリを再起動せずに抜け出すためのシート。ホスト中で claude が動いているルームの
+  見出しの「端末の画面」と、権限カード・選択肢カード・読めない選択肢のカードの「端末の画面」から開く（外部セッションには出さない。メイン・別ウィンドウのどちらでも開ける）。
+- 上半分に端末の今の表示を等幅で出す（罫線・❯ もそのまま。右の別の欄も含めた全幅で、末尾の空行は落とす。0.3 秒ごとに読み直し、変わった時だけ描き直す。
+  縦横にスクロールでき、「表示をコピー」で文字としてクリップボードに写せる）。claude が終わった後は最後の画面を出し、キーは押せない。
+- 下に送れるキーのボタン: ← ↑ ↓ → Enter Esc Tab Space と数字 1〜9。押した時だけ 1 回送る。シートにフォーカスがある間はキーボードの
+  矢印・Return（テンキーの Enter も）・Esc・Tab・Space・1〜9 も同じキーとして送る（押しっぱなしの繰り返しは送らない。⌘ / ⌃ / ⌥ 付きは拾わない）。
+  キーと送る列の対応は `PTYInput.swift` の `TerminalKey`（テストあり。矢印は端末のモードに合わせて CSI / SS3）。**文字の自由入力の口は無い**（入力欄の送信の守りを迂回しないため）。
+- 送らない時: カードから ❯ を動かしている最中（`isNavigatingMenu`）・入力欄からの送信の途中・権限カードの回答を送った直後（押せない間）・claude が動いていない時。
+  理由をシートの下に出す。矢印を送った後は、カードの矢印と同じ `PendingArrowHold` を残し、反映されるまでカードからの移動を「反映待ち」で待たせる。
+- Esc が claude の終了になるメニュー（選択肢カード・読めない選択肢のカードと同じ判定）では、Esc を送る前に確認ダイアログを挟む。
+- Esc は端末に送るキーなのでシートを閉じない。閉じるのは「閉じる」（⌘W）。
 
 ### 外部セッション（ターミナル等で起動したもの）
 
@@ -1016,25 +1104,48 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 ### 終了と次の起動（前回のセッションの再開）
 
 アプリを終了するとホスト中の claude は PTY ごと閉じて止まる。次の起動で同じ会話を自動で続けられるよう、記録して再開する。
+止め方は `Sources/MonitorKit/Support/ChildProcessControl.swift`（テストあり・ダミーのプロセスで確かめる）。
 判定と記録の読み書きは `Sources/MonitorKit/Chat/SessionRestore.swift`・上限の記録は `Sources/MonitorKit/Limit/LimitState.swift`（どちらもテストあり）、
 つなぎは `Chat/Model/SessionRestorer.swift`・`App/QuitCoordinator.swift`・`App/LimitWatch.swift`。
 
-- **記録**: 動いているホスト中のセッション（名前・cwd・sessionId・最後の状態・書きかけ）を `ChatModel.hosted` そのものから組み立て
+- **PTY の master を後の子に漏らさない**: SwiftTerm の forkpty は master に CLOEXEC を付けないので、起動の直後（`launchClaude`）に付ける。
+  付けないと後から起動した claude が先の claude の master を持ち、アプリが終わっても先の claude に切断が届かず、起動順の逆に 1 本ずつしか終わらない。
+  開発サーバー・mcpbridge は `POSIX_SPAWN_CLOEXEC_DEFAULT` で起動するので master を受け継がず、そのパイプ・Foundation の `Pipe`（`EditorActions`・`XcodeSelection`）・
+  設定の監視の fd・伝言のソケットにも CLOEXEC を付けて claude に渡さない（Foundation の `Pipe` は付かないので `makeFoundationPipe` で作る）。
+  作ってから印を付けるまでの間に forkpty が割り込まないよう、「forkpty + master への印」と「パイプ・ソケットを作って印」は同じロック（`withSpawnLock`）で囲む。
+- **終了時に止める**: `applicationWillTerminate`（⌘Q・ウィンドウ・SIGTERM / SIGINT / SIGHUP・ログアウト）で記録と設定を書き切った後、
+  ホスト中の claude 全部へ同時に SIGHUP を送り（起動時刻が記録と合う pid だけ。待たない）、開発サーバー・mcpbridge を止めてから、
+  送った時から 3 秒の締め切りまで後片付けを待つ（`ChildProcessControl.sendHangUp` / `waitForExit`。終了を長く引き止めない）。
+  シグナルの経路では、開発サーバー等を止める前に記録を書く。
+  終わらなかった分はアプリの終了で master が閉じて切断が届き、次の起動が終わるのを待つ（下の「前回の claude の終了待ち」）。
+- **記録**: 動いているホスト中のセッション（名前・cwd・sessionId・最後の状態・書きかけ・claude の pid と起動時刻）を `ChatModel.hosted` そのものから組み立て
   （一覧 `rooms` は次の周回まで古いので使わない）、見送り中の分と合わせて
   `~/Library/Application Support/claude-deck/hosted-sessions.json`（`CLAUDE_DECK_HOSTED_SESSIONS` で差し替え）に 0600・置き換えで書く。
-  ルームの起動・閉じる時・アプリの終了時（SIGTERM / SIGINT を含む）と 3 秒ごと（中身が変わった時だけ）に書くので、強制終了・クラッシュでも直前の分が残る。
+  ルームの起動・閉じる時・アプリの終了時（SIGTERM / SIGINT / SIGHUP を含む）と 3 秒ごと（中身が変わった時だけ）に書くので、強制終了・クラッシュでも直前の分が残る。
   `/exit` で終了した claude とまだ sessionId の分からないルームは記録しない。壊れた・知らない版のファイルは空とみなして書き直す。
+  pid と起動時刻（`pid`・`procStart`。epoch 秒・カーネルの値）は後から足した任意の項目で、無い古い記録もそのまま読む（版は 1 のまま）。
 - **二重起動**: 記録の隣の `hosted-sessions.json.lock` を起動中ずっと flock で持つ（exec で閉じるので子の claude には残らない）。
-  取れない時（別の claude-deck が動いている）は再開も記録の書き込みもせず、その旨を帯に出す。
+  前のアプリが終わる途中（claude の後片付けを待っている）だと取れないので、8 秒まで取り直す。
+  それでも取れない時（別の claude-deck が動いている）は再開も記録の書き込みもせず、その旨を帯に出す。
 - **起動時の再開**（設定「起動と終了」の「起動時に前回のセッションを再開する」。既定はオン・UserDefaults）: 監視が始まって残量を読むまで待ってから（最大 10 秒）、
   記録したものを同じ cwd で `claude --resume=<sessionId>` で起動する（「アプリに引き継ぐ」と同じ `launchClaude(in:resumeSessionId:)`。UUID 形式のみ・API キー除去は維持）。
-  - 同じ sessionId が別の claude で動いていれば起動せず（`SessionHandover.liveDuplicate`。前回の claude がまだ終了の途中のこともある）、記録は見送りに残す。
+  - **前回の claude の終了待ち**: 記録の pid が今も動いていて、自分のユーザーで起動時刻が記録と合う（= 前回このアプリがホストしていた claude が後片付けの途中）時は、
+    見送らずに 0.5 秒ごとに見張り、終わったら判定し直して再開する（`SessionRestore.isPreviousProcess`・`PreviousExitWait`）。
+    待っている間は一覧の上の帯に「前回アプリでホストしていた claude N 件が終わるのを待っています」を出す。
+    15 秒待っても終わらなければ「同じ会話が動いている」の見送りに回して帯で知らせる。終了の確認中・保留中は待ちを進めない。
+    帯の［破棄］で待ちをやめて記録を捨てる。待っている間に「起動時に前回のセッションを再開する」を切ったら、自動の分は終わっても再開しない（［再開する］から始めた待ちは再開する）。
+  - 同じ会話を「アプリに引き継ぐ」の途中なら起動せず見送りに残す（引き継ぎ側が起動する）。ホストを始める直前にも、同じ会話を動いているホスト中のセッションがあれば起動せずそれを選ぶ。
+  - それ以外で同じ sessionId が別の claude で動いていれば起動せず（`SessionHandover.liveDuplicate`）、記録は見送りに残す。
     sessionId の形が想定外・フォルダが無い・同じ会話を既にホストしている時は起動しない。
   - 上限到達中（`LimitWatch.isLimitReached`）は起動せず見送りに残す。
   - **再開の直後に落ちた時**: 自動で再開した時刻を記録に `restoredAt` として持ち、正常に終わる時（`applicationWillTerminate`）に外す。
     次の起動で印が残っていて 2 分以内なら、再開が原因で落ちた疑いがあるので自動では再開せず見送りに回す。
   - 見送った分は一覧の上の帯に「再開を見送ったセッション N 件（上限 / 再開の直後に落ちた / 同じ会話が動いている）［再開する］［破棄］」で出し、記録にも残し続ける
-    （次の起動でもう一度判定する）。［再開する］はまだ上限中なら何もしない。
+    （次の起動でもう一度判定する）。［再開する］はまだ上限中・終了の確認中や保留中なら何もしない。
+  - 終了待ち・見送り中の会話の claude が監視に外部ルームとして見えている間は、外部ルームの帯をターミナル起動の文言ではなく
+    「前回アプリでホストしていた会話です」にし、判定前は「確かめています…」、待ち中は「終了を待っています…」、
+    見送り中はその会話だけの［再開する］（前の claude が終わる途中ならまた終わるのを待つ）と、引き継げる時だけ［アプリに引き継ぐ］（前の claude が終わらない時の逃げ道）を出す。
+    引き継ぎ中は［再開する］を出さない。引き継ぎ等で同じ会話をホストし始めたら待ちと見送りから外す。
   - 再開した件数（続きを頼んだ件数・見送り）を一覧の上の帯に出す（× で閉じる）。選択は未選択の時だけ移す。書きかけは入力欄に戻す。
 - **上限の記録**: `LimitWatch` は起動時から残量を見張り、到達の解ける時刻（と理由）を `limit-state.json`（`CLAUDE_DECK_LIMIT_STATE` で差し替え・0600・置き換え）に書き、
   解けたら消す。起動時はこれを読んで到達を持ち越すので、usage.json が古い（セッションが止まっていて statusLine が書いていない）間も、リセット時刻までは再開しない。
@@ -1053,7 +1164,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   「作業が終わったら終了」は `.terminateLater` で保留し、稼働中のルームが無い状態が 3 秒続いたら終了する（ツールの合間の一瞬では終えない）。
   待っている間は一覧の上に帯（［取り消す］）を出す。待っている間にもう一度 ⌘Q を押すとすぐ終える。ウィンドウの閉じるボタンでは終えず、待ちを続けたままウィンドウを隠す（Dock から出し直せる）。
   保留中は run loop がモーダルの mode で回るので、記録と待ちのタイマーは common の mode に載せている。
-- **SIGTERM / SIGINT での終了**（`MonitorBridge` のハンドラ → `QuitCoordinator.terminateBySignal`）は確認を出さず、記録だけ書き切って必ず終える
+- **SIGTERM / SIGINT / SIGHUP での終了**（`MonitorBridge` のハンドラ → `QuitCoordinator.terminateBySignal`）は確認を出さず、記録だけ書き切って必ず終える
   （保留中なら `NSApp.reply(toApplicationShouldTerminate: true)`、確認ダイアログの表示中なら `NSApp.abortModal()` してから終了へ進める）。
 - **ログアウト・再起動・シャットダウン**（quit の Apple Event に `kAEQuitReason` が付く）でも確認を出さず、記録だけ書き切って終える。
 
@@ -1072,7 +1183,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
                              { "name": "Figma", "url": "https://www.figma.com/file/…" } ],
                   "site": { "path": "site" },
                   "xcode": { "path": "ios/App.xcodeproj" },
-                  "icon": "iphone", "color": "blue" } ],
+                  "icon": "iphone", "color": "blue",
+                  "appStore": [ { "appId": "1234567890", "name": "本番" }, { "appId": "1234567891", "name": "検証用" } ] } ],
   "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
 ```
 
@@ -1104,6 +1216,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   `icon` は SF Symbol の名前（無ければ `folder`。この OS に無い名前は読めて値も残るが、表示は `folder` に落ちる。空は警告）。
   `color` は `red` / `orange` / `yellow` / `green` / `teal` / `blue` / `indigo` / `purple` / `pink` / `brown` / `gray` のどれか（無ければ名前から決める。知らない値は警告として読み込み、値は残したまま名前から決めた色で出す）。
   設定画面のプロジェクトタブの「アイコンと色」か、ディレクトリ一覧の行の右クリック「アイコンと色を変更…」から選ぶ（「自動」「既定」でキーを消す）。
+  `appStore` はディレクトリの詳細の「App Store」で見る App Store Connect のアプリ（`appId` は数字の文字列・`name` は画面に出す名前。本番・検証用など複数可・並びは配列の順）で、省略できる（空ならアプリも書かない）。
+  `appId` は数でも読む（次に保存すると文字列で書く）。数字でない・名前が空・同じ `appId` の重なりは警告として読む（数字でないものは取りに行かない）。形が崩れている（配列でない・要素に `appId` が無い）時は、その `appStore` だけを無視して警告を出す（次に保存すると書かれない）。
+  鍵は書かない（`~/.claude/appstore-meta.env` から読む）。**App Store を紐づけたら、`appStore` を知らない前のビルドで設定を保存しない**（`appStore` を落として書くため）。
   `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
 - 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600。ディレクトリを 0700 に締めるのは既定の場所（`~/Library/Application Support/claude-deck/`）の時だけで、
   `CLAUDE_DECK_SETTINGS` で向けた先のディレクトリの権限は変えない。
@@ -1150,6 +1265,12 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
   「サイト」の節で LP の場所を指定（相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
   正しい相対パスの間だけ保存し、検出の結果（指定 / 自動で検出・書き出しの有無）を出す。
+  「App Store」の節で App Store Connect のアプリを紐づける（`ProjectAppStoreEditor`）: 「App Store Connect のアプリの一覧を取得」で一覧を取り（10 分覚える。「一覧を取り直す」はアプリの一覧だけを取り直し、詳細の文面の覚えは残す。開いただけでは取りに行かず、settings.json も書かない）、
+  「アプリを追加」のメニューから選ぶ。メニューの先頭の「候補」は、そのプロジェクトの `.claude/appstore.json`（`{"appId": "…", "platform": "IOS"}`）の appId と、
+  プロジェクト内の `.xcodeproj/project.pbxproj` の `PRODUCT_BUNDLE_IDENTIFIER` が一致するアプリ（大文字小文字は区別しない）。`$(NAME)` / `${NAME}`（`:lower` / `:upper` / `:rfc1034identifier` も）は
+  同じプロジェクトの pbxproj と `.xcconfig`（条件付きの `NAME[sdk=…][config=…] = v` も）の値で解決し（値の重複は除き、変数ごとの解決は覚えて使い回す。互いに参照し合う変数は解決できないとする。組み合わせは 8 通りまで）、
+  解決できない時は「`com.example.`」のように区切り 2 つ以上の決まった頭がある書き方で（隣り合う変数は 1 つにまとめ、変数は 3 つまで）、合うアプリが 1 件だけの時だけ候補にする（誤って当てるより出さない）。
+  走査はアプリの一覧が取れてから始め、欄を離れると取りやめる。浅く（深さ 4・フォルダ 3,000 個・隠しフォルダと「画像」と同じ依存 / 成果物のフォルダ・`.xcworkspace` 等の中は見ない・リンクは辿らない）。候補の照合は走査の結果か一覧が替わった時だけ。紐づけた行は名前（本番・検証用など）を変えられ、∧ / ∨ で並べ替え・ゴミ箱で外す（名前が空の間は保存しない）。
 - **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号（プロジェクトタブの「GitHub」と同じ部品・git の remote の候補も同じ）と、リポジトリに紐づかないボードの追加・編集・削除。
   owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
 - **iPhone 連携**: 上の「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）と、「iPhone への通知」の入り切り・状態。
@@ -1206,6 +1327,22 @@ cp config/Local.example.xcconfig config/Local.xcconfig   # 雛形を写して自
 
 ### `.app` として起動する
 
+普段使いは `/Applications` に入れて、Spotlight・Launchpad・Dock から起動する。入れるのも更新するのも次の 1 つ:
+
+```sh
+cd /Users/shinjo/project/ai-manager/mac
+./scripts/install.sh           # develop を最新に → 組み立て → 動いている claude-deck を終了 → /Applications/claude-deck.app と入れ替え → 起動
+```
+
+- develop にいて作業ツリーがきれいな時だけ `git pull --ff-only` する（違えば止まる）。今の作業ツリーのまま組み立てるなら `--no-pull`。
+- 動いている claude-deck（同じバンドル ID）には ⌘Q と同じ普通の終了を頼むので、稼働中・権限待ちがあれば確認が出る。取りやめた・180 秒で終わらなかった時は入れ替えない。
+  ホスト中のセッションは終了の時に記録され、起動し直すと再開する（「終了と次の起動」）。初回は端末から claude-deck を操作する許可（オートメーション）を macOS が尋ねる。
+- 入れる先に同じ名前の別のアプリ（バンドル ID が違う）がある時は消さずに止まる。組み立ては一時フォルダで行い、`mac/dist/` は変えない。
+- オプション: `--dest <dir>`（既定 `/Applications`）/ `--no-pull` / `--no-launch` / `--adhoc` / `--build-system auto|default|native`（後ろの 2 つは bundle.sh に渡す）。
+- Channels のチャネルを `.mcp.json` に登録する時は `/Applications/claude-deck.app/Contents/MacOS/claude-deck-channel` を指せば、更新のたびに新しくなる。
+
+組み立てだけをする時（`mac/dist/` に作る）:
+
 ```sh
 cd /Users/shinjo/project/ai-manager/mac
 ./scripts/bundle.sh            # → mac/dist/claude-deck.app（config/ の値に合うプロファイルがあれば Apple Development、無ければ ad-hoc）
@@ -1216,7 +1353,7 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - `auto` は通常の `swift build` を試し、失敗したら `--build-system native` で再ビルドする。Metal Toolchain が無い環境では通常ビルドが SwiftTerm の `Shaders.metal` のコンパイルで失敗するため（`xcodebuild -downloadComponent MetalToolchain` で入れれば通常ビルドが通る）。
 - 依存のリソースバンドル（`SwiftTerm_SwiftTerm.bundle`）は `Contents/Resources/` に同梱する。claude-deck は SwiftTerm の Metal レンダラーを有効にしていないため、現状このバンドルは参照されない（有効化する場合は SPM の `Bundle.module` が `.app` 直下を探す点に注意）。
 - バンドル ID（`CFBundleIdentifier`）と `DeckICloudContainer` は `config/` の値で Info.plist に埋める。署名はチーム ID・コンテナが設定されていて、このアプリ用のプロビジョニングプロファイルがあれば Apple Development（iCloud のエンタイトルメント付き。上の「iPhone への通知」）、無ければ ad-hoc（`codesign -s -`）。Developer ID 署名・公証・配布・自動アップデートはしない。別の Mac へコピーすると Gatekeeper に止められる前提（右クリック → 開く）。
-- `/Applications` へ置く場合は `--out /Applications` またはコピー。置き場所に関わらず、設定は `~/Library/Application Support/claude-deck/settings.json` を読む（上の「設定（settings.json）」。Finder 起動には環境変数が渡らないので `CLAUDE_DECK_SETTINGS` は効かない）。
+- 置き場所に関わらず、設定は `~/Library/Application Support/claude-deck/settings.json` を読む（上の「設定（settings.json）」。Finder 起動には環境変数が渡らないので `CLAUDE_DECK_SETTINGS` は効かない）。
 - 生成物 `mac/dist/` と `mac/.build/` は git 管理外。
 - アイコン（任意）: `mac/Resources/AppIcon.icns` を置くと同梱される。1024px の PNG から作る例:
   ```sh
@@ -1238,16 +1375,19 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - 上限到達の画面表示は実際の上限で出たものを未確認（文言はバイナリから、`⎿` の位置は TUI の描画コードから推定）。表示の形が違えば補助経路だけ効かない（主経路の残量判定は効く）。
 - ホスト中のルームはアプリを終了すると claude ごと終わる（次の起動で `--resume` で再開するが、作業は一度止まる。アプリを閉じても動かし続ける常駐プロセスの設計は `docs/pty-daemon.md`・未実装）。
 - アプリが強制終了・クラッシュした時は、サイトの開発サーバー（`npm run dev`）と「iPhone のプレビュー」の mcpbridge が残りうる。
+- 「App Store」は読むだけで、スクリーンショット・価格・審査のメモは出さない。版は各プラットフォームの最新と公開中だけ（API に並びの指定が無いので、版も審査の提出も 200 件ずつ 4 ページまで辿る。それより多いと最新を取りこぼしうる）。画面は本物の API で取れることを確かめたが、見た目の目視は未確認。
 - 「iPhone のプレビュー」は起動中の Xcode（RenderPreview のある 27 以降）が要る（Xcode を起動していない時の自前の描き手は未実装）。描画とキャッシュへの写しは
   MonitorKit のクライアントで sandora（描けた）と mirio（ビルド失敗の文言）で確かめたが、アプリの画面での操作（グリッド・シートでの切り替え）とアプリからの初回の承認は目視で未確認。
 - 権限プロンプト・選択メニューの読み取りは端末画面の文言（`Do you want to …?` と `1. Yes`、`❯ n.` の選択肢、`Enter to confirm` 等の操作案内）に依る。
   **Claude Code の TUI の更新で判定を見直す必要がある**: `PTYInput.swift` の `InputBlock` / `ChoiceMenu` / `PermissionPrompt` / `InputBox`、`MenuPrompt.swift`
-  （v2.1.286 の trust 確認・AskUserQuestion・plan 承認・入力欄の例文と NBSP で確認）。文言・配置（罫線と ❯ の位置関係、操作案内の有無）に依存している。
-  入力欄が上下の罫線で囲まれること・右の差分パネルが縦線 `│` 1 本で区切られることも前提（`ScreenPane.swift`。全角の幅は近似）。
-- 選択肢カードからの回答（矢印 + Enter）は、テストのフィクスチャ（v2.1.286 の実画面の写し）で読み取りと手順を確かめたのみで、
-  本物の claude で押して先へ進むところは目視で未確認。AskUserQuestion の複数選択（チェックボックス）・複数の問い（タブ）は
-  押すたびに今の画面のメニューでカードを出し直す作りで、実画面の写しでは未確認（チェック欄の記号・Enter で切り替わるかも未確認）。「Type something.」の行を「❯」が通過する時の描き方も未確認
-  （文言が変わって選択肢の数が読めなくなれば Enter を押さずにやめる）。
+  （v2.1.286 の trust 確認・AskUserQuestion・plan 承認・入力欄の例文と NBSP、v2.1.300 の trust 確認・AskUserQuestion の 3 問・長い問い・複数選択で確認。
+  v2.1.300 の画面の写しは `Tests/ClaudeDeckTests/Fixtures/ClaudeCode-2.1.300/`）。文言・配置（罫線と ❯ の位置関係、操作案内の有無）に依存している。
+  入力欄が上下の罫線で囲まれること・右の差分パネルが縦線 `│` 1 本か、全行で空白の桁（左の欄の罫線がその手前で切れる）で区切られることも前提
+  （`ScreenPane.swift`。全角の幅は近似）。確かめた版の一覧は `ClaudeCodeVersions.swift`。
+- 選択肢カードからの回答（矢印 + Enter）は、テストのフィクスチャ（v2.1.286 / v2.1.300 の実画面の写し）で読み取りと手順を確かめた。
+  v2.1.300 では AskUserQuestion の複数の問い（タブ）・長い問い・複数選択（`[✔]` と Next）を、作業用のフォルダで本物の claude をアプリと同じ部品で動かして確定まで通した。
+  アプリの画面から押して先へ進むところの目視は未確認。「Type something.」の行を「❯」が通過する時の描き方も未確認
+  （文言が変わって選択肢の数が読めなくなれば Enter を押さずにやめる）。右の差分パネルの空白の区切りは、発生した形をなぞった合成の画面でのみ確認。
 - 送った伝言の吹き出しはアプリのメモリにだけ持つ（再起動で消える）。
 - 外部セッションの権限カード（Channels 経由の許可 / 拒否）は既存の permissions の経路（アプリ内サーバーに移した）をそのまま使っており、外部ルームでの実機確認はしていない。
 - ステージの 3D は、オフスクリーン描画（`SCNRenderer`）の画像を three.js 版の 3D（ヘッドレスブラウザで撮影）と状態ごとに見比べて合わせた。

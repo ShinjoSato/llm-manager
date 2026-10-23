@@ -1,7 +1,7 @@
 import SwiftUI
 import MonitorKit
 
-/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（見出しの操作と、サイト・画像・iPhone のプレビュー・リンク・スレッドのタブ）。
+/// 中央: 「ディレクトリ」で選んだプロジェクトの詳細（見出しの操作と、サイト・画像・iPhone のプレビュー・App Store・リンク・スレッドのタブ）。
 struct DirectoryDetailView: View {
     let model: ChatModel
     let directory: ProjectDirectory
@@ -43,7 +43,8 @@ private struct DirectoryDetailTabs: View {
     var body: some View {
         let xcode = model.editors.xcodeResolution(for: project.editorTarget)
         let rooms = threadRooms
-        let available = DirectoryTabs.available(hasSite: hasSite, hasXcodeProject: DirectoryTabs.hasXcodeProject(xcode))
+        let available = DirectoryTabs.available(hasSite: hasSite, hasXcodeProject: DirectoryTabs.hasXcodeProject(xcode),
+                                                hasAppStoreApps: !project.appStoreApps.isEmpty)
         let selection = DirectoryTabs.resolve(remembered: remembered, available: available)
         VStack(spacing: 0) {
             DirectoryTabBar(items: available.map { DirectoryTabBar.Item(tab: $0, count: count(of: $0, rooms: rooms)) },
@@ -94,6 +95,8 @@ private struct DirectoryDetailTabs: View {
                 }
                 .frame(maxWidth: Self.readableWidth, alignment: .leading)
             }
+        case .appStore:
+            AppStoreSection(project: project).frame(maxWidth: Self.readableWidth, alignment: .leading)
         case .links:
             links.frame(maxWidth: Self.readableWidth, alignment: .leading)
         case .threads:
@@ -107,6 +110,7 @@ private struct DirectoryDetailTabs: View {
         case .site: return nil
         case .images: return images.scan?.count
         case .iosPreviews: return iosPreviews.value?.count
+        case .appStore: return project.appStoreApps.count
         case .links: return project.links.count
         case .threads: return rooms.count
         }
