@@ -8,6 +8,8 @@ public enum RemoteOperationKind: Sendable, Equatable {
     case menuDismiss
     case message
     case relay
+    /// 「端末の画面」からキーを 1 回送る。
+    case terminalKey
 }
 
 /// 操作の結果を人に見せる言葉にする。
@@ -18,6 +20,7 @@ public enum RemoteResultText {
             switch result.code {
             case "answered": return "既に答えています（同じ確認には送り直していません）。"
             case "toggled": return "チェックを切り替えました。"
+            case "sent" where operation == .terminalKey: return "送りました。"
             default: return nil
             }
         }
@@ -33,11 +36,17 @@ public enum RemoteResultText {
         case "changed":
             return "mac 側の表示が替わっていました。最新の内容を確かめてからもう一度押してください。"
         case "busy":
-            return "直前の操作を mac で送っている最中です。終わってからもう一度。"
+            return operation == .terminalKey
+                ? "Mac で権限の回答を送っているところです。少し待ってからもう一度。"
+                : "直前の操作を mac で送っている最中です。終わってからもう一度。"
         case "unconfirmed":
             return "mac で応答を確かめられませんでした。後から反映されることがあるので、送り直す前に画面の様子を確かめてください。"
         case "navigating":
             return "mac で前の操作の選択肢を動かしているところです。終わってからもう一度。"
+        case "sending":
+            return "Mac で入力欄からの送信の途中です。終わってからもう一度。"
+        case "unsupported_key":
+            return "送れないキーです（← ↑ ↓ → Enter Esc Tab Space 1〜9 だけ）。"
         case "timeout":
             return "mac での操作が 30 秒で戻りませんでした。後から反映されることがあるので、送り直す前に画面の様子を確かめてください。"
         case "ended":
@@ -52,12 +61,16 @@ public enum RemoteResultText {
             return "このルームはもうありません。"
         case "invalid":
             return operation == .message || operation == .relay ? "送れない本文です（空か長すぎます）。" : "要求の形が正しくありません。"
+        case "unavailable" where operation == .terminalKey:
+            return "このルームは Mac でホストしていないため、端末にキーは送れません。"
         case "unavailable":
             return operation == .menu
                 ? "文字を入力する選択肢はここからは選べません。キャンセルしてから入力欄で伝えてください。"
                 : "このルームには今は送れません。"
         case "confirm_required":
-            return "取り消すと claude が終了します。確認してから押してください。"
+            return operation == .terminalKey
+                ? "このメニューで Esc を押すと claude が終了します。確認してから押してください。"
+                : "取り消すと claude が終了します。確認してから押してください。"
         case "blocked_permission":
             return "端末で権限の確認が出ているので送りませんでした。先に許可 / 拒否してください。"
         case "blocked_menu":
@@ -84,6 +97,22 @@ public enum RemoteResultText {
         default:
             return nil
         }
+    }
+}
+
+extension RemoteResultText {
+    /// 端末の画面を取れなかった理由（`GET /v1/rooms/{roomId}/terminal` の失敗）。
+    public static func terminalScreenProblem(_ error: Error) -> String {
+        if case .http(_, let code?, let message)? = error as? RemoteClientError {
+            switch code {
+            case "ended": return "claude が動いていないため、端末の画面は出せません。"
+            case "unavailable": return "このルームは Mac でホストしていないため、端末の画面は出せません。"
+            case "not_found": return "このルームはもうありません。"
+            default: if let message, !message.isEmpty { return message }
+            }
+        }
+        let issue = RemoteIssue.from(error)
+        return issue.title
     }
 }
 

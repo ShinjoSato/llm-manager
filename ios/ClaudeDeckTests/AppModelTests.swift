@@ -239,3 +239,83 @@ final class PairingAddressOnIOSTests: XCTestCase {
         XCTAssertNotNil(try PairingOffer.parse(link(host: "192.168.1.5"), source: .openedURL).get().originWarning)
     }
 }
+
+/// 「端末の画面」の取り直しは開いている間だけ回り、閉じたら止まる。
+@MainActor
+final class TerminalWatchTests: XCTestCase {
+    private var keychain: PairingKeychain!
+
+    override func setUp() {
+        keychain = PairingKeychain(service: PairingKeychain.serviceName(suffix: "tests.\(UUID().uuidString)"))
+    }
+
+    override func tearDown() {
+        keychain.delete()
+    }
+
+    private func waitUntil(_ timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() > deadline { return XCTFail("時間内に揃いませんでした") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private func makeModel() -> AppModel {
+        let model = AppModel(keychain: keychain, startMonitoring: false)
+        model.terminalRefreshInterval = .milliseconds(20)
+        return model
+    }
+
+    func testRefreshRunsWhileOpenAndStopsWhenClosed() async throws {
+        let model = makeModel()
+        let viewer = UUID()
+        XCTAssertFalse(model.isWatchingTerminal)
+        model.watchTerminal(roomId: "h:room", viewer: viewer)
+        XCTAssertTrue(model.isWatchingTerminal)
+        XCTAssertEqual(model.terminalWatch?.roomId, "h:room")
+        try await waitUntil { model.terminalFetchCount >= 3 }
+        XCTAssertNotNil(model.terminalWatch?.problem, "つながっていない間は理由を出す")
+        XCTAssertNil(model.terminalWatch?.screen)
+
+        model.stopWatchingTerminal(viewer: viewer)
+        XCTAssertFalse(model.isWatchingTerminal)
+        XCTAssertNil(model.terminalWatch)
+        let stopped = model.terminalFetchCount
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(model.terminalFetchCount, stopped, "閉じたら取り直さない")
+    }
+
+    func testOnlyTheLastOpenedSheetCanStopIt() async throws {
+        let model = makeModel()
+        let old = UUID()
+        let new = UUID()
+        model.watchTerminal(roomId: "h:a", viewer: old)
+        model.watchTerminal(roomId: "h:b", viewer: new)
+        XCTAssertEqual(model.terminalWatch?.roomId, "h:b", "開き直したら前のシートの分は止める")
+        model.stopWatchingTerminal(viewer: old)
+        XCTAssertTrue(model.isWatchingTerminal, "古いシートの閉じるでは止めない")
+        let before = model.terminalFetchCount
+        try await waitUntil { model.terminalFetchCount > before + 2 }
+        model.stopWatchingTerminal(viewer: new)
+        XCTAssertFalse(model.isWatchingTerminal)
+    }
+
+    func testKeyIsNotSentWhileDisconnected() {
+        let model = makeModel()
+        let viewer = UUID()
+        model.watchTerminal(roomId: "h:a", viewer: viewer)
+        model.sendTerminalKey(.enter)
+        XCTAssertEqual(model.terminalWatch?.notice?.isError, true)
+        XCTAssertEqual(model.terminalWatch?.sending, false)
+        model.stopWatchingTerminal(viewer: viewer)
+    }
+
+    func testForgettingThePairingStopsIt() {
+        let model = makeModel()
+        model.watchTerminal(roomId: "h:a", viewer: UUID())
+        model.forget()
+        XCTAssertFalse(model.isWatchingTerminal)
+        XCTAssertNil(model.terminalWatch)
+    }
+}

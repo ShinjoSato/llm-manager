@@ -106,6 +106,68 @@ final class RemoteClientIntegrationTests: XCTestCase {
         }
     }
 
+    // MARK: - 端末の画面
+
+    /// iPhone と同じクライアントで端末の表示を取り、キーを送ると、差し替えた端末に 1 回ずつ届いて次の表示に出る。
+    func testTerminalScreenAndKeysRoundTrip() async throws {
+        let pairing = try await pairFromQR()
+        let client = RemoteClient(pairing: pairing)
+        defer { client.invalidate() }
+        let room = "h:\(UUID().uuidString)"
+        let options = ["1. Yes", "2. No"]
+        var cursor = 0
+        func draw() {
+            control.terminalScreen = RemoteTerminalScreen(
+                lines: ["Do you want to proceed?"] + options.enumerated().map { ($0.offset == cursor ? "❯ " : "  ") + $0.element },
+                cursor: RemoteTerminalCursor(row: cursor + 1, column: 0), columns: 100, rows: 30, capturedAt: Double(cursor), escapeExits: true)
+        }
+        draw()
+        control.keyHandler = { key in
+            if key == .down { cursor = min(cursor + 1, options.count - 1) }
+            if key == .up { cursor = max(cursor - 1, 0) }
+            draw()
+        }
+
+        let first = try await client.terminalScreen(roomId: room)
+        XCTAssertEqual(first.lines, ["Do you want to proceed?", "❯ 1. Yes", "  2. No"])
+        XCTAssertEqual(first.columns, 100)
+        XCTAssertTrue(first.escapeExits)
+
+        let sent = try await client.sendTerminalKey(roomId: room, key: .down)
+        XCTAssertEqual(sent, .success("sent"))
+        XCTAssertEqual(RemoteResultText.text(for: sent, operation: .terminalKey), "送りました。")
+        let second = try await client.terminalScreen(roomId: room)
+        XCTAssertEqual(second.lines[2], "❯ 2. No")
+        XCTAssertEqual(second.cursor, RemoteTerminalCursor(row: 2, column: 0))
+
+        let refused = try await client.sendTerminalKey(roomId: room, key: .escape)
+        XCTAssertEqual(refused.code, "confirm_required", "Esc で終わるメニューには確認が要る")
+        XCTAssertNotNil(RemoteResultText.text(for: refused, operation: .terminalKey))
+        let confirmed = try await client.sendTerminalKey(roomId: room, key: .escape, confirmExit: true)
+        XCTAssertTrue(confirmed.ok)
+        XCTAssertEqual(control.sentKeys, [.down, .escape])
+
+        control.keyResult = .failure("navigating", "動かしている")
+        let busy = try await client.sendTerminalKey(roomId: room, key: .enter)
+        XCTAssertEqual(busy.code, "navigating")
+        XCTAssertEqual(control.sentKeys, [.down, .escape], "断られたキーは端末に届かない")
+
+        control.endedRooms = [room]
+        do {
+            _ = try await client.terminalScreen(roomId: room)
+            XCTFail("claude が動いていないルームの表示は出さない")
+        } catch {
+            XCTAssertEqual(error as? RemoteClientError, .http(status: 409, error: "ended", message: "claude が動いていません。"))
+            XCTAssertEqual(RemoteResultText.terminalScreenProblem(error), "claude が動いていないため、端末の画面は出せません。")
+        }
+        do {
+            _ = try await client.terminalScreen(roomId: "e:\(FakeTranscriptSource.sessionId)")
+            XCTFail("外部セッションの表示は出さない")
+        } catch {
+            XCTAssertEqual(RemoteResultText.terminalScreenProblem(error), "このルームは Mac でホストしていないため、端末の画面は出せません。")
+        }
+    }
+
     // MARK: - 画像付きの送信
 
     private func storedImageFiles() -> [String] {

@@ -91,6 +91,22 @@ final class RemoteRequestBuilderTests: XCTestCase {
         XCTAssertGreaterThan(decide.timeoutInterval, 30, "mac は操作を最大 30 秒待つ")
     }
 
+    func testTerminalScreenAndKey() throws {
+        let room = "h:6F1C0C9E-0000-4000-8000-000000000000"
+        let screen = try builder.terminalScreen(roomId: room)
+        XCTAssertEqual(screen.url?.absoluteString, "https://192.168.1.5:8767/v1/rooms/\(room)/terminal")
+        XCTAssertEqual(screen.httpMethod, "GET")
+        XCTAssertEqual(screen.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+        let key = try builder.terminalKey(roomId: room, RemoteTerminalKeyRequest(key: .digit3))
+        XCTAssertEqual(key.url?.path, "/v1/rooms/\(room)/terminal/key")
+        XCTAssertEqual(key.httpMethod, "POST")
+        let body = try XCTUnwrap(key.httpBody)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: body) as? [String: String], ["key": "3"], "確認が要らなければ confirmExit は省く")
+        let escape = try builder.terminalKey(roomId: room, RemoteTerminalKeyRequest(key: .escape, confirmExit: true))
+        XCTAssertEqual(try JSONDecoder().decode(RemoteTerminalKeyRequest.self, from: XCTUnwrap(escape.httpBody)),
+                       RemoteTerminalKeyRequest(rawKey: "escape", confirmExit: true))
+    }
+
     func testMessageWithImagesKeepsTheOldShapeWhenThereAreNone() throws {
         let room = "h:6F1C0C9E-0000-4000-8000-000000000000"
         let plain = try XCTUnwrap(builder.message(roomId: room, text: "a").httpBody)
@@ -284,6 +300,26 @@ final class RemoteMessagesTests: XCTestCase {
         XCTAssertEqual(RemoteResultText.text(for: RemoteActionResult(ok: false, code: "weird"), operation: .menu), "うまくいきませんでした（weird）。")
     }
 
+    func testTerminalKeyResultsHaveHumanText() {
+        for code in ["busy", "navigating", "sending", "ended", "unsupported_key", "confirm_required", "unavailable", "not_found"] {
+            let text = RemoteResultText.text(for: .failure(code, "server"), operation: .terminalKey)
+            XCTAssertNotNil(text, code)
+            XCTAssertFalse(text!.contains(code), code)
+        }
+        XCTAssertTrue(RemoteResultText.text(for: .failure("confirm_required", "x"), operation: .terminalKey)!.contains("Esc"))
+        XCTAssertTrue(RemoteResultText.text(for: .failure("unavailable", "x"), operation: .terminalKey)!.contains("ホスト"))
+        XCTAssertEqual(RemoteResultText.text(for: .success("sent"), operation: .terminalKey), "送りました。")
+        XCTAssertNil(RemoteResultText.text(for: .success("sent"), operation: .message), "他の操作の成功は黙ったまま")
+    }
+
+    func testTerminalScreenProblems() {
+        XCTAssertTrue(RemoteResultText.terminalScreenProblem(RemoteClientError.http(status: 409, error: "ended", message: "x")).contains("動いていない"))
+        XCTAssertTrue(RemoteResultText.terminalScreenProblem(RemoteClientError.http(status: 409, error: "unavailable", message: "x")).contains("ホスト"))
+        XCTAssertEqual(RemoteResultText.terminalScreenProblem(RemoteClientError.http(status: 409, error: "weird", message: "mac の説明")), "mac の説明")
+        XCTAssertEqual(RemoteResultText.terminalScreenProblem(RemoteClientError.http(status: 401, error: "unauthorized", message: "")),
+                       RemoteIssue.from(RemoteClientError.http(status: 401, error: "unauthorized", message: "")).title)
+    }
+
     func testSuccessIsMostlySilent() {
         XCTAssertNil(RemoteResultText.text(for: .success("decided"), operation: .permission))
         XCTAssertNil(RemoteResultText.text(for: .success("submitted"), operation: .message))
@@ -382,5 +418,31 @@ final class RemotePairingTests: XCTestCase {
         XCTAssertEqual(noLocal.hosts, ["192.168.1.5"])
         let data = try! JSONEncoder().encode(pairing)
         XCTAssertEqual(try JSONDecoder().decode(RemotePairing.self, from: data), pairing)
+    }
+}
+
+final class RemoteTerminalTests: XCTestCase {
+    func testKeysAreTheSheetTable() {
+        XCTAssertEqual(RemoteTerminalKey.allCases.map(\.rawValue),
+                       ["left", "up", "down", "right", "enter", "escape", "tab", "space", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+        XCTAssertEqual(RemoteTerminalKey.allCases.map(\.label),
+                       ["←", "↑", "↓", "→", "Enter", "Esc", "Tab", "Space", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+        XCTAssertNil(RemoteTerminalKey(rawValue: "0"))
+    }
+
+    func testLimitedKeepsTheBottomAndMovesTheCursor() {
+        let lines = (0..<(RemoteTerminalScreen.maxLines + 5)).map { "line \($0)" }
+        let screen = RemoteTerminalScreen.limited(lines: lines, cursor: RemoteTerminalCursor(row: 10, column: 2), columns: 80, rows: 24,
+                                                  capturedAt: 1, escapeExits: false)
+        XCTAssertEqual(screen.lines.count, RemoteTerminalScreen.maxLines)
+        XCTAssertEqual(screen.lines.first, "line 5", "端末と同じく下を残す")
+        XCTAssertEqual(screen.cursor, RemoteTerminalCursor(row: 5, column: 2))
+        let cut = RemoteTerminalScreen.limited(lines: lines, cursor: RemoteTerminalCursor(row: 2, column: 0), columns: 80, rows: 24,
+                                               capturedAt: 1, escapeExits: false)
+        XCTAssertNil(cut.cursor, "切った行にあるカーソルは落とす")
+        let long = RemoteTerminalScreen.limited(lines: [String(repeating: "a", count: RemoteTerminalScreen.maxLineLength + 10)], cursor: nil,
+                                                columns: 80, rows: 24, capturedAt: 1, escapeExits: true)
+        XCTAssertEqual(long.lines[0].count, RemoteTerminalScreen.maxLineLength)
+        XCTAssertTrue(long.escapeExits)
     }
 }

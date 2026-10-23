@@ -169,6 +169,16 @@ final class HostedSession: Identifiable {
         terminal.displayScreenLines()
     }
 
+    /// iPhone に渡す端末の今の表示。
+    func remoteScreen() -> RemoteTerminalScreen {
+        terminal.remoteScreen(escapeExits: escapeExits)
+    }
+
+    /// Esc で claude が終わるメニューが出ている（「端末の画面」から Esc を送る前に確かめる）。
+    var escapeExits: Bool {
+        menuPrompt?.cancelExits == true || unreadableMenu?.cancelExits == true
+    }
+
     /// 端末に出ている答えられる表示（会話末尾のカードと同じ優先順）。
     var terminalCard: RemoteTerminalCard? {
         RemoteTerminalCard.current(permissionPrompt: permissionPrompt, inputBlock: inputBlock, menuPrompt: menuPrompt,

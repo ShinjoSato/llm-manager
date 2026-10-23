@@ -131,6 +131,31 @@ public enum TerminalKey: Hashable, Sendable {
     }
 }
 
+extension TerminalKey {
+    /// iPhone の口の値から（表は同じ）。
+    public init(_ remote: RemoteTerminalKey) {
+        switch remote {
+        case .left: self = .left
+        case .up: self = .up
+        case .down: self = .down
+        case .right: self = .right
+        case .enter: self = .enter
+        case .escape: self = .escape
+        case .tab: self = .tab
+        case .space: self = .space
+        case .digit1: self = .digit(1)
+        case .digit2: self = .digit(2)
+        case .digit3: self = .digit(3)
+        case .digit4: self = .digit(4)
+        case .digit5: self = .digit(5)
+        case .digit6: self = .digit(6)
+        case .digit7: self = .digit(7)
+        case .digit8: self = .digit(8)
+        case .digit9: self = .digit(9)
+        }
+    }
+}
+
 /// 入力欄への送信（Enter）を止めるべき端末画面の状態。
 public enum InputBlock: Sendable, Equatable {
     /// ツール使用の権限プロンプト。Enter が「1. Yes」になる。

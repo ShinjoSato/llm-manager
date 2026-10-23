@@ -56,12 +56,8 @@ struct TerminalScreenSheet: View {
     }
 
     /// Esc で claude が終わるメニューでは、カードと同じく確かめてから送る。
-    private var escapeExits: Bool {
-        session.menuPrompt?.cancelExits == true || session.unreadableMenu?.cancelExits == true
-    }
-
     private func press(_ key: TerminalKey) {
-        if key == .escape, escapeExits {
+        if key == .escape, session.escapeExits {
             exitKey = key
             return
         }

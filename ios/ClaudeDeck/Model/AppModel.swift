@@ -72,6 +72,11 @@ final class AppModel {
     var noticeHint: String?
     /// 要対応の通知（iCloud の購読）の入り切り。
     let notifications: AttentionNotifications
+    /// 開いている「端末の画面」（同時に 1 つだけ）。
+    private(set) var terminalWatch: TerminalWatch?
+    private var terminalTask: Task<Void, Never>?
+    /// 端末の表示を取り直す間隔（試験で縮める）。
+    var terminalRefreshInterval: Duration = .milliseconds(700)
 
     /// ペアリングの失敗。設定へ導くかを決めるため、接続の失敗なら理由も持つ。
     struct PairingError: Equatable {
@@ -90,6 +95,19 @@ final class AppModel {
     struct Notice: Equatable {
         var text: String
         var isError: Bool
+    }
+
+    /// 「端末の画面」のシートの様子。
+    struct TerminalWatch: Equatable {
+        let roomId: String
+        /// シートごとの印（開き直しで新旧の開く・閉じるが前後しても、最後に開いたシートだけが止められる）。
+        let viewer: UUID
+        var screen: RemoteTerminalScreen?
+        /// 表示を取れなかった理由（取れたら消す）。
+        var problem: String?
+        /// 直前に押したキーの結果。
+        var notice: Notice?
+        var sending = false
     }
 
     private let keychain: PairingKeychain
@@ -141,6 +159,8 @@ final class AppModel {
     func simulateReceived(_ transcript: TranscriptEvent) { handle(.transcript(transcript)) }
     /// 試験用: 会話を全件取りに行った回数（接続していなくても数える）。
     private(set) var transcriptFetchCount = 0
+    /// 試験用: 端末の表示を取りに行った回数（接続していなくても数える）。
+    private(set) var terminalFetchCount = 0
     #endif
 
     var serverName: String { pairing?.serverName ?? "Mac" }
@@ -382,6 +402,9 @@ final class AppModel {
 
     /// 前の Mac の一覧と会話・送る前の画像を捨てる。
     private func clearRoomData() {
+        terminalTask?.cancel()
+        terminalTask = nil
+        terminalWatch = nil
         state = nil
         stateUpdatedAt = nil
         transcripts = [:]
@@ -623,5 +646,77 @@ final class AppModel {
 
     func clearNotice(_ roomId: String) {
         notices[roomId] = nil
+    }
+
+    // MARK: - 端末の画面
+
+    /// シートを開いた時。閉じるまで表示を取り直し続ける（前に開いていたものは止める）。
+    func watchTerminal(roomId: String, viewer: UUID) {
+        terminalTask?.cancel()
+        terminalWatch = TerminalWatch(roomId: roomId, viewer: viewer)
+        let interval = terminalRefreshInterval
+        terminalTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.refreshTerminal(viewer: viewer)
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
+
+    /// シートを閉じた時。取り直しをやめる。
+    func stopWatchingTerminal(viewer: UUID) {
+        guard terminalWatch?.viewer == viewer else { return }
+        terminalTask?.cancel()
+        terminalTask = nil
+        terminalWatch = nil
+    }
+
+    var isWatchingTerminal: Bool { terminalTask != nil }
+
+    private func refreshTerminal(viewer: UUID) async {
+        guard let roomId = terminalWatch?.roomId, terminalWatch?.viewer == viewer else { return }
+        #if DEBUG
+        terminalFetchCount += 1
+        #endif
+        guard let client, connection == .connected else {
+            terminalWatch?.problem = "Mac につながっていないので、端末の画面を取れません。"
+            return
+        }
+        do {
+            let screen = try await client.terminalScreen(roomId: roomId)
+            guard terminalWatch?.viewer == viewer else { return }
+            terminalWatch?.screen = screen
+            terminalWatch?.problem = nil
+        } catch {
+            guard terminalWatch?.viewer == viewer, !(error is CancellationError) else { return }
+            terminalWatch?.problem = RemoteResultText.terminalScreenProblem(error)
+        }
+    }
+
+    /// キーを 1 回送り、すぐ表示を取り直す。送っている間は重ねて送らない。
+    func sendTerminalKey(_ key: RemoteTerminalKey, confirmExit: Bool = false) {
+        guard let watch = terminalWatch, !watch.sending else { return }
+        guard let client, connection == .connected else {
+            terminalWatch?.notice = Notice(text: "Mac につながっていないので送れません。", isError: true)
+            return
+        }
+        terminalWatch?.sending = true
+        terminalWatch?.notice = nil
+        Task {
+            let notice: Notice
+            do {
+                let result = try await client.sendTerminalKey(roomId: watch.roomId, key: key, confirmExit: confirmExit)
+                notice = result.ok
+                    ? Notice(text: "\(key.label) を送りました。", isError: false)
+                    : Notice(text: RemoteResultText.text(for: result, operation: .terminalKey) ?? "送れませんでした。", isError: true)
+            } catch {
+                notice = Notice(text: "\(RemoteIssue.from(error).title)。届いたかどうか分からないので、画面の様子を確かめてください。", isError: true)
+            }
+            guard terminalWatch?.viewer == watch.viewer else { return }
+            terminalWatch?.sending = false
+            terminalWatch?.notice = notice
+            await refreshTerminal(viewer: watch.viewer)
+        }
     }
 }

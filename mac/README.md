@@ -331,7 +331,8 @@ mac/
 
 ## iPhone 連携（同じ Wi-Fi・`docs/remote-api.md`）
 
-同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信（画像も付けられる）ができる口。
+同じ Wi-Fi の iPhone アプリから、ルーム一覧・状態・要対応・会話（画像も）を見て、許可 / 拒否・選択肢への回答・メッセージ送信（画像も付けられる）・
+「端末の画面」（ホスト中のルームの端末の表示と、決まったキーを 1 回ずつ送る）ができる口。
 iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共有パッケージ `packages/DeckCore`。
 **既定は無効**で、設定画面の「iPhone 連携」タブ（メニュー「claude-deck → iPhone 連携…」でも開く）で有効にした時だけ開く。
 
@@ -360,6 +361,7 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   答えた ID（mac・iPhone どちらから答えても）の押し直しは送らずに `answered` を返す。Channels の確認が出ている間は端末の権限・選択肢を iPhone から扱わない。
   操作の待ちは 30 秒で `timeout` を返す（操作自体は続きうる）。カードの組み立てと照合の純粋な部分は MonitorKit（`RemoteTerminalCard`・`RemoteRoomCards`・`RemoteChecks`）。
   選択待ちの間は送信しない。iPhone からの失敗は mac に警告を出さず結果で返す。mac の入力欄の書きかけ・添付には触れない。
+  「端末の画面」は mac のシートと同じ行（`HostedSession.remoteScreen`）を返し、キーは表に無い値を口で断ってから mac のシートと同じ `sendTerminalKey` に渡す（文字の自由入力は無い）。
 - **iPhone からの画像**: PNG / JPEG を 1 通 4 枚・1 枚 3MB・合計 8MB・一辺 8000 ピクセル（1600 万画素）まで（`RemoteImageLimits`）。
   送り先（ルームがある・ホスト中）を先に確かめてから、宣言した型と中身の一致・終わりの印・ImageIO で読めるかを確かめ（`RemoteImageIntake`。
   共有スレッドの外の専用キューで同時 2 本まで・溢れたら `images_busy`）、入力欄の添付と同じ一時保存先（`ChatOutbox.attachmentStore` と同じもの・0700 / 0600）に
@@ -375,7 +377,8 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   インターフェースの除外・ネットワークの判定・鍵ファイルの権限・取り消しの書き直し・TLS の設定・操作の待ちの上限・本文と画像の形）と `RemoteServerTests`
   （ループバックの OS 割り当てのポートに TLS で立て、指紋でピン留めした URLSession / NWConnection で叩く。別の指紋・平文は繋がらない・
   未認証 / 不正 / 取り消し後は 401・回数制限・接続元ごとの上限・ストリームの入れ替え・各 API・SSE・Channels の答えが `MonitorStore.decide` を通ること・
-  本文の上限を広げるのはメッセージの口だけ）、`RemoteClientIntegrationTests`（DeckCore のクライアントで画像付きの送信が添付の形で受け手に渡るまで・
+  本文の上限を広げるのはメッセージの口だけ・端末の画面を返すのはホスト中で動いているルームだけ・表に無いキーは mac に渡さない）、
+  `RemoteClientIntegrationTests`（DeckCore のクライアントで端末の表示を取りキーを送ると差し替えた端末に 1 回ずつ届くこと・画像付きの送信が添付の形で受け手に渡るまで・
   枚数 / 型違い / 壊れた画像 / 寸法 / 外部セッションでの拒否とファイルを残さないこと）。LAN には立てない。
 
 ## iPhone への通知（iCloud・CloudKit）
@@ -1162,6 +1165,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   理由をシートの下に出す。矢印を送った後は、カードの矢印と同じ `PendingArrowHold` を残し、反映されるまでカードからの移動を「反映待ち」で待たせる。
 - Esc が claude の終了になるメニュー（選択肢カード・読めない選択肢のカードと同じ判定）では、Esc を送る前に確認ダイアログを挟む。
 - Esc は端末に送るキーなのでシートを閉じない。閉じるのは「閉じる」（⌘W）。
+- iPhone・iPad からも同じことができる（`GET /v1/rooms/{roomId}/terminal` で表示、`POST …/terminal/key` でキー。`docs/remote-api.md`「端末の画面」）。
+  キーは同じ表（`RemoteTerminalKey` ↔ `TerminalKey`）だけで、送るのは同じ `PromptResponder.sendTerminalKey`（断る理由も同じ・Esc で終わるメニューは `confirmExit` が要る）。
 
 ### 外部セッション（ターミナル・VS Code 等で起動したもの）
 
