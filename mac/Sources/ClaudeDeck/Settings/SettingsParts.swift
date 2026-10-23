@@ -10,16 +10,92 @@ struct SettingsProblems: View {
     }
 }
 
-/// プロジェクトの画面の紐づけの節の見出し（見出しに何が出るかを添える）。
-struct LinkageHeader: View {
-    let title: String
-    let shows: String
+/// 項目名の横の ⓘ。ホバーで説明を出し、押すと同じ説明をポップオーバーで出す。
+struct InfoButton: View {
+    let text: String
+    @State private var shown = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("紐づけ · \(title)")
-            Text("見出しの\(shows)").font(.caption).foregroundStyle(.secondary)
+        Button { shown.toggle() } label: {
+            Image(systemName: "info.circle").foregroundStyle(.secondary)
         }
+        .buttonStyle(.borderless)
+        .help(text)
+        .accessibilityLabel("説明")
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            Text(text)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 300, alignment: .leading)
+                .padding(12)
+        }
+    }
+}
+
+/// 節の見出し（名前と ⓘ）。
+struct SettingsSectionHeader: View {
+    let title: String
+    let info: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title)
+            InfoButton(text: info)
+        }
+    }
+}
+
+/// 行の下に添える一言（検証の問題など）。
+struct SettingsNote: Equatable {
+    var text: String
+    var isError = true
+
+    /// 閉じた中に保存できない行がある旨（行の数を添える）。
+    static func rowProblems(_ problems: [[String]]) -> [SettingsNote] {
+        let count = problems.filter { !$0.isEmpty }.count
+        return count > 0 ? [SettingsNote(text: "保存できない行があります（\(count) 行・開いて直してください）")] : []
+    }
+}
+
+/// 設定の 1 行: 名前と ⓘ・今の値の要約・操作。値が無い時は要約を控えめに出す。
+struct SettingsItemLabel<Actions: View>: View {
+    let title: String
+    var info: String?
+    let summary: String
+    var isEmpty = false
+    var notes: [SettingsNote] = []
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Text(title)
+                    if let info { InfoButton(text: info) }
+                }
+                .frame(width: 92, alignment: .leading)
+                Text(summary)
+                    .foregroundStyle(isEmpty ? .tertiary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(summary)
+                Spacer(minLength: 8)
+                actions()
+            }
+            ForEach(notes, id: \.text) { note in
+                Text(note.text)
+                    .font(.caption)
+                    .foregroundStyle(note.isError ? Color.red : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 100)
+            }
+        }
+    }
+}
+
+extension SettingsItemLabel where Actions == EmptyView {
+    init(title: String, info: String? = nil, summary: String, isEmpty: Bool = false, notes: [SettingsNote] = []) {
+        self.init(title: title, info: info, summary: summary, isEmpty: isEmpty, notes: notes) { EmptyView() }
     }
 }
 
