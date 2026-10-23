@@ -75,7 +75,8 @@ extension RemoteMenu {
     public init(_ menu: MenuPrompt, generation: Int) {
         let options = menu.options.enumerated().map { index, option in
             RemoteMenuOption(index: index, number: option.number, label: option.label, detail: option.detail,
-                             checked: option.checked, isSubmit: option.isSubmit, selectable: !option.isFreeText)
+                             checked: option.checked, isSubmit: option.isSubmit, selectable: !option.isFreeText,
+                             exits: menu.choiceExits(index) ? true : nil)
         }
         let tabs = menu.tabs.map { t in
             RemoteMenuTabs(tabs: t.tabs.map { RemoteMenuTab(title: $0.title, answered: $0.answered) }, hasSubmit: t.hasSubmit,

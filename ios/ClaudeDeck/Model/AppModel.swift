@@ -36,6 +36,15 @@ final class AppModel {
     private(set) var notices: [String: Notice] = [:]
     /// 送っている最中の操作（二度押しさせない）。
     private(set) var inFlight: Set<String> = []
+    /// mac に終了の確認を求められた操作（ルームごと）。終了の印を付けない古い mac には断られてから確かめる。
+    private(set) var exitConfirmations: [String: PendingExitConfirmation] = [:]
+    /// 求められた確認を出しておく長さ。過ぎてから急に出さない。
+    static let exitConfirmationLifetime: TimeInterval = 60
+
+    struct PendingExitConfirmation: Equatable {
+        var confirmation: ExitConfirmation
+        var askedAt: Date
+    }
     var drafts: [String: String] = [:]
     /// ルームごとの送る前の画像（送れる形に整えたもの）。
     private(set) var composerImages: [String: [ComposerImage]] = [:]
@@ -223,6 +232,7 @@ final class AppModel {
             state = newState
             stateUpdatedAt = Date()
             dropImagesOfVanishedRooms()
+            dropStaleExitConfirmations()
             if firstAfterConnect {
                 connection = .connected
                 backoff.reset()
@@ -388,6 +398,7 @@ final class AppModel {
         recentSessions = []
         composerImages = [:]
         preparingBatches = [:]
+        exitConfirmations = [:]
     }
 
     /// 一覧から消えたルームの送る前の画像を捨てる（整えている途中の分は終わった時に足さない）。
@@ -395,6 +406,15 @@ final class AppModel {
         let alive = Set(rooms.map(\.id))
         composerImages = composerImages.filter { alive.contains($0.key) }
         preparingBatches = preparingBatches.filter { alive.contains($0.key) }
+    }
+
+    /// 確認を求められた時のメニューがもう出ていなければ、確認も出さない。
+    private func dropStaleExitConfirmations() {
+        let menus = Dictionary(rooms.map { ($0.id, $0.menu?.menuId) }, uniquingKeysWith: { first, _ in first })
+        let now = clock()
+        exitConfirmations = exitConfirmations.filter {
+            menus[$0.key] == $0.value.confirmation.menuId && now.timeIntervalSince($0.value.askedAt) <= Self.exitConfirmationLifetime
+        }
     }
 
     // MARK: - 会話
@@ -473,9 +493,35 @@ final class AppModel {
 
     /// `choice` が nil なら取り消し（Esc）。押した時の `menuId` で送る（替わっていれば mac が断る）。
     func answerMenu(_ room: RemoteRoom, _ menu: RemoteMenu, choice: Int?, confirmExit: Bool = false) {
-        let body = choice.map { RemoteMenuAnswerRequest(menuId: menu.menuId, choice: $0) }
-            ?? RemoteMenuAnswerRequest(menuId: menu.menuId, cancel: true, confirmExit: confirmExit ? true : nil)
-        perform(room, .menu) { client in try await client.answerMenu(roomId: room.id, body) }
+        let body = RemoteMenuAnswerRequest(menuId: menu.menuId, choice: choice, cancel: choice == nil ? true : nil,
+                                           confirmExit: confirmExit ? true : nil)
+        exitConfirmations[room.id] = nil
+        let sentTo = pairing
+        perform(room, .menu, { client in try await client.answerMenu(roomId: room.id, body) }) { [weak self] result in
+            self?.menuAnswered(result, roomId: room.id, menu: menu, choice: choice, confirmedExit: confirmExit, sentTo: sentTo)
+        }
+    }
+
+    /// 終了になると断られたら、同じ確認を出す（了承すれば `confirmExit` を付けて送り直す）。
+    /// 送った後にペアリングが替わった・その会話を閉じていた時は出さない（断られた文だけ残す）。
+    func menuAnswered(_ result: RemoteActionResult?, roomId: String, menu: RemoteMenu, choice: Int?, confirmedExit: Bool,
+                      sentTo: RemotePairing?) {
+        guard let result, !result.ok, result.code == "confirm_required", !confirmedExit else { return }
+        guard sentTo != nil, sentTo == pairing, openRoomId == roomId else { return }
+        let confirmation = choice.map { ExitConfirmation.choice($0, in: menu) } ?? .cancel(menu.menuId)
+        exitConfirmations[roomId] = PendingExitConfirmation(confirmation: confirmation, askedAt: clock())
+        notices[roomId] = nil
+    }
+
+    /// このメニューに出す終了の確認（求められた時のメニューのままで、期限内の時だけ）。
+    func exitConfirmation(_ room: RemoteRoom, _ menu: RemoteMenu) -> ExitConfirmation? {
+        guard let pending = exitConfirmations[room.id], pending.confirmation.menuId == menu.menuId,
+              clock().timeIntervalSince(pending.askedAt) <= Self.exitConfirmationLifetime else { return nil }
+        return pending.confirmation
+    }
+
+    func dismissExitConfirmation(_ roomId: String) {
+        exitConfirmations[roomId] = nil
     }
 
     func moveTab(_ room: RemoteRoom, _ menu: RemoteMenu, _ direction: RemoteTabDirection) {
