@@ -1,14 +1,15 @@
 import DeckCore
 import SwiftUI
 
-/// ルーム一覧（要対応 / 稼働中 / 待機）。横幅が regular なら左に一覧・右に会話の 2 列、compact なら行を押すと会話へ進む。
+/// 左の一覧（ルーム / ディレクトリ / リンク）。横幅が regular なら左に一覧・右に会話か詳細の 2 列、compact なら行を押すと先へ進む。
 struct RoomListScreen: View {
     @Bindable var model: AppModel
     @Environment(\.horizontalSizeClass) private var sizeClass
-    /// 開いている会話。2 列と積み上げで共有し、幅が変わっても同じ会話を開いたままにする。
-    @State private var selection: String?
+    /// 開いている画面の道のり。2 列と積み上げで共有し、幅が変わっても同じ画面を開いたままにする。
+    @State private var route: [DeckRoute] = []
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var showingSettings = false
+    @AppStorage("sidebar.mode") private var storedMode = SidebarMode.rooms.rawValue
 
     var body: some View {
         Group {
@@ -16,23 +17,27 @@ struct RoomListScreen: View {
         }
         .sheet(isPresented: $showingSettings) { SettingsScreen(model: model) }
         .onAppear {
-            if let id = model.launchRoomId {
-                selection = id
-                model.launchRoomId = nil
+            if let mode = model.launchMode ?? SidebarMode(rawValue: storedMode) { model.sidebarMode = mode }
+            model.launchMode = nil
+            if let launch = model.launchRoute {
+                route = launch
+                model.launchRoute = nil
             }
             openRequestedRoom()
         }
+        .onChange(of: model.sidebarMode) { _, mode in storedMode = mode.rawValue }
+        .onChange(of: route, initial: true) { _, newRoute in model.showsProjectDetail = RoomSelection.showsProject(newRoute) }
         .onChange(of: model.requestedRoomId) { _, _ in openRequestedRoom() }
-        .onChange(of: model.rooms.map(\.id)) { _, ids in dropVanishedSelection(ids: ids, sizeClass: sizeClass) }
-        .onChange(of: sizeClass) { _, newClass in dropVanishedSelection(ids: model.rooms.map(\.id), sizeClass: newClass) }
+        .onChange(of: model.rooms.map(\.id)) { _, _ in dropVanished(sizeClass: sizeClass) }
+        .onChange(of: model.projects?.projects.map(\.id)) { _, _ in dropVanished(sizeClass: sizeClass) }
+        .onChange(of: sizeClass) { _, newClass in dropVanished(sizeClass: newClass) }
     }
 
     private var stack: some View {
-        let path = Binding(get: { RoomSelection.path(for: selection) }, set: { selection = RoomSelection.selection(from: $0) })
-        return NavigationStack(path: path) {
+        NavigationStack(path: $route) {
             sidebar
-                .navigationDestination(for: String.self) { roomId in
-                    ConversationScreen(model: model, roomId: roomId)
+                .navigationDestination(for: DeckRoute.self) { step in
+                    destination(step, listHidden: false, compact: true)
                 }
         }
     }
@@ -44,24 +49,50 @@ struct RoomListScreen: View {
         } detail: {
             // 一覧を畳んでいる間は左の帯や案内が見えないので、右の側に出す。
             let listHidden = columns == .detailOnly
-            if let roomId = selection {
-                ConversationScreen(model: model, roomId: roomId, showsBanner: listHidden, showsListNotices: listHidden)
-                    .id(roomId)
+            if let first = route.first {
+                // 詳細から開いた会話は右の列の中で積み、戻ると詳細に戻る。
+                let tail = Binding(get: { Array(route.dropFirst()) }, set: { route = [first] + $0 })
+                NavigationStack(path: tail) {
+                    destination(first, listHidden: listHidden, compact: false)
+                        .navigationDestination(for: DeckRoute.self) { step in
+                            destination(step, listHidden: listHidden, compact: false)
+                        }
+                }
+                .id(first)
             } else {
-                NoRoomSelected(model: model, showsListNotices: listHidden)
+                NoRoomSelected(model: model, mode: model.sidebarMode, showsListNotices: listHidden)
             }
         }
         .navigationSplitViewStyle(.balanced)
+    }
+
+    @ViewBuilder
+    private func destination(_ step: DeckRoute, listHidden: Bool, compact: Bool) -> some View {
+        switch step {
+        case .room(let roomId):
+            if compact {
+                ConversationScreen(model: model, roomId: roomId)
+            } else {
+                ConversationScreen(model: model, roomId: roomId, showsBanner: listHidden, showsListNotices: listHidden)
+            }
+        case .project(let projectId):
+            ProjectDetailScreen(model: model, projectId: projectId, showsBanner: compact || listHidden)
+        }
     }
 
     private var sidebar: some View {
         VStack(spacing: 0) {
             ConnectionBanner(model: model)
             ListNotices(model: model)
-            list
+            SidebarModePicker(mode: $model.sidebarMode)
+            switch model.sidebarMode {
+            case .rooms: list
+            case .directory: DirectoryList(model: model, route: $route, regular: sizeClass == .regular)
+            case .links: LinkOverviewList(model: model, route: $route, regular: sizeClass == .regular)
+            }
         }
         .background(DeckTheme.sidebar.ignoresSafeArea())
-        .navigationTitle("ルーム")
+        .navigationTitle(model.sidebarMode.title)
         .navigationBarTitleDisplayMode(.large)
         .toolbarBackground(DeckTheme.sidebar, for: .navigationBar)
         .toolbar {
@@ -70,20 +101,23 @@ struct RoomListScreen: View {
                     .accessibilityLabel("接続の設定")
             }
         }
-        .refreshable { model.connect() }
+        .refreshable {
+            if model.sidebarMode.usesProjects { await model.pullToRefreshProjects() } else { model.connect() }
+        }
     }
 
-    /// 通知から開くルーム。開いている会話の上に積まず、一覧から入り直す。
+    /// 通知から開くルーム。開いている画面の上に積まず、ルームの一覧から入り直す。
     private func openRequestedRoom() {
         guard let id = model.requestedRoomId else { return }
         model.requestedRoomId = nil
-        selection = id
+        model.sidebarMode = .rooms
+        route = RoomSelection.open(.room(id))
     }
 
     /// 積み上げの画面は消えたルームでも「もう一覧にありません」を出したままにするので、外すのは 2 列の時だけ。
-    private func dropVanishedSelection(ids: [String], sizeClass: UserInterfaceSizeClass?) {
+    private func dropVanished(sizeClass: UserInterfaceSizeClass?) {
         guard sizeClass == .regular else { return }
-        selection = RoomSelection.kept(selection, among: ids)
+        route = RoomSelection.kept(route, roomIds: model.rooms.map(\.id), projectIds: model.projects?.projects.map(\.id))
     }
 
     private var list: some View {
@@ -123,15 +157,7 @@ struct RoomListScreen: View {
     @ViewBuilder
     private func row(_ room: RemoteRoom) -> some View {
         let label = RoomRow(room: room, unread: room.sessionId.flatMap { model.unread[$0] } ?? 0).contentShape(Rectangle())
-        if sizeClass == .regular {
-            let selected = selection == room.id
-            Button { selection = room.id } label: { label }
-                .buttonStyle(RowButtonStyle(selected: selected))
-                .accessibilityAddTraits(selected ? .isSelected : [])
-        } else {
-            NavigationLink(value: room.id) { label }
-                .buttonStyle(RowButtonStyle())
-        }
+        SidebarRowLink(step: .room(room.id), route: $route, regular: sizeClass == .regular) { label }
     }
 
     @ViewBuilder
@@ -160,7 +186,7 @@ struct RoomListScreen: View {
     }
 }
 
-private struct RowButtonStyle: ButtonStyle {
+struct RowButtonStyle: ButtonStyle {
     var selected = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -169,9 +195,48 @@ private struct RowButtonStyle: ButtonStyle {
     }
 }
 
+/// 一覧の 1 行。2 列では押すと右に開いて選んだ印を付け、積み上げでは先へ進む。
+struct SidebarRowLink<Label: View>: View {
+    let step: DeckRoute
+    @Binding var route: [DeckRoute]
+    let regular: Bool
+    @ViewBuilder var label: () -> Label
+
+    var body: some View {
+        if regular {
+            let selected = RoomSelection.isSelected(step, in: route)
+            Button { route = RoomSelection.open(step) } label: { label() }
+                .buttonStyle(RowButtonStyle(selected: selected))
+                .accessibilityAddTraits(selected ? .isSelected : [])
+        } else {
+            NavigationLink(value: step) { label() }
+                .buttonStyle(RowButtonStyle())
+        }
+    }
+}
+
+/// 左の一覧の見方の切り替え（一覧の最上段）。
+private struct SidebarModePicker: View {
+    @Binding var mode: SidebarMode
+
+    var body: some View {
+        Picker("一覧", selection: $mode) {
+            ForEach(SidebarMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .accessibilityIdentifier("sidebar-mode")
+    }
+}
+
 /// 2 列で何も選んでいない時の右側。
 private struct NoRoomSelected: View {
     @Bindable var model: AppModel
+    let mode: SidebarMode
     let showsListNotices: Bool
 
     var body: some View {
@@ -181,8 +246,8 @@ private struct NoRoomSelected: View {
                 ListNotices(model: model)
             }
             VStack(spacing: 10) {
-                Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 28)).foregroundStyle(DeckTheme.tertiary)
-                Text("左の一覧からルームを選ぶと、ここに会話が出ます。")
+                Image(systemName: mode.symbol).font(.system(size: 28)).foregroundStyle(DeckTheme.tertiary)
+                Text(Self.hint(mode))
                     .font(DeckTheme.body)
                     .foregroundStyle(DeckTheme.secondary)
                     .multilineTextAlignment(.center)
@@ -192,6 +257,14 @@ private struct NoRoomSelected: View {
         }
         .background(DeckTheme.background.ignoresSafeArea())
         .toolbarBackground(DeckTheme.background, for: .navigationBar)
+    }
+
+    static func hint(_ mode: SidebarMode) -> String {
+        switch mode {
+        case .rooms: return "左の一覧からルームを選ぶと、ここに会話が出ます。"
+        case .directory: return "左の一覧からプロジェクトを選ぶと、ここにリンクとスレッドが出ます。"
+        case .links: return "左の一覧のリンクを押すと Safari で開きます。プロジェクト名の横の「詳細」で、ここにリンクとスレッドが出ます。"
+        }
     }
 }
 

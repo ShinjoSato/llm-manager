@@ -70,6 +70,7 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | GET | `/v1/info` | → `RemoteInfo {apiVersion, serverName, device}` |
 | POST | `/v1/unpair` | → `RemoteActionResult`（自分の端末を取り消す） |
 | GET | `/v1/rooms` | → `RemoteState`（下記） |
+| GET | `/v1/projects` | → `RemoteProjectList`（登録したプロジェクトとリンク。読むだけ。下記） |
 | GET | `/v1/events?transcripts=<*\|id,id,...>` | Server-Sent Events（下記） |
 | GET | `/v1/sessions/{sessionId}/transcript?after=<itemId>` | → `TranscriptResponse`（`after` 無しは全件。`after` が見つからなければ全件で `reset: true`）。無ければ 404 |
 | GET | `/v1/sessions/{sessionId}/items/{itemId}/images/{index}` | → 画像のバイナリ（`Content-Type` は `image/png` 等。`Cache-Control: private, max-age=86400`）。目録は `TranscriptItem.images` |
@@ -92,7 +93,7 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
     {
       "id": "h:…", "kind": "hosted|external", "phase": "attention|active|idle",
       "name": "mirio", "branch": "develop", "status": "working|waiting|permission|idle|error|stopped",
-      "line": "直近の一行", "activityAt": 0, "sessionId": "…|null", "cwd": "/…",
+      "line": "直近の一行", "activityAt": 0, "sessionId": "…|null", "cwd": "/…",   // cwd は作業フォルダの絶対パス（/v1/projects と違い、手元のパスを送る）
       "ended": "exited|limitReached|launchFailed|null",     // ホスト中のセッションが終わった理由
       "session": { /* SessionSnapshot（外部・ホスト中とも、監視に出ていれば） */ },
       "permissions": [ /* PendingPermission（Channels）。あれば最優先で出す */ ],
@@ -113,6 +114,39 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 
 `promptId` / `menuId` は中身（❯ の位置は除く）と**表示の世代**から作る。世代は端末の確認が消えるか替わるたびに進むので、
 同じ文面の確認が続けて出ても ID は別になる（前の表示の ID で次の確認に答えることは無い）。iPhone は常に最新の `state` の ID で操作すること。
+
+### `RemoteProjectList`（ディレクトリとリンク）
+
+mac の「ディレクトリ」と横断のリンク一覧を iPhone で見るための口。**読むだけ**（設定の書き換え・claude の起動の口は無い。`POST` などは 405）。
+型は DeckCore の `Sources/DeckCore/Remote/RemoteProjects.swift`、組み立ては `Sources/MonitorKit/Remote/Server/RemoteProjectsBuilder.swift`。
+
+```jsonc
+{
+  "projects": [                       // mac のディレクトリと同じ並び（進行中 → 休止・保管、それぞれ設定の順）
+    {
+      "id": "<UUID>",                 // 設定の id
+      "name": "mirio",
+      "status": "active|paused|archived",
+      "github": { "owner": "ShinjoSato", "repo": "mirio", "projectNumber": 3 },   // 無ければ省く。repo / projectNumber も省くことがある
+      "links": [                      // 設定の順。mac の見出しで開けるもの（ProjectLinks.openable）だけ
+        { "name": "LP", "url": "https://…", "kind": "billing|dashboard|store|docs|other", "pinned": true, "note": "…" }   // note は無ければ省く
+      ],
+      "roomIds": ["h:…", "e:…"]       // このプロジェクトのルーム（RemoteRoom.id と同じ値。要対応 → 稼働中 → 待機、終了したものも含む）
+    }
+  ]
+}
+```
+
+- **送らないもの**: フォルダの絶対パス・プロジェクトのメモ（`note`）・サイト / Xcode の場所・App Store のアプリ・実行コマンド・印のアイコンと色・リンクの確認日と最終確認日。
+  リンクのメモ（`links[].note`）は送る。
+  なお、この口とは別に、既存の `/v1/rooms` と `/v1/events` の `state` は `RemoteRoom.cwd`（と `session.cwd`）でルームの作業フォルダの絶対パスを送っている（既存の仕様のまま）。
+  ルームの振り分け（どのフォルダのルームか）は mac が決めて `roomIds` で渡すので、iPhone はパスを知らなくてよい。
+- リンクは名前があり、URL が http / https で host があり資格情報を含まないものだけ（`javascript:`・`file:` 等は送らない）。同じ名前の 2 件目も送らない。
+  URL は前後の空白を落とした形。判定は DeckCore の `WebLink.openableURL` の 1 か所で、mac（`ProjectLinks.url(from:)`）も iPhone の開く前の確認（`RemoteProjectLink.openableURL`）も同じものを使う。
+- 知らない `status` / `kind` は `unknown` / `other` として読む。省いた項目は空として読む（後から項目を足しても古い iPhone は落ちない）。
+- **更新の仕方**: ストリームでは送らない。iPhone は「ディレクトリ」「リンク」を開いた時・張り直した時・その間に `state` のルームの顔ぶれが変わった時・引っ張って更新した時に取り直す。
+  設定はめったに変わらないので、全部のストリームへ常に流すより必要な時に取る方が軽く、`RemoteState` の形も変えずに済むため。
+- 口の無い古い mac は知らないパスとして 404（`not_found`）を返すので、iPhone はそれで「古いため表示できません」と出す。
 
 ### `/v1/events`（Server-Sent Events）
 
