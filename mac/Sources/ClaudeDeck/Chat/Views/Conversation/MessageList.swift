@@ -28,7 +28,7 @@ struct MessageList: View {
                         PermissionCard(toolName: permission.toolName,
                                        description: permission.description,
                                        lines: permission.inputPreview.isEmpty ? [] : [permission.inputPreview],
-                                       busy: prompts.busyKeys.contains(permission.key), onOpenTerminal: terminal) { allow in
+                                       board: prompts.board, key: permission.key, identity: permission.key, onOpenTerminal: terminal) { allow in
                             prompts.decide(permission, allow ? .allow : .deny)
                         }
                     }
@@ -39,23 +39,24 @@ struct MessageList: View {
                         PermissionCard(toolName: room.snapshot?.currentTool ?? prompt.title,
                                        description: prompt.title,
                                        lines: prompt.lines,
-                                       busy: prompts.busyKeys.contains(PromptResponder.ptyPermissionKey(session)),
-                                       onOpenTerminal: terminal) { allow in
+                                       board: prompts.board, key: PromptResponder.ptyPermissionKey(session),
+                                       identity: PromptResponder.permissionCard(session, prompt),
+                                       claudeVersion: session.claudeVersion ?? room.snapshot?.version, onOpenTerminal: terminal) { allow in
                             prompts.answerOnTerminal(session, prompt: prompt, allow: allow)
                         }
                     }
                     if permissions.isEmpty, let session = room.hosted, session.permissionPrompt == nil, session.inputBlock == .menu {
                         let key = PromptResponder.ptyMenuKey(session)
-                        let busy = prompts.busyKeys.contains(key)
+                        let version = session.claudeVersion ?? room.snapshot?.version
                         if let menu = session.menuPrompt {
-                            MenuCard(menu: menu, busy: busy, notice: prompts.menuNotices[key], onOpenTerminal: terminal) { shown, choice in
+                            MenuCard(menu: menu, board: prompts.board, key: key, claudeVersion: version, onOpenTerminal: terminal) { shown, choice in
                                 prompts.answerMenu(session, menu: shown, choice: choice)
                             } onMoveTab: { shown, direction in
                                 prompts.moveMenuTab(session, menu: shown, direction: direction)
                             }
                             .id(menu.identity)
                         } else if let unreadable = session.unreadableMenu {
-                            UnreadableMenuCard(menu: unreadable, busy: busy, onOpenTerminal: terminal) { shown in
+                            UnreadableMenuCard(menu: unreadable, board: prompts.board, key: key, claudeVersion: version, onOpenTerminal: terminal) { shown in
                                 prompts.cancelUnreadableMenu(session, menu: shown)
                             }
                                 .id(unreadable)

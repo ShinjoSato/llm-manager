@@ -260,6 +260,9 @@ public enum RemoteChecks {
             guard !current.options[index].isFreeText else {
                 return .failure(.failure("unavailable", "文字を入力する選択肢はここからは選べません。取り消してからメッセージで伝えてください。"))
             }
+            guard !current.choiceExits(index) || request.confirmExit == true else {
+                return .failure(.failure("confirm_required", "選ぶと claude が終了します。終了してよければ confirmExit を付けてください。"))
+            }
         case .cancel:
             guard !current.cancelExits || request.confirmExit == true else {
                 return .failure(.failure("confirm_required", "取り消すと claude が終了します。終了してよければ confirmExit を付けてください。"))

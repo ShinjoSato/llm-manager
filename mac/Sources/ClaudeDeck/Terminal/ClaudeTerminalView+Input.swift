@@ -141,8 +141,10 @@ extension ClaudeTerminalView {
         case failed(MenuNavigator.Failure)
         /// 移動の途中で claude が終わった・端末ビューが無くなった（Enter は送っていない）。
         case ended
-        /// 押せない選択肢（自由入力）か、別の選択肢へ動かしている最中。
+        /// 押せない選択肢（自由入力）か、タブを移れない位置。
         case unavailable
+        /// 別の選択肢・タブへ動かしている最中。
+        case navigating
         /// 前回やめた移動の矢印がまだ反映されていないかもしれない。少し待てば押せる。
         case settling
         /// 問いのタブを移った。
@@ -157,7 +159,8 @@ extension ClaudeTerminalView {
 
     /// 選択メニューに答える（`choice` が nil なら Esc）。今のメニューが `expected` と同じ時だけ、❯ を 1 行ずつ動かして着いたのを確かめてから Enter。
     func answerMenu(_ expected: MenuPrompt, choice: Int?, completion: @escaping (MenuAnswerOutcome) -> Void) {
-        guard !isNavigatingMenu else { return completion(.unavailable) }
+        let card = PromptCardIdentity.menu(expected)
+        guard !isNavigatingMenu else { return completion(.navigating) }
         guard let choice else {
             guard let current = currentMenu() else {
                 evaluateStatus()
@@ -169,11 +172,13 @@ extension ClaudeTerminalView {
                 return completion(.failed(.changed))
             }
             send(txt: PTYInput.cancelMenuKey)
+            opsLog?("key", [("card", card), ("send", "esc")])
             return completion(.cancelled)
         }
         guard let navigator = MenuNavigator(expected: expected, target: choice) else { return completion(.unavailable) }
         if let refusal = beginNavigation() { return completion(refusal) }
-        stepMenu(navigator, completion: completion)
+        opsLog?("navigate", [("card", card), ("target", "\(choice)"), ("cursor", "\(expected.cursor)")])
+        stepMenu(navigator, waits: 0, completion: completion)
     }
 
     /// ❯ の移動を始める。前回やめた矢印の反映を待つ間は `.settling` を返して始めない。
@@ -193,13 +198,22 @@ extension ClaudeTerminalView {
         completion(.failed(failure))
     }
 
-    private func stepMenu(_ navigator: MenuNavigator, completion: @escaping (MenuAnswerOutcome) -> Void) {
+    /// `waits` は続けて待った回数（記録を 1 行にまとめるため）。
+    private func stepMenu(_ navigator: MenuNavigator, waits: Int, completion: @escaping (MenuAnswerOutcome) -> Void) {
         var navigator = navigator
+        let card = PromptCardIdentity.menu(navigator.expected)
         guard process?.running == true else {
             isNavigatingMenu = false
+            opsLog?("step", [("card", card), ("action", "ended")])
             return completion(.ended)
         }
-        switch navigator.next(currentMenu()) {
+        let current = currentMenu()
+        let action = navigator.next(current)
+        if action != .wait {
+            opsLog?("step", [("card", card), ("cursor", current.map { "\($0.cursor)" } ?? "-"), ("waited", "\(waits)"),
+                             ("action", Self.actionName(action))])
+        }
+        switch action {
         case .confirm:
             send(txt: PTYInput.confirmMenuKey)
             isNavigatingMenu = false
@@ -213,28 +227,54 @@ extension ClaudeTerminalView {
         case .wait:
             break
         }
+        let nextWaits = action == .wait ? waits + 1 : 0
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.menuStepInterval) { [weak self] in
             // 移動中に端末ビューが解放されても、呼び出し側の送信中の印が残らないよう必ず結果を返す。
             guard let self else { return completion(.ended) }
-            self.stepMenu(navigator, completion: completion)
+            self.stepMenu(navigator, waits: nextWaits, completion: completion)
+        }
+    }
+
+    static func actionName(_ action: MenuNavigator.Action) -> String {
+        switch action {
+        case .wait: return "wait"
+        case .press(let direction): return direction == .down ? "press(down)" : "press(up)"
+        case .confirm: return "confirm(enter)"
+        case .abort(let failure): return "abort(\(failure))"
+        }
+    }
+
+    static func actionName(_ action: MenuTabMover.Action) -> String {
+        switch action {
+        case .wait: return "wait"
+        case .press(let direction): return direction == .next ? "press(right)" : "press(left)"
+        case .moved: return "moved"
+        case .abort(let failure): return "abort(\(failure))"
         }
     }
 
     /// 問いのタブを →/← で 1 つ移る。`expected` と今の画面のメニューが同じ時だけ送り、問いが替わったのを確かめて終える。
     func moveMenuTab(_ expected: MenuPrompt, direction: MenuTabMover.Direction, completion: @escaping (MenuAnswerOutcome) -> Void) {
-        guard !isNavigatingMenu else { return completion(.unavailable) }
+        guard !isNavigatingMenu else { return completion(.navigating) }
         guard let mover = MenuTabMover(expected: expected, direction: direction) else { return completion(.unavailable) }
         if let refusal = beginNavigation() { return completion(refusal) }
-        stepTab(mover, completion: completion)
+        opsLog?("navigate", [("card", PromptCardIdentity.menu(expected)), ("tab", direction == .next ? "next" : "previous")])
+        stepTab(mover, waits: 0, completion: completion)
     }
 
-    private func stepTab(_ mover: MenuTabMover, completion: @escaping (MenuAnswerOutcome) -> Void) {
+    private func stepTab(_ mover: MenuTabMover, waits: Int, completion: @escaping (MenuAnswerOutcome) -> Void) {
         var mover = mover
+        let card = PromptCardIdentity.menu(mover.expected)
         guard process?.running == true else {
             isNavigatingMenu = false
+            opsLog?("step", [("card", card), ("action", "ended")])
             return completion(.ended)
         }
-        switch mover.next(currentMenu()) {
+        let action = mover.next(currentMenu())
+        if action != .wait {
+            opsLog?("step", [("card", card), ("waited", "\(waits)"), ("action", Self.actionName(action))])
+        }
+        switch action {
         case .moved:
             isNavigatingMenu = false
             evaluateStatus()
@@ -248,9 +288,10 @@ extension ClaudeTerminalView {
         case .wait:
             break
         }
+        let nextWaits = action == .wait ? waits + 1 : 0
         DispatchQueue.main.asyncAfter(deadline: .now() + PTYInput.menuStepInterval) { [weak self] in
             guard let self else { return completion(.ended) }
-            self.stepTab(mover, completion: completion)
+            self.stepTab(mover, waits: nextWaits, completion: completion)
         }
     }
 
@@ -301,6 +342,7 @@ extension ClaudeTerminalView {
             return .changed
         }
         send(txt: PTYInput.cancelMenuKey)
+        opsLog?("key", [("card", PromptCardIdentity.unreadable(expected)), ("send", "esc")])
         return .sent
     }
 }

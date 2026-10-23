@@ -4,17 +4,37 @@ import MonitorKit
 /// 端末に出ている選択メニュー（plan の承認・選択式の質問・trust 確認など）のカード。権限カードと同じ位置に出す。
 struct MenuCard: View {
     let menu: MenuPrompt
-    let busy: Bool
-    /// 直前の操作の結果（複数選択でチェックを切り替えた等）。
-    let notice: String?
+    /// 送信中と直前の操作の結果（複数選択でチェックを切り替えた等）を読む先。このカードの印の分だけを見る。
+    let board: PromptCardBoard
+    /// ルームの鍵（`PromptResponder.ptyMenuKey`）。
+    let key: String
+    /// claude の版（確かめていない版なら一言を出す）。
+    var claudeVersion: String? = nil
     /// 「端末の画面」を開く（ホスト中のルームだけ）。送信中のまま止まっても押せるよう無効化の外に置く。
     var onOpenTerminal: (() -> Void)? = nil
     /// 押した時のメニューと選択肢の位置。nil は取り消し（Esc）。
     let onChoose: (MenuPrompt, Int?) -> Void
     /// 押した時のメニューと、問いのタブを移る向き。
     let onMoveTab: (MenuPrompt, MenuTabMover.Direction) -> Void
-    /// 終了の確認を開いた時のメニュー。確認中に差し替わっても、開いた時のメニューで照合する。
-    @State private var exitMenu: MenuPrompt?
+    /// 終了の確認を開いた時のメニューと選択肢。確認中に差し替わっても、開いた時のメニューで照合する。
+    @State private var exitMenu: MenuExit?
+    /// 送信中・一言の期限で描き直すための時計。
+    @State private var clock = 0
+
+    private var identity: String { PromptCardIdentity.menu(menu) }
+    private var busy: Bool {
+        _ = clock
+        return board.isCardBusy(key: key, identity: identity)
+    }
+    private var notice: String? {
+        _ = clock
+        return board.notice(key: key, identity: identity)
+    }
+
+    /// 選択肢を押す。claude の終了になる選択肢は Esc と同じく確かめてから送る。
+    private func choose(_ index: Int) {
+        if menu.choiceExits(index) { exitMenu = MenuExit(menu: menu, choice: index) } else { onChoose(menu, index) }
+    }
 
     /// 今の ❯ から自由入力の行をまたがないと届かない選択肢があるか。
     private var crossesFreeText: Bool {
@@ -42,7 +62,7 @@ struct MenuCard: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(menu.options.enumerated()), id: \.offset) { index, option in
-                    MenuOptionRow(option: option, isCursor: index == menu.cursor) { onChoose(menu, index) }
+                    MenuOptionRow(option: option, isCursor: index == menu.cursor) { choose(index) }
                 }
             }
             if menu.isMultiSelect {
@@ -66,9 +86,10 @@ struct MenuCard: View {
             if let notice {
                 Text(notice).font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
             }
+            UntestedVersionNote(version: claudeVersion)
             HStack(spacing: 8) {
                 CardEscapeButton(exits: menu.cancelExits) {
-                    if menu.cancelExits { exitMenu = menu } else { onChoose(menu, nil) }
+                    if menu.cancelExits { exitMenu = MenuExit(menu: menu, choice: nil) } else { onChoose(menu, nil) }
                 }
                 if busy { SendingIndicator() }
             }
@@ -80,7 +101,27 @@ struct MenuCard: View {
             if let onOpenTerminal { CardTerminalButton(action: onOpenTerminal) }
         }
         .cardFrame()
-        .exitConfirmation(presenting: $exitMenu) { onChoose($0, nil) }
+        .exitConfirmation(presenting: $exitMenu, button: \.buttonTitle, message: \.message) { onChoose($0.menu, $0.choice) }
+        .cardClock(next: board.nextChange(key: key, identity: identity)) { clock &+= 1 }
+        .onAppear { board.cardAppeared(key: key, identity: identity, kind: "menu") }
+    }
+}
+
+/// 終了の確認を開いた時のメニューと、押したもの（nil は Esc）。
+private struct MenuExit {
+    let menu: MenuPrompt
+    let choice: Int?
+
+    var buttonTitle: String {
+        guard let choice, menu.options.indices.contains(choice) else { return "終了する（Esc）" }
+        return "終了する（\(menu.options[choice].label)）"
+    }
+
+    var message: String {
+        guard let choice, menu.options.indices.contains(choice) else {
+            return "このメニューで Esc を押すと、取り消しではなく Claude Code の終了になります。"
+        }
+        return "「\(menu.options[choice].label)」を選ぶと Claude Code が終了します。"
     }
 }
 

@@ -56,7 +56,8 @@ extension ClaudeTerminalView {
         releasePendingArrowHoldIfDone(cursor: menu?.cursor)
         let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen, waiting: waiting, screenChangedAt: lastDataTime) : nil
         logMenuScreen(menu: menu, unreadable: unreadable, screen: screen)
-        let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable)
+        let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable,
+                               claudeVersion: sessionWaitingCache?.version)
         guard next != screenState else { return }
         screenState = next
         onScreenStateChanged?(next)   // Timer は main runloop なのでメインスレッド
@@ -134,8 +135,9 @@ extension ClaudeTerminalView {
         guard let pid = claudePid else { return nil }
         let now = Date()
         if !fresh, let cache = sessionWaitingCache, now.timeIntervalSince(cache.at) < 1 { return cache.value }
-        let value = ClaudeSessionRegistry().record(forPid: pid)?.waiting
-        sessionWaitingCache = (now, value)
+        let record = ClaudeSessionRegistry().record(forPid: pid)
+        let value = record?.waiting
+        sessionWaitingCache = (now, value, record?.version ?? sessionWaitingCache?.version)
         return value
     }
 
