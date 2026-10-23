@@ -147,6 +147,17 @@ final class HostedSession: Identifiable {
         return terminal.cancelUnreadableMenu(expected)
     }
 
+    /// 「端末の画面」から決まったキーを 1 回送る。
+    func sendKey(_ key: TerminalKey) -> ClaudeTerminalView.KeySendResult {
+        guard isRunning else { return .ended }
+        return terminal.sendKey(key)
+    }
+
+    /// 端末の今の表示（終了後は最後の画面）。
+    func screenText() -> [String] {
+        terminal.displayScreenLines()
+    }
+
     /// 端末に出ている答えられる表示（会話末尾のカードと同じ優先順）。
     var terminalCard: RemoteTerminalCard? {
         RemoteTerminalCard.current(permissionPrompt: permissionPrompt, inputBlock: inputBlock, menuPrompt: menuPrompt,

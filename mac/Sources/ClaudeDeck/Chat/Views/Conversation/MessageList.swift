@@ -6,6 +6,7 @@ struct MessageList: View {
     let room: Room
     let items: [TranscriptItem]
     @State private var pinnedToBottom = true
+    @Environment(\.openTerminalScreen) private var openTerminal
 
     var body: some View {
         let entries = ChatTimeline.entries(from: items, notes: model.relay.notes(for: room.sessionId),
@@ -14,6 +15,7 @@ struct MessageList: View {
         let runningId = ChatTimeline.runningToolId(items: items, status: room.status)
         let prompts = model.prompts
         let permissions = prompts.monitorPermissions(for: room)
+        let terminal = terminalOpener
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
@@ -26,7 +28,7 @@ struct MessageList: View {
                         PermissionCard(toolName: permission.toolName,
                                        description: permission.description,
                                        lines: permission.inputPreview.isEmpty ? [] : [permission.inputPreview],
-                                       board: prompts.board, key: permission.key, identity: permission.key) { allow in
+                                       board: prompts.board, key: permission.key, identity: permission.key, onOpenTerminal: terminal) { allow in
                             prompts.decide(permission, allow ? .allow : .deny)
                         }
                     }
@@ -39,7 +41,7 @@ struct MessageList: View {
                                        lines: prompt.lines,
                                        board: prompts.board, key: PromptResponder.ptyPermissionKey(session),
                                        identity: PromptResponder.permissionCard(session, prompt),
-                                       claudeVersion: session.claudeVersion ?? room.snapshot?.version) { allow in
+                                       claudeVersion: session.claudeVersion ?? room.snapshot?.version, onOpenTerminal: terminal) { allow in
                             prompts.answerOnTerminal(session, prompt: prompt, allow: allow)
                         }
                     }
@@ -47,14 +49,14 @@ struct MessageList: View {
                         let key = PromptResponder.ptyMenuKey(session)
                         let version = session.claudeVersion ?? room.snapshot?.version
                         if let menu = session.menuPrompt {
-                            MenuCard(menu: menu, board: prompts.board, key: key, claudeVersion: version) { shown, choice in
+                            MenuCard(menu: menu, board: prompts.board, key: key, claudeVersion: version, onOpenTerminal: terminal) { shown, choice in
                                 prompts.answerMenu(session, menu: shown, choice: choice)
                             } onMoveTab: { shown, direction in
                                 prompts.moveMenuTab(session, menu: shown, direction: direction)
                             }
                             .id(menu.identity)
                         } else if let unreadable = session.unreadableMenu {
-                            UnreadableMenuCard(menu: unreadable, board: prompts.board, key: key, claudeVersion: version) { shown in
+                            UnreadableMenuCard(menu: unreadable, board: prompts.board, key: key, claudeVersion: version, onOpenTerminal: terminal) { shown in
                                 prompts.cancelUnreadableMenu(session, menu: shown)
                             }
                                 .id(unreadable)
@@ -82,6 +84,12 @@ struct MessageList: View {
     }
 
     private static let bottomId = "chat-bottom"
+
+    /// カードの「端末の画面」（ホスト中で動いているルームだけ）。
+    private var terminalOpener: (() -> Void)? {
+        guard let session = room.hosted, session.isRunning, let openTerminal else { return nil }
+        return { openTerminal(session) }
+    }
 
     /// 末尾が伸びた時だけ変わる値（発話の追加・ツールの追加・権限カードの出入り）。
     private func scrollKey(entries: [ChatEntry], permissions: Int) -> String {

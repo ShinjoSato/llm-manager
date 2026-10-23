@@ -10,6 +10,8 @@ struct MenuCard: View {
     let key: String
     /// claude の版（確かめていない版なら一言を出す）。
     var claudeVersion: String? = nil
+    /// 「端末の画面」を開く（ホスト中のルームだけ）。送信中のまま止まっても押せるよう無効化の外に置く。
+    var onOpenTerminal: (() -> Void)? = nil
     /// 押した時のメニューと選択肢の位置。nil は取り消し（Esc）。
     let onChoose: (MenuPrompt, Int?) -> Void
     /// 押した時のメニューと、問いのタブを移る向き。
@@ -94,6 +96,10 @@ struct MenuCard: View {
         }
         .disabled(busy)
         .opacity(busy ? 0.6 : 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .bottomTrailing) {
+            if let onOpenTerminal { CardTerminalButton(action: onOpenTerminal) }
+        }
         .cardFrame()
         .exitConfirmation(presenting: $exitMenu, button: \.buttonTitle, message: \.message) { onChoose($0.menu, $0.choice) }
         .cardClock(next: board.nextChange(key: key, identity: identity)) { clock &+= 1 }
