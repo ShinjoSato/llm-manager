@@ -344,6 +344,25 @@ final class RemoteAccessUnitTests: XCTestCase {
     }
 
 
+    func testTerminalKeysMatchTheSheet() {
+        XCTAssertEqual(RemoteTerminalKey.allCases.map { TerminalKey($0) }, TerminalKey.all, "iPhone の口と mac のシートは同じ表・同じ並び")
+        XCTAssertEqual(RemoteTerminalKey.allCases.map(\.label), TerminalKey.all.map(\.label))
+        for key in RemoteTerminalKey.allCases {
+            XCTAssertNotNil(TerminalKey(key).sequence(applicationCursor: false), key.rawValue)
+            if case .success(let parsed) = RemoteChecks.terminalKey(key.rawValue) { XCTAssertEqual(parsed, TerminalKey(key)) } else { XCTFail(key.rawValue) }
+        }
+        for raw in ["", "0", "10", "a", "Enter", "esc", "ctrl-c", "\u{1b}", "\r", " "] {
+            if case .failure(let f) = RemoteChecks.terminalKey(raw) { XCTAssertEqual(f.code, "unsupported_key", raw) } else { XCTFail(raw) }
+        }
+    }
+
+    func testEscapeThatExitsNeedsConfirmation() {
+        XCTAssertEqual(RemoteChecks.terminalKeyRefusal(.escape, confirmExit: false, escapeExits: true)?.code, "confirm_required")
+        XCTAssertNil(RemoteChecks.terminalKeyRefusal(.escape, confirmExit: true, escapeExits: true))
+        XCTAssertNil(RemoteChecks.terminalKeyRefusal(.escape, confirmExit: false, escapeExits: false))
+        XCTAssertNil(RemoteChecks.terminalKeyRefusal(.enter, confirmExit: false, escapeExits: true), "Esc 以外は確かめない")
+    }
+
     func testMessageChecks() {
         if case .failure(let f) = RemoteChecks.message("  \n") { XCTAssertEqual(f.code, "invalid") } else { XCTFail() }
         if case .failure = RemoteChecks.message(String(repeating: "a", count: RemoteChecks.maxMessageBytes + 1)) {} else { XCTFail() }
@@ -393,6 +412,7 @@ final class RemoteAccessUnitTests: XCTestCase {
         XCTAssertEqual(RemoteRoutes.status(of: .success("sent")), 200)
         XCTAssertEqual(RemoteRoutes.status(of: .failure("not_found", "")), 404)
         XCTAssertEqual(RemoteRoutes.status(of: .failure("invalid", "")), 400)
+        XCTAssertEqual(RemoteRoutes.status(of: .failure("unsupported_key", "")), 400)
         XCTAssertEqual(RemoteRoutes.status(of: .failure("changed", "")), 409)
         XCTAssertEqual(RemoteRoutes.status(of: .failure("app_unavailable", "")), 503)
     }

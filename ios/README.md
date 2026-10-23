@@ -14,6 +14,7 @@ API の仕様は `mac/docs/remote-api.md`、通信と型は共有パッケージ
 | ルーム一覧 | 要対応 / 稼働中 / 待機（Mac の並び順のまま）。ドット絵のアイコン・外部タグ・ブランチ・状態と直近の一行・時刻・未読（開いていない間に届いた応答の数）・要回答の印 |
 | 会話 | ユーザーは右の青、Claude は左の暗色（Markdown の見出し・表・リスト・引用・コード）、画像のサムネイル（押すと全画面）、ツールは「ツール N件 ▸」、外部セッションへ送った伝言は点線の吹き出し |
 | カード | 権限（Channels → 端末のプロンプトの順。許可 / 拒否）、選択肢（選択・複数選択・問いのタブ・キャンセル。Esc が終了になるメニューは確認してから `confirmExit`）、読めない選択肢（閉じるだけ）、Channels の無い外部セッションの案内 |
+| 端末の画面 | カードで答えられない時の逃げ道（mac の「端末の画面」と同じ）。ホスト中で claude が動いているルームの見出しの端末のボタンと、端末の権限・選択肢・読めない選択肢のカードの「端末の画面」（カードの無効化の外に置くので送信中でも押せる）から開く。Mac の端末の今の表示を 0.7 秒ごとに取り直して等幅で出し（変わった時だけ描き直す・つながっていない間は取りに行かず 4 倍の間隔で待つ・重なった取り直しの古い応答とキーを送る前の取り直しの応答は捨てる。iPhone は小さめの文字で縦横にスクロール、iPad は大きめの文字で、iOS 18 からはページの大きさのシート）、← ↑ ↓ → Enter Esc Tab Space 1〜9 のボタンで 1 回ずつ送る（送っている間・表示が取れない間は押せない。押すとすぐ取り直す）。文字の自由入力は無い。Esc が claude の終了になるメニュー（`escapeExits`）では確認してから `confirmExit` で送る。Esc は端末に送るキーなので、下へのスワイプでは閉じず「閉じる」で閉じる。閉じたら取り直しをやめる（`AppModel.watchTerminal` / `stopWatchingTerminal`。開いているのは 1 つだけ・最後に開いたシートだけが止められる）。シートを重ねている間は下の会話を開いたままとして扱う（未読を数えない）。口の無い古い Mac には「Mac の claude-deck を更新してください」を出す |
 | 入力欄 | ホスト中のセッションはメッセージ、外部セッションは伝言。Mac が送れない理由（選択待ち等）を出している間は無効。ホスト中のセッション（Mac の `send.acceptsImages` が true）には写真を添えられる（下の「画像を送る」）。ハードウェアキーボードでは ⏎ 送信・⇧⏎（⌥⏎）改行。本文は UITextView（`ComposerTextView`）で、⏎ を IME に渡す前（`pressesBegan`）に変換中かを見て、変換中なら確定に使う。ソフトウェアキーボードの改行キーは改行のまま |
 | 接続 | Mac 名・再接続・ペアリングの解除（Mac から取り消し + 鍵を消す）・要対応の通知の入り切り |
 | 通知 | Mac で要対応が続くと iCloud 経由でプッシュ（アプリを閉じていても・外出先でも）。開くと該当ルームへ（つながっていなければ案内を出し、つながって一覧が届いたら開く） |
@@ -74,13 +75,13 @@ ios/
   Info.plist                  上の追加分だけ（GENERATE_INFOPLIST_FILE と合わせる。フォルダ同期の外に置いてリソース扱いさせない）
   ClaudeDeck/
     App/                      @main・RootView・画面確認用の見本データ（Debug のみ）
-    Model/                    AppModel（接続・一覧・会話・操作・通知から開く・送る前の画像）・ComposerImages（写真を送れる形に整える）・PairingKeychain・RoomCards（カードの優先順・リンクの解析）・RoomSelection（2 列の選択）
+    Model/                    AppModel（接続・一覧・会話・操作・通知から開く・送る前の画像・端末の画面の取り直し）・ComposerImages（写真を送れる形に整える）・PairingKeychain・RoomCards（カードの優先順・リンクの解析）・RoomSelection（2 列の選択）
     Notify/                   要対応の通知（iCloud の購読・通知の受け口 DeckAppDelegate・設定の欄）
     ja.lproj/                 通知の見出し・本文のキー
     Theme/DeckTheme.swift     mac のチャット画面と同じトークン
-    Views/                    PixelAvatar・接続の帯と設定・Pairing/・Rooms/・Conversation/（MarkdownView は mac から移植）
+    Views/                    PixelAvatar・接続の帯と設定・Pairing/・Rooms/・Conversation/（MarkdownView は mac から移植・TerminalScreenSheet は「端末の画面」）
     Assets.xcassets           アプリアイコン（scripts/make-app-icon.sh で DeckCore のドット絵から描く）・AccentColor
-  ClaudeDeckTests/            リンクの解析と確認待ち・キーチェーン・カードの優先順・2 列の選択・入力欄の変換中の判定・DeckCore の判定（iOS 上）・自己署名 TLS への接続（ATS の確認）・写真の整え方と入力欄の画像
+  ClaudeDeckTests/            リンクの解析と確認待ち・キーチェーン・カードの優先順・2 列の選択・入力欄の変換中の判定・DeckCore の判定（iOS 上）・自己署名 TLS への接続（ATS の確認）・写真の整え方と入力欄の画像・端末の画面の取り直しの開始 / 停止
   scripts/make-app-icon.sh    アイコンを描き直す
 ```
 

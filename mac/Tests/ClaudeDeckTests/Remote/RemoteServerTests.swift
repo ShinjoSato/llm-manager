@@ -354,6 +354,80 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(RemoteActionResult.self, from: data), .failure("changed", "替わった"))
     }
 
+    func testTerminalScreenIsReturnedOnlyForHostedRunningRooms() async throws {
+        let paired = try await pair()
+        let token = paired.deviceToken
+        let room = "h:\(UUID().uuidString)"
+        let (status, data, response) = try await request("GET", "/v1/rooms/\(room)/terminal", token: token)
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(try JSONDecoder().decode(RemoteTerminalScreen.self, from: data), control.terminalScreen)
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Cache-Control"), "no-store", "端末の表示は残さない")
+
+        let (unauthorized, _, _) = try await request("GET", "/v1/rooms/\(room)/terminal")
+        XCTAssertEqual(unauthorized, 401, "本文を含むので認証済みの端末だけ")
+        let (external, externalData, _) = try await request("GET", "/v1/rooms/e:\(FakeTranscriptSource.sessionId)/terminal", token: token)
+        XCTAssertEqual(external, 409)
+        XCTAssertEqual(object(externalData)["error"] as? String, "unavailable")
+        control.endedRooms = [room]
+        let (ended, endedData, _) = try await request("GET", "/v1/rooms/\(room)/terminal", token: token)
+        XCTAssertEqual(ended, 409)
+        XCTAssertEqual(object(endedData)["error"] as? String, "ended")
+        let missing = "h:\(UUID().uuidString)"
+        control.missingRooms = [missing]
+        let (gone, _, _) = try await request("GET", "/v1/rooms/\(missing)/terminal", token: token)
+        XCTAssertEqual(gone, 404)
+        let callsBefore = control.calls.count
+        let (badRoom, _, _) = try await request("GET", "/v1/rooms/not-a-room/terminal", token: token)
+        XCTAssertEqual(badRoom, 404)
+        XCTAssertEqual(control.calls.count, callsBefore, "形の違うルームは mac に渡さない")
+        let (wrongMethod, _, _) = try await request("POST", "/v1/rooms/\(room)/terminal", token: token, json: [String: Any]())
+        XCTAssertEqual(wrongMethod, 404)
+    }
+
+    func testTerminalKeysAreCheckedAndHandedToTheSheetPath() async throws {
+        let paired = try await pair()
+        let token = paired.deviceToken
+        let room = "h:\(UUID().uuidString)"
+        for raw in ["up", "enter", "3", "space"] {
+            let (status, data, _) = try await request("POST", "/v1/rooms/\(room)/terminal/key", token: token, json: ["key": raw])
+            XCTAssertEqual(status, 200, raw)
+            XCTAssertEqual(try JSONDecoder().decode(RemoteActionResult.self, from: data), .success("sent"))
+        }
+        XCTAssertEqual(control.sentKeys, [.up, .enter, .digit(3), .space])
+
+        let before = control.calls.count
+        for raw in ["a", "0", "10", "ctrl-c", "\u{3}", "UP", ""] {
+            let (status, data, _) = try await request("POST", "/v1/rooms/\(room)/terminal/key", token: token, json: ["key": raw])
+            XCTAssertEqual(status, 400, raw)
+            XCTAssertEqual(object(data)["code"] as? String, "unsupported_key", raw)
+        }
+        let (noKey, _, _) = try await request("POST", "/v1/rooms/\(room)/terminal/key", token: token, json: ["text": "ls"])
+        XCTAssertEqual(noKey, 400, "文字の自由入力の口は無い")
+        let (getKey, _, _) = try await request("GET", "/v1/rooms/\(room)/terminal/key", token: token)
+        XCTAssertEqual(getKey, 405)
+        XCTAssertEqual(control.calls.count, before, "表に無いキーは mac に渡さない")
+
+        control.terminalScreen.escapeExits = true
+        let (needsConfirm, confirmData, _) = try await request("POST", "/v1/rooms/\(room)/terminal/key", token: token, json: ["key": "escape"])
+        XCTAssertEqual(needsConfirm, 409)
+        XCTAssertEqual(object(confirmData)["code"] as? String, "confirm_required")
+        let (confirmed, _, _) = try await request("POST", "/v1/rooms/\(room)/terminal/key", token: token,
+                                                  json: ["key": "escape", "confirmExit": true])
+        XCTAssertEqual(confirmed, 200)
+        XCTAssertEqual(control.sentKeys.last, .escape)
+
+        for code in ["busy", "navigating", "sending", "ended"] {
+            control.keyResult = .failure(code, code)
+            let (status, data, _) = try await request("POST", "/v1/rooms/\(room)/terminal/key", token: token, json: ["key": "down"])
+            XCTAssertEqual(status, 409, code)
+            XCTAssertEqual(object(data)["code"] as? String, code)
+        }
+        let (external, externalData, _) = try await request("POST", "/v1/rooms/e:\(FakeTranscriptSource.sessionId)/terminal/key",
+                                                            token: token, json: ["key": "enter"])
+        XCTAssertEqual(external, 409)
+        XCTAssertEqual(object(externalData)["code"] as? String, "unavailable")
+    }
+
     /// Channels の許可 / 拒否は画面と同じ `MonitorStore.decide` を通り、待っているチャネルへ答えが返る。
     func testChannelDecisionGoesThroughMonitorStore() async throws {
         let config = MonitorConfiguration(claudeHome: ClaudeHome(root: dir.appendingPathComponent("claude")), usageFile: nil, serverPort: nil)
@@ -577,6 +651,38 @@ final class FakeRemoteControl: RemoteControl {
     func remoteImageTargetRefusal(roomId: String) -> RemoteActionResult? {
         if missingRooms.contains(roomId) { return .failure("not_found", "ルームが見つかりません。") }
         return roomId.hasPrefix("e:") ? RemoteChecks.imagesNotAccepted : nil
+    }
+
+    /// 端末の今の表示（試験ごとに差し替える）。
+    var terminalScreen = RemoteTerminalScreen(lines: ["╭───╮", "│ > │", "╰───╯"], cursor: RemoteTerminalCursor(row: 1, column: 4),
+                                              columns: 80, rows: 24, capturedAt: 1, escapeExits: false)
+    /// 端末が動いていないことにするルーム。
+    var endedRooms: Set<String> = []
+    /// 送ったキー（mac のシートと同じ経路に渡る形）。
+    var sentKeys: [TerminalKey] = []
+    /// キーを送った時の結果。nil なら `RemoteChecks` の判定と同じに確かめて "sent"。
+    var keyResult: RemoteActionResult?
+    /// 送ったキーを受けた端末の差し替え（表示を描き替える）。
+    var keyHandler: ((TerminalKey) -> Void)?
+
+    func remoteTerminalScreen(roomId: String) -> Result<RemoteTerminalScreen, RemoteActionResult> {
+        calls.append("screen \(roomId)")
+        if missingRooms.contains(roomId) { return .failure(.failure("not_found", "ルームが見つかりません。")) }
+        if roomId.hasPrefix("e:") { return .failure(.failure("unavailable", "ホストしていません。")) }
+        if endedRooms.contains(roomId) { return .failure(.failure("ended", "claude が動いていません。")) }
+        return .success(terminalScreen)
+    }
+
+    func remoteSendTerminalKey(roomId: String, key: TerminalKey, confirmExit: Bool) async -> RemoteActionResult {
+        calls.append("key \(roomId) \(key.label) exit=\(confirmExit)")
+        if roomId.hasPrefix("e:") { return .failure("unavailable", "ホストしていません。") }
+        if let refusal = RemoteChecks.terminalKeyRefusal(key, confirmExit: confirmExit, escapeExits: terminalScreen.escapeExits) {
+            return refusal
+        }
+        if let keyResult { return keyResult }
+        sentKeys.append(key)
+        keyHandler?(key)
+        return .success("sent")
     }
 }
 

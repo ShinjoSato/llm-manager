@@ -6,9 +6,12 @@ struct CardView: View {
     @Bindable var model: AppModel
     let room: RemoteRoom
     let card: RoomCard
+    /// 「端末の画面」を開く（ホスト中のルームの端末のカードだけに出す）。
+    var onOpenTerminal: (() -> Void)? = nil
 
     var body: some View {
         let busy = model.isBusy(room)
+        let openTerminal = room.kind == .hosted ? onOpenTerminal : nil
         switch card {
         case .channels(let permissions):
             ForEach(permissions) { permission in
@@ -19,18 +22,18 @@ struct CardView: View {
             }
         case .terminalPermission(let prompt):
             PermissionCard(toolName: room.session?.currentTool ?? prompt.title, description: prompt.title, lines: prompt.lines,
-                           busy: busy) { allow in
+                           busy: busy, onOpenTerminal: openTerminal) { allow in
                 model.answerTerminal(room, prompt, allow: allow)
             }
         case .menu(let menu):
-            MenuCard(menu: menu, busy: busy) { choice, confirmExit in
+            MenuCard(menu: menu, busy: busy, onOpenTerminal: openTerminal) { choice, confirmExit in
                 model.answerMenu(room, menu, choice: choice, confirmExit: confirmExit)
             } onMoveTab: { direction in
                 model.moveTab(room, menu, direction)
             }
             .id(menu.menuId)
         case .unreadableMenu(let menu):
-            UnreadableMenuCard(menu: menu, busy: busy) { confirmExit in
+            UnreadableMenuCard(menu: menu, busy: busy, onOpenTerminal: openTerminal) { confirmExit in
                 model.dismiss(room, menu, confirmExit: confirmExit)
             }
             .id(menu.menuId)
@@ -45,6 +48,7 @@ struct PermissionCard: View {
     let description: String
     let lines: [String]
     let busy: Bool
+    var onOpenTerminal: (() -> Void)? = nil
     let onDecide: (Bool) -> Void
 
     var body: some View {
@@ -84,6 +88,7 @@ struct PermissionCard: View {
             .disabled(busy)
             .opacity(busy ? 0.6 : 1)
             if busy { SendingIndicator() }
+            if let onOpenTerminal { CardTerminalButton(action: onOpenTerminal) }
         }
         .cardFrame()
     }
@@ -93,12 +98,24 @@ struct PermissionCard: View {
 struct MenuCard: View {
     let menu: RemoteMenu
     let busy: Bool
+    var onOpenTerminal: (() -> Void)? = nil
     /// 選択肢の位置。nil は取り消し（Esc）。2 つ目は終了の確認を済ませたか。
     let onChoose: (Int?, Bool) -> Void
     let onMoveTab: (RemoteTabDirection) -> Void
     @State private var confirmingExit = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content
+                .disabled(busy)
+                .opacity(busy ? 0.6 : 1)
+            if let onOpenTerminal { CardTerminalButton(action: onOpenTerminal) }
+        }
+        .cardFrame()
+        .exitConfirmation(isPresented: $confirmingExit) { onChoose(nil, true) }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             CardTitle(symbol: "list.bullet.circle.fill", title: "選択肢")
             if let tabs = menu.tabs, !tabs.tabs.isEmpty {
@@ -133,10 +150,6 @@ struct MenuCard: View {
                 .accessibilityIdentifier("menu-cancel")
             if busy { SendingIndicator() }
         }
-        .disabled(busy)
-        .opacity(busy ? 0.6 : 1)
-        .cardFrame()
-        .exitConfirmation(isPresented: $confirmingExit) { onChoose(nil, true) }
     }
 
     private func hint(_ text: String) -> some View {
@@ -245,6 +258,7 @@ private struct MenuTabBar: View {
 struct UnreadableMenuCard: View {
     let menu: RemoteUnreadableMenu
     let busy: Bool
+    var onOpenTerminal: (() -> Void)? = nil
     /// 引数は終了の確認を済ませたか。
     let onCancel: (Bool) -> Void
     @State private var confirmingExit = false
@@ -260,9 +274,10 @@ struct UnreadableMenuCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             if !menu.lines.isEmpty { CardCode(text: menu.lines.suffix(12).joined(separator: "\n")) }
             MenuCancelButton(cancelExits: menu.cancelExits, confirmingExit: $confirmingExit) { onCancel(false) }
+                .disabled(busy)
             if busy { SendingIndicator() }
+            if let onOpenTerminal { CardTerminalButton(action: onOpenTerminal) }
         }
-        .disabled(busy)
         .cardFrame()
         .exitConfirmation(isPresented: $confirmingExit) { onCancel(true) }
     }

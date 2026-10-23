@@ -21,6 +21,10 @@ public protocol RemoteControl: AnyObject {
     var remoteImageStore: AttachmentStore { get }
     /// そのルームに画像を付けて送れないなら理由（ルームが無い・ホスト中でない）。画像を読み込む前に断るため。
     func remoteImageTargetRefusal(roomId: String) -> RemoteActionResult?
+    /// ホスト中で claude が動いているルームの端末の今の表示（mac の「端末の画面」と同じ行）。
+    func remoteTerminalScreen(roomId: String) -> Result<RemoteTerminalScreen, RemoteActionResult>
+    /// 「端末の画面」のキーを 1 回送る（mac のシートと同じ判定・同じ経路）。
+    func remoteSendTerminalKey(roomId: String, key: TerminalKey, confirmExit: Bool) async -> RemoteActionResult
 }
 
 /// ルームの識別子（`h:<UUID>` / `e:<sessionId>`）。
@@ -316,6 +320,21 @@ public enum RemoteChecks {
         guard text.utf8.count <= maxMessageBytes else { return .failure(.failure("invalid", "本文が長すぎます（\(maxMessageBytes / 1024)KB まで）。")) }
         if let problem = RemoteImageLimits.problem(images) { return .failure(problem) }
         return .success(text)
+    }
+
+    /// 送れるキーの表に無い値。
+    public static let unsupportedKey = RemoteActionResult.failure("unsupported_key", "送れないキーです（← ↑ ↓ → Enter Esc Tab Space 1〜9 だけ）。")
+
+    /// 「端末の画面」のキーの値を読む。表に無ければ失敗。
+    public static func terminalKey(_ raw: String) -> Result<TerminalKey, RemoteActionResult> {
+        guard let key = RemoteTerminalKey(rawValue: raw) else { return .failure(unsupportedKey) }
+        return .success(TerminalKey(key))
+    }
+
+    /// Esc で claude が終わるメニューへの Esc は、mac のシートの確認と同じく `confirmExit` が要る。送ってよければ nil。
+    public static func terminalKeyRefusal(_ key: TerminalKey, confirmExit: Bool, escapeExits: Bool) -> RemoteActionResult? {
+        guard key == .escape, escapeExits, !confirmExit else { return nil }
+        return .failure("confirm_required", "このメニューで Esc を押すと claude が終了します。終了してよければ confirmExit を付けてください。")
     }
 
     /// 外部セッションへの伝言には画像を付けない（受信箱は文字だけを運ぶ）。

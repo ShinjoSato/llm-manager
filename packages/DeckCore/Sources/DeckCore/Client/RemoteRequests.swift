@@ -212,6 +212,14 @@ public struct RemoteRequestBuilder: Sendable {
         try post(["rooms", roomId, "menu", "dismiss"], body)
     }
 
+    public func terminalScreen(roomId: String) throws -> URLRequest {
+        try request("GET", ["rooms", roomId, "terminal"], timeout: 10)
+    }
+
+    public func terminalKey(roomId: String, _ body: RemoteTerminalKeyRequest) throws -> URLRequest {
+        try post(["rooms", roomId, "terminal", "key"], body)
+    }
+
     /// 画像を付けると上りに時間がかかるので、待ちを延ばす。
     static let imageActionTimeout: TimeInterval = 90
 
