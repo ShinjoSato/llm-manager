@@ -38,6 +38,8 @@ final class HostedSession: Identifiable {
     @ObservationIgnored private let observer = TerminalProcessObserver()
 
     private(set) var pid: Int32?
+    /// claude の起動時刻（カーネルの値）。次の起動で、前回の claude がまだ終わる途中かを見分けるために記録へ残す。
+    @ObservationIgnored private(set) var processStartedAt: Date?
     /// 端末の画面から読んだ状態（終了後は状態以外を消す）。
     private(set) var screen = ClaudeTerminalView.ScreenState()
     var localStatus: ClaudeStatus { screen.status }
@@ -45,6 +47,8 @@ final class HostedSession: Identifiable {
     var inputBlock: InputBlock? { screen.inputBlock }
     var menuPrompt: MenuPrompt? { screen.menuPrompt }
     var unreadableMenu: UnreadableMenu? { screen.unreadableMenu }
+    /// claude の版（セッションファイルから。読めなければ nil）。
+    var claudeVersion: String? { screen.claudeVersion }
     /// チャット欄からの送信の途中（画像の取り込み待ち〜Enter）。
     private(set) var isSending = false
     private(set) var end: End?
@@ -76,6 +80,8 @@ final class HostedSession: Identifiable {
         terminal.onScreenStateChanged = { [weak self] in self?.update($0) }
         terminal.onSendingChanged = { [weak self] in self?.isSending = $0 }
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
+        let menuKey = "menu:\(id.uuidString)"
+        terminal.opsLog = { event, fields in MenuOpsLog.shared.record(event, [("key", menuKey)] + fields) }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
     }
 
@@ -92,7 +98,14 @@ final class HostedSession: Identifiable {
             return
         }
         self.pid = pid
+        processStartedAt = ProcessFacts.inspect(pid: pid)?.startedAt
         MonitorBridge.store.registerHostedProcess(pid: pid)
+    }
+
+    /// 次の起動で再開するための記録。
+    func record(sessionId: String, status: SessionStatus, draft: String?) -> HostedSessionRecord {
+        HostedSessionRecord(name: project.name, cwd: project.path, sessionId: sessionId, status: status, draft: draft,
+                            pid: pid, procStart: processStartedAt?.timeIntervalSince1970)
     }
 
     /// 今の sessionId（監視の対応表から引けなければ最後に解決できたもの）。
@@ -141,6 +154,17 @@ final class HostedSession: Identifiable {
     func cancelUnreadableMenu(_ expected: UnreadableMenu) -> ClaudeTerminalView.UnreadableCancelResult {
         guard isRunning else { return .gone }
         return terminal.cancelUnreadableMenu(expected)
+    }
+
+    /// 「端末の画面」から決まったキーを 1 回送る。
+    func sendKey(_ key: TerminalKey) -> ClaudeTerminalView.KeySendResult {
+        guard isRunning else { return .ended }
+        return terminal.sendKey(key)
+    }
+
+    /// 端末の今の表示（終了後は最後の画面）。
+    func screenText() -> [String] {
+        terminal.displayScreenLines()
     }
 
     /// 端末に出ている答えられる表示（会話末尾のカードと同じ優先順）。

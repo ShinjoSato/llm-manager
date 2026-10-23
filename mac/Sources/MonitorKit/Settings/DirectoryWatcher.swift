@@ -32,7 +32,7 @@ final class DirectoryWatcher {
 
     func start() {
         stopDirectory()
-        let fd = open(directory.path, O_EVTONLY)
+        let fd = open(directory.path, O_EVTONLY | O_CLOEXEC)
         guard fd >= 0 else {
             stopFile()
             scheduleRetry()
@@ -82,7 +82,7 @@ final class DirectoryWatcher {
         }
         if fileSource != nil, fileInode == UInt64(st.st_ino) { return }
         stopFile()
-        let fd = open(path, O_EVTONLY)
+        let fd = open(path, O_EVTONLY | O_CLOEXEC)
         guard fd >= 0 else { return }
         var opened = stat()
         guard fstat(fd, &opened) == 0 else {

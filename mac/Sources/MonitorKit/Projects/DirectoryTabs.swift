@@ -5,6 +5,7 @@ public enum DirectoryTab: String, CaseIterable, Identifiable, Sendable {
     case site
     case images
     case iosPreviews
+    case appStore
     case links
     case threads
 
@@ -15,6 +16,7 @@ public enum DirectoryTab: String, CaseIterable, Identifiable, Sendable {
         case .site: return "サイト"
         case .images: return "画像"
         case .iosPreviews: return "iPhone"
+        case .appStore: return "App Store"
         case .links: return "リンク"
         case .threads: return "スレッド"
         }
@@ -25,6 +27,7 @@ public enum DirectoryTab: String, CaseIterable, Identifiable, Sendable {
         case .site: return "globe"
         case .images: return "photo.on.rectangle"
         case .iosPreviews: return "iphone"
+        case .appStore: return "storefront"
         case .links: return "link"
         case .threads: return "bubble.left.and.bubble.right"
         }
@@ -34,11 +37,13 @@ public enum DirectoryTab: String, CaseIterable, Identifiable, Sendable {
 /// 出せるタブと、開くタブの選び方。
 public enum DirectoryTabs {
     /// サイトの有無が分からない間（nil）は出しておく。後から足すと並びがずれて押し間違えるため、消す向きにだけ動かす。
-    public static func available(hasSite: Bool?, hasXcodeProject: Bool) -> [DirectoryTab] {
+    /// App Store は設定でアプリを紐づけたプロジェクトだけ。
+    public static func available(hasSite: Bool?, hasXcodeProject: Bool, hasAppStoreApps: Bool = false) -> [DirectoryTab] {
         DirectoryTab.allCases.filter { tab in
             switch tab {
             case .site: return hasSite ?? true
             case .iosPreviews: return hasXcodeProject
+            case .appStore: return hasAppStoreApps
             case .images, .links, .threads: return true
             }
         }
@@ -53,6 +58,11 @@ public enum DirectoryTabs {
     /// 設定の場所が使えない時も、理由を見せるためにサイトのタブは出す。
     public static func hasSite(_ lookup: SiteLookup) -> Bool {
         lookup.location != nil || lookup.problem != nil
+    }
+
+    /// 指定した Xcode のプロジェクトが使えない時も、理由を見せるために iPhone のタブは出す。
+    public static func hasXcodeProject(_ resolution: XcodeResolution) -> Bool {
+        resolution.path != nil || resolution.problem != nil
     }
 }
 

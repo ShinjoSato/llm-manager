@@ -65,6 +65,17 @@ struct RestoreNotice: View {
                 }
                 .foregroundStyle(ChatTheme.working)
             }
+            if let waiting = restorer.waitingSummary {
+                HStack(alignment: .top, spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text(waiting).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("破棄") { restorer.discardWaiting() }
+                        .help("待つのをやめ、この会話の再開の記録を捨てます")
+                }
+                .controlSize(.small)
+                .foregroundStyle(ChatTheme.working)
+            }
             if let summary = restorer.deferredSummary {
                 HStack(spacing: 8) {
                     Text(summary)

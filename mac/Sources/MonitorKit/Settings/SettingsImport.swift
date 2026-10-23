@@ -111,6 +111,14 @@ public enum SettingsImport {
                         merged.projects[index].site = site
                         filled = true
                     }
+                    if merged.projects[index].appStoreApps.isEmpty, !project.appStoreApps.isEmpty {
+                        merged.projects[index].appStoreApps = project.appStoreApps
+                        filled = true
+                    }
+                    if merged.projects[index].xcode == nil, let xcode = project.xcode {
+                        merged.projects[index].xcode = xcode
+                        filled = true
+                    }
                     if merged.projects[index].icon == nil, let icon = project.icon {
                         merged.projects[index].icon = icon
                         filled = true

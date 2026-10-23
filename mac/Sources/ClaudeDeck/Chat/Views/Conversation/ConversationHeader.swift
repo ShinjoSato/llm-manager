@@ -52,12 +52,13 @@ struct StatusBadge: View {
     }
 }
 
-/// 見出しの「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」と、押した結果の短い一言。
+/// 見出しの「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」と、押した結果の短い一言。
 struct EditorButtons: View {
     let model: ChatModel
     let room: Room
     var opensWindow = true
     @State private var confirmingClose = false
+    @Environment(\.openTerminalScreen) private var openTerminal
 
     var body: some View {
         let editors = model.editors
@@ -70,6 +71,9 @@ struct EditorButtons: View {
         actions += HeaderAction.xcode(openPriority: 4, closePriority: 1, editors: editors, target: target,
                                       project: xcodeProject) { confirmingClose = true }
         if opensWindow { actions.append(HeaderAction.openInWindow(priority: 3, subpriority: -1) { [model, room] in model.openWindow(for: room.id) }) }
+        if let session = room.hosted, session.isRunning, let openTerminal {
+            actions.append(HeaderAction.terminalScreen(priority: 4, subpriority: -1) { openTerminal(session) })
+        }
         return HStack(spacing: 6) {
             EditorNoteText(note: editors.notes[target.key])
             HeaderActionRow(actions: actions).layoutPriority(1)

@@ -178,7 +178,7 @@ final class CloudKitAttentionSubscription: AttentionSubscriptionService, @unchec
         let status = try? await ckContainer().accountStatus()
         switch status {
         case .available: return nil
-        case .noAccount: return "この iPhone で iCloud にサインインしていません。Mac と同じ Apple アカウントでサインインしてください。"
+        case .noAccount: return "この端末で iCloud にサインインしていません。Mac と同じ Apple アカウントでサインインしてください。"
         case .restricted: return "iCloud の利用が制限されています。"
         case .temporarilyUnavailable: return "iCloud を一時的に使えません。しばらくしてからもう一度入れてください。"
         default: return "iCloud の状態を確かめられませんでした。"

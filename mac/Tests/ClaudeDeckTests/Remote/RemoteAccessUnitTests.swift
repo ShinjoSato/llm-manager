@@ -208,6 +208,14 @@ final class RemoteAccessUnitTests: XCTestCase {
         XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: exitId, cancel: true), in: context(.menu(exiting)))), "confirm_required",
                        "claude の終了になる取り消しは明示が要る")
         XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: exitId, cancel: true, confirmExit: true), in: context(.menu(exiting)))), "ok")
+        let trust = MenuPrompt(context: [], question: "Is this a project you created or one you trust?",
+                               options: [.init(number: nil, label: "No, exit"), .init(number: nil, label: "Yes, I trust this folder")],
+                               cursor: 0, footer: "Enter to confirm · Esc to cancel", tabs: nil)
+        let trustId = RemoteMenu.menuId(trust, generation: 0)
+        XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: trustId, choice: 0), in: context(.menu(trust)))), "confirm_required",
+                       "claude の終了になる選択肢も明示が要る")
+        XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: trustId, choice: 0, confirmExit: true), in: context(.menu(trust)))), "ok")
+        XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: trustId, choice: 1), in: context(.menu(trust)))), "ok")
         XCTAssertEqual(code(RemoteChecks.menuTab(.init(menuId: id, direction: .next), in: ctx)), "ok")
         XCTAssertEqual(code(RemoteChecks.menuTab(.init(menuId: id, direction: .next), in: context(nil))), "gone")
     }
@@ -340,6 +348,45 @@ final class RemoteAccessUnitTests: XCTestCase {
         if case .failure(let f) = RemoteChecks.message("  \n") { XCTAssertEqual(f.code, "invalid") } else { XCTFail() }
         if case .failure = RemoteChecks.message(String(repeating: "a", count: RemoteChecks.maxMessageBytes + 1)) {} else { XCTFail() }
         if case .failure = RemoteChecks.message("hello") { XCTFail() }
+        let png = RemoteMessageImage(mediaType: "image/png", data: TestImages.png())
+        if case .failure = RemoteChecks.message(RemoteMessageRequest(text: " ", images: [png])) { XCTFail("画像があれば本文は空でよい") }
+        if case .failure(let f) = RemoteChecks.message(RemoteMessageRequest(text: String(repeating: "a", count: RemoteChecks.maxMessageBytes + 1),
+                                                                           images: [png])) {
+            XCTAssertEqual(f.code, "invalid", "本文の上限は画像があっても文字の分に掛かる")
+        } else { XCTFail() }
+        if case .failure(let f) = RemoteChecks.message(RemoteMessageRequest(text: "a", images: Array(repeating: png, count: 5))) {
+            XCTAssertEqual(f.code, "too_many_images")
+        } else { XCTFail() }
+    }
+
+    /// 一時ファイルを消すのは、送り始められなかった時・claude が終わった時・ルームが無くなった時だけ。
+    func testRemoteImageCleanup() {
+        XCTAssertFalse(RemoteImageCleanup.keepsFiles(.refused))
+        let kept: [SendCompletion] = [.submitted, .abortedBeforeBody(.menu), .abortedAfterBody(.permission),
+                                      .notPasted(imagesPasted: true), .notPasted(imagesPasted: false)]
+        for completion in kept {
+            XCTAssertTrue(RemoteImageCleanup.keepsFiles(.finished(completion, roomExists: true)), "\(completion)")
+            XCTAssertFalse(RemoteImageCleanup.keepsFiles(.finished(completion, roomExists: false)), "\(completion)")
+        }
+        XCTAssertFalse(RemoteImageCleanup.keepsFiles(.finished(.ended, roomExists: true)))
+    }
+
+    /// 取り込みの枠は同時に `limit` 本まで。溢れた分は待たせずに断り、終われば空く。
+    func testImageIntakeQueueLimitsConcurrency() async {
+        let queue = RemoteImageIntakeQueue(limit: 1)
+        let gate = DispatchSemaphore(value: 0)
+        let started = Box(false)
+        let first = Task { await queue.run { () -> Int in started.mutate { $0 = true }; gate.wait(); return 1 } }
+        while !started.value { try? await Task.sleep(for: .milliseconds(5)) }
+        let refused = await queue.run { 2 }
+        XCTAssertNil(refused, "埋まっていれば断る")
+        gate.signal()
+        let firstValue = await first.value
+        XCTAssertEqual(firstValue, 1)
+        let again = await queue.run { 3 }
+        XCTAssertEqual(again, 3, "終われば空く")
+        let none = await RemoteImageIntakeQueue(limit: 0).run { 4 }
+        XCTAssertNil(none)
     }
 
     func testStatusMapping() {

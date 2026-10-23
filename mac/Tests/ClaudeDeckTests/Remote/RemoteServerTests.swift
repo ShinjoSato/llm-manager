@@ -18,6 +18,7 @@ final class RemoteServerTests: XCTestCase {
         transcripts = FakeTranscriptSource()
         service = RemoteAccessService(directory: dir, transcripts: transcripts, control: control, serverName: "test-mac",
                                       throttle: RemoteAuthThrottle(window: 60, maxFailures: 5))
+        control.imageStore = AttachmentStore(directory: dir.appendingPathComponent("images"))
         service.start(address: "127.0.0.1", port: 0)
         for _ in 0..<300 where service.boundPort == nil {
             if case .failed(let reason) = service.state { throw NSError(domain: reason, code: 1) }
@@ -250,13 +251,36 @@ final class RemoteServerTests: XCTestCase {
         let paired = try await pair()
         let room = "h:\(UUID().uuidString)"
         let big = Data(repeating: 0x61, count: RemoteRoutes.maxBodyBytes + 1)
-        let (status, _, _) = try await request("POST", "/v1/rooms/\(room)/messages", token: paired.deviceToken, body: big,
+        let (status, _, _) = try await request("POST", "/v1/rooms/\(room)/permission", token: paired.deviceToken, body: big,
                                                headers: ["Content-Type": "application/json"])
         XCTAssertEqual(status, 413)
         let (unsupported, _, _) = try await request("POST", "/v1/rooms/\(room)/messages", token: paired.deviceToken,
                                                     body: Data("{\"text\":\"a\"}".utf8), headers: ["Content-Type": "text/plain"])
         XCTAssertEqual(unsupported, 415)
         XCTAssertEqual(control.calls, [], "弾いた要求は mac の操作に届かない")
+    }
+
+    /// 本文の上限を広げるのは画像付きのメッセージの口だけで、認証を通る相手に限る。
+    func testOnlyMessagesAcceptImageSizedBodies() async throws {
+        let paired = try await pair()
+        let room = "h:\(UUID().uuidString)"
+        let large = Data(repeating: 0x61, count: RemoteRoutes.maxBodyBytes + 64 * 1024)
+        let json = ["Content-Type": "application/json"]
+        let (menu, _, _) = try await request("POST", "/v1/rooms/\(room)/menu", token: paired.deviceToken, body: large, headers: json)
+        XCTAssertEqual(menu, 413, "他の口の上限は広げない")
+        let (message, _, _) = try await request("POST", "/v1/rooms/\(room)/messages", token: paired.deviceToken, body: large, headers: json)
+        XCTAssertEqual(message, 400, "メッセージの口は読み込んでから形を見る")
+        let (anonymous, _, _) = try await request("POST", "/v1/rooms/\(room)/messages", body: large, headers: json)
+        XCTAssertEqual(anonymous, 401, "認証の無い相手には大きな本文を読ませない")
+        XCTAssertEqual(control.calls, [])
+
+        XCTAssertNotNil(RemoteRoutes.bodyAllowance(HTTPRequest(method: "POST", path: "/v1/rooms/\(room)/messages")))
+        XCTAssertNil(RemoteRoutes.bodyAllowance(HTTPRequest(method: "GET", path: "/v1/rooms/\(room)/messages")))
+        XCTAssertNil(RemoteRoutes.bodyAllowance(HTTPRequest(method: "POST", path: "/v1/rooms/\(room)/menu")))
+        XCTAssertNil(RemoteRoutes.bodyAllowance(HTTPRequest(method: "POST", path: "/v1/rooms//messages")))
+        XCTAssertNil(RemoteRoutes.bodyAllowance(HTTPRequest(method: "POST", path: "/v1/rooms/\(room)/messages/x")))
+        XCTAssertNil(RemoteRoutes.bodyAllowance(HTTPRequest(method: "POST", path: "/v1/pair")))
+        XCTAssertGreaterThan(RemoteRoutes.maxMessageBodyBytes, RemoteImageLimits.maxTotalBytes * 4 / 3 + RemoteChecks.maxMessageBytes * 6)
     }
 
     // MARK: - API
@@ -533,9 +557,26 @@ final class FakeRemoteControl: RemoteControl {
         return result
     }
 
-    func remoteSendMessage(roomId: String, text: String) async -> RemoteActionResult {
-        calls.append("send \(roomId) \(text)")
+    /// 受け取った画像（添付の経路に渡る形）。
+    var receivedImages: [[Attachment]] = []
+
+    func remoteSendMessage(roomId: String, text: String, images: [Attachment]) async -> RemoteActionResult {
+        calls.append(images.isEmpty ? "send \(roomId) \(text)" : "send \(roomId) \(text) images=\(images.count)")
+        receivedImages.append(images)
         return result
+    }
+
+    /// 試験ごとに差し替える（既定も一時ディレクトリ。利用者のキャッシュには書かない）。
+    var imageStore = AttachmentStore(directory: FileManager.default.temporaryDirectory
+        .appendingPathComponent("fake-remote-images-\(UUID().uuidString)", isDirectory: true))
+    /// 無いことにするルーム。
+    var missingRooms: Set<String> = []
+
+    var remoteImageStore: AttachmentStore { imageStore }
+
+    func remoteImageTargetRefusal(roomId: String) -> RemoteActionResult? {
+        if missingRooms.contains(roomId) { return .failure("not_found", "ルームが見つかりません。") }
+        return roomId.hasPrefix("e:") ? RemoteChecks.imagesNotAccepted : nil
     }
 }
 
