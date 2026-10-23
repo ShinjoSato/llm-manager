@@ -18,8 +18,8 @@ final class HandoverCloseWaitTests: XCTestCase {
         _ = wait.step(.init(originalAlive: true), now: t0)
         XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(1)), .wait)
         XCTAssertEqual(wait.phase, .settling)
-        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(1.5)), .wait)
-        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(2)), .resume)
+        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(3)), .wait)
+        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(3.5)), .resume)
     }
 
     func testWaitsForAnotherClaudeOfTheSameConversation() {
@@ -30,8 +30,8 @@ final class HandoverCloseWaitTests: XCTestCase {
         XCTAssertEqual(wait.phase, .waitingForOther(200))
         XCTAssertEqual(wait.step(.init(originalAlive: false, otherPid: 200), now: t0.addingTimeInterval(5)), .wait)
         XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(6)), .wait)
-        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(6.5)), .wait)
-        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(7)), .resume)
+        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(8)), .wait)
+        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(8.5)), .resume)
     }
 
     func testCancelsWhenTheLimitIsReached() {
@@ -51,7 +51,7 @@ final class HandoverCloseWaitTests: XCTestCase {
         var wait = HandoverCloseWait()
         _ = wait.step(.init(originalAlive: false), now: t0)
         XCTAssertEqual(wait.step(.init(originalAlive: false, holding: true), now: t0.addingTimeInterval(5)), .wait)
-        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(5.5)), .resume)
+        XCTAssertEqual(wait.step(.init(originalAlive: false), now: t0.addingTimeInterval(5.5)), .resume, "settle は終わった時から数える")
     }
 }
 
@@ -106,6 +106,19 @@ final class HandoverObservationTests: XCTestCase {
         observation = HandoverCloseWait.observe(target, records: records, inspect: inspect, limitReached: false, holding: false,
                                                 alreadyHosted: false)
         XCTAssertEqual(observation, .init(originalAlive: false))
+    }
+
+    func testOriginalSwitchedToAnotherConversationCountsAsGone() {
+        // 同じプロセス（pid 100・起動時刻も同じ）のまま、記録の sessionId だけが別の会話に替わった。
+        let records = [record(pid: 100, sessionId: "bcb12868-4061-4d7e-987c-0522878e518d")]
+        let observation = HandoverCloseWait.observe(target, records: records) { _ in self.facts() }
+        XCTAssertEqual(observation, .init(originalAlive: false))
+        var wait = HandoverCloseWait()
+        let t0 = Date(timeIntervalSince1970: 1_790_000_000)
+        XCTAssertEqual(wait.step(observation, now: t0), .wait)
+        XCTAssertEqual(wait.step(observation, now: t0.addingTimeInterval(HandoverCloseWait.settle)), .resume)
+        // 記録が同じ会話のままなら待ち続ける。
+        XCTAssertTrue(HandoverCloseWait.observe(target, records: [record(pid: 100)]) { _ in self.facts() }.originalAlive)
     }
 
     func testFindsTheExternalDuplicateButNotTheHostedClaude() {
@@ -166,11 +179,33 @@ final class HandoverDummyProcessTests: XCTestCase {
         }
     }
 
+    /// クラスで 1 回だけビルドしたダミー（無ければ飛ばす理由）。
+    nonisolated(unsafe) private static var builtDummy: URL?
+    nonisolated(unsafe) private static var buildFolder: URL?
+    nonisolated(unsafe) private static var skipReason: String?
+
+    override class func setUp() {
+        super.setUp()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("handover-build-\(UUID().uuidString)")
+        buildFolder = folder
+        do {
+            builtDummy = try buildDummy(in: folder)
+        } catch {
+            skipReason = "ダミーのプロセスを作れません: \(error)"
+        }
+    }
+
+    override class func tearDown() {
+        if let buildFolder { try? FileManager.default.removeItem(at: buildFolder) }
+        super.tearDown()
+    }
+
     override func setUpWithError() throws {
+        guard let built = Self.builtDummy else { throw XCTSkip(Self.skipReason ?? "ダミーのプロセスがありません") }
         root = FileManager.default.temporaryDirectory.appendingPathComponent("handover-\(UUID().uuidString)")
         binary = root.appendingPathComponent(".vscode/extensions/anthropic.claude-code-9.9.9-darwin-arm64/resources/native-binary/claude")
         try FileManager.default.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try compileDummy(to: binary)
+        try FileManager.default.copyItem(at: built, to: binary)
         let sessions = root.appendingPathComponent("sessions")
         try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
         registry = ClaudeSessionRegistry(directory: sessions)
@@ -178,38 +213,63 @@ final class HandoverDummyProcessTests: XCTestCase {
 
     override func tearDownWithError() throws {
         for dummy in launched { dummy.stop() }
-        try? FileManager.default.removeItem(at: root)
+        if let root { try? FileManager.default.removeItem(at: root) }
     }
 
-    /// 秒数だけ眠る小さなプログラム。2 つ目の引数があれば SIGINT / SIGTERM を無視する。
+    /// 秒数だけ眠る小さなプログラム（引数: 秒数・ignore なら SIGINT / SIGTERM を無視・用意ができたら作るファイル）。
     /// OS のコマンドの写しは別の場所から動かすと OS に止められるので、その場でビルドする。
     private static let dummySource = """
+        #include <fcntl.h>
         #include <signal.h>
         #include <stdlib.h>
+        #include <string.h>
         #include <unistd.h>
         int main(int argc, char **argv) {
-            unsigned left = argc > 1 ? (unsigned)atoi(argv[1]) : 30;
-            if (argc > 2) { signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN); }
+            if (argc < 4) return 2;
+            unsigned left = (unsigned)atoi(argv[1]);
+            if (strcmp(argv[2], "ignore") == 0) { signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN); }
+            close(open(argv[3], O_CREAT | O_WRONLY, 0600));
             while (left > 0) left = sleep(left);
             return 0;
         }
         """
 
-    private func compileDummy(to output: URL) throws {
-        let source = root.appendingPathComponent("dummy.c")
-        try Self.dummySource.write(to: source, atomically: true, encoding: .utf8)
-        let cc = Process()
-        cc.executableURL = URL(fileURLWithPath: "/usr/bin/cc")
-        cc.arguments = ["-o", output.path, source.path]
-        do { try cc.run() } catch { throw XCTSkip("C コンパイラが無いため、ダミーのプロセスを作れません") }
-        cc.waitUntilExit()
-        guard cc.terminationStatus == 0 else { throw XCTSkip("ダミーのプロセスをビルドできません") }
+    private struct BuildFailure: Error, CustomStringConvertible {
+        var description: String
+    }
+
+    /// clang の有無を先に xcrun で確かめる（`/usr/bin/cc` のスタブを叩くと導入のダイアログが出うるため）。
+    private static func buildDummy(in folder: URL) throws -> URL {
+        guard let clang = run("/usr/bin/xcrun", ["--find", "clang"]), !clang.isEmpty else {
+            throw BuildFailure(description: "clang が見つかりません")
+        }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let source = folder.appendingPathComponent("dummy.c")
+        let output = folder.appendingPathComponent("dummy")
+        try dummySource.write(to: source, atomically: true, encoding: .utf8)
+        guard run(clang, ["-o", output.path, source.path]) != nil else { throw BuildFailure(description: "ビルドに失敗しました") }
+        return output
+    }
+
+    /// 終了コードが 0 なら標準出力（前後の空白を除く）、それ以外は nil。
+    private static func run(_ path: String, _ arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// VS Code の拡張の場所に置いたダミーの claude を起動する。
     private func launchDummy(seconds: Int, ignoringSignals: Bool = false) throws -> Dummy {
-        var arguments = [binary.path, "\(seconds)"]
-        if ignoringSignals { arguments.append("ignore") }
+        let ready = root.appendingPathComponent("ready-\(UUID().uuidString)")
+        let arguments = [binary.path, "\(seconds)", ignoringSignals ? "ignore" : "default", ready.path]
         let argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         // 親（テストの実行器）のシグナルの無視・塞ぎを持ち込まず、既定の扱いで起動する。
@@ -228,7 +288,10 @@ final class HandoverDummyProcessTests: XCTestCase {
         guard result == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(result)) }
         let dummy = Dummy(pid: pid)
         launched.append(dummy)
-        if ignoringSignals { usleep(200_000) } // 無視の設定が済む前に送らないため。
+        // 初回の起動は署名の確かめで遅いことがあるので、シグナルの扱いを決め終えるまで待つ。
+        let deadline = Date().addingTimeInterval(10)
+        while !FileManager.default.fileExists(atPath: ready.path), Date() < deadline { usleep(20_000) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path), "ダミーの用意ができない")
         XCTAssertTrue(ProcessFacts.inspect(pid: pid)?.executablePath?.hasSuffix("/native-binary/claude") == true)
         return dummy
     }
@@ -304,13 +367,13 @@ final class HandoverDummyProcessTests: XCTestCase {
     }
 
     func testHandsOverAfterTheDummyClosesByItself() async throws {
-        let dummy = try launchDummy(seconds: 1)
+        let dummy = try launchDummy(seconds: 3)
         try writeRecord(for: dummy)
         guard case .ok(let target) = check(dummy) else { return XCTFail("\(check(dummy))") }
         var wait = HandoverCloseWait()
         var resumedWhileAlive = false
         var resumed = false
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(20)
         while !resumed, Date() < deadline {
             let observation = HandoverCloseWait.observe(target, records: registry.allRecords(), inspect: ProcessFacts.inspect,
                                                         limitReached: false, holding: false, alreadyHosted: false)
@@ -343,7 +406,7 @@ final class HandoverDummyProcessTests: XCTestCase {
         other.stop()
         XCTAssertEqual(step(), .wait)
         XCTAssertEqual(wait.phase, .settling)
-        try await Task.sleep(for: .milliseconds(1100))
+        try await Task.sleep(for: .seconds(HandoverCloseWait.settle + 0.1))
         XCTAssertEqual(step(), .resume)
     }
 

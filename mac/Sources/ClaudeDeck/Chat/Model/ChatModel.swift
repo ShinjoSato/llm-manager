@@ -134,7 +134,9 @@ final class ChatModel {
         outbox.hostedRoomExists = { [weak self] roomId in self?.hosted.contains { RoomID.hosted($0.id) == roomId } ?? false }
         outbox.roomIds = { [weak self] sessionId in self?.rooms.filter { $0.sessionId == sessionId }.map(\.id) ?? [] }
         outbox.isHandingOver = { handover.isHandingOver($0) }
-        handover.onResume = { [weak self] project, sessionId, roomId in self?.resume(project: project, sessionId: sessionId, from: roomId) }
+        handover.onResume = { [weak self] project, sessionId, roomId, onlyIfSelected in
+            self?.resume(project: project, sessionId: sessionId, from: roomId, onlyIfSelected: onlyIfSelected)
+        }
         handover.hostedSessions = { [weak self] in
             guard let self else { return [] }
             return hosted.map { ($0, $0.resolveSessionId(store)) }
@@ -384,17 +386,25 @@ final class ChatModel {
     }
 
     /// 引き継ぎで外部の claude を止められた。同じ会話を `--resume` で起動し、外部ルームの書きかけと添付を引き取る。
-    private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
+    /// `onlyIfSelected` なら元のルームを選んでいた時だけ選択を新しいルームへ付け替える（中央の表示は変えない）。
+    private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID, onlyIfSelected: Bool) {
         if let running = runningHosted(sessionId: sessionId) {
-            select(.hosted(running.id))
+            moveSelection(to: .hosted(running.id), from: roomId, onlyIfSelected: onlyIfSelected)
             return
         }
         let session = host(project, resuming: sessionId)
         outbox.move(from: roomId, to: .hosted(session.id))
         shells.move(from: roomId, to: .hosted(session.id))
         if let duplicate = detached.retarget(from: roomId, to: .hosted(session.id)) { dismissRoomWindow(duplicate) }
-        select(.hosted(session.id))
+        moveSelection(to: .hosted(session.id), from: roomId, onlyIfSelected: onlyIfSelected)
         restorer.saveNow()
+    }
+
+    private func moveSelection(to id: RoomID, from roomId: RoomID, onlyIfSelected: Bool) {
+        guard onlyIfSelected else { return select(id) }
+        guard selection == roomId else { return }
+        selection = id
+        if center == .room { markShownSeen() }
     }
 
     /// 前回アプリが止まった時に動いていたセッションを同じ cwd で `--resume` する。書きかけも戻す。選択は未選択の時だけ移す。

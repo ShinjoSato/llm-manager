@@ -23,11 +23,14 @@ final class ChatHandover {
     }
 
     /// 終了を確認できた後の再開（HostedSession の起動と一覧への追加は ChatModel が持つ）。
-    @ObservationIgnored var onResume: (_ project: ManagedProject, _ sessionId: String, _ from: RoomID) -> Void = { _, _, _ in assertionFailure("onResume 未設定") }
+    /// `onlyIfSelected` なら元のルームを選んでいる時だけ選択を移す（待ちからの自動の再開で利用者の選択を奪わないため）。
+    @ObservationIgnored var onResume: (_ project: ManagedProject, _ sessionId: String, _ from: RoomID, _ onlyIfSelected: Bool) -> Void = { _, _, _, _ in assertionFailure("onResume 未設定") }
     /// ホスト中のセッションと今の sessionId（待ちの間にホストし始めたかと、外での二重起動の見張りに使う）。
     @ObservationIgnored var hostedSessions: () -> [(session: HostedSession, sessionId: String?)] = { assertionFailure("hostedSessions 未設定"); return [] }
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var ticks = 0
+    /// `~/.claude/sessions` の読み取り中（重ねて読まない）。
+    @ObservationIgnored private var scanning = false
 
     /// 見張りの間隔。二重起動の見張りはこの何回かに 1 回。
     private static let tickInterval: TimeInterval = 0.5
@@ -55,10 +58,8 @@ final class ChatHandover {
         guard let snapshot = room.snapshot else { return .unsupported("このルームは引き継げません") }
         let record = ClaudeSessionRegistry().record(forPid: snapshot.pid).flatMap { $0.sessionId == snapshot.sessionId ? $0 : nil }
         let entrypoint = record?.entrypoint ?? snapshot.entrypoint
-        guard let facts = ProcessFacts.inspect(pid: snapshot.pid) else {
-            // 終わったセッションは実行ファイルを読めないので、ボタンを消さず「終了しています」で断る。
-            return entrypoint == "claude-vscode" ? .supported(.editorExtension)
-                : SessionHandover.checkSource(entrypoint: entrypoint, kind: record?.kind, executablePath: nil)
+        guard let facts = ProcessFacts.inspect(pid: snapshot.pid), !facts.isZombie else {
+            return .unsupported("このセッションは終了しています")
         }
         return SessionHandover.checkSource(entrypoint: entrypoint, kind: record?.kind, executablePath: facts.executablePath)
     }
@@ -140,7 +141,12 @@ final class ChatHandover {
                     alerts.message = "\(label)は終了しましたが、Max 枠の上限に達しているため再開しませんでした。"
                     return
                 }
-                onResume(project, sessionId, roomId)
+                // 終わるつもりの時に新しく起動しない。
+                if QuitCoordinator.shared.isHolding {
+                    alerts.message = "\(label)は終了しましたが、アプリの終了の確認中のため再開しませんでした。"
+                    return
+                }
+                onResume(project, sessionId, roomId, false)
             case .refused(let reason):
                 alerts.message = "引き継ぎを中止しました（何も終了していません）: \(reason)"
             case .runningElsewhere(let other):
@@ -195,24 +201,50 @@ final class ChatHandover {
         self.timer = timer
     }
 
+    /// 読み取りはメインの外で行い、結果だけをメインで反映する。
     private func tick() {
         ticks += 1
-        advanceCloseWaits()
-        if ticks % Self.duplicateCheckEveryTicks == 0 { checkDuplicates() }
+        guard !scanning else { return }
+        let waits = closeWaits.mapValues(\.target)
+        let checksDuplicates = ticks % Self.duplicateCheckEveryTicks == 0
+        let hosted = hostedSessions()
+        let hostedPids = Set(hosted.compactMap { $0.session.pid })
+        let duplicateTargets: [UUID: String] = checksDuplicates
+            ? Dictionary(hosted.compactMap { entry in
+                entry.session.isRunning ? entry.sessionId.map { (entry.session.id, $0) } : nil
+            }, uniquingKeysWith: { a, _ in a })
+            : [:]
+        if checksDuplicates { clearDuplicates(keeping: Set(duplicateTargets.keys)) }
+        guard !waits.isEmpty || !duplicateTargets.isEmpty else { return }
+        scanning = true
+        Task.detached(priority: .utility) { [weak self] in
+            let records = ClaudeSessionRegistry().allRecords()
+            let observations = waits.mapValues { HandoverCloseWait.observe($0, records: records, inspect: ProcessFacts.inspect) }
+            let duplicates = duplicateTargets.mapValues {
+                ExternalDuplicate.find(sessionId: $0, hostedPids: hostedPids, records: records, inspect: ProcessFacts.inspect)
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                scanning = false
+                advanceCloseWaits(observations, targets: waits)
+                if checksDuplicates { applyDuplicates(duplicates, targets: duplicateTargets) }
+            }
+        }
     }
 
-    private func advanceCloseWaits() {
+    private func advanceCloseWaits(_ observations: [String: HandoverCloseWait.Observation], targets: [String: HandoverTarget]) {
         guard !closeWaits.isEmpty else { return }
-        let records = ClaudeSessionRegistry().allRecords()
         let hostedIds = Set(hostedSessions().filter { $0.session.end == nil }.compactMap(\.sessionId))
         let limitReached = LimitWatch.shared.isLimitReached
         let holding = QuitCoordinator.shared.isHolding
         let now = Date()
         for (sessionId, entry) in closeWaits {
+            // 読んでいる間に始め直した待ちには、前の相手の観測を使わない。
+            guard var observation = observations[sessionId], targets[sessionId] == entry.target else { continue }
+            observation.limitReached = limitReached
+            observation.holding = holding
+            observation.alreadyHosted = hostedIds.contains(sessionId)
             var next = entry
-            let observation = HandoverCloseWait.observe(entry.target, records: records, inspect: ProcessFacts.inspect,
-                                                        limitReached: limitReached, holding: holding,
-                                                        alreadyHosted: hostedIds.contains(sessionId))
             switch next.wait.step(observation, now: now) {
             case .wait:
                 if next != entry { closeWaits[sessionId] = next }
@@ -223,24 +255,25 @@ final class ChatHandover {
                 alerts.message = "Max 枠の上限に達したため、「\(entry.name)」の引き継ぎの待ちをやめました（VS Code の claude はそのままです）。"
             case .resume:
                 closeWaits[sessionId] = nil
-                onResume(SettingsStore.shared.project(atPath: entry.cwd, orNamed: entry.name), sessionId, entry.roomId)
+                onResume(SettingsStore.shared.project(atPath: entry.cwd, orNamed: entry.name), sessionId, entry.roomId, true)
             }
         }
     }
 
     /// ホスト中の会話と同じ会話がアプリの外で動いていれば、そのルームに印を付ける（送信を止めて警告を出す）。
-    private func checkDuplicates() {
-        let hosted = hostedSessions()
-        let running = hosted.filter { $0.session.isRunning && $0.sessionId != nil }
-        let records = running.isEmpty ? [] : ClaudeSessionRegistry().allRecords()
-        let hostedPids = Set(hosted.compactMap { $0.session.pid })
-        for (session, sessionId) in hosted {
-            var duplicate: ExternalDuplicate?
-            if session.isRunning, let sessionId {
-                duplicate = ExternalDuplicate.find(sessionId: sessionId, hostedPids: hostedPids, records: records,
-                                                   inspect: ProcessFacts.inspect)
-            }
+    private func applyDuplicates(_ duplicates: [UUID: ExternalDuplicate?], targets: [UUID: String]) {
+        for (session, sessionId) in hostedSessions() {
+            // 読んでいる間に終わった・会話が替わったルームには付けない。
+            guard session.isRunning, let sessionId, targets[session.id] == sessionId,
+                  let duplicate = duplicates[session.id] else { continue }
             if session.externalDuplicate != duplicate { session.externalDuplicate = duplicate }
+        }
+    }
+
+    /// 動いていない・見張りの対象から外れたルームの印を外す。
+    private func clearDuplicates(keeping ids: Set<UUID>) {
+        for (session, _) in hostedSessions() where !ids.contains(session.id) && session.externalDuplicate != nil {
+            session.externalDuplicate = nil
         }
     }
 }

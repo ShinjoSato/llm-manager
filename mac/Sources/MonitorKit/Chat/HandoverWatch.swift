@@ -49,11 +49,11 @@ extension SessionHandover {
 
 /// VS Code のタブが閉じられて claude が終わるのを待ち、同じ会話の claude が他に無くなったら再開する。
 public struct HandoverCloseWait: Sendable, Equatable {
-    /// 終わった直後に拡張が同じ会話を起動し直しても二重に動かさないよう、終わった状態が続くのを少し待つ。
-    public static let settle: TimeInterval = 1
+    /// 終わった直後に拡張が同じ会話を起動し直した時の記録が出るのを待ってから再開する（二重に動かさないため）。
+    public static let settle: TimeInterval = 2.5
 
     public enum Phase: Sendable, Equatable {
-        /// 元の claude が動いている（タブが閉じられるのを待っている）。
+        /// 元の claude がこの会話を動かしている（タブが閉じられるのを待っている）。
         case waitingForClose
         /// 元の claude は終わったが、同じ会話を別の claude が動かしている。
         case waitingForOther(Int32)
@@ -120,11 +120,13 @@ public struct HandoverCloseWait: Sendable, Equatable {
 
     /// 今の様子を読む（上限・終了の確認中・ホスト中かは呼ぶ側が渡す）。
     public static func observe(_ target: HandoverTarget, records: [ClaudeSessionRecord], inspect: (Int32) -> ProcessFacts?,
-                               limitReached: Bool, holding: Bool, alreadyHosted: Bool) -> Observation {
+                               limitReached: Bool = false, holding: Bool = false, alreadyHosted: Bool = false) -> Observation {
         let alive = SessionHandover.isAlive(target, inspect: inspect)
+        // 同じプロセスが別の会話へ切り替わったら、この会話の claude としては終わったとみなす。
+        let switched = records.contains { $0.pid == target.pid && $0.sessionId != target.sessionId }
         let other = SessionHandover.liveRecords(sessionId: target.sessionId, records: records,
                                                 excluding: alive ? [target.pid] : [], inspect: inspect).first?.pid
-        return Observation(originalAlive: alive, otherPid: other, limitReached: limitReached, holding: holding,
+        return Observation(originalAlive: alive && !switched, otherPid: other, limitReached: limitReached, holding: holding,
                            alreadyHosted: alreadyHosted)
     }
 }
