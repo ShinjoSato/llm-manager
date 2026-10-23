@@ -22,7 +22,11 @@ struct ConversationView: View {
             }
             switch tab {
             case .claude:
-                if room.isExternal { ExternalBanner(model: model, room: room) }
+                if room.isExternal {
+                    ExternalBanner(model: model, room: room)
+                } else if let duplicate = room.hosted?.externalDuplicate {
+                    ExternalDuplicateBanner(duplicate: duplicate)
+                }
                 ChatPane(model: model, room: room)
             case .terminal:
                 ShellPane(model: model, room: room, window: window)

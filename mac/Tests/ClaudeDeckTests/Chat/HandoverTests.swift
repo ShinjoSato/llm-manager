@@ -29,14 +29,50 @@ final class SessionIdValidationTests: XCTestCase {
 }
 
 final class HandoverSourceTests: XCTestCase {
-    func testOnlyInteractiveTerminalSessionsCanBeHandedOver() {
-        XCTAssertNil(SessionHandover.unsupportedSourceReason(entrypoint: "cli", kind: "interactive"))
-        XCTAssertNil(SessionHandover.unsupportedSourceReason(entrypoint: "cli", kind: nil))
-        XCTAssertEqual(SessionHandover.unsupportedSourceReason(entrypoint: "claude-vscode", kind: "interactive"),
-                       "VS Code 等で動いているセッションは引き継げません")
-        XCTAssertNotNil(SessionHandover.unsupportedSourceReason(entrypoint: "sdk-cli", kind: nil))
-        XCTAssertNotNil(SessionHandover.unsupportedSourceReason(entrypoint: nil, kind: "interactive"))
-        XCTAssertNotNil(SessionHandover.unsupportedSourceReason(entrypoint: "cli", kind: "print"))
+    private let vscodeBinary = "/Users/u/.vscode/extensions/anthropic.claude-code-2.1.304-darwin-arm64/resources/native-binary/claude"
+
+    func testTerminalAndVSCodeSessionsCanBeHandedOver() {
+        XCTAssertEqual(SessionHandover.checkSource(entrypoint: "cli", kind: "interactive", executablePath: nil), .supported(.terminal))
+        XCTAssertEqual(SessionHandover.checkSource(entrypoint: "cli", kind: nil, executablePath: "/x/claude"), .supported(.terminal))
+        XCTAssertEqual(SessionHandover.checkSource(entrypoint: "claude-vscode", kind: "interactive", executablePath: vscodeBinary),
+                       .supported(.editorExtension))
+    }
+
+    func testRefusesOtherSources() {
+        XCTAssertEqual(SessionHandover.checkSource(entrypoint: "claude-desktop", kind: "interactive", executablePath: vscodeBinary),
+                       .unsupported("ターミナルと VS Code 以外で動いているセッションは引き継げません"))
+        XCTAssertNotEqual(SessionHandover.checkSource(entrypoint: "sdk-cli", kind: nil, executablePath: nil), .supported(.terminal))
+        XCTAssertNotEqual(SessionHandover.checkSource(entrypoint: nil, kind: "interactive", executablePath: nil), .supported(.terminal))
+        XCTAssertNotEqual(SessionHandover.checkSource(entrypoint: "cli", kind: "print", executablePath: nil), .supported(.terminal))
+        XCTAssertNotEqual(SessionHandover.checkSource(entrypoint: "claude-vscode", kind: "print", executablePath: vscodeBinary),
+                          .supported(.editorExtension))
+    }
+
+    func testVSCodeNeedsTheExtensionBinary() {
+        // entrypoint だけでは決めない（Claude Code の中から起動した claude にも同じ値が付きうる）。
+        for path in [nil, "/Users/u/.local/share/claude/versions/2.1.304", "/opt/homebrew/bin/claude"] {
+            XCTAssertEqual(SessionHandover.checkSource(entrypoint: "claude-vscode", kind: "interactive", executablePath: path),
+                           .unsupported("VS Code の拡張の claude だと確かめられないため引き継げません"), path ?? "nil")
+        }
+    }
+
+    func testRecognizesEditorExtensionBinaries() {
+        for path in [vscodeBinary,
+                     "/Users/u/.vscode-insiders/extensions/anthropic.claude-code-2.1.304-darwin-x64/resources/native-binary/claude",
+                     "/Users/u/.cursor/extensions/anthropic.claude-code-2.1.300/resources/native-binary/claude",
+                     "/Users/u/.windsurf/extensions/anthropic.claude-code-2.1.300-universal/claude",
+                     "/private/var/folders/x/T/h/.vscode/extensions/anthropic.claude-code-9.9.9-darwin-arm64/resources/native-binary/claude"] {
+            XCTAssertTrue(SessionHandover.isEditorExtensionBinary(path), path)
+        }
+        for path in ["/Users/u/.local/share/claude/versions/2.1.304",
+                     "/Users/u/.vscode/extensions/anthropic.claude-code-2.1.304/resources/native-binary/node",
+                     "/Users/u/.vscode/extensions/other.claude-code-2.1.304/claude",
+                     "/Users/u/vscode/extensions/anthropic.claude-code-2.1.304/claude",
+                     "/Users/u/.vscode/extensions/anthropic.claude-code-2.1.304/../../../../tmp/claude",
+                     "/Users/u/.vscode/extensions/claude",
+                     "claude"] {
+            XCTAssertFalse(SessionHandover.isEditorExtensionBinary(path), path)
+        }
     }
 
     func testDescribesWhereTheSessionRuns() {
@@ -110,15 +146,46 @@ final class HandoverVerifyTests: XCTestCase {
         XCTAssertNotEqual(SessionHandover.verify(pid: 100, sessionId: sid, record: late, facts: facts(), ownUid: uid), .ok)
     }
 
-    func testRefusesVSCodeSession() {
+    func testAcceptsVSCodeExtensionClaude() {
         var vscode = record()
         vscode.entrypoint = "claude-vscode"
-        vscode.kind = "interactive"
-        // 実体のパス末尾が claude でも、VS Code 拡張の claude は撃たない。
-        let facts = facts(path: "/Users/u/.vscode/extensions/anthropic.claude-code/resources/native-binary/claude", argv0: nil)
-        XCTAssertTrue(facts.looksLikeClaude)
-        XCTAssertEqual(SessionHandover.verify(pid: 100, sessionId: sid, record: vscode, facts: facts, ownUid: uid),
-                       .refused("VS Code 等で動いているセッションは引き継げません"))
+        let facts = facts(path: "/Users/u/.vscode/extensions/anthropic.claude-code-2.1.304-darwin-arm64/resources/native-binary/claude",
+                          argv0: nil)
+        XCTAssertEqual(SessionHandover.verify(pid: 100, sessionId: sid, record: vscode, facts: facts, ownUid: uid), .ok)
+        guard case .ok(let target) = SessionHandover.checkTarget(pid: 100, sessionId: sid, record: vscode, facts: facts, ownUid: uid) else {
+            return XCTFail("VS Code の拡張の claude を相手にできない")
+        }
+        XCTAssertEqual(target.source, .editorExtension)
+        XCTAssertEqual(target.original, facts)
+    }
+
+    func testRefusesVSCodeEntrypointOutsideTheExtension() {
+        var vscode = record()
+        vscode.entrypoint = "claude-vscode"
+        XCTAssertEqual(SessionHandover.verify(pid: 100, sessionId: sid, record: vscode, facts: facts(), ownUid: uid),
+                       .refused("VS Code の拡張の claude だと確かめられないため引き継げません"))
+    }
+
+    func testRefusesReusedPidForVSCode() {
+        var vscode = record()
+        vscode.entrypoint = "claude-vscode"
+        let reused = facts(start: start.addingTimeInterval(3600),
+                           path: "/Users/u/.vscode/extensions/anthropic.claude-code-2.1.304/resources/native-binary/claude")
+        guard case .refused = SessionHandover.checkTarget(pid: 100, sessionId: sid, record: vscode, facts: reused, ownUid: uid) else {
+            return XCTFail("起動時刻が合わない pid を相手にした")
+        }
+    }
+
+    func testTargetCheckPassesThroughRefusals() {
+        XCTAssertEqual(SessionHandover.checkTarget(pid: 100, sessionId: sid, record: nil, facts: nil, ownUid: uid), .notRunning)
+        guard case .refused = SessionHandover.checkTarget(pid: 100, sessionId: sid, record: record(sessionId: "other"), facts: facts(),
+                                                          ownUid: uid) else {
+            return XCTFail("別の会話を相手にした")
+        }
+        guard case .ok(let target) = SessionHandover.checkTarget(pid: 100, sessionId: sid, record: record(), facts: facts(), ownUid: uid) else {
+            return XCTFail("ターミナルの claude を相手にできない")
+        }
+        XCTAssertEqual(target.source, .terminal)
     }
 
     func testSameProcessIgnoresExecutablePath() {

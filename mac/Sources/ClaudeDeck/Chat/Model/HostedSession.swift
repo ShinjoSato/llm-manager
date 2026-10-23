@@ -51,6 +51,8 @@ final class HostedSession: Identifiable {
     var claudeVersion: String? { screen.claudeVersion }
     /// チャット欄からの送信の途中（画像の取り込み待ち〜Enter）。
     private(set) var isSending = false
+    /// 同じ会話をアプリの外の claude も動かしている（`ChatHandover` の見張りが付ける）。その間は送らない。
+    var externalDuplicate: ExternalDuplicate?
     private(set) var end: End?
     /// 最後に解決できた sessionId。終了して監視の対応表から消えた後も会話を出すために持ち続ける。
     @ObservationIgnored var lastSessionId: String?

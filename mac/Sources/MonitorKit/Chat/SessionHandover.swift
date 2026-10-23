@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-/// 外部（ターミナル等）で動いている claude をアプリに引き継ぐための判定と終了処理。
+/// 外部（ターミナル・VS Code の拡張）で動いている claude をアプリに引き継ぐための判定と終了処理。
 public enum SessionHandover {
     /// シェルのコマンド行に埋め込むので UUID の形だけを通す（`-p` 等のオプションに化けさせない）。
     public static func isResumableSessionId(_ id: String) -> Bool {
@@ -13,14 +13,52 @@ public enum SessionHandover {
         isResumableSessionId(id) ? "--resume=\(id)" : nil
     }
 
-    /// ターミナルで対話起動した claude 以外は止めると元の画面（VS Code 等）が壊れるので引き継がない。
-    public static func unsupportedSourceReason(entrypoint: String?, kind: String?) -> String? {
-        if let kind, kind != "interactive" { return "対話セッションではないため引き継げません" }
-        switch entrypoint {
-        case "cli": return nil
-        case nil: return "起動元が分からないため引き継げません"
-        default: return "VS Code 等で動いているセッションは引き継げません"
+    /// 引き継げる起動元。
+    public enum Source: Sendable, Equatable {
+        /// ターミナルで対話起動した claude。
+        case terminal
+        /// VS Code 系のエディタの Claude 拡張が起動した claude。
+        case editorExtension
+
+        /// 文言に使う呼び名。
+        public var label: String {
+            switch self {
+            case .terminal: return "ターミナル"
+            case .editorExtension: return "VS Code"
+            }
         }
+    }
+
+    public enum SourceCheck: Sendable, Equatable {
+        case supported(Source)
+        case unsupported(String)
+    }
+
+    /// 止めても元の画面が壊れない起動元か。VS Code の拡張は記録の entrypoint と実行ファイルの置き場所の両方で確かめる。
+    public static func checkSource(entrypoint: String?, kind: String?, executablePath: String?) -> SourceCheck {
+        if let kind, kind != "interactive" { return .unsupported("対話セッションではないため引き継げません") }
+        switch entrypoint {
+        case "cli": return .supported(.terminal)
+        case "claude-vscode":
+            guard let executablePath, isEditorExtensionBinary(executablePath) else {
+                return .unsupported("VS Code の拡張の claude だと確かめられないため引き継げません")
+            }
+            return .supported(.editorExtension)
+        case nil: return .unsupported("起動元が分からないため引き継げません")
+        default: return .unsupported("ターミナルと VS Code 以外で動いているセッションは引き継げません")
+        }
+    }
+
+    /// `~/.vscode/extensions/anthropic.claude-code-<版>/…/claude` のように、エディタの設定フォルダ（`.vscode`・`.cursor` 等）の下の拡張の claude か。
+    public static func isEditorExtensionBinary(_ path: String) -> Bool {
+        let parts = (path as NSString).standardizingPath.split(separator: "/").map(String.init)
+        guard parts.count >= 4, parts.last == "claude", !parts.contains(".."), !parts.contains(".") else { return false }
+        for index in 1..<(parts.count - 2) where parts[index] == "extensions" {
+            let editor = parts[index - 1]
+            let extensionDir = parts[index + 1]
+            if editor.hasPrefix("."), editor.count > 1, extensionDir.hasPrefix("anthropic.claude-code-") { return true }
+        }
+        return false
     }
 
     /// バナーに出す起動元の説明。
@@ -55,7 +93,10 @@ public enum SessionHandover {
         guard record.sessionId == sessionId else {
             return .refused("pid \(pid) は別のセッション（\(record.sessionId)）を動かしています")
         }
-        if let reason = unsupportedSourceReason(entrypoint: record.entrypoint, kind: record.kind) { return .refused(reason) }
+        if case .unsupported(let reason) = checkSource(entrypoint: record.entrypoint, kind: record.kind,
+                                                       executablePath: facts.executablePath) {
+            return .refused(reason)
+        }
         guard startMatches(record: record, facts: facts) else {
             return .refused("pid \(pid) は記録と起動時刻が合いません（pid が再利用された可能性）")
         }
@@ -99,11 +140,17 @@ public enum SessionHandover {
     /// 同じ sessionId を今も動かしている pid（記録と起動時刻が合うものだけ。残骸や再利用された pid は数えない）。
     public static func liveDuplicate(sessionId: String, records: [ClaudeSessionRecord], excluding: Int32? = nil,
                                      inspect: (Int32) -> ProcessFacts?) -> Int32? {
-        for record in records where record.sessionId == sessionId && record.pid > 1 && record.pid != excluding {
-            guard let facts = inspect(record.pid), !facts.isZombie, startMatches(record: record, facts: facts) else { continue }
-            return record.pid
+        liveRecords(sessionId: sessionId, records: records, excluding: excluding.map { [$0] } ?? [], inspect: inspect).first?.pid
+    }
+
+    /// 同じ sessionId を今も動かしている claude の記録（`excluding` の pid は除く）。
+    public static func liveRecords(sessionId: String, records: [ClaudeSessionRecord], excluding: Set<Int32>,
+                                   inspect: (Int32) -> ProcessFacts?) -> [ClaudeSessionRecord] {
+        records.filter { record in
+            guard record.sessionId == sessionId, record.pid > 1, !excluding.contains(record.pid),
+                  let facts = inspect(record.pid), !facts.isZombie else { return false }
+            return startMatches(record: record, facts: facts)
         }
-        return nil
     }
 }
 

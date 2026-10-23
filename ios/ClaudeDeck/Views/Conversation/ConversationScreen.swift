@@ -153,26 +153,30 @@ private struct MessageList: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        let (icon, text) = emptyMessage
+        let (icon, text, spins) = emptyMessage
         VStack(spacing: 8) {
-            Image(systemName: icon).font(.system(size: 22)).foregroundStyle(DeckTheme.tertiary)
+            Group {
+                if spins { SpinningSymbol(systemName: icon) } else { Image(systemName: icon) }
+            }
+            .font(.system(size: 22)).foregroundStyle(DeckTheme.tertiary)
             Text(text).font(DeckTheme.body).foregroundStyle(DeckTheme.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 70)
     }
 
-    private var emptyMessage: (String, String) {
+    /// アイコン・文言・アイコンを回すか（読み込み中だけ）。
+    private var emptyMessage: (String, String, Bool) {
         guard let sessionId = room.sessionId else {
             switch room.ended {
-            case "launchFailed": return ("exclamationmark.triangle", "claude を起動できませんでした。")
-            case .some: return ("stop.circle", "会話を取得する前に claude が終了しました。")
-            case nil: return ("hourglass", "セッションの開始を待っています…")
+            case "launchFailed": return ("exclamationmark.triangle", "claude を起動できませんでした。", false)
+            case .some: return ("stop.circle", "会話を取得する前に claude が終了しました。", false)
+            case nil: return ("hourglass", "セッションの開始を待っています…", false)
             }
         }
-        if model.loadingTranscripts.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…") }
-        if !model.connection.isConnected { return ("wifi.slash", "Mac につながると会話が出ます。") }
-        return ("bubble.left.and.bubble.right", room.kind == .hosted ? "下の入力欄から指示を送れます。" : "まだ会話がありません。下の入力欄から伝言を送れます。")
+        if model.loadingTranscripts.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…", true) }
+        if !model.connection.isConnected { return ("wifi.slash", "Mac につながると会話が出ます。", false) }
+        return ("bubble.left.and.bubble.right", room.kind == .hosted ? "下の入力欄から指示を送れます。" : "まだ会話がありません。下の入力欄から伝言を送れます。", false)
     }
 }
 
