@@ -51,10 +51,10 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | 同じ接続元から 5 分間に 10 回の失敗（認証・ペアリング） | 以降 5 分間、その接続元の接続は受け入れた時点で切る（正しいトークンでも。既に繋がっていた接続には 429） |
 | `Origin` ヘッダー付き（ブラウザ） | 403 |
 | POST の `content-type` が `application/json` でない | 415 |
-| 本文 256KB 超 / ヘッダー 64KB 超 | 413 / 431 |
+| 本文 256KB 超（画像付きのメッセージの口だけは画像の分を足した約 12MB 超）/ ヘッダー 64KB 超 | 413 / 431 |
 | `Transfer-Encoding: chunked` の本文 | 501 |
 | 同時接続 32 超・同じ接続元から 8 超 | 即切断 |
-| 送り切らない相手（TLS の握手を含む） | 5 秒で 408（か切断） |
+| 送り切らない相手（TLS の握手を含む） | 5 秒で 408（か切断）。256KB を超える画像付きのメッセージは、認証を通った時だけ 60 秒まで待つ |
 | ストリームが端末あたり 4 本を超える | 同じ端末の**最も古いストリームを閉じて**新しいものを受ける |
 | ストリームが全体 16 本を超える | 429 |
 
@@ -78,7 +78,7 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | POST | `/v1/rooms/{roomId}/menu` | `RemoteMenuAnswerRequest {menuId, choice?, cancel?, confirmExit?}` → `RemoteActionResult`（`choice` か `cancel: true` のどちらか一方） |
 | POST | `/v1/rooms/{roomId}/menu/tab` | `RemoteMenuTabRequest {menuId, direction: next\|previous}` → `RemoteActionResult` |
 | POST | `/v1/rooms/{roomId}/menu/dismiss` | `RemoteMenuDismissRequest {menuId, confirmExit?}` → `RemoteActionResult`（中身を読めないメニューを Esc で閉じる） |
-| POST | `/v1/rooms/{roomId}/messages` | `RemoteMessageRequest {text}` → `RemoteActionResult`（添付は受けない。本文 32KB まで） |
+| POST | `/v1/rooms/{roomId}/messages` | `RemoteMessageRequest {text, images?}` → `RemoteActionResult`（本文 32KB まで。画像は下の「画像付きのメッセージ」。画像があれば本文は空でよい） |
 
 `roomId` は `h:<UUID>`（mac がホスト中のセッション）か `e:<sessionId>`（外部セッション）。
 
@@ -101,7 +101,7 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
                 "cursor": 0, "footer": "…", "tabs": null, "isMultiSelect": false, "isReview": false, "cancelExits": false },
       "unreadableMenu": { "menuId": "…", "lines": ["…"], "cancelExits": false },
       "busy": false,                  // mac か iPhone から操作を送っている最中（終わるまで押させない）
-      "send": { "mode": "input|relay", "disabledReason": "…|null" }
+      "send": { "mode": "input|relay", "disabledReason": "…|null", "acceptsImages": true }  // acceptsImages: 画像を付けられるか（ホスト中だけ true。古い mac は載せない）
     }
   ]
 }
@@ -124,10 +124,41 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 - 端末を取り消す・口を閉じると切れる。同じ端末が 5 本目を張ると最も古い 1 本が切れる。
   iPhone は間を空けて張り直す（張り直したら `state` が届き、会話は全件を取り直す）。
 
+### 画像付きのメッセージ
+
+`images` は `[{"mediaType": "image/png|image/jpeg", "data": "<base64>"}]`。無い（`null`・省略）要求は前と同じ形で、前と同じに扱う。
+
+| 上限・条件 | 値 | 超えた・満たさない時 |
+|---|---|---|
+| 枚数 | 1 通 4 枚 | `too_many_images`（413） |
+| 1 枚の大きさ（base64 にする前） | 3MB | `image_too_large`（413） |
+| 1 通の合計（同上） | 8MB | `image_too_large`（413） |
+| 寸法 | 縦横それぞれ 8000 ピクセル・合計 1600 万画素（検証で展開する時のメモリを抑えるため。iPhone は長辺 2048 に縮めて送る） | `image_too_large`（413） |
+| 形式 | PNG / JPEG のみ（HEIC は iPhone で JPEG にしてから送る） | `unsupported_image`（415） |
+| 中身 | 宣言した型と先頭の印が一致・終わりの印（PNG の IEND・JPEG の EOI）がある・ImageIO で読める | `unsupported_image`（415） |
+| 送り先 | ホスト中のセッションだけ。外部セッションへの伝言は文字だけ | `images_not_accepted`（409）。ルームが無ければ `not_found`（404） |
+| 同時に取り込む数 | 2 本（本文の読み込み・検証・書き込み） | `images_busy`（503）。待たせずに断るので、少し置いて送り直す |
+| 一時保存 | 書けること | `image_store_failed`（500） |
+
+- 型と上限は DeckCore の `RemoteImageLimits`（iPhone は送る前にこれに収める）、mac の検証は `RemoteImageIntake`（ImageIO）。
+  本文の 32KB は文字の分だけに掛ける。要求全体の上限は、この口だけ画像の分を足して広げる（他の口は 256KB のまま）。
+  足す分は base64（合計 8MB → 約 10.7MB）に 1/8 の余白と区切りの分。余白は base64 の `/`（中身が偏らなければ 64 文字に 1 つ）を `\/` と書く
+  クライアントの分で、DeckCore のクライアントは `/` をエスケープしない。全部の `/` が `\/` になるような偏った中身は 413 になりうる。
+- 順序: 送り先（ルームがあるか・ホスト中か）を、画像を検証・書き込みする前に確かめる。256KB を超える本文は画像付きなので、
+  JSON を読む前に確かめる。読み込み・ImageIO の検証・書き込みは Swift 並行処理の共有スレッドの外（専用のキュー）で同時に 2 本まで回す（`RemoteImageIntakeQueue`）。
+  読み終えた本文（`HTTPRequest.releaseBody`）と画像のバイト列は、mac の操作を待つ前に手放す。
+- mac は受けたバイト列を**そのまま**書いて端末に渡す（再エンコードもメタデータの除去もしない）。位置情報などのメタデータを落とすのは iPhone 側の役目
+  （iPhone アプリは送る前に書き直す。`ios/README.md`「画像を送る」）。
+- mac は検証を通った画像を、入力欄の添付と同じ一時保存先 `~/Library/Caches/claude-deck/attachments/`（ディレクトリ 0700・ファイル 0600・名前は UUID）に書き、
+  入力欄の添付と同じ経路（画像のパスだけを先に貼り、`[Image #N]` が増えたのを画面で確かめてから本文を貼って Enter）で送る。
+  消すのは、送り始められなかった時（断った・ルームが無い・選択待ち等で始めなかった）・claude が終了した時・ルームが無くなった時だけ（`RemoteImageCleanup`）。
+  送り始めた後は画像のパスが端末に書かれている（貼り付けモードの端末では先に貼ったパス、そうでない端末では本文末尾の「添付:」の一覧）ので、
+  入らなかったように見えても遅れて入って読まれうる（`.notPasted` を含む）。入力欄の添付と同じく残して起動時の掃除（7 日より古いもの）に任せる。
+
 ## 操作の結果（`RemoteActionResult`）
 
 `{"ok": true|false, "code": "<code>", "message": "<日本語|null>"}`。HTTP の状態は `ok` なら 200、
-`not_found` 404・`invalid` 400・`app_unavailable` 503・`failed` 502・それ以外の失敗は 409。
+`not_found` 404・`invalid` 400・`too_many_images` / `image_too_large` 413・`unsupported_image` 415・`app_unavailable` / `images_busy` 503・`image_store_failed` 500・`failed` 502・それ以外の失敗は 409。
 
 | 操作 | 成功の code | 主な失敗の code |
 |---|---|---|
@@ -136,8 +167,8 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | 選択肢 | `confirmed` / `toggled`（複数選択のチェック切り替え）/ `cancelled` / `answered` | `gone`・`changed`（`menuId` 違い・途中で替わった・Channels で答える）・`unavailable`（文字入力の選択肢）・`confirm_required`（`cancelExits` の取り消し、または終了になる選択肢（trust 確認の「No, exit」）なのに `confirmExit` が無い）・`stuck`・`vanished`・`settling`・`navigating`（前の操作で選択肢を動かしている最中）・`unconfirmed`（mac で 12 秒以内に端末の結果を確かめられなかった）・`ended`・`busy`・`timeout` |
 | タブ | `moved` / `answered` | 同上 |
 | 読めない選択肢を閉じる | `cancelled` / `answered` | `gone`・`changed`・`confirm_required`・`busy` |
-| 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`・`aborted`・`busy`・`ended`・`unavailable`・`timeout` |
-| 送信（外部） | `relayed` | `failed`（受信箱に届かない）・`unavailable` |
+| 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`・`aborted`・`busy`・`ended`・`unavailable`・`timeout`・`too_many_images`・`image_too_large`・`unsupported_image`・`images_busy`・`image_store_failed` |
+| 送信（外部） | `relayed` | `failed`（受信箱に届かない）・`unavailable`・`images_not_accepted`（画像を付けた） |
 | 共通 | | `not_found`（ルームが無い）・`invalid`（本文の形・空・長すぎ）・`app_unavailable`（mac の画面の準備ができていない） |
 
 結果コードの意味:
@@ -153,6 +184,12 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | `failed` | false | 届けられなかった（伝言の受信箱・Channels への答え） |
 | `timeout` | false | mac での操作が 30 秒で戻らなかった。**操作は続いていて、後から反映されることがある**ので、再送の前に `state` で端末の様子を確かめる |
 | `busy` | false | 直前の操作を送っている最中（終わってから） |
+| `too_many_images` | false | 画像の枚数が上限（4 枚）を超えた |
+| `image_too_large` | false | 画像の大きさ（1 枚 3MB・合計 8MB）か寸法（一辺 8000 ピクセル・1600 万画素）が上限を超えた |
+| `unsupported_image` | false | PNG / JPEG でない・宣言した型と中身が違う・壊れている（途中で切れている） |
+| `images_not_accepted` | false | 画像を付けられないルーム（外部セッションへの伝言） |
+| `images_busy` | false | mac が他の画像を取り込んでいる最中（同時 2 本まで）。少し置いて送り直す |
+| `image_store_failed` | false | mac で画像を一時保存できなかった |
 
 ## mac 側の安全策（iPhone からの操作も同じ経路）
 
@@ -162,6 +199,7 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
   - 選択肢: `menuId`（❯ の位置以外の中身と表示の世代から作る）が一致した時だけ、画面と同じ `answerMenu`（`MenuNavigator` で 1 行ずつ動かし、
     着いたのを確かめてから Enter）。押し間違いを避けるため、iPhone の画面も古い `menuId` のまま押させないこと。
   - 送信: 画面と同じ `HostedSession.send`（貼り付け前と Enter 直前に選択待ちを判定して止める・取りやめた本文の残りを確かめる）。
-    mac の入力欄の書きかけ・添付には触れない。外部セッションは画面と同じ伝言（mac にも点線の吹き出しで出る）。
+    画像は入力欄の添付と同じ `Attachment` にして同じ `send(_:attachments:)` に渡す（`ChatOutbox.sendFromRemote`。送った画像は mac の会話にも仮の吹き出しで出る）。
+    mac の入力欄の書きかけ・添付には触れない。外部セッションは画面と同じ伝言（mac にも点線の吹き出しで出る。画像は付けられない）。
 - iPhone からの失敗は mac に警告を出さず、結果だけを返す。
 - 料金事故ゼロの方針は変わらない（新しい claude の起動口・headless の口は無い。API キーも使わない）。
