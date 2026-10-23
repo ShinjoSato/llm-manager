@@ -154,7 +154,7 @@ mac/
       LoopbackGuard.swift         Host / Origin / 接続元アドレスの判定
     Remote/                     iPhone 向けの口（同じ Wi-Fi・TLS・端末トークン）。仕様は docs/remote-api.md
       Server/                     SelfSignedCertificate（DER で X.509 を組む・鍵と証明書のファイル）・RemotePairingStore・
-                                  RemoteAuthThrottle・RemoteRoutes（/v1 の振り分け）・RemoteEventHub（SSE）・RemoteControl（アプリへ頼む操作と照合）・
+                                  RemoteAuthThrottle・RemoteRoutes（/v1 の振り分け）・RemoteEventHub（SSE）・RemoteControl（アプリへ頼む操作と照合）・RemoteProjectsBuilder（`/v1/projects` の中身。パスは送らない）・
                                   RemoteAccessService（口の開け閉め・QR の中身・端末一覧）・LANInterfaces・RemoteImageIntake（iPhone から届いた画像の検証と一時保存）
     Channel/                    チャネル（claude-deck-channel）の中身。実行ファイルからはこれを呼ぶだけ
       ChannelProtocol.swift       stdio の MCP（改行区切りの JSON-RPC 2.0）の読み解きと応答（initialize / ping / 未対応メソッド / 権限確認の通知）
@@ -362,6 +362,12 @@ iPhone アプリは `ios/`（`ios/README.md`）、型とクライアントは共
   操作の待ちは 30 秒で `timeout` を返す（操作自体は続きうる）。カードの組み立てと照合の純粋な部分は MonitorKit（`RemoteTerminalCard`・`RemoteRoomCards`・`RemoteChecks`）。
   選択待ちの間は送信しない。iPhone からの失敗は mac に警告を出さず結果で返す。mac の入力欄の書きかけ・添付には触れない。
   「端末の画面」は mac のシートと同じ行（`HostedSession.remoteScreen`）を返し（**会話の記録に無いもの（差分パネル・打ちかけの入力・ダイアログ等、端末に見えているもの全部）も TLS で iPhone に渡す**）、キーは表に無い値を口で断ってから mac のシートと同じ `sendTerminalKey` に渡す（文字の自由入力は無い）。
+- **ディレクトリとリンク**: `GET /v1/projects` は読むだけ（`ChatModel.remoteProjects` が「ディレクトリ」と同じ振り分けの `directories` から作る）。
+  id・名前・状態・GitHub の要約・開けるリンク（`ProjectLinks.openable`。名前・URL・種類・ピン・リンクのメモ）・そのプロジェクトのルームの id だけで、
+  フォルダのパス・プロジェクトのメモ（`note`）・コマンド等は送らない（リンクのメモは送る）。URL の判定は iPhone と共有の `WebLink.openableURL`（DeckCore）の 1 か所。
+  ストリームでは流さず、iPhone が開いた時・ルームの顔ぶれが変わった時・引っ張った時に取り直す。
+- **口ごとに送る手元の情報**: `/v1/projects` はフォルダのパスを送らない。既存の `/v1/rooms` と `/v1/events` の `state`（`RemoteRoom.cwd`・`session` の `cwd`）は
+  ルームの作業フォルダの絶対パスを送る（iPhone の会話の見出しにブランチが無い時に出すため。既存の仕様のまま）。
 - **iPhone からの画像**: PNG / JPEG を 1 通 4 枚・1 枚 3MB・合計 8MB・一辺 8000 ピクセル（1600 万画素）まで（`RemoteImageLimits`）。
   送り先（ルームがある・ホスト中）を先に確かめてから、宣言した型と中身の一致・終わりの印・ImageIO で読めるかを確かめ（`RemoteImageIntake`。
   共有スレッドの外の専用キューで同時 2 本まで・溢れたら `images_busy`）、入力欄の添付と同じ一時保存先（`ChatOutbox.attachmentStore` と同じもの・0700 / 0600）に

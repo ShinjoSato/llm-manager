@@ -6,6 +6,8 @@ import Foundation
 public protocol RemoteControl: AnyObject {
     /// ルーム一覧と各ルームのカード。
     func remoteState() -> RemoteState
+    /// 登録したプロジェクトとリンク（読むだけ。パスは載せない）。
+    func remoteProjects() -> RemoteProjectList
     /// Channels の権限確認に答える（画面の権限カードと同じ `MonitorStore.decide`）。
     func remoteDecide(key: String, decision: PermissionDecision) async -> RemoteActionResult
     /// 端末画面の権限プロンプトに答える（`promptId` が今のプロンプトと一致する時だけ）。

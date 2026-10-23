@@ -105,6 +105,9 @@ public struct RemoteRoutes: Sendable {
         case ("GET", ["rooms"]):
             guard let state = await controlRef.state() else { return Self.error(503, "unavailable", "mac アプリの準備ができていません") }
             return Self.encoded(200, state)
+        case ("GET", ["projects"]):
+            guard let projects = await controlRef.projects() else { return Self.error(503, "unavailable", "mac アプリの準備ができていません") }
+            return Self.encoded(200, projects)
         case ("GET", ["events"]):
             return await openEvents(request, device: device)
         case ("GET", let path) where path.count == 3 && path[0] == "sessions" && path[2] == "transcript":
@@ -130,7 +133,7 @@ public struct RemoteRoutes: Sendable {
         }
     }
 
-    static let knownPaths: Set<String> = ["info", "unpair", "rooms", "events", "sessions", "permissions"]
+    static let knownPaths: Set<String> = ["info", "unpair", "rooms", "projects", "events", "sessions", "permissions"]
 
     private func roomAction(_ request: HTTPRequest, roomId: String, rest: [String]) async -> HTTPResponse {
         guard RemoteRoomID(roomId) != nil else { return Self.error(404, "not_found", "ルームが見つかりません") }

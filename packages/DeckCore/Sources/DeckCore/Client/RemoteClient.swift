@@ -10,6 +10,12 @@ public enum RemoteClientError: Error, Equatable, Sendable {
     case transport(URLError.Code)
     case decoding
     case streamOverflow
+
+    /// mac にその口が無い（古い mac は知らないパスに 404 を返す）。
+    public var isMissingEndpoint: Bool {
+        if case .http(404, _, _) = self { return true }
+        return false
+    }
 }
 
 /// mac アプリの LAN の口を叩く。ピン留めは `RemotePinnedSessionDelegate`。
@@ -49,6 +55,9 @@ public final class RemoteClient: Sendable {
     public func info() async throws -> RemoteInfo { try await json(builder.info()) }
 
     public func rooms() async throws -> RemoteState { try await json(builder.rooms()) }
+
+    /// 登録したプロジェクトとリンク。口の無い古い mac では 404（`RemoteClientError.isMissingEndpoint`）。
+    public func projects() async throws -> RemoteProjectList { try await json(builder.projects()) }
 
     public func unpair() async throws -> RemoteActionResult { try await action(builder.unpair()) }
 

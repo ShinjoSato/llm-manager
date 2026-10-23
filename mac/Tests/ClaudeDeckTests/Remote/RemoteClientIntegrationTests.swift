@@ -192,6 +192,25 @@ final class RemoteClientIntegrationTests: XCTestCase {
         }
     }
 
+    // MARK: - プロジェクトとリンク
+
+    /// iPhone と同じクライアントでディレクトリとリンクの一覧を読む（読むだけで、mac の操作には何も届かない）。
+    func testProjectsReachTheClient() async throws {
+        control.state = FakeRemoteControl.sampleState()
+        control.projects = FakeRemoteControl.sampleProjects()
+        control.projects.projects[0].roomIds = control.state.rooms.map(\.id)
+        let client = RemoteClient(pairing: try await pairFromQR())
+        defer { client.invalidate() }
+        let projects = try await client.projects()
+        XCTAssertEqual(projects, control.projects)
+        let rooms = try await client.rooms()
+        XCTAssertEqual(RemoteProjectList.rooms(of: projects.projects[0], in: rooms.rooms).map(\.name), ["mirio"],
+                       "スレッドは一覧のルームと同じ id で引ける")
+        XCTAssertEqual(projects.linkSections.map(\.name), ["mirio"])
+        XCTAssertEqual(projects.projects[0].links.first?.openableURL?.absoluteString, "https://mirio.example/")
+        XCTAssertEqual(control.calls, [])
+    }
+
     // MARK: - 画像付きの送信
 
     private func storedImageFiles() -> [String] {

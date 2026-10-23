@@ -66,8 +66,25 @@ final class AppModel {
     private var openViewer: UUID?
     /// 端末全体の経路が Wi-Fi（有線）か。最初の判定が届くまでは nil。
     private(set) var onWiFi: Bool?
-    /// 起動直後に開くルーム（画面確認用）。
-    var launchRoomId: String?
+    /// 起動直後に開く画面（画面確認用）。
+    var launchRoute: [DeckRoute]?
+    /// 起動直後の左の一覧の見方（画面確認用。無ければ前回の見方）。
+    var launchMode: SidebarMode?
+    /// 左の一覧の見方。ディレクトリ・リンクに切り替えたらプロジェクトの一覧を取り直す。
+    var sidebarMode: SidebarMode = .rooms {
+        didSet { startWatchingProjects(wasWatching: oldValue.usesProjects || showsProjectDetail) }
+    }
+    /// プロジェクトの詳細を開いている（2 列で左を「ルーム」に戻しても右に出ている間は、スレッドを新しく保つ）。
+    var showsProjectDetail = false {
+        didSet { startWatchingProjects(wasWatching: sidebarMode.usesProjects || oldValue) }
+    }
+    /// プロジェクトの一覧を使う画面が出ているか（ルームの顔ぶれが変わったら取り直す）。
+    var watchesProjects: Bool { sidebarMode.usesProjects || showsProjectDetail }
+    /// 登録したプロジェクトとリンク（`GET /v1/projects`）。読めるまでは nil。
+    private(set) var projects: RemoteProjectList?
+    private(set) var projectsStatus: ProjectsStatus = .idle
+    /// プロジェクトの詳細で最後に開いたタブ（プロジェクトごと）。
+    var projectTabs: [String: ProjectDetailTab] = [:]
     /// 通知から開くルーム（一覧の画面が受け取って会話へ進む）。
     var requestedRoomId: String?
     /// 開いた通知のうち、まだルームが見つかっていないもの（つながって一覧が届いたら開く）。
@@ -125,6 +142,17 @@ final class AppModel {
         var sending = false
     }
 
+    enum ProjectsStatus: Equatable {
+        case idle
+        case loading
+        case loaded
+        /// mac に `/v1/projects` が無い（古い claude-deck）。
+        case outdatedMac
+        case failed(String)
+    }
+
+    static let outdatedMacText = "この Mac の claude-deck は古いため表示できません。Mac の claude-deck を更新してください。"
+
     private let keychain: PairingKeychain
     private var client: RemoteClient?
     private var streamTask: Task<Void, Never>?
@@ -138,6 +166,11 @@ final class AppModel {
     private let pathMonitor = NWPathMonitor()
     /// 画面確認用のデータで動いている（通信しない）。
     private var isDemo = false
+    private var projectsTask: Task<Void, Never>?
+    /// 取っている間に取り直しを頼まれた（終わったらもう一度取る）。
+    private var projectsDirty = false
+    /// ペアリングが替わったら、前の Mac への取得の結果を捨てる。
+    private var projectsGeneration = 0
 
     init(keychain: PairingKeychain = PairingKeychain(), startMonitoring: Bool = true,
          notifications: AttentionNotifications? = nil) {
@@ -151,11 +184,13 @@ final class AppModel {
     #if DEBUG
     /// 画面の確認用（通信しない）。
     init(demo state: RemoteState, pairing: RemotePairing, transcripts: [String: [TranscriptItem]], open: String?,
-         notifications: AttentionNotifications? = nil) {
+         projects: RemoteProjectList? = nil, notifications: AttentionNotifications? = nil) {
         keychain = PairingKeychain(service: "demo")
         self.notifications = notifications ?? .live()
         self.pairing = pairing
         self.state = state
+        self.projects = projects
+        projectsStatus = projects == nil ? .idle : .loaded
         stateUpdatedAt = Date()
         connection = .connected
         for (sid, items) in transcripts {
@@ -176,6 +211,8 @@ final class AppModel {
     private(set) var transcriptFetchCount = 0
     /// 試験用: 端末の表示を取りに行った回数（接続していなくても数える）。
     private(set) var terminalFetchCount = 0
+    /// 試験用: プロジェクトの一覧の取り方（つながっている時だけ使う）。
+    var projectsLoader: (@Sendable () async throws -> RemoteProjectList)?
     #endif
 
     var serverName: String { pairing?.serverName ?? "Mac" }
@@ -255,6 +292,7 @@ final class AppModel {
         switch event {
         case .state(let newState):
             let firstAfterConnect = connection != .connected
+            let roomsChanged = Set(newState.rooms.map(\.id)) != Set(rooms.map(\.id))
             state = newState
             stateUpdatedAt = Date()
             dropImagesOfVanishedRooms()
@@ -265,6 +303,8 @@ final class AppModel {
                 // 張り直した後は取りこぼしがあり得るので、持っている会話は全件を取り直す。
                 for sid in recentSessions { fetchTranscript(sid) }
             }
+            // プロジェクトのルームの振り分けは mac が決めるので、顔ぶれが変わったら取り直す。
+            if watchesProjects, firstAfterConnect || roomsChanged { refreshProjects() }
             resolvePendingNotice()
         case .transcript(let event):
             if transcripts[event.sessionId] != nil {
@@ -429,6 +469,13 @@ final class AppModel {
         composerImages = [:]
         preparingBatches = [:]
         exitConfirmations = [:]
+        projectsTask?.cancel()
+        projectsTask = nil
+        projectsDirty = false
+        projectsGeneration += 1
+        projects = nil
+        projectsStatus = .idle
+        projectTabs = [:]
     }
 
     /// 一覧から消えたルームの送る前の画像を捨てる（整えている途中の分は終わった時に足さない）。
@@ -444,6 +491,93 @@ final class AppModel {
         let now = clock()
         exitConfirmations = exitConfirmations.filter {
             menus[$0.key] == $0.value.confirmation.menuId && now.timeIntervalSince($0.value.askedAt) <= Self.exitConfirmationLifetime
+        }
+    }
+
+    // MARK: - プロジェクトとリンク
+
+    func project(_ id: String) -> RemoteProject? { projects?.project(id) }
+
+    /// プロジェクトのルームのうち、今の一覧にあるもの（状態は一覧の最新）。
+    func rooms(of project: RemoteProject) -> [RemoteRoom] {
+        RemoteProjectList.rooms(of: project, in: rooms)
+    }
+
+    func projectTab(_ projectId: String) -> ProjectDetailTab {
+        projectTabs[projectId] ?? .links
+    }
+
+    /// つながっていれば取り直す（取っている最中なら、終わってからもう一度取る）。
+    func refreshProjects() {
+        guard !isDemo else { return }
+        if projectsTask != nil {
+            projectsDirty = true
+            return
+        }
+        guard let fetch = projectsFetcher() else { return }
+        let generation = projectsGeneration
+        if projects == nil { projectsStatus = .loading }
+        projectsTask = Task { [weak self] in
+            let result: Result<RemoteProjectList, Error>
+            do { result = .success(try await fetch()) } catch { result = .failure(error) }
+            guard let self, generation == self.projectsGeneration else { return }
+            self.projectsTask = nil
+            self.applyProjects(result)
+            if self.projectsDirty {
+                self.projectsDirty = false
+                self.refreshProjects()
+            }
+        }
+    }
+
+    /// 引っ張って更新した時（取り終わるまで待つ）。
+    func reloadProjects() async {
+        refreshProjects()
+        while let task = projectsTask { await task.value }
+    }
+
+    /// ディレクトリ・リンク・詳細で引っ張った時。切れていればつなぎ直し（つながって一覧が届いたら取り直す）、つながっていれば取り直す。
+    func pullToRefreshProjects() async {
+        if !connection.isConnected, pairing != nil {
+            connect()
+            return
+        }
+        await reloadProjects()
+    }
+
+    private func startWatchingProjects(wasWatching: Bool) {
+        if watchesProjects, !wasWatching { refreshProjects() }
+    }
+
+    /// 取りやめた取得（画面を閉じた・張り直しで前の接続を捨てた）。失敗ではないので理由は出さない。
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let error = error as? RemoteClientError, case .transport(.cancelled) = error { return true }
+        return (error as? URLError)?.code == .cancelled
+    }
+
+    private func projectsFetcher() -> (@Sendable () async throws -> RemoteProjectList)? {
+        guard connection == .connected else { return nil }
+        #if DEBUG
+        if let projectsLoader { return projectsLoader }
+        #endif
+        guard let client else { return nil }
+        return { try await client.projects() }
+    }
+
+    private func applyProjects(_ result: Result<RemoteProjectList, Error>) {
+        switch result {
+        case .success(let list):
+            projects = list
+            projectsStatus = .loaded
+        case .failure(let error as RemoteClientError) where error.isMissingEndpoint:
+            projects = nil
+            projectsStatus = .outdatedMac
+        case .failure(let error) where Self.isCancellation(error):
+            if projects == nil { projectsStatus = .idle }
+        case .failure(let error):
+            // 前に読めた一覧は残し、取り直せなかったことだけを添える。
+            projectsStatus = .failed(RemoteIssue.from(error).title)
         }
     }
 

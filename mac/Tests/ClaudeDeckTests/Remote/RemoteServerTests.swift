@@ -310,6 +310,25 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertEqual(noImg, 404)
     }
 
+    func testProjectsAreReadOnly() async throws {
+        let paired = try await pair()
+        control.projects = FakeRemoteControl.sampleProjects()
+        let (status, data, _) = try await request("GET", "/v1/projects", token: paired.deviceToken)
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(try JSONDecoder().decode(RemoteProjectList.self, from: data), control.projects)
+        let (anonymous, _, _) = try await request("GET", "/v1/projects")
+        XCTAssertEqual(anonymous, 401)
+        let (post, _, _) = try await request("POST", "/v1/projects", token: paired.deviceToken, json: ["projects": []])
+        XCTAssertEqual(post, 405, "設定を書き換える口は無い")
+        let (sub, _, _) = try await request("GET", "/v1/projects/\(control.projects.projects[0].id)", token: paired.deviceToken)
+        XCTAssertEqual(sub, 405)
+        XCTAssertEqual(control.calls, [])
+        // 口の無い古い mac と同じく、知らないパスは 404（iPhone はこれで「古い」と見分ける）。
+        let (unknown, unknownData, _) = try await request("GET", "/v1/not-yet-known", token: paired.deviceToken)
+        XCTAssertEqual(unknown, 404)
+        XCTAssertEqual(object(unknownData)["error"] as? String, "not_found")
+    }
+
     func testActionsAreHandedToTheAppWithTheirIdentifiers() async throws {
         let paired = try await pair()
         let room = "h:\(UUID().uuidString)"
@@ -604,6 +623,20 @@ final class FakeRemoteControl: RemoteControl {
     }
 
     func remoteState() -> RemoteState { state }
+
+    var projects = RemoteProjectList(projects: [])
+
+    func remoteProjects() -> RemoteProjectList { projects }
+
+    static func sampleProjects() -> RemoteProjectList {
+        RemoteProjectList(projects: [
+            RemoteProject(id: UUID().uuidString, name: "mirio", status: .active,
+                          github: RemoteGitHubSummary(owner: "o", repo: "mirio", projectNumber: 2),
+                          links: [RemoteProjectLink(name: "LP", url: "https://mirio.example/", kind: .dashboard, pinned: true, note: "本番")],
+                          roomIds: ["h:\(UUID().uuidString)"]),
+            RemoteProject(id: UUID().uuidString, name: "old", status: .archived),
+        ])
+    }
 
     func remoteDecide(key: String, decision: PermissionDecision) async -> RemoteActionResult {
         if let decideHandler { return await decideHandler(key, decision) }
