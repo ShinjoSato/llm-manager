@@ -5,6 +5,9 @@ import MonitorKit
 struct ExternalBanner: View {
     let model: ChatModel
     let room: Room
+    /// 狭い時はボタンをアイコンだけにして、説明に幅を回す（帯が縦に伸びないように）。
+    @State private var compact = false
+    private static let compactWidth: CGFloat = 820
 
     var body: some View {
         let busy = room.sessionId.map { model.handover.inProgress.contains($0) } ?? false
@@ -28,11 +31,13 @@ struct ExternalBanner: View {
                   : room.snapshot?.entrypoint == "cli" ? "terminal" : "macwindow")
                 .font(.system(size: 14))
                 .foregroundStyle(ChatTheme.waiting)
-            Text(description(pending: pending, closeWait: closeWait, sourceReason: sourceReason, isEditor: isEditor,
-                             showsHandover: showsHandover))
+            Text(summary(pending: pending, closeWait: closeWait, sourceReason: sourceReason))
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.text)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1...3)
+                .truncationMode(.tail)
+                .help(description(pending: pending, closeWait: closeWait, sourceReason: sourceReason, isEditor: isEditor,
+                                  showsHandover: showsHandover))
             Spacer(minLength: 8)
             if busy {
                 ProgressView().controlSize(.small)
@@ -78,6 +83,7 @@ struct ExternalBanner: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
+        .onGeometryChange(for: Bool.self) { $0.size.width < Self.compactWidth } action: { compact = $0 }
         .background(ChatTheme.externalBanner)
         .overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
     }
@@ -87,18 +93,38 @@ struct ExternalBanner: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: systemImage)
-                Text(title)
+                if !compact { Text(title) }
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(!enabled ? ChatTheme.tertiary : prominent ? ChatTheme.onAccent : ChatTheme.text)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, compact ? 8 : 12)
             .frame(height: 28)
             .background(RoundedRectangle(cornerRadius: 8).fill(enabled && prominent ? ChatTheme.accent : ChatTheme.inputSurface))
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .help(help)
+        .help(compact ? "\(title): \(help)" : help)
+        .accessibilityLabel(title)
         .fixedSize()
+    }
+
+    /// 帯に出す短い文（詳しい説明は `description` をホバーで出す）。
+    private func summary(pending: SessionRestorer.Pending?, closeWait: HandoverCloseWait.Phase?, sourceReason: String?) -> String {
+        switch closeWait {
+        case .waitingForClose: return "VS Code でこの会話のタブを閉じてください（閉じたら自動でアプリに引き継ぎます）。"
+        case .waitingForOther(let pid): return "同じ会話が別の claude（pid \(pid)）で動いています。終わったら引き継ぎます。"
+        case .settling: return "VS Code の claude が終わりました。このアプリで再開します。"
+        case nil: break
+        }
+        switch pending {
+        case .judging: return "前回アプリでホストしていた会話です。再開できるか確かめています。"
+        case .waiting: return "前回アプリでホストしていた会話です。前の claude が終わったら再開します。"
+        case .deferred: return "前回アプリでホストしていた会話です（再開を見送っています）。"
+        case nil:
+            let source = SessionHandover.sourceDescription(entrypoint: room.snapshot?.entrypoint)
+            if let sourceReason { return source + "\(sourceReason)。" }
+            return source + "ここから送れるのは『伝言』と権限の許可・拒否だけです。"
+        }
     }
 
     private func description(pending: SessionRestorer.Pending?, closeWait: HandoverCloseWait.Phase?, sourceReason: String?,
@@ -149,7 +175,9 @@ struct ExternalDuplicateBanner: View {
             Text(duplicate.warning)
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.text)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1...3)
+                .truncationMode(.tail)
+                .help(duplicate.warning)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
