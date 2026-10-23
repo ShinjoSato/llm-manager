@@ -5,7 +5,7 @@ struct MessageList: View {
     let model: ChatModel
     let room: Room
     let items: [TranscriptItem]
-    @State private var pinnedToBottom = true
+    @State private var jump = LatestJump()
     @Environment(\.openTerminalScreen) private var openTerminal
 
     var body: some View {
@@ -66,24 +66,61 @@ struct MessageList: View {
                 }
                 // 広い欄では中央の列に収め、返答・ツールの行・カードの左端をそろえる。
                 .frame(maxWidth: ChatTheme.columnWidth)
-                .padding(.horizontal, 28)
+                // 右下の「最新へ」のボタンが狭い欄でも列に重ならないよう、右だけ余白を広げる。
+                .padding(.leading, 28)
+                .padding(.trailing, JumpToLatestButton.reservedGutter)
                 .padding(.vertical, 20)
                 .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
-            .modifier(BottomTracking(pinned: $pinnedToBottom))
+            .modifier(BottomTracking { zone in
+                updateJump { $0.enter(zone, entries: entries) }
+            })
+            .overlay(alignment: .bottomTrailing) {
+                ZStack {
+                    if jump.showsButton {
+                        JumpToLatestButton(newCount: jump.newCount(entries: entries)) {
+                            jumpToLatest(proxy: proxy, entries: entries)
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                    }
+                }
+                .padding(.trailing, JumpToLatestButton.trailingInset)
+                .padding(.bottom, 16)
+                .animation(.easeOut(duration: 0.15), value: jump.showsButton)
+            }
             .onChange(of: scrollKey(entries: entries, permissions: permissions.count)) {
-                guard pinnedToBottom else { return }
+                guard jump.followsBottom else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
             }
             .onChange(of: room.id) {
-                pinnedToBottom = true
+                updateJump { $0.reset() }
                 proxy.scrollTo(Self.bottomId, anchor: .bottom)
             }
         }
     }
 
     private static let bottomId = "chat-bottom"
+    /// 押してから末尾に着くまで付いていく扱いを続ける上限。
+    private static let jumpTimeout: Duration = .milliseconds(500)
+
+    /// 中身が変わった時だけ書き戻し、スクロールの段が知らされるたびに一覧を描き直さない。
+    @discardableResult
+    private func updateJump<T>(_ change: (inout LatestJump) -> T) -> T {
+        var next = jump
+        let result = change(&next)
+        if next != jump { jump = next }
+        return result
+    }
+
+    private func jumpToLatest(proxy: ScrollViewProxy, entries: [ChatEntry]) {
+        let generation = updateJump { $0.startJump() }
+        withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.jumpTimeout)
+            updateJump { $0.finishJump(generation, entries: entries) }
+        }
+    }
 
     /// カードの「端末の画面」（ホスト中で動いているルームだけ）。
     private var terminalOpener: (() -> Void)? {
@@ -127,16 +164,17 @@ struct MessageList: View {
     }
 }
 
-/// ユーザーが上に遡っている間は自動スクロールを止めるための追跡。
+/// 一番下からの離れ具合の段。自動スクロールを止める判定と「最新へ」のボタンに使い、段が変わった時だけ知らせる。
 private struct BottomTracking: ViewModifier {
-    @Binding var pinned: Bool
+    let onZone: (ScrollZone) -> Void
 
     func body(content: Content) -> some View {
         if #available(macOS 15.0, *) {
-            content.onScrollGeometryChange(for: Bool.self) { geo in
-                geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height - 48
-            } action: { _, atBottom in
-                pinned = atBottom
+            content.onScrollGeometryChange(for: ScrollZone.self) { geo in
+                LatestJump.zone(contentHeight: geo.contentSize.height, offsetY: geo.contentOffset.y,
+                                viewportHeight: geo.containerSize.height)
+            } action: { _, zone in
+                onZone(zone)
             }
         } else {
             content
