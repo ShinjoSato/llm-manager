@@ -37,6 +37,8 @@ public final class RemoteControlRef {
 
     func state() -> RemoteState? { control?.remoteState() }
 
+    func projects() -> RemoteProjectList? { control?.remoteProjects() }
+
     nonisolated static let unavailable = RemoteActionResult.failure("app_unavailable", "mac アプリの準備ができていません。")
 
     func run(_ body: @MainActor @Sendable (RemoteControl) async -> RemoteActionResult) async -> RemoteActionResult {

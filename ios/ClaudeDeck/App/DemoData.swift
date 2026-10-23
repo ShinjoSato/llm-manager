@@ -2,7 +2,7 @@
 import DeckCore
 import Foundation
 
-/// 画面の確認用のデータ（`-demo rooms` / `-demo conversation` で起動した時だけ。通信しない）。
+/// 画面の確認用のデータ（`-demo rooms` / `conversation` / `directory` / `project` / `threads` / `thread` / `links` で起動した時だけ。通信しない）。
 @MainActor
 enum DemoData {
     static func model(from arguments: [String]) -> AppModel? {
@@ -12,12 +12,60 @@ enum DemoData {
                                     fingerprint: String(repeating: "ab", count: 32), serverName: "Demo の MacBook Pro",
                                     deviceId: "demo", deviceToken: "demo", pairedAt: now - 86_400_000)
         let model = AppModel(demo: state(now: now), pairing: pairing, transcripts: ["s-mirio": transcript(now: now)],
-                             open: nil)
-        if arguments[i + 1] == "conversation" { model.launchRoomId = mirioRoomId }
+                             open: nil, projects: projects())
+        switch arguments[i + 1] {
+        case "conversation":
+            model.launchRoute = [.room(mirioRoomId)]
+        case "directory":
+            model.launchMode = .directory
+        case "project":
+            model.launchMode = .directory
+            model.launchRoute = [.project(mirioProjectId)]
+        case "threads":
+            model.launchMode = .directory
+            model.projectTabs[mirioProjectId] = .threads
+            model.launchRoute = [.project(mirioProjectId)]
+        case "thread":
+            model.launchMode = .directory
+            model.launchRoute = [.project(mirioProjectId), .room(mirioRoomId)]
+        case "links":
+            model.launchMode = .links
+        default:
+            model.launchMode = .rooms
+        }
         return model
     }
 
     static let mirioRoomId = "h:5D1B9C2E-7A41-4E0B-9F3A-2C8D6E1F0A11"
+    static let mirioProjectId = "0B7E3C1A-4F2D-4E8B-9A6C-1D2E3F4A5B6C"
+
+    static func projects() -> RemoteProjectList {
+        RemoteProjectList(projects: [
+            RemoteProject(id: mirioProjectId, name: "mirio", status: .active,
+                          github: RemoteGitHubSummary(owner: "ShinjoSato", repo: "mirio", projectNumber: 3),
+                          links: [
+                              RemoteProjectLink(name: "LP（本番）", url: "https://mirio.example.com/", kind: .dashboard, pinned: true,
+                                                note: "公開中のランディングページ"),
+                              RemoteProjectLink(name: "App Store Connect", url: "https://appstoreconnect.apple.com/apps", kind: .store),
+                              RemoteProjectLink(name: "Stripe の請求", url: "https://dashboard.stripe.com/billing", kind: .billing,
+                                                pinned: true, note: "毎月 1 日に確認"),
+                              RemoteProjectLink(name: "設計メモ", url: "https://docs.example.com/mirio/design", kind: .docs),
+                          ],
+                          roomIds: [mirioRoomId, "h:8C0D1E2F-3A4B-4C5D-8E6F-7A8B9C0D1E2F"]),
+            RemoteProject(id: "6A1F0E2D-3C4B-4A59-8E7D-6C5B4A3F2E1D", name: "infra", status: .active,
+                          github: RemoteGitHubSummary(owner: "ShinjoSato", projectNumber: 7),
+                          links: [RemoteProjectLink(name: "Cloudflare", url: "https://dash.cloudflare.com/", kind: .dashboard)],
+                          roomIds: ["e:s-infra"]),
+            RemoteProject(id: "7B2A1F3E-4D5C-4B6A-9F8E-7D6C5B4A3E2F", name: "ai-manager", status: .active,
+                          github: RemoteGitHubSummary(owner: "ShinjoSato", repo: "llm-manager"),
+                          roomIds: ["h:1A2B3C4D-5E6F-4A7B-8C9D-0E1F2A3B4C5D"]),
+            RemoteProject(id: "8C3B2A4F-5E6D-4C7B-8A9F-8E7D6C5B4A3F", name: "blog", status: .paused,
+                          links: [RemoteProjectLink(name: "Vercel", url: "https://vercel.com/dashboard", kind: .dashboard,
+                                                    note: "プレビューの確認")],
+                          roomIds: ["e:s-blog"]),
+            RemoteProject(id: "9D4C3B5A-6F7E-4D8C-9B0A-9F8E7D6C5B4A", name: "spreadsheet-study", status: .archived),
+        ])
+    }
 
     static func state(now: Double) -> RemoteState {
         let input = RemoteSendState(mode: .input, disabledReason: nil, acceptsImages: true)

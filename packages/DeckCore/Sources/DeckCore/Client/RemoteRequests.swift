@@ -175,6 +175,8 @@ public struct RemoteRequestBuilder: Sendable {
 
     public func rooms() throws -> URLRequest { try request("GET", ["rooms"], timeout: 15) }
 
+    public func projects() throws -> URLRequest { try request("GET", ["projects"], timeout: 15) }
+
     /// `transcripts` が nil なら会話を購読しない。`["*"]` は全部。
     public func events(transcripts: [String]?) throws -> URLRequest {
         let query = transcripts.map { [URLQueryItem(name: "transcripts", value: $0.joined(separator: ","))] } ?? []

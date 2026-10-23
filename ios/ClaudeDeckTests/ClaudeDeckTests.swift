@@ -144,17 +144,45 @@ final class RoomCardTests: XCTestCase {
     }
 
     func testSelectionIsDroppedWhenRoomLeavesList() {
-        XCTAssertEqual(RoomSelection.kept("b", among: ["a", "b"]), "b")
-        XCTAssertNil(RoomSelection.kept("b", among: ["a"]), "一覧から消えたら右を案内に戻す")
-        XCTAssertNil(RoomSelection.kept("b", among: []), "一覧が空になった（別の Mac とペアリングし直した）時も外す")
-        XCTAssertNil(RoomSelection.kept(nil, among: ["a"]), "何も選んでいなければ勝手に選ばない")
+        let b: [DeckRoute] = [.room("b")]
+        XCTAssertEqual(RoomSelection.kept(b, roomIds: ["a", "b"], projectIds: nil), b)
+        XCTAssertEqual(RoomSelection.kept(b, roomIds: ["a"], projectIds: nil), [], "一覧から消えたら右を案内に戻す")
+        XCTAssertEqual(RoomSelection.kept(b, roomIds: [], projectIds: []), [], "一覧が空になった（別の Mac とペアリングし直した）時も外す")
+        XCTAssertEqual(RoomSelection.kept([], roomIds: ["a"], projectIds: ["p"]), [], "何も選んでいなければ勝手に選ばない")
     }
 
-    func testCompactPathFollowsSelection() {
-        XCTAssertEqual(RoomSelection.path(for: "h:1"), ["h:1"], "2 列から狭くしても開いていた会話のまま")
-        XCTAssertEqual(RoomSelection.path(for: nil), [])
-        XCTAssertNil(RoomSelection.selection(from: []), "一覧へ戻ったら選択を外す")
-        XCTAssertEqual(RoomSelection.selection(from: ["h:1"]), "h:1")
+    func testProjectRouteKeepsTheProjectWhenItsThreadVanishes() {
+        let route: [DeckRoute] = [.project("p"), .room("r")]
+        XCTAssertEqual(RoomSelection.kept(route, roomIds: ["r"], projectIds: ["p"]), route)
+        XCTAssertEqual(RoomSelection.kept(route, roomIds: [], projectIds: ["p"]), [.project("p")], "消えたスレッドだけ閉じて詳細に戻る")
+        XCTAssertEqual(RoomSelection.kept(route, roomIds: ["r"], projectIds: []), [], "登録から消えたプロジェクトは先ごと閉じる")
+        XCTAssertEqual(RoomSelection.kept(route, roomIds: ["r"], projectIds: nil), route, "一覧を読めていない間は消えたとみなさない")
+    }
+
+    func testRowSelectionOpensOnlyThatScreen() {
+        XCTAssertEqual(RoomSelection.open(.project("p")), [.project("p")], "行を押すと前に開いていた会話の上に積まない")
+        XCTAssertTrue(RoomSelection.isSelected(.project("p"), in: [.project("p"), .room("r")]), "詳細から開いた会話の間もプロジェクトの行を選んだまま")
+        XCTAssertFalse(RoomSelection.isSelected(.room("r"), in: [.project("p"), .room("r")]))
+        XCTAssertFalse(RoomSelection.isSelected(.room("r"), in: []))
+    }
+
+    func testSidebarModesUseProjectsExceptRooms() {
+        XCTAssertEqual(SidebarMode.allCases.map(\.title), ["ルーム", "ディレクトリ", "リンク"])
+        XCTAssertEqual(SidebarMode.allCases.map(\.usesProjects), [false, true, true])
+    }
+
+    func testProjectRowCountsLiveRoomsAndMostUrgentStatus() {
+        func r(_ status: SessionStatus) -> RemoteRoom {
+            let x = room()
+            return RemoteRoom(id: UUID().uuidString, kind: .hosted, phase: .idle, name: "x", branch: nil, status: status, line: "",
+                              activityAt: nil, sessionId: nil, cwd: "/", ended: nil, session: nil, permissions: [], terminalPermission: nil,
+                              menu: nil, unreadableMenu: nil, busy: false, send: x.send)
+        }
+        let rooms = [r(.stopped), r(.working), r(.waiting), r(.idle)]
+        XCTAssertEqual(ProjectRooms.liveCount(rooms), 3)
+        XCTAssertEqual(ProjectRooms.urgentStatus(rooms), .waiting)
+        XCTAssertNil(ProjectRooms.urgentStatus([r(.stopped)]), "終了したルームだけなら印を付けない")
+        XCTAssertEqual(ProjectRooms.liveCount([]), 0)
     }
 }
 

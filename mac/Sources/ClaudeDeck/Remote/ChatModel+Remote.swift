@@ -13,6 +13,10 @@ extension ChatModel: RemoteControl {
         return RemoteState(rooms: ordered.map(remoteRoom), usage: store.usage, monitoring: store.connection.isConnected)
     }
 
+    func remoteProjects() -> RemoteProjectList {
+        RemoteProjectList(directories: directories)
+    }
+
     private func remoteRoom(_ room: Room) -> RemoteRoom {
         let permissions = prompts.monitorPermissions(for: room)
         let cards: RemoteRoomCards
