@@ -78,6 +78,62 @@ final class ProjectsLoadingTests: XCTestCase {
         try await waitUntil { loader.calls == 4 }
     }
 
+    /// 2 列で右に詳細を開いたまま左を「ルーム」に戻しても、スレッドを新しく保つ。
+    func testOpenProjectDetailKeepsThreadsFreshInRoomsMode() async throws {
+        let loader = Loader(.success(Self.list))
+        let model = model(loader)
+        model.simulateReceived(Self.state(["h:1"]))
+        XCTAssertEqual(loader.calls, 0)
+        model.showsProjectDetail = true
+        try await waitUntil { loader.calls == 1 }
+        XCTAssertEqual(model.sidebarMode, .rooms)
+        model.simulateReceived(Self.state(["h:1", "h:2"]))
+        try await waitUntil { loader.calls == 2 }
+        model.sidebarMode = .directory
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(loader.calls, 2, "もう見ている間は見方を替えただけでは取り直さない")
+        model.sidebarMode = .rooms
+        model.showsProjectDetail = false
+        model.simulateReceived(Self.state(["h:3"]))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(loader.calls, 2, "詳細を閉じてルームの一覧だけなら取らない")
+    }
+
+    /// 張り直しで前の接続を捨てた時の取り消しは、失敗として出さない。
+    func testCancelledFetchIsNotShownAsFailure() async throws {
+        let loader = Loader(.failure(RemoteClientError.transport(.cancelled)))
+        let model = model(loader)
+        model.simulateReceived(Self.state([]))
+        model.sidebarMode = .directory
+        await model.reloadProjects()
+        XCTAssertEqual(model.projectsStatus, .idle)
+        loader.result = .success(Self.list)
+        await model.reloadProjects()
+        XCTAssertEqual(model.projectsStatus, .loaded)
+        for error: Error in [RemoteClientError.transport(.cancelled), URLError(.cancelled), CancellationError()] {
+            loader.result = .failure(error)
+            await model.reloadProjects()
+            XCTAssertEqual(model.projectsStatus, .loaded, "\(error)")
+            XCTAssertEqual(model.projects, Self.list)
+        }
+        XCTAssertTrue(AppModel.isCancellation(RemoteClientError.transport(.cancelled)))
+        XCTAssertFalse(AppModel.isCancellation(RemoteClientError.transport(.timedOut)))
+    }
+
+    /// 切れている時に引っ張ると、つなぎ直す（取り直しはつながって一覧が届いてから）。
+    func testPullWhileDisconnectedReconnects() async throws {
+        try keychain.save(RemotePairing(host: "127.0.0.1", port: 1, localHostName: nil, fingerprint: String(repeating: "ab", count: 32),
+                                        serverName: "Mac", deviceId: "d", deviceToken: "t", pairedAt: 0))
+        let loader = Loader(.success(Self.list))
+        let model = model(loader)
+        model.sidebarMode = .links
+        XCTAssertEqual(model.connection, .paused)
+        await model.pullToRefreshProjects()
+        try await waitUntil { model.connection != .paused }
+        XCTAssertEqual(loader.calls, 0)
+        model.pause()
+    }
+
     func testOldMacIsReportedAsOutdated() async throws {
         let loader = Loader(.failure(RemoteClientError.http(status: 404, error: "not_found", message: "not found")))
         let model = model(loader)

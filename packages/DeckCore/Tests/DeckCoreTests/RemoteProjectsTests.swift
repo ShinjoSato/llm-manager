@@ -52,14 +52,15 @@ final class RemoteProjectsTests: XCTestCase {
     }
 
     func testOnlyWebLinksOpen() {
-        XCTAssertEqual(RemoteProjectLink.openableURL(" https://a.example/x ")?.absoluteString, "https://a.example/x")
-        XCTAssertNotNil(RemoteProjectLink.openableURL("http://192.168.1.2:3000"))
-        XCTAssertNil(RemoteProjectLink.openableURL("javascript:alert(1)"))
-        XCTAssertNil(RemoteProjectLink.openableURL("file:///etc/passwd"))
-        XCTAssertNil(RemoteProjectLink.openableURL("https://user:pw@a.example"))
-        XCTAssertNil(RemoteProjectLink.openableURL("https://"))
-        XCTAssertNil(RemoteProjectLink.openableURL("https://a.example/a b"))
-        XCTAssertNil(RemoteProjectLink.openableURL("tel:123"))
+        XCTAssertEqual(WebLink.openableURL(" https://a.example/x ")?.absoluteString, "https://a.example/x")
+        XCTAssertNotNil(WebLink.openableURL("http://192.168.1.2:3000"))
+        XCTAssertNil(WebLink.openableURL("javascript:alert(1)"))
+        XCTAssertNil(WebLink.openableURL("file:///etc/passwd"))
+        XCTAssertNil(WebLink.openableURL("https://user:pw@a.example"))
+        XCTAssertNil(WebLink.openableURL("https://"))
+        XCTAssertNil(WebLink.openableURL("https://a.example/a b"))
+        XCTAssertNil(WebLink.openableURL("tel:123"))
+        XCTAssertEqual(RemoteProjectLink(name: "a", url: " https://a.example ").openableURL, WebLink.openableURL("https://a.example"))
         XCTAssertEqual(RemoteProjectLink(name: "a", url: "https://www.vercel.com/x").hostLabel, "vercel.com")
     }
 

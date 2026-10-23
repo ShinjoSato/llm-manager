@@ -93,7 +93,7 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
     {
       "id": "h:…", "kind": "hosted|external", "phase": "attention|active|idle",
       "name": "mirio", "branch": "develop", "status": "working|waiting|permission|idle|error|stopped",
-      "line": "直近の一行", "activityAt": 0, "sessionId": "…|null", "cwd": "/…",
+      "line": "直近の一行", "activityAt": 0, "sessionId": "…|null", "cwd": "/…",   // cwd は作業フォルダの絶対パス（/v1/projects と違い、手元のパスを送る）
       "ended": "exited|limitReached|launchFailed|null",     // ホスト中のセッションが終わった理由
       "session": { /* SessionSnapshot（外部・ホスト中とも、監視に出ていれば） */ },
       "permissions": [ /* PendingPermission（Channels）。あれば最優先で出す */ ],
@@ -137,10 +137,12 @@ mac の「ディレクトリ」と横断のリンク一覧を iPhone で見る�
 }
 ```
 
-- **送らないもの**: フォルダの絶対パス・プロジェクトのメモ・サイト / Xcode の場所・App Store のアプリ・実行コマンド・印のアイコンと色・リンクの確認日と最終確認日。
+- **送らないもの**: フォルダの絶対パス・プロジェクトのメモ（`note`）・サイト / Xcode の場所・App Store のアプリ・実行コマンド・印のアイコンと色・リンクの確認日と最終確認日。
+  リンクのメモ（`links[].note`）は送る。
+  なお、この口とは別に、既存の `/v1/rooms` と `/v1/events` の `state` は `RemoteRoom.cwd`（と `session.cwd`）でルームの作業フォルダの絶対パスを送っている（既存の仕様のまま）。
   ルームの振り分け（どのフォルダのルームか）は mac が決めて `roomIds` で渡すので、iPhone はパスを知らなくてよい。
 - リンクは名前があり、URL が http / https で host があり資格情報を含まないものだけ（`javascript:`・`file:` 等は送らない）。同じ名前の 2 件目も送らない。
-  URL は前後の空白を落とした形。iPhone も開く前に `RemoteProjectLink.openableURL` で同じ判定をする。
+  URL は前後の空白を落とした形。判定は DeckCore の `WebLink.openableURL` の 1 か所で、mac（`ProjectLinks.url(from:)`）も iPhone の開く前の確認（`RemoteProjectLink.openableURL`）も同じものを使う。
 - 知らない `status` / `kind` は `unknown` / `other` として読む。省いた項目は空として読む（後から項目を足しても古い iPhone は落ちない）。
 - **更新の仕方**: ストリームでは送らない。iPhone は「ディレクトリ」「リンク」を開いた時・張り直した時・その間に `state` のルームの顔ぶれが変わった時・引っ張って更新した時に取り直す。
   設定はめったに変わらないので、全部のストリームへ常に流すより必要な時に取る方が軽く、`RemoteState` の形も変えずに済むため。

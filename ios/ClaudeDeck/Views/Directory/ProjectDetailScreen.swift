@@ -13,22 +13,41 @@ struct ProjectDetailScreen: View {
             if let project = model.project(projectId) {
                 content(project)
             } else {
-                VStack(spacing: 10) {
-                    Image(systemName: "folder.badge.questionmark").font(.system(size: 28)).foregroundStyle(DeckTheme.tertiary)
-                    Text(model.projectsStatus == .outdatedMac ? AppModel.outdatedMacText : "このプロジェクトはもう登録されていません。")
-                        .font(DeckTheme.body)
-                        .foregroundStyle(DeckTheme.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(24)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                missing
             }
         }
         .background(DeckTheme.background.ignoresSafeArea())
         .toolbarBackground(DeckTheme.background, for: .navigationBar)
         .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await model.reloadProjects() }
+        .refreshable { await model.pullToRefreshProjects() }
         .onAppear { if model.projects == nil { model.refreshProjects() } }
+    }
+
+    /// 引っ張って更新できるよう、案内も ScrollView に載せる。
+    private var missing: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 10) {
+                    Image(systemName: "folder.badge.questionmark").font(.system(size: 28)).foregroundStyle(DeckTheme.tertiary)
+                    Text(missingText)
+                        .font(DeckTheme.body)
+                        .foregroundStyle(DeckTheme.secondary)
+                        .multilineTextAlignment(.center)
+                    Text("下に引っ張ると読み直します。").font(DeckTheme.caption).foregroundStyle(DeckTheme.tertiary)
+                }
+                .padding(24)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+        }
+    }
+
+    private var missingText: String {
+        switch model.projectsStatus {
+        case .outdatedMac: return AppModel.outdatedMacText
+        case .failed(let reason): return "一覧を読み込めませんでした（\(reason)）"
+        case .loaded: return "このプロジェクトはもう登録されていません。"
+        case .idle, .loading: return model.connection.isConnected ? "一覧を読み込んでいます…" : "Mac につながると出ます。"
+        }
     }
 
     private func content(_ project: RemoteProject) -> some View {

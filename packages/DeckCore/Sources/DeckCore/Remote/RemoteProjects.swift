@@ -66,6 +66,20 @@ public struct RemoteGitHubSummary: Codable, Sendable, Equatable {
     }
 }
 
+/// リンクとして開いてよい URL の判定（mac の設定・見出し・iPhone への送り出しと iPhone の開く前の確認で同じものを使う）。
+public enum WebLink {
+    /// http / https で host があり、資格情報の無いもの（`javascript:`・`file:`・資格情報付きは開かない）。前後の空白は落とす。
+    public static func openableURL(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) }),
+              let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil else { return nil }
+        return components.url
+    }
+}
+
 /// プロジェクトのリンク 1 件（mac で開けると判定したものだけが届く）。
 public struct RemoteProjectLink: Codable, Sendable, Equatable {
     public var name: String
@@ -93,18 +107,8 @@ public struct RemoteProjectLink: Codable, Sendable, Equatable {
         note = try c.decodeIfPresent(String.self, forKey: .note)
     }
 
-    /// 開いてよい URL（http / https で host があり、資格情報の無いもの）。iPhone も開く前に自分で確かめる。
-    public var openableURL: URL? { Self.openableURL(url) }
-
-    public static func openableURL(_ text: String) -> URL? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) }),
-              let components = URLComponents(string: trimmed),
-              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = components.host, !host.isEmpty,
-              components.user == nil, components.password == nil else { return nil }
-        return components.url
-    }
+    /// 開いてよい URL（`WebLink.openableURL`）。iPhone も開く前に自分で確かめる。
+    public var openableURL: URL? { WebLink.openableURL(url) }
 
     /// 一覧に添える接続先（host だけ。`www.` は落とす）。
     public var hostLabel: String {

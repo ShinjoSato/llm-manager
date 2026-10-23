@@ -26,6 +26,7 @@ struct RoomListScreen: View {
             openRequestedRoom()
         }
         .onChange(of: model.sidebarMode) { _, mode in storedMode = mode.rawValue }
+        .onChange(of: route, initial: true) { _, newRoute in model.showsProjectDetail = RoomSelection.showsProject(newRoute) }
         .onChange(of: model.requestedRoomId) { _, _ in openRequestedRoom() }
         .onChange(of: model.rooms.map(\.id)) { _, _ in dropVanished(sizeClass: sizeClass) }
         .onChange(of: model.projects?.projects.map(\.id)) { _, _ in dropVanished(sizeClass: sizeClass) }
@@ -101,7 +102,7 @@ struct RoomListScreen: View {
             }
         }
         .refreshable {
-            if model.sidebarMode.usesProjects { await model.reloadProjects() } else { model.connect() }
+            if model.sidebarMode.usesProjects { await model.pullToRefreshProjects() } else { model.connect() }
         }
     }
 

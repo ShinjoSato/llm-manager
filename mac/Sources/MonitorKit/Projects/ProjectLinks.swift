@@ -2,16 +2,9 @@ import Foundation
 
 /// 見出しの「リンク」で開く先。設定の `links` のうち開けるものだけを扱う。
 public enum ProjectLinks {
-    /// 開いてよい URL か（http / https で host があり userinfo の無いもの。`javascript:`・`file:`・資格情報付きは開かない）。
+    /// 開いてよい URL か。判定は iPhone と共有の `WebLink.openableURL` の 1 か所に持つ。
     public static func url(from text: String) -> URL? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) }),
-              let components = URLComponents(string: trimmed),
-              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = components.host, !host.isEmpty,
-              components.user == nil, components.password == nil,
-              let url = components.url else { return nil }
-        return url
+        WebLink.openableURL(text)
     }
 
     /// 設定のリンクのうち、名前があって URL が開けるもの（並びは設定の順。同じ名前はメニューに並べないため先のものだけ残す）。

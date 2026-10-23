@@ -65,6 +65,11 @@ enum RoomSelection {
     /// 一覧の行を押した時の道のり（その行の画面だけを開く）。
     static func open(_ step: DeckRoute) -> [DeckRoute] { [step] }
 
+    /// プロジェクトの詳細を開いているか（その上に会話を積んでいる時も含む）。
+    static func showsProject(_ route: [DeckRoute]) -> Bool {
+        route.contains { if case .project = $0 { return true } else { return false } }
+    }
+
     /// 一覧の行を選んで見せるか（2 列で右に開いている最初の画面がその行）。
     static func isSelected(_ step: DeckRoute, in route: [DeckRoute]) -> Bool {
         route.first == step

@@ -164,6 +164,10 @@ final class RoomCardTests: XCTestCase {
         XCTAssertTrue(RoomSelection.isSelected(.project("p"), in: [.project("p"), .room("r")]), "詳細から開いた会話の間もプロジェクトの行を選んだまま")
         XCTAssertFalse(RoomSelection.isSelected(.room("r"), in: [.project("p"), .room("r")]))
         XCTAssertFalse(RoomSelection.isSelected(.room("r"), in: []))
+        XCTAssertTrue(RoomSelection.showsProject([.project("p")]))
+        XCTAssertTrue(RoomSelection.showsProject([.project("p"), .room("r")]), "詳細の上に会話を積んでいる間も詳細を開いている")
+        XCTAssertFalse(RoomSelection.showsProject([.room("r")]))
+        XCTAssertFalse(RoomSelection.showsProject([]))
     }
 
     func testSidebarModesUseProjectsExceptRooms() {

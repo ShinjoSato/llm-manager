@@ -63,10 +63,14 @@ final class AppModel {
     var launchMode: SidebarMode?
     /// 左の一覧の見方。ディレクトリ・リンクに切り替えたらプロジェクトの一覧を取り直す。
     var sidebarMode: SidebarMode = .rooms {
-        didSet {
-            if sidebarMode.usesProjects, !oldValue.usesProjects { refreshProjects() }
-        }
+        didSet { startWatchingProjects(wasWatching: oldValue.usesProjects || showsProjectDetail) }
     }
+    /// プロジェクトの詳細を開いている（2 列で左を「ルーム」に戻しても右に出ている間は、スレッドを新しく保つ）。
+    var showsProjectDetail = false {
+        didSet { startWatchingProjects(wasWatching: sidebarMode.usesProjects || oldValue) }
+    }
+    /// プロジェクトの一覧を使う画面が出ているか（ルームの顔ぶれが変わったら取り直す）。
+    var watchesProjects: Bool { sidebarMode.usesProjects || showsProjectDetail }
     /// 登録したプロジェクトとリンク（`GET /v1/projects`）。読めるまでは nil。
     private(set) var projects: RemoteProjectList?
     private(set) var projectsStatus: ProjectsStatus = .idle
@@ -264,7 +268,7 @@ final class AppModel {
                 for sid in recentSessions { fetchTranscript(sid) }
             }
             // プロジェクトのルームの振り分けは mac が決めるので、顔ぶれが変わったら取り直す。
-            if sidebarMode.usesProjects, firstAfterConnect || roomsChanged { refreshProjects() }
+            if watchesProjects, firstAfterConnect || roomsChanged { refreshProjects() }
             resolvePendingNotice()
         case .transcript(let event):
             if transcripts[event.sessionId] != nil {
@@ -482,6 +486,26 @@ final class AppModel {
         while let task = projectsTask { await task.value }
     }
 
+    /// ディレクトリ・リンク・詳細で引っ張った時。切れていればつなぎ直し（つながって一覧が届いたら取り直す）、つながっていれば取り直す。
+    func pullToRefreshProjects() async {
+        if !connection.isConnected, pairing != nil {
+            connect()
+            return
+        }
+        await reloadProjects()
+    }
+
+    private func startWatchingProjects(wasWatching: Bool) {
+        if watchesProjects, !wasWatching { refreshProjects() }
+    }
+
+    /// 取りやめた取得（画面を閉じた・張り直しで前の接続を捨てた）。失敗ではないので理由は出さない。
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let error = error as? RemoteClientError, case .transport(.cancelled) = error { return true }
+        return (error as? URLError)?.code == .cancelled
+    }
+
     private func projectsFetcher() -> (@Sendable () async throws -> RemoteProjectList)? {
         guard connection == .connected else { return nil }
         #if DEBUG
@@ -499,7 +523,7 @@ final class AppModel {
         case .failure(let error as RemoteClientError) where error.isMissingEndpoint:
             projects = nil
             projectsStatus = .outdatedMac
-        case .failure(is CancellationError):
+        case .failure(let error) where Self.isCancellation(error):
             if projects == nil { projectsStatus = .idle }
         case .failure(let error):
             // 前に読めた一覧は残し、取り直せなかったことだけを添える。
