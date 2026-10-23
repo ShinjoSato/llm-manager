@@ -91,7 +91,8 @@ mac/
           RoomWindowView.swift        別ウィンドウの中身（1 ルームの会話・会話の取得と既読・ルームが消えた時の案内・そのウィンドウで出す警告）
           BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文。大きさは会話の返答と同じ）
           HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
-          MessageList.swift           会話の一覧（中央の列にそろえる・末尾への自動スクロール・カードの差し込み・空の時の案内）
+          MessageList.swift           会話の一覧（中央の列にそろえる・末尾への自動スクロール・カードの差し込み・空の時の案内。読み込み中だけアイコンを回す）
+          SpinningSymbol.swift        一定の速さで回り続けるアイコン（時刻から角度を決める TimelineView・視差効果を減らす設定では止めたまま。iPhone にも同じもの）
           MessageBubbles.swift        発話 1 件（EntryView）・自分の吹き出し・Claude の返答（枠なしの本文。右クリックとホバーのボタンで別ウィンドウに開く）
           ToolsRow.swift              「ツール N件 ▸」の畳み
           PermissionCard.swift        権限確認のカード

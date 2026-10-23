@@ -138,29 +138,33 @@ struct MessageList: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        let (icon, text) = emptyMessage
+        let (icon, text, spins) = emptyMessage
         VStack(spacing: 8) {
-            Image(systemName: icon).font(.system(size: 22)).foregroundStyle(ChatTheme.tertiary)
+            Group {
+                if spins { SpinningSymbol(systemName: icon) } else { Image(systemName: icon) }
+            }
+            .font(.system(size: 22)).foregroundStyle(ChatTheme.tertiary)
             Text(text).font(ChatTheme.body).foregroundStyle(ChatTheme.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 80)
     }
 
-    private var emptyMessage: (String, String) {
+    /// アイコン・文言・アイコンを回すか（読み込み中だけ）。
+    private var emptyMessage: (String, String, Bool) {
         if !model.store.connection.isConnected {
             return ("bolt.horizontal.circle", "セッションの監視を始めています…"
-                    + (room.hosted?.isRunning == true ? "\n下の入力欄からの送信はできます。" : ""))
+                    + (room.hosted?.isRunning == true ? "\n下の入力欄からの送信はできます。" : ""), false)
         }
         guard let sessionId = room.sessionId else {
             if room.hosted?.end == .launchFailed {
-                return ("exclamationmark.triangle", "claude を起動できませんでした。\nログインシェルの PATH に claude があるか確かめてください。")
+                return ("exclamationmark.triangle", "claude を起動できませんでした。\nログインシェルの PATH に claude があるか確かめてください。", false)
             }
-            if room.hosted?.end != nil { return ("stop.circle", "会話を取得する前に claude が終了しました。") }
-            return ("hourglass", "セッションの開始を待っています…")
+            if room.hosted?.end != nil { return ("stop.circle", "会話を取得する前に claude が終了しました。", false) }
+            return ("hourglass", "セッションの開始を待っています…", false)
         }
-        if model.transcripts.loading.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…") }
-        return ("bubble.left.and.bubble.right", room.hosted != nil ? "下の入力欄から指示を送れます。" : "まだ会話がありません。下の入力欄から伝言を送れます。")
+        if model.transcripts.loading.contains(sessionId) { return ("arrow.triangle.2.circlepath", "会話を読み込んでいます…", true) }
+        return ("bubble.left.and.bubble.right", room.hosted != nil ? "下の入力欄から指示を送れます。" : "まだ会話がありません。下の入力欄から伝言を送れます。", false)
     }
 }
 
