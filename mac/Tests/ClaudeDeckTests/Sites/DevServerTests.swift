@@ -249,8 +249,13 @@ final class DevServerProcessTests: XCTestCase {
 
     func testNaturalExitCleansUpGrandchildIgnoringTerm() async throws {
         let collector = Collector()
-        // 先頭はすぐ終わり、SIGTERM を無視する孫がグループに残る。
-        let process = try spawn("(trap '' TERM; exec sleep 60) & echo ready; exit 2", collector: collector)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ready = dir.appendingPathComponent("ready").path
+        // 先頭が終わるとすぐ SIGTERM が届くので、孫が trap を張って印を残すまで先頭は終わらない（張る前だと孫も消える）。
+        let process = try spawn("(trap '' TERM; : > '\(ready)'; exec sleep 60) & "
+                                + "while [ ! -e '\(ready)' ]; do sleep 0.01; done; exit 2", collector: collector)
         waitUntil { collector.exit != nil }
         XCTAssertEqual(collector.exit, DevServerExit(code: 2))
         // 終了を知らせた時点では、孫が残っているので片付けは終わっていない。

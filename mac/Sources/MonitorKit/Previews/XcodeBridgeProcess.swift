@@ -89,7 +89,7 @@ public final class XcodeBridgeProcess: XcodeBridgeTransport, @unchecked Sendable
             if data.isEmpty { handle.readabilityHandler = nil } else { process.receiveError(data) }
         }
         let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global(qos: .utility))
-        source.setEventHandler { process.leaderExited() }
+        source.setEventHandler { process.leaderExited(notified: true) }
         process.lock.withLock {
             process.input = input
             process.outputs = [output, errors]
@@ -132,8 +132,8 @@ public final class XcodeBridgeProcess: XcodeBridgeTransport, @unchecked Sendable
 
     private func peekExited() -> Bool { ProcessGroup.peekExit(pid) != nil }
 
-    private func leaderExited() {
-        guard peekExited() else { return }
+    private func leaderExited(notified: Bool = false) {
+        guard notified ? ProcessGroup.exitAfterNotice(pid) != nil : peekExited() else { return }
         let report = lock.withLock { () -> Bool in
             exitSource?.cancel()
             exitSource = nil
