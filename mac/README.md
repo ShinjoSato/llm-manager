@@ -55,6 +55,7 @@ mac/
         DevServerStore.swift        開発サーバーの持ち手（サイトごとに 1 つ・起動 / 停止・アプリの終了とプロジェクトの削除で止める。ルームを閉じても止めない）
         ProjectImageStore.swift     ディレクトリの詳細の「画像」（走査・サムネイルの縮小をバックグラウンドで・NSCache）・節の走査の持ち手（BackgroundScan。走り切った鍵と「再読み込み」の回数を持つ。「iPhone のプレビュー」と共有）
         IOSPreviewStore.swift       ディレクトリの詳細の「iPhone のプレビュー」（mcpbridge を 1 本持って 1 件ずつ描く・待ち行列・キャッシュへ写す・タブを離れて 3 分で止める）
+        AppStoreStore.swift         App Store Connect から読んだもの（アプリの一覧・版と審査・文面）の持ち手（10 分覚える・「再読み込み」で取り直す・古い結果で上書きしない）
         LinkVisitStore.swift        リンクの最終確認日（link-visits.json）の読み書き
         LinkTitleFetcher.swift      リンクの名前の候補にするページの <title> の取得（3 秒・資格情報なし）
         ImageDecoding.swift         ImageIO での縮小（吹き出しの画像・ディレクトリの詳細の画像・iPhone のプレビューで共有）
@@ -70,11 +71,12 @@ mac/
           RoomRow.swift               ルーム 1 行（RoomRow）・「外部」タグ・プロジェクトの印（ProjectBadgeView）
           RoomListNotices.swift       検索欄の下の注意（監視の開始中・フックの受け口の状態・再開の結果・終了待ち）
           ProjectLauncher.swift       「+」の中身（プロジェクト一覧から選んで起動・追加・削除・設定を開く）
-        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・タブで切り替える本文（サイト・画像・iPhone のプレビュー・リンク・スレッド））
+        Directory/                  中央のディレクトリの詳細（DirectoryDetailView: 見出しと操作・タブで切り替える本文（サイト・画像・iPhone のプレビュー・App Store・リンク・スレッド））
           DirectoryTabBar.swift       見出しの下のタブの列（アイコン・名前・件数。入りきらなければアイコンを外し、それでも入らなければ横スクロール）
           ProjectLinkEditor.swift     「リンク」の節の追加・編集のポップオーバー（種類と名前の提案・<title> の取得）
           ProjectImagesSection.swift  「画像」: フォルダごとのサムネイルのグリッド・拡大のシート
           IOSPreviewsSection.swift    「iPhone のプレビュー」: 全ファイルの #Preview を 1 つのグリッド（枠にファイル名と行）・すべて描く・拡大して切り替えて描き直すシート
+          AppStoreSection.swift       「App Store」: アプリごとの版の状態・審査の提出・ロケールごとの文面（文字数と上限）
           SitePreviewSection.swift    「サイト」: 見る元（開発サーバー / 書き出し / 公開 URL）・表示幅・再読み込み・ブラウザで開く・書き出しの更新時刻
           SitePreviewParts.swift      サイトの欄とステージパネルのプレビューで共有する部品（場所の読み込み・表示幅の切り替え・縮める枠・開発サーバーの操作と出力）
           SiteWebView.swift           プレビューの WKWebView（pageZoom で縮めて表示幅ぶんを収める・file: / javascript: へは遷移しない）
@@ -172,6 +174,16 @@ mac/
       PreviewQueueRules.swift     待ち行列の止め方（時間切れ・読み込み待ちが続いた時・節が閉じた時）
       XcodeBridgeProcess.swift    `xcrun mcpbridge` の子プロセス（新しいプロセスグループ・stdin / stdout の 1 行 1 メッセージ・グループごとの停止）
       PreviewSnapshotCache.swift  描いた PNG と添え書きのキャッシュ（鍵・置き場・写す前の絵の確かめ・古い版と消えたプロジェクトの片付け）
+    AppStore/                   ディレクトリの詳細の「App Store」（App Store Connect API を読むだけ）
+      AppStoreCredentials.swift   環境変数と ~/.claude/appstore-meta.env の読み取り（appstore-plugin と同じ書式・環境変数が先・プロジェクトの .env は読まない・通常のファイルだけ）・読み元・足りないものの案内。鍵は文字列にしない
+      AppStoreToken.swift         ES256 の JWT（CryptoKit・有効 10 分・20 分を超えない）と期限の少し前までの使い回し（鍵はトークンを作る時だけ読む・Key ID / Issuer ID が替われば作り直す）
+      AppStoreRequest.swift       要求の組み立て（宛先は api.appstoreconnect.apple.com の https・GET だけ・ID は数字 / 英数字とハイフンだけ・links.next も同じ宛先の /v1/ だけ）
+      AppStoreClient.swift        読み取りのクライアント（通信は差し替えられる・リダイレクトは辿らない・本文は 8MB まで・401 / 403 / 404 / 429 / 5xx の案内・自動で取り直さない）
+      AppStoreModels.swift        JSON:API の応答の読み取り（アプリ・版・文面・アプリの情報・審査の提出）
+      AppStoreOverview.swift      版の並び（版番号の数で新しい順）・プラットフォームごとの最新と公開中・版に合うアプリの情報・文面の欄と文字数の上限
+      AppStoreStates.swift        状態の日本語と色分け（知らない値は原文）
+      AppStoreCandidates.swift    紐づけの候補（.claude/appstore.json の appId・Xcode のバンドル ID。変数は pbxproj / xcconfig から解決し、できなければ控えめに当てる）
+      AppStoreCache.swift         取った結果を 10 分覚える
     Sites/                      ディレクトリの詳細の「サイト」（LP のプレビュー）
       SiteLocator.swift           LP の場所の自動検出と、設定の `site`（相対パス）の検証・解決（プロジェクトの外を指さない）
       SiteFiles.swift             配信のパスの解決（書き出しの外・隠しファイルは返さない・フォルダは index.html・拡張子なしは .html）と Content-Type
@@ -222,7 +234,7 @@ mac/
       Concurrency.swift           一度だけ通す印（OnceFlag）と、持ち主が消えたら止まる繰り返し（repeatingTask）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
-                                Server / Remote / Settings / Sites / Previews / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
+                                Server / Remote / Settings / Sites / Previews / AppStore / Notify / Stage / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   docs/pty-daemon.md            アプリを閉じても claude を動かし続ける常駐プロセスの設計と試作の記録（未実装）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
@@ -573,10 +585,10 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     `.xcworkspace` / `.xcodeproj` がある時だけ。会話の見出しと同じ処理で、検出の結果は cwd ごと、閉じる処理中の印は押した先（ルーム / プロジェクト）ごとに `EditorLauncher` が持つ）・
     「設定で編集」（設定画面のプロジェクトタブでそのプロジェクトを選んで開く）。
     見出しの直下にタブの列（`Views/Directory/DirectoryTabBar.swift`）があり、本文は選んだタブの節だけを欄いっぱいに出す（画像やプレビューが多くても他の節へ 1 クリックで行ける）。
-    タブはサイト（下記）・画像（下記）・iPhone（iPhone のプレビュー。下記）・リンク（下記）・スレッド（そのプロジェクトのスレッド。ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）の順。
-    - 件数: 画像・iPhone は走査し終えた時だけ（それまでは数字なし）、リンク・スレッドは常に添える。
+    タブはサイト（下記）・画像（下記）・iPhone（iPhone のプレビュー。下記）・App Store（下記）・リンク（下記）・スレッド（そのプロジェクトのスレッド。ルーム一覧と同じ行。終了したルームも含み、押すとそのルームを選んで中央が会話に戻る）の順。
+    - 件数: 画像・iPhone は走査し終えた時だけ（それまでは数字なし）、App Store（紐づけたアプリの数）・リンク・スレッドは常に添える。
     - 出す条件: 「サイト」は LP の場所が見つかった時と、設定の `site` が使えない時（理由を見せるため）だけ。開いた時に場所だけを軽く探し（`SiteLocator.lookup`）、分かるまでは出しておいて無いと分かったら消す
-      （後から足すと並びがずれるため、消す向きにだけ動かす）。LP が無く公開リンクだけのプロジェクトでは出さない（リンクには請求やダッシュボードも混ざり、勝手に読み込まないため。リンクのタブからブラウザで開く）。調べるのは詳細を開いた時の 1 回で、開いている間に LP を作った時は別のディレクトリへ移って戻ると出る。「iPhone」は `.xcworkspace` / `.xcodeproj` がある時だけ。画像・リンク・スレッドは常に出す（空なら中で「なし」）。
+      （後から足すと並びがずれるため、消す向きにだけ動かす）。LP が無く公開リンクだけのプロジェクトでは出さない（リンクには請求やダッシュボードも混ざり、勝手に読み込まないため。リンクのタブからブラウザで開く）。調べるのは詳細を開いた時の 1 回で、開いている間に LP を作った時は別のディレクトリへ移って戻ると出る。「iPhone」は `.xcworkspace` / `.xcodeproj` がある時だけ。「App Store」は設定でアプリを紐づけた（`appStore` がある）時だけ。画像・リンク・スレッドは常に出す（空なら中で「なし」）。
     - 覚え方: 最後に押したタブをプロジェクトごとに UserDefaults（`directory.tab.<プロジェクトの id>`）に覚え、次に開く時はそのタブ。初めては出せるタブの先頭、覚えたタブが出せなくなっていたら先頭に戻る（覚えた値は押した時だけ書き換える）。
     - 走査・描画はそのタブを開いた時に始め、タブを離れると画面ごと消えて走査中のものは取りやめる。走査の結果と「再読み込み」の回数は詳細（プロジェクトごと）が持つので、タブを行き来しても走査し直さない。
       タブを替えるとスクロールは先頭に戻る（サイトで選んだ見る元は詳細が持ち、タブを替えても保つ）。別のプロジェクトへ移れば選んだタブ・走査の結果・見る元を持ち越さない（`.id(project.id)`）。
@@ -661,6 +673,26 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
     回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「端末の画面」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
     候補は `ViewThatFits` で入るものを選ぶ（`Views/Conversation/HeaderActions.swift`）。回す順の計算は `Sources/MonitorKit/Chat/HeaderOverflow.swift`（テストあり）。
+  - **App Store**（詳細のタブ。設定の `appStore` でアプリを紐づけたプロジェクトだけ）: App Store Connect API から読んだ、アプリごとの版の状態・審査・メタデータの文面を出す（`Views/Directory/AppStoreSection.swift`）。
+    - **読むだけ**: 送るのは `https://api.appstoreconnect.apple.com` への GET だけ。要求は `AppStoreRequest` でしか組み立てられず（他の宛先・メソッドは作れない。appId は数字だけ、版などの ID は英数字とハイフンだけ）、
+      一覧の続き（`links.next`）も同じ宛先の `/v1/` の下だけを辿る。リダイレクトは辿らない。書き換え・版の作成・審査への提出の口は無い（appstore-plugin の skill で確認を挟んで行う）。
+    - **認証**: appstore-plugin と同じ書式の `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_PRIVATE_KEY_PATH` か `ASC_PRIVATE_KEY` を、**環境変数 → `~/.claude/appstore-meta.env` の順**に読む
+      （plugin は間にプロジェクトの `./.env` も読むが、**アプリはプロジェクトの `.env` を読まない**。他の秘密を読み込まないため）。`ASC_PRIVATE_KEY_PATH` は `~` を展開した後も絶対パスでなければ断る。
+      env と .p8 は、リンクを辿った先が通常のファイル（64KB まで）の時だけ読む（FIFO やフォルダは開いて待たずに断る）。
+      CryptoKit で ES256 の JWT（alg ES256・kid・typ JWT / iss・iat・exp（plugin と同じ 10 分。20 分を超えない）・aud `appstoreconnect-v1`）を作って期限の 1 分前まで使い回す。
+      .p8 はトークンを作る時だけ読み、要求のたびには env の Key ID・Issuer ID だけを読んで、替わっていればトークンを作り直す。
+      ファイルは読むだけで、鍵・トークンは画面・ログ・設定に出さない。画面には読み元（「環境変数（ASC_KEY_ID）」/ `~/.claude/appstore-meta.env`）の名前だけを出す。
+      ファイルが無い・キーが足りない・鍵が読めない時は足りないものの名前だけを出す（鍵を貼らせない）。
+    - 見出しの「再読み込み」で取り直す（鍵も読み直す）。取るのはタブを開いた時と「再読み込み」だけで、自動の定期取得はしない。取った結果はアプリ全体で 10 分覚え（`AppStoreCache`）、その間はタブを行き来しても取り直さない。アプリごとに取得の時刻を出す。
+    - 失敗の案内: 401（キーの組み合わせ・取り消し）・403（役割・アプリへのアクセス）・404（appId）・429 / 5xx（しばらく待ってから「再読み込み」。**自動では取り直さない**）・通信の失敗・応答が読めない・応答が 8MB を超える（読まない）。
+      「再読み込み」の前に取りに行っていた文面の結果は採らない。
+    - アプリごとに: 名前（設定の名前と、違えば App Store Connect の名前）・バンドル ID・appId、プラットフォームごとの**最新の版**（版番号の数で新しい順・同じなら作った日）と**公開中の版**（最新が公開中なら出さない）の版番号・状態・作った日、
+      **審査の提出**（`reviewSubmissions` の新しい 3 件。下書きを先に、提出の日時）。版の一覧も提出の一覧も API に並びの指定（`sort`）が無いので、1 ページ 200 件で 4 ページまで辿って手元で並べる。
+      文面を書き換えられる状態の版（提出準備中・リジェクトなど）には「文面を編集できる版」と添える（書き換えは plugin で）。状態は日本語にし（提出準備中 / 審査の提出待ち / 審査待ち / 審査中 / リジェクト / メタデータのリジェクト / 取り下げ（開発者）/
+      公開待ち（手動で公開）/ 公開中 など。印の色で分け、ホバーで原文）、知らない値は原文のまま出す。版の状態は `appVersionState` を先に、無ければ `appStoreState`。
+    - **文面**: 最新の版（公開中の版が別にあれば選び替え）とロケール（アプリの主の言語を先頭に並べ、既定でも選ぶ）を選んで、名前・サブタイトル（アプリの情報。公開中の版には公開中の情報、それ以外には編集中の情報）・説明文・キーワード・プロモーションテキスト・What's New・サポート / マーケティング URL を、
+      文字数と上限（30 / 30 / 4000 / 100 / 170 / 4000。数え方は appstore-plugin と同じ Unicode のコードポイントの数）付きで出す。上限を超えた欄は赤と「上限超え」の印、ロケールの選択肢にも ⚠︎。長い本文は畳んで「全文」で開く。URL は http / https のものだけ押すとブラウザで開く。
+    - 組み立てと判定（env の読み取り・JWT・要求・応答の読み取り・状態の日本語・文字数・候補の当て方・キャッシュ）は `Sources/MonitorKit/AppStore/`（テストあり。本物の API は呼ばず、作った見本の JSON と偽の通信で確かめる）、持ち手は `Chat/Model/AppStoreStore.swift`。
   - **サイト**（先頭のタブ）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
     - 場所: 設定の `site`（下記「設定（settings.json）」）があればそれ、無ければプロジェクト直下と 2 階層までのサブフォルダから探す
       （`next.config.{js,mjs,ts,cjs}` があるか、`package.json` と `out/index.html` がある所。`node_modules`・`.next`・`out`・隠しフォルダ等の中は見ず、
@@ -1120,7 +1152,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
                                "pinned": true, "note": "月初に請求を見る", "reminderDay": 1 },
                              { "name": "Figma", "url": "https://www.figma.com/file/…" } ],
                   "site": { "path": "site" },
-                  "icon": "iphone", "color": "blue" } ],
+                  "icon": "iphone", "color": "blue",
+                  "appStore": [ { "appId": "1234567890", "name": "本番" }, { "appId": "1234567891", "name": "検証用" } ] } ],
   "boards": [ { "name": "overview", "owner": "ShinjoSato", "number": 5 } ] }
 ```
 
@@ -1147,6 +1180,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   `icon` は SF Symbol の名前（無ければ `folder`。この OS に無い名前は読めて値も残るが、表示は `folder` に落ちる。空は警告）。
   `color` は `red` / `orange` / `yellow` / `green` / `teal` / `blue` / `indigo` / `purple` / `pink` / `brown` / `gray` のどれか（無ければ名前から決める。知らない値は警告として読み込み、値は残したまま名前から決めた色で出す）。
   設定画面のプロジェクトタブの「アイコンと色」か、ディレクトリ一覧の行の右クリック「アイコンと色を変更…」から選ぶ（「自動」「既定」でキーを消す）。
+  `appStore` はディレクトリの詳細の「App Store」で見る App Store Connect のアプリ（`appId` は数字の文字列・`name` は画面に出す名前。本番・検証用など複数可・並びは配列の順）で、省略できる（空ならアプリも書かない）。
+  `appId` は数でも読む（次に保存すると文字列で書く）。数字でない・名前が空・同じ `appId` の重なりは警告として読む（数字でないものは取りに行かない）。形が崩れている（配列でない・要素に `appId` が無い）時は、その `appStore` だけを無視して警告を出す（次に保存すると書かれない）。
+  鍵は書かない（`~/.claude/appstore-meta.env` から読む）。**App Store を紐づけたら、`appStore` を知らない前のビルドで設定を保存しない**（`appStore` を落として書くため）。
   `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
 - 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600。ディレクトリを 0700 に締めるのは既定の場所（`~/Library/Application Support/claude-deck/`）の時だけで、
   `CLAUDE_DECK_SETTINGS` で向けた先のディレクトリの権限は変えない。
@@ -1186,6 +1222,12 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
   「サイト」の節で LP の場所を指定（相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
   正しい相対パスの間だけ保存し、検出の結果（指定 / 自動で検出・書き出しの有無）を出す。
+  「App Store」の節で App Store Connect のアプリを紐づける（`ProjectAppStoreEditor`）: 「App Store Connect のアプリの一覧を取得」で一覧を取り（10 分覚える。「一覧を取り直す」はアプリの一覧だけを取り直し、詳細の文面の覚えは残す。開いただけでは取りに行かず、settings.json も書かない）、
+  「アプリを追加」のメニューから選ぶ。メニューの先頭の「候補」は、そのプロジェクトの `.claude/appstore.json`（`{"appId": "…", "platform": "IOS"}`）の appId と、
+  プロジェクト内の `.xcodeproj/project.pbxproj` の `PRODUCT_BUNDLE_IDENTIFIER` が一致するアプリ（大文字小文字は区別しない）。`$(NAME)` / `${NAME}`（`:lower` / `:upper` / `:rfc1034identifier` も）は
+  同じプロジェクトの pbxproj と `.xcconfig`（条件付きの `NAME[sdk=…][config=…] = v` も）の値で解決し（値の重複は除き、変数ごとの解決は覚えて使い回す。互いに参照し合う変数は解決できないとする。組み合わせは 8 通りまで）、
+  解決できない時は「`com.example.`」のように区切り 2 つ以上の決まった頭がある書き方で（隣り合う変数は 1 つにまとめ、変数は 3 つまで）、合うアプリが 1 件だけの時だけ候補にする（誤って当てるより出さない）。
+  走査はアプリの一覧が取れてから始め、欄を離れると取りやめる。浅く（深さ 4・フォルダ 3,000 個・隠しフォルダと「画像」と同じ依存 / 成果物のフォルダ・`.xcworkspace` 等の中は見ない・リンクは辿らない）。候補の照合は走査の結果か一覧が替わった時だけ。紐づけた行は名前（本番・検証用など）を変えられ、∧ / ∨ で並べ替え・ゴミ箱で外す（名前が空の間は保存しない）。
 - **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号と、リポジトリに紐づかないボードの追加・編集・削除。
   owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
 - **iPhone 連携**: 上の「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）と、「iPhone への通知」の入り切り・状態。
@@ -1290,6 +1332,7 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - 上限到達の画面表示は実際の上限で出たものを未確認（文言はバイナリから、`⎿` の位置は TUI の描画コードから推定）。表示の形が違えば補助経路だけ効かない（主経路の残量判定は効く）。
 - ホスト中のルームはアプリを終了すると claude ごと終わる（次の起動で `--resume` で再開するが、作業は一度止まる。アプリを閉じても動かし続ける常駐プロセスの設計は `docs/pty-daemon.md`・未実装）。
 - アプリが強制終了・クラッシュした時は、サイトの開発サーバー（`npm run dev`）と「iPhone のプレビュー」の mcpbridge が残りうる。
+- 「App Store」は読むだけで、スクリーンショット・価格・審査のメモは出さない。版は各プラットフォームの最新と公開中だけ（API に並びの指定が無いので、版も審査の提出も 200 件ずつ 4 ページまで辿る。それより多いと最新を取りこぼしうる）。画面は本物の API で取れることを確かめたが、見た目の目視は未確認。
 - 「iPhone のプレビュー」は起動中の Xcode（RenderPreview のある 27 以降）が要る（Xcode を起動していない時の自前の描き手は未実装）。描画とキャッシュへの写しは
   MonitorKit のクライアントで sandora（描けた）と mirio（ビルド失敗の文言）で確かめたが、アプリの画面での操作（グリッド・シートでの切り替え）とアプリからの初回の承認は目視で未確認。
 - 権限プロンプト・選択メニューの読み取りは端末画面の文言（`Do you want to …?` と `1. Yes`、`❯ n.` の選択肢、`Enter to confirm` 等の操作案内）に依る。
