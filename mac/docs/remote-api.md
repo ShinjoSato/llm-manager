@@ -99,6 +99,7 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
       "terminalPermission": { "promptId": "…", "title": "Bash command", "lines": ["…"] },
       "menu": { "menuId": "…", "context": [], "question": "…", "options": [{ "index": 0, "number": 1, "label": "Yes", "detail": [], "checked": null, "isSubmit": false, "selectable": true }],
                 "cursor": 0, "footer": "…", "tabs": null, "isMultiSelect": false, "isReview": false, "cancelExits": false },
+                // options[] の "exits": true は選ぶと claude が終了する選択肢（trust 確認の「No, exit」）だけに付く（省略できる。古い mac は載せない）
       "unreadableMenu": { "menuId": "…", "lines": ["…"], "cancelExits": false },
       "busy": false,                  // mac か iPhone から操作を送っている最中（終わるまで押させない）
       "send": { "mode": "input|relay", "disabledReason": "…|null", "acceptsImages": true }  // acceptsImages: 画像を付けられるか（ホスト中だけ true。古い mac は載せない）
@@ -113,6 +114,10 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 
 `promptId` / `menuId` は中身（❯ の位置は除く）と**表示の世代**から作る。世代は端末の確認が消えるか替わるたびに進むので、
 同じ文面の確認が続けて出ても ID は別になる（前の表示の ID で次の確認に答えることは無い）。iPhone は常に最新の `state` の ID で操作すること。
+
+claude の終了になる操作（`cancelExits` のメニューの取り消し・`exits: true` の選択肢）は、`confirmExit: true` が無いと `confirm_required` で断る。
+iPhone は押した時に確認を出してから `confirmExit: true` で送る。`exits` を載せない古い mac には、`confirm_required` が返ってから同じ確認を出し、
+了承されたら `confirmExit: true` を付けて送り直す（`exits` は省略できる欄なので、古い iPhone は読み飛ばす）。
 
 ### `/v1/events`（Server-Sent Events）
 

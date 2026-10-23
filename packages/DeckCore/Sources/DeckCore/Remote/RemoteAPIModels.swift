@@ -184,8 +184,11 @@ public struct RemoteMenuOption: Codable, Sendable, Equatable {
     public var isSubmit: Bool
     /// 押せるか（文字入力に移る選択肢は押せない）。
     public var selectable: Bool
+    /// 選ぶと claude が終了する（trust 確認の「No, exit」）。選ぶには `confirmExit: true` が要る。古い mac は付けない。
+    public var exits: Bool?
 
-    public init(index: Int, number: Int?, label: String, detail: [String], checked: Bool?, isSubmit: Bool, selectable: Bool) {
+    public init(index: Int, number: Int?, label: String, detail: [String], checked: Bool?, isSubmit: Bool, selectable: Bool,
+                exits: Bool? = nil) {
         self.index = index
         self.number = number
         self.label = label
@@ -193,6 +196,7 @@ public struct RemoteMenuOption: Codable, Sendable, Equatable {
         self.checked = checked
         self.isSubmit = isSubmit
         self.selectable = selectable
+        self.exits = exits
     }
 }
 
@@ -253,6 +257,16 @@ public struct RemoteMenu: Codable, Sendable, Equatable {
         self.isMultiSelect = isMultiSelect
         self.isReview = isReview
         self.cancelExits = cancelExits
+    }
+
+    /// `index` の選択肢を選ぶと claude が終了するか（mac の印で判断する。印の無い古い mac には `confirm_required` で断られて知る）。
+    public func choiceExits(_ index: Int) -> Bool {
+        options.first { $0.index == index }?.exits == true
+    }
+
+    /// `index` の選択肢の名前（確認の文言に出す）。
+    public func label(of index: Int) -> String? {
+        options.first { $0.index == index }?.label
     }
 }
 

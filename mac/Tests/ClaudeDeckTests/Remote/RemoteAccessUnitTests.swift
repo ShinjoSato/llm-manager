@@ -188,6 +188,27 @@ final class RemoteAccessUnitTests: XCTestCase {
         XCTAssertEqual(remote.options.map(\.index), [0, 1, 2])
     }
 
+    /// 終了になる選択肢にだけ印を付ける（iPhone が押す前に確かめるため）。印の無い選択肢では鍵ごと出さない。
+    func testExitingChoiceIsMarked() throws {
+        let trust = MenuPrompt(context: [], question: "Is this a project you created or one you trust?",
+                               options: [.init(number: nil, label: "No, exit"), .init(number: nil, label: "Yes, I trust this folder")],
+                               cursor: 0, footer: "Enter to confirm · Esc to cancel", tabs: nil)
+        let remote = RemoteMenu(trust, generation: 0)
+        XCTAssertEqual(remote.options.map(\.exits), [true, nil])
+        XCTAssertTrue(remote.choiceExits(0))
+        XCTAssertFalse(remote.choiceExits(1))
+
+        let ask = MenuPrompt(context: [], question: "Stop?", options: [.init(number: 1, label: "No, exit the loop"), .init(number: 2, label: "Yes")],
+                             cursor: 0, footer: "Enter to select · Esc to cancel", tabs: nil)
+        XCTAssertEqual(RemoteMenu(ask, generation: 0).options.map(\.exits), [nil, nil], "Claude が書いた選択肢は終了と読まない")
+        XCTAssertEqual(RemoteMenu(menu(), generation: 0).options.map(\.exits), [nil, nil, nil])
+
+        let options = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(remote)) as? [String: Any])["options"]
+        let encoded = try XCTUnwrap(options as? [[String: Any]])
+        XCTAssertEqual(encoded[0]["exits"] as? Bool, true)
+        XCTAssertNil(encoded[1]["exits"], "印の無い選択肢は古い iPhone と同じ形のまま")
+    }
+
     func testMenuAnswerChecks() {
         let current = menu()
         let id = RemoteMenu.menuId(current, generation: 0)

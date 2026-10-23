@@ -23,10 +23,12 @@ struct CardView: View {
                 model.answerTerminal(room, prompt, allow: allow)
             }
         case .menu(let menu):
-            MenuCard(menu: menu, busy: busy) { choice, confirmExit in
+            MenuCard(menu: menu, busy: busy, requestedExit: model.exitConfirmation(room, menu)) { choice, confirmExit in
                 model.answerMenu(room, menu, choice: choice, confirmExit: confirmExit)
             } onMoveTab: { direction in
                 model.moveTab(room, menu, direction)
+            } onDismissRequestedExit: {
+                model.dismissExitConfirmation(room.id)
             }
             .id(menu.menuId)
         case .unreadableMenu(let menu):
@@ -93,10 +95,13 @@ struct PermissionCard: View {
 struct MenuCard: View {
     let menu: RemoteMenu
     let busy: Bool
+    /// mac に求められた終了の確認（終了の印を付けない古い mac は、送ってから断る）。
+    let requestedExit: ExitConfirmation?
     /// 選択肢の位置。nil は取り消し（Esc）。2 つ目は終了の確認を済ませたか。
     let onChoose: (Int?, Bool) -> Void
     let onMoveTab: (RemoteTabDirection) -> Void
-    @State private var confirmingExit = false
+    let onDismissRequestedExit: () -> Void
+    @State private var exitTarget: ExitConfirmation?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -115,7 +120,7 @@ struct MenuCard: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(menu.options, id: \.index) { option in
-                    MenuOptionRow(option: option, isCursor: option.index == menu.cursor) { onChoose(option.index, false) }
+                    MenuOptionRow(option: option, isCursor: option.index == menu.cursor) { choose(option.index) }
                 }
             }
             if menu.isMultiSelect {
@@ -129,14 +134,28 @@ struct MenuCard: View {
             if menu.options.contains(where: { !$0.selectable }) {
                 hint("文字を入力する選択肢はここからは選べません。「キャンセル」で閉じてから、下の入力欄で伝えてください。")
             }
-            MenuCancelButton(cancelExits: menu.cancelExits, confirmingExit: $confirmingExit) { onChoose(nil, false) }
+            MenuCancelButton(cancelExits: menu.cancelExits) { onChoose(nil, false) } onAskExit: { exitTarget = .cancel(menu.menuId) }
                 .accessibilityIdentifier("menu-cancel")
             if busy { SendingIndicator() }
         }
         .disabled(busy)
         .opacity(busy ? 0.6 : 1)
         .cardFrame()
-        .exitConfirmation(isPresented: $confirmingExit) { onChoose(nil, true) }
+        .exitConfirmation($exitTarget) { target in onChoose(target.choice, true) }
+        .onChange(of: requestedExit, initial: true) { _, requested in
+            if let requested { exitTarget = requested }
+        }
+        .onChange(of: exitTarget) { _, target in
+            if target == nil, requestedExit != nil { onDismissRequestedExit() }
+        }
+    }
+
+    private func choose(_ index: Int) {
+        if let confirmation = ExitConfirmation.needed(choosing: index, in: menu) {
+            exitTarget = confirmation
+        } else {
+            onChoose(index, false)
+        }
     }
 
     private func hint(_ text: String) -> some View {
@@ -247,7 +266,7 @@ struct UnreadableMenuCard: View {
     let busy: Bool
     /// 引数は終了の確認を済ませたか。
     let onCancel: (Bool) -> Void
-    @State private var confirmingExit = false
+    @State private var exitTarget: ExitConfirmation?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -259,12 +278,12 @@ struct UnreadableMenuCard: View {
                 .foregroundStyle(DeckTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if !menu.lines.isEmpty { CardCode(text: menu.lines.suffix(12).joined(separator: "\n")) }
-            MenuCancelButton(cancelExits: menu.cancelExits, confirmingExit: $confirmingExit) { onCancel(false) }
+            MenuCancelButton(cancelExits: menu.cancelExits) { onCancel(false) } onAskExit: { exitTarget = .cancel(menu.menuId) }
             if busy { SendingIndicator() }
         }
         .disabled(busy)
         .cardFrame()
-        .exitConfirmation(isPresented: $confirmingExit) { onCancel(true) }
+        .exitConfirmation($exitTarget) { _ in onCancel(true) }
     }
 }
 
@@ -350,12 +369,12 @@ private struct CardButtonLabel: View {
 /// 選択メニューの取り消し（Esc）。Esc が終了になるメニューでは先に確認を出す。
 private struct MenuCancelButton: View {
     let cancelExits: Bool
-    @Binding var confirmingExit: Bool
     let onCancel: () -> Void
+    let onAskExit: () -> Void
 
     var body: some View {
         Button {
-            if cancelExits { confirmingExit = true } else { onCancel() }
+            if cancelExits { onAskExit() } else { onCancel() }
         } label: {
             CardButtonLabel(title: cancelExits ? "終了（Esc）" : "キャンセル（Esc）")
         }
@@ -381,13 +400,15 @@ private extension View {
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(DeckTheme.permission, lineWidth: 1.5))
     }
 
-    /// Esc が claude の終了になるメニューで、送る前に確かめる。
-    func exitConfirmation(isPresented: Binding<Bool>, onExit: @escaping () -> Void) -> some View {
-        confirmationDialog("claude を終了しますか？", isPresented: isPresented, titleVisibility: .visible) {
-            Button("終了する（Esc）", role: .destructive, action: onExit)
+    /// claude の終了になる取り消し・選択肢を、送る前に確かめる。
+    func exitConfirmation(_ target: Binding<ExitConfirmation?>, onExit: @escaping (ExitConfirmation) -> Void) -> some View {
+        let isPresented = Binding(get: { target.wrappedValue != nil }, set: { if !$0 { target.wrappedValue = nil } })
+        return confirmationDialog(ExitConfirmation.title, isPresented: isPresented, titleVisibility: .visible,
+                                  presenting: target.wrappedValue) { confirmation in
+            Button(confirmation.actionTitle, role: .destructive) { onExit(confirmation) }
             Button("やめる", role: .cancel) {}
-        } message: {
-            Text("このメニューで Esc を押すと、取り消しではなく Claude Code の終了になります。")
+        } message: { confirmation in
+            Text(confirmation.message)
         }
     }
 }

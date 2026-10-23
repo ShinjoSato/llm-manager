@@ -183,6 +183,10 @@ final class SharedClientOnIOSTests: XCTestCase {
         XCTAssertEqual(req.value(forHTTPHeaderField: "Content-Type"), "application/json")
         let body = try JSONDecoder().decode(RemoteMenuAnswerRequest.self, from: XCTUnwrap(req.httpBody))
         XCTAssertEqual(body, RemoteMenuAnswerRequest(menuId: "m", cancel: true, confirmExit: true))
+
+        let choice = try builder.menu(roomId: "h:1", RemoteMenuAnswerRequest(menuId: "m", choice: 0, confirmExit: true))
+        XCTAssertEqual(try JSONDecoder().decode(RemoteMenuAnswerRequest.self, from: XCTUnwrap(choice.httpBody)),
+                       RemoteMenuAnswerRequest(menuId: "m", choice: 0, confirmExit: true), "終了になる選択肢は確認の印を付けて送る")
     }
 
     func testResultCodesReadAsJapanese() {
