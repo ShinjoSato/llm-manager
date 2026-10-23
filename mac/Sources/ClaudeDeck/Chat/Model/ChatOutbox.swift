@@ -28,6 +28,8 @@ final class ChatOutbox {
     private(set) var sentImages: [RoomID: [PendingImageMessage]] = [:]
     /// ルーム → 送り始めてまだ transcript に載っていないかもしれない発話（入力欄の履歴に含める）。
     @ObservationIgnored private var sentTexts: [RoomID: [ComposerHistory.Sent]] = [:]
+    /// ルーム → 入力欄の ↑ / ↓ の呼び出しの状態（退避した下書きを含む。ルームやタブを替えても ↓ で戻せるように）。
+    @ObservationIgnored private var recalls: [RoomID: ComposerRecall] = [:]
 
     // MARK: ChatModel・引き継ぎへの問い合わせ（循環参照を避けてクロージャで受け、設定し忘れは assert で止める）
     /// ホスト中のルームがまだあるか（閉じた後に届いた送信の結末で下書きを戻さないため）。
@@ -174,9 +176,39 @@ final class ChatOutbox {
 
     // MARK: - 入力欄の履歴
 
-    /// 入力欄の ↑ / ↓ で呼び出す、そのルームで前に送った発話（新しい順）。
-    func history(for roomId: RoomID, items: [TranscriptItem], notes: [RelayNote]) -> [String] {
-        ComposerHistory.entries(items: items, notes: notes, sent: sentTexts[roomId] ?? [])
+    /// 入力欄の先頭での ↑ / ↓。履歴は辿り始めと transcript などが変わった時だけ組み立てる。
+    func recall(_ direction: ComposerRecall.Direction, current: String, in roomId: RoomID,
+                items: [TranscriptItem], notes: [RelayNote]) -> ComposerRecall.Outcome {
+        var state = recalls[roomId] ?? ComposerRecall()
+        let sent = sentTexts[roomId] ?? []
+        let outcome = state.move(direction, current: current, stamp: {
+            "\(items.count)|\(items.last?.id ?? "")|\(notes.count)|\(sent.count)|\(sent.last?.id ?? "")"
+        }, history: {
+            ComposerHistory.entries(items: items, notes: notes, sent: sent, now: Date().timeIntervalSince1970 * 1000)
+        })
+        recalls[roomId] = state.isIdle ? nil : state
+        return outcome
+    }
+
+    /// 入力欄がルームやタブを離れた。位置だけ初めに戻す。
+    func rewindRecall(in roomId: RoomID) {
+        recalls[roomId]?.rewind()
+    }
+
+    /// 送信や外からの変更で入力欄の文が入れ替わった。
+    func resetRecall(in roomId: RoomID) {
+        recalls[roomId] = nil
+    }
+
+    /// transcript に載った分と期限切れの送信中の発話を片付ける。
+    func pruneSentTexts(sessionId: String, items: [TranscriptItem]) {
+        guard !sentTexts.isEmpty else { return }
+        let now = Date().timeIntervalSince1970 * 1000
+        for roomId in roomIds(sessionId) {
+            guard let sent = sentTexts[roomId] else { continue }
+            let rest = ComposerHistory.pending(sent, in: items, now: now)
+            if rest.count != sent.count { sentTexts[roomId] = rest.isEmpty ? nil : rest }
+        }
     }
 
     private func rememberSent(_ text: String, id: String, at sentAt: Double, in roomId: RoomID) {
@@ -312,6 +344,7 @@ final class ChatOutbox {
         drafts[roomId] = nil
         sentImages[roomId] = nil
         sentTexts[roomId] = nil
+        recalls[roomId] = nil
         discardPendingAttachments(of: roomId)
     }
 
@@ -319,6 +352,7 @@ final class ChatOutbox {
     func move(from roomId: RoomID, to newRoomId: RoomID) {
         if let draft = drafts.removeValue(forKey: roomId) { drafts[newRoomId] = draft }
         if let sent = sentTexts.removeValue(forKey: roomId) { sentTexts[newRoomId, default: []].append(contentsOf: sent) }
+        if let recall = recalls.removeValue(forKey: roomId) { recalls[newRoomId] = recall }
         if let pending = attachments.removeValue(forKey: roomId) { attachments[newRoomId, default: []].append(contentsOf: pending) }
         if let pending = importing.removeValue(forKey: roomId) {
             importing[newRoomId, default: [:]].merge(pending) { _, moved in moved }

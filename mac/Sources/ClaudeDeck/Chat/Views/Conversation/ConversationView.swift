@@ -87,11 +87,10 @@ struct ChatPane: View {
                      thumbnail: { outbox.thumbnails[$0.id] },
                      onAttach: { outbox.attach($0, to: room.id) },
                      onRemoveAttachment: { outbox.removeAttachment($0, from: room.id) },
-                     history: { [transcripts = model.transcripts, relay = model.relay] in
-                         outbox.history(for: room.id, items: transcripts.items(for: room.sessionId),
-                                        notes: relay.notes(for: room.sessionId))
-                     },
-                     historyScope: room.id) { text in
+                     recaller: ComposerRecaller(scope: room.id, move: { [transcripts = model.transcripts, relay = model.relay] direction, current in
+                         outbox.recall(direction, current: current, in: room.id, items: transcripts.items(for: room.sessionId),
+                                       notes: relay.notes(for: room.sessionId))
+                     }, rewind: { outbox.rewindRecall(in: room.id) }, reset: { outbox.resetRecall(in: room.id) })) { text in
                 room.isExternal ? model.relay.send(text, to: room) : outbox.send(text, to: room)
             }
         }

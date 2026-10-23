@@ -2,6 +2,15 @@ import SwiftUI
 import AppKit
 import MonitorKit
 
+/// 入力欄の ↑ / ↓ の呼び出しを、状態を持つ側（ルームごと）へつなぐ。
+struct ComposerRecaller {
+    /// 呼び出しの状態を持つ単位（ルーム）。
+    let scope: AnyHashable
+    let move: (ComposerRecall.Direction, String) -> ComposerRecall.Outcome
+    let rewind: () -> Void
+    let reset: () -> Void
+}
+
 /// 入力欄。⏎ 送信・⇧⏎ 改行・先頭で ↑ / ↓ は前に送った発話の呼び出し。`disabledReason` があれば送れない理由を出して無効にする。
 struct Composer: View {
     @Binding var text: String
@@ -17,10 +26,8 @@ struct Composer: View {
     var thumbnail: (Attachment) -> NSImage? = { _ in nil }
     var onAttach: ([AttachmentSource]) -> Void = { _ in }
     var onRemoveAttachment: (Attachment) -> Void = { _ in }
-    /// ↑ / ↓ で呼び出す前に送った発話（新しい順）。キーを押した時だけ組み立てる。
-    var history: () -> [String] = { [] }
-    /// 履歴の位置を持つ単位（ルーム）。変わったら初めに戻す。
-    var historyScope: AnyHashable?
+    /// 先頭での ↑ / ↓ による前に送った発話の呼び出し（無ければ既定の行の移動だけ）。
+    var recaller: ComposerRecaller?
     /// 送れたら true（入力欄を空にする）。
     let onSend: (String) -> Bool
     @State private var height: CGFloat = 20
@@ -99,7 +106,7 @@ struct Composer: View {
             .help("画像・ファイルを添付（⌘V で画像の貼り付け・ドラッグ＆ドロップも可）")
             // 案内は端末ビューが表示内容で出し分ける（下書きが空のままの変換中に SwiftUI 側では消せない）。
             ComposerTextView(text: $text, height: $height, isEnabled: enabled, placeholder: disabledReason ?? placeholder,
-                             onSubmit: submit, onAttach: onAttach, history: history, historyScope: historyScope)
+                             onSubmit: submit, onAttach: onAttach, recaller: recaller)
                 .frame(height: height)
                 .padding(.vertical, 6)
             Button(action: submit) {

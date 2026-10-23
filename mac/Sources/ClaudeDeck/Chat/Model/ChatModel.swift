@@ -127,7 +127,10 @@ final class ChatModel {
         self.handover = handover
         relay = ChatRelay(store: store, alerts: alerts, outbox: outbox)
         prompts = PromptResponder(store: store, alerts: alerts)
-        transcripts = TranscriptCache(store: store) { sessionId, items in outbox.pruneSentImages(sessionId: sessionId, items: items) }
+        transcripts = TranscriptCache(store: store) { sessionId, items in
+            outbox.pruneSentImages(sessionId: sessionId, items: items)
+            outbox.pruneSentTexts(sessionId: sessionId, items: items)
+        }
         editors = EditorLauncher()
         listMode = RoomListMode(saved: UserDefaults.standard.string(forKey: RoomListMode.defaultsKey))
         // 部品から ChatModel へは弱い参照のクロージャだけで戻る（循環参照を作らない）。引き継ぎは部品同士の一方向の参照。

@@ -23,15 +23,16 @@ public enum ComposerHistory {
     /// ルームごとに覚えておく送信中の発話の数。
     public static let sentLimit = 20
 
-    /// 新しい順の履歴。本人の発話（伝言の写しを除く）と、まだ記録されていない送信中の発話。同じ文の連続は 1 つにする。
-    public static func entries(items: [TranscriptItem], notes: [RelayNote] = [], sent: [Sent] = []) -> [String] {
+    /// 新しい順の履歴。本人の発話（伝言の写し・アプリが自分で頼む続きの依頼を除く）と、まだ記録されていない送信中の発話。
+    /// 同じ文の連続は 1 つにする。`now`（epoch ミリ秒）があれば期限切れの送信中の発話を除く。
+    public static func entries(items: [TranscriptItem], notes: [RelayNote] = [], sent: [Sent] = [], now: Double? = nil) -> [String] {
         let users = (notes.isEmpty ? items : RelayNotes.removingEchoes(from: items, notes: notes)).filter { item in
             item.kind == .user && !(item.text ?? "").hasPrefix(RelayNotes.peerPrefix)
         }
         var oldestFirst = users.map { recallable($0.text ?? "") }
-        oldestFirst += unrecorded(sent, in: users).map { recallable($0.text) }
+        oldestFirst += pending(sent, in: items, now: now).map { recallable($0.text) }
         var result: [String] = []
-        for text in oldestFirst.reversed() where !text.isEmpty && text != result.last {
+        for text in oldestFirst.reversed() where !text.isEmpty && text != result.last && text != SessionRestore.continueMessage {
             result.append(text)
         }
         return result
@@ -46,6 +47,17 @@ public enum ComposerHistory {
             if let index = pending.firstIndex(where: { isRecorded(text: text, at: item.at, of: $0) }) { pending.remove(at: index) }
         }
         return pending
+    }
+
+    /// 履歴に出す送信中の発話。記録されたもの・期限切れ・最後に記録された発話より前に送ったもの（取り下げ等で記録されなかった）を除く。
+    public static func pending(_ sent: [Sent], in items: [TranscriptItem], now: Double?) -> [Sent] {
+        guard !sent.isEmpty else { return [] }
+        let lastRecorded = items.lazy.filter { $0.kind == .user }.compactMap(\.at).max()
+        return unrecorded(sent, in: items).filter { sent in
+            if let now, now - sent.sentAt >= sentLifetime { return false }
+            if let lastRecorded, sent.sentAt < lastRecorded { return false }
+            return true
+        }
     }
 
     private static func isRecorded(text: String, at: Double?, of sent: Sent) -> Bool {
@@ -77,7 +89,7 @@ public enum ComposerHistory {
     }
 }
 
-/// 入力欄の ↑ / ↓ による履歴の呼び出しの状態（シェルの履歴と同じ動き）。
+/// 入力欄の ↑ / ↓ による履歴の呼び出しの状態（シェルの履歴と同じ動き）。ルームごとに持つ。
 public struct ComposerRecall: Sendable, Equatable {
     public enum Direction: Sendable { case older, newer }
 
@@ -90,56 +102,91 @@ public struct ComposerRecall: Sendable, Equatable {
         case show(String)
     }
 
-    /// 今出している履歴の位置（0 が一番新しい）。nil は呼び出していない。
+    /// 今出している履歴の位置（0 が一番新しい）。nil は辿っていない（呼び出した文が欄に残っていても、ルームを替えた後は初めから辿る）。
     public private(set) var position: Int?
-    /// 呼び出す前の打ちかけの下書き。
-    public private(set) var savedDraft = ""
+    /// 呼び出す前の打ちかけの下書き。nil は呼び出していない。
+    public private(set) var savedDraft: String?
     private var shown: String?
+    /// 辿っている間の履歴（新しい順）と、組み立てた時の transcript などの印。
+    private var history: [String] = []
+    private var stamp: String?
 
     public init() {}
+
+    /// 呼び出した文も退避した下書きも無い（持っておく必要が無い）。
+    public var isIdle: Bool { savedDraft == nil && shown == nil }
 
     /// 履歴に回せる位置か。カーソルが先頭で選択が無く、変換中でない時だけ。
     public static func isAtStart(selection: NSRange, hasMarkedText: Bool) -> Bool {
         !hasMarkedText && selection.location == 0 && selection.length == 0
     }
 
-    /// `history` は新しい順、`current` は今の入力欄の文。
-    public mutating func move(_ direction: Direction, history: [String], current: String) -> Outcome {
+    /// `current` は今の入力欄の文。`stamp` は履歴の元が変わったら変わる印、`history` は新しい順の履歴で、要る時だけ呼ぶ。
+    public mutating func move(_ direction: Direction, current: String, stamp: () -> String,
+                              history build: () -> [String]) -> Outcome {
         // 呼び出した文を打ち直したら、その文を新しい下書きとして呼び出しをやめる。
         if let shown, current != shown { reset() }
         switch direction {
         case .older:
-            let next = position.map { $0 + 1 } ?? 0
-            guard next < history.count else {
-                guard position != nil else { return .pass }
-                // 履歴が減って今の位置も無くなった時は一番古いものに合わせる。
-                return history.isEmpty ? restoreDraft() : show(history.count - 1, of: history, unlessAt: true)
+            refresh(stamp: stamp, build: build)
+            let next: Int
+            if let position {
+                next = position + 1
+            } else {
+                // 欄に出ている文と同じものは飛ばす（ルームを替えて戻った時に同じ文を出し直さない）。
+                next = history.first == current ? 1 : 0
             }
-            if position == nil { savedDraft = current }
-            return show(next, of: history, unlessAt: false)
+            guard next < history.count else { return savedDraft == nil ? .pass : .stay }
+            if savedDraft == nil { savedDraft = current }
+            return show(next)
         case .newer:
-            guard let position else { return .pass }
-            let next = min(position, history.count) - 1
-            guard next >= 0 else { return restoreDraft() }
-            return show(next, of: history, unlessAt: false)
+            guard savedDraft != nil else { return .pass }
+            guard position != nil else { return restoreDraft() }
+            refresh(stamp: stamp, build: build)
+            guard let position, position > 0 else { return restoreDraft() }
+            return show(position - 1)
         }
     }
 
-    public mutating func reset() {
+    /// ルームやタブを離れた。位置は初めに戻すが、欄に残る呼び出した文と退避した下書きは覚えておき、↓ で戻せるようにする。
+    public mutating func rewind() {
         position = nil
-        savedDraft = ""
-        shown = nil
+        history = []
+        stamp = nil
     }
 
-    private mutating func show(_ index: Int, of history: [String], unlessAt stayIfSame: Bool) -> Outcome {
-        if stayIfSame, position == index, shown == history[index] { return .stay }
+    public mutating func reset() {
+        self = ComposerRecall()
+    }
+
+    /// 辿り始めと履歴の元が変わった時だけ組み立て直し、今出している文を基準に位置を合わせ直す。
+    private mutating func refresh(stamp: () -> String, build: () -> [String]) {
+        let newStamp = stamp()
+        guard position == nil || newStamp != self.stamp else { return }
+        let fresh = build()
+        if let position { self.position = Self.reanchor(position, shown: shown, old: history, new: fresh) }
+        history = fresh
+        self.stamp = newStamp
+    }
+
+    static func reanchor(_ position: Int, shown: String?, old: [String], new: [String]) -> Int? {
+        guard !new.isEmpty else { return nil }
+        // 新しい発話は先頭に足されるので、古い一覧がそのまま後ろに残っていればその分だけずらす。
+        if new.count >= old.count, Array(new.suffix(old.count)) == old { return position + new.count - old.count }
+        if let shown, let nearest = new.indices.filter({ new[$0] == shown }).min(by: { abs($0 - position) < abs($1 - position) }) {
+            return nearest
+        }
+        return min(position, new.count - 1)
+    }
+
+    private mutating func show(_ index: Int) -> Outcome {
         position = index
         shown = history[index]
         return .show(history[index])
     }
 
     private mutating func restoreDraft() -> Outcome {
-        let draft = savedDraft
+        let draft = savedDraft ?? ""
         reset()
         return .show(draft)
     }
@@ -149,10 +196,13 @@ extension NSTextView {
     /// 呼び出した文に入れ替える。打った時と同じく取り消しと変更の通知（下書きへの反映）を通し、カーソルは先頭に置く。
     public func replaceAllForRecall(with text: String) {
         let whole = NSRange(location: 0, length: (string as NSString).length)
+        // 直前の打鍵とまとめず、⌘Z 1 回で入れ替え前に戻るようにする。
+        breakUndoCoalescing()
         if shouldChangeText(in: whole, replacementString: text) {
             replaceCharacters(in: whole, with: text)
             didChangeText()
         }
+        breakUndoCoalescing()
         setSelectedRange(NSRange(location: 0, length: 0))
         scrollRangeToVisible(NSRange(location: 0, length: 0))
     }

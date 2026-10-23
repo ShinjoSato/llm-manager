@@ -11,8 +11,7 @@ struct ComposerTextView: NSViewRepresentable {
     var placeholder = ""
     let onSubmit: () -> Void
     var onAttach: ([AttachmentSource]) -> Void = { _ in }
-    var history: () -> [String] = { [] }
-    var historyScope: AnyHashable?
+    var recaller: ComposerRecaller?
 
     static let maxHeight: CGFloat = 160
 
@@ -52,26 +51,26 @@ struct ComposerTextView: NSViewRepresentable {
         textView.onSubmit = { context.coordinator.parent.onSubmit() }
         textView.onAttach = { context.coordinator.parent.onAttach($0) }
         textView.onRecall = { [weak coordinator = context.coordinator] direction, current in
-            coordinator?.recall(direction, current: current) ?? .pass
+            coordinator?.parent.recaller?.move(direction, current) ?? .pass
         }
-        context.coordinator.recallScope = historyScope
         scroll.documentView = textView
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let previous = context.coordinator.parent.recaller
         context.coordinator.parent = self
-        // 同じ入力欄のまま別のルームに替わることがあるので、呼び出しの位置はルームが変わったら初めに戻す。
-        if context.coordinator.recallScope != historyScope {
-            context.coordinator.recallScope = historyScope
-            context.coordinator.recallState.reset()
-        }
+        // 同じ入力欄のまま別のルームに替わることがあるので、離れたルームの呼び出しの位置は初めに戻す。
+        let scopeChanged = previous?.scope != recaller?.scope
+        if scopeChanged { previous?.rewind() }
         guard let textView = scroll.documentView as? SubmitTextView else { return }
         // 変換中の文字は下書きに入っていないので、再描画のたびに書き戻すと消える。本当の外部変更（送信後の空など）だけ反映する。
         if context.coordinator.sync.shouldApply(external: text, shown: textView.string) {
             if textView.hasMarkedText() { textView.inputContext?.discardMarkedText() }
             textView.string = text
             context.coordinator.recalculateHeight(textView)
+            // 送信で空になった・外から本文が変わった時は呼び出しをやめる（ルームの切り替えでは移った先の呼び出しを残す）。
+            if !scopeChanged { recaller?.reset() }
         }
         textView.placeholder = placeholder
         textView.isEditable = isEnabled
@@ -80,17 +79,16 @@ struct ComposerTextView: NSViewRepresentable {
         textView.minSize = NSSize(width: 0, height: scroll.contentSize.height)
     }
 
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        // タブを替えて入力欄が消えた。戻った時は初めから辿る（退避した下書きは残す）。
+        coordinator.parent.recaller?.rewind()
+    }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
         var sync = ComposerSync()
-        var recallState = ComposerRecall()
-        var recallScope: AnyHashable?
 
         init(_ parent: ComposerTextView) { self.parent = parent }
-
-        func recall(_ direction: ComposerRecall.Direction, current: String) -> ComposerRecall.Outcome {
-            recallState.move(direction, history: parent.history(), current: current)
-        }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
