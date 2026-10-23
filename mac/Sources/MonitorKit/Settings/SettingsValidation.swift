@@ -79,6 +79,18 @@ public enum SettingsValidation {
         }
     }
 
+    /// App Store のアプリの行ごとの問題（appId は数字だけ・同じ appId は後の行の問題にする）。
+    public static func appStoreRowProblems(_ apps: [AppStoreAppLink]) -> [[String]] {
+        var seen = Set<String>()
+        return apps.map { app in
+            var problems: [String] = []
+            if !AppStoreRequest.isAppID(app.appId) { problems.append("appId は数字だけです（\(app.appId)）") }
+            if app.name.trimmingCharacters(in: .whitespaces).isEmpty { problems.append("名前を入れてください") }
+            if !app.appId.isEmpty, !seen.insert(app.appId).inserted { problems.append("同じ appId のアプリが他にもあります") }
+            return problems
+        }
+    }
+
     public static func projectCommandProblems(_ command: ProjectCommand) -> [String] {
         var problems: [String] = []
         let name = command.name.trimmingCharacters(in: .whitespaces)
@@ -167,6 +179,14 @@ public enum SettingsValidation {
                 result.append("「\(project.name)」の実行コマンド: 形が正しくないため無視しました（[{\"name\": \"名前\", \"command\": \"コマンド\"}] の形で書いてください）")
             }
             if project.ignoredSite.isSet { result.append("「\(project.name)」のサイト: 形が正しくないため無視しました（{\"path\": \"相対パス\"} の形で書いてください）") }
+            for (app, problems) in zip(project.appStoreApps, appStoreRowProblems(project.appStoreApps)) {
+                for p in problems { result.append("「\(project.name)」の App Store「\(app.name)」: \(p)") }
+            }
+            if project.ignoredAppStore.isSet { result.append("「\(project.name)」の App Store: 形が正しくないため無視しました（[{\"appId\": \"数字\", \"name\": \"名前\"}] の形で書いてください）") }
+            if let path = project.xcode?.configuredPath, let p = XcodeLinks.pathProblem(path) { result.append("「\(project.name)」の Xcode: \(p)") }
+            if project.ignoredXcode.isSet {
+                result.append("「\(project.name)」の Xcode: 形が正しくないため無視しました（{\"path\": \"相対パス\"} か {\"disabled\": true} の形で書いてください）")
+            }
             if let p = ProjectBadge.colorProblem(project.color) { result.append("「\(project.name)」の印: \(p)") }
             if let p = ProjectBadge.iconProblem(project.icon) { result.append("「\(project.name)」の印: \(p)") }
         }

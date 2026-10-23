@@ -25,8 +25,10 @@ final class DummyPTY {
 
     init(executable: String, args: [String], environment: [String], directory: String? = nil) {
         process = LocalProcess(delegate: recorder, dispatchQueue: queue)
-        process.startProcess(executable: executable, args: args, environment: environment, execName: nil, currentDirectory: directory)
-        if process.childfd >= 0 { _ = fcntl(process.childfd, F_SETFD, FD_CLOEXEC) }
+        ChildProcessControl.withSpawnLock {
+            process.startProcess(executable: executable, args: args, environment: environment, execName: nil, currentDirectory: directory)
+            ChildProcessControl.setCloseOnExec(process.childfd)
+        }
     }
 
     var pid: pid_t { process.shellPid }

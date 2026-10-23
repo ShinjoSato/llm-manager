@@ -34,6 +34,10 @@ enum DeckTheme {
     static let headline = Font.system(size: 17, weight: .bold)
     static let mono = Font.system(size: 12.5, design: .monospaced)
 
+    // iPad の広い画面で 1 行や主ボタンが横に伸びすぎないよう、本文の幅に上限を置く。
+    static let readableWidth: CGFloat = 760
+    static let formWidth: CGFloat = 560
+
     static func color(for status: SessionStatus) -> Color {
         switch status {
         case .permission: return permission

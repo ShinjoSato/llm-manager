@@ -67,7 +67,7 @@ final class QuitCoordinator {
         }
     }
 
-    /// SIGTERM / SIGINT。確認中なら閉じ、保留中ならそのまま終える（必ず終わる）。
+    /// SIGTERM / SIGINT / SIGHUP。確認中なら閉じ、保留中ならそのまま終える（必ず終わる）。
     func terminateBySignal() {
         forced = true
         if isWaiting {

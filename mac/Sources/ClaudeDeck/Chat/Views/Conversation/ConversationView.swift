@@ -7,6 +7,7 @@ struct ConversationView: View {
     let room: Room
     /// 別ウィンドウの印（nil はメイン）。見出しに「別ウィンドウで開く」を出さず、タブと確認はウィンドウごとに持つ。
     var window: UUID? = nil
+    @State private var terminalSession: HostedSession?
 
     var body: some View {
         let shells = model.shells
@@ -40,6 +41,12 @@ struct ConversationView: View {
         .environment(\.openURL, OpenURLAction { url in
             ChatMarkdown.isOpenableLink(url) ? .systemAction : .discarded
         })
+        .environment(\.openTerminalScreen, OpenTerminalScreenAction { terminalSession = $0 })
+        .sheet(item: $terminalSession) { session in
+            TerminalScreenSheet(session: session, roomName: room.name) { [prompts = model.prompts] key in
+                prompts.sendTerminalKey(session, key)
+            }
+        }
     }
 
     /// このウィンドウで答える確認（押したウィンドウが閉じられていればメインで答える）。

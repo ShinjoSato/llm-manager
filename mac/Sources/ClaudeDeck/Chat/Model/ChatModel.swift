@@ -380,6 +380,10 @@ final class ChatModel {
 
     /// 引き継ぎで外部の claude を止められた。同じ会話を `--resume` で起動し、外部ルームの書きかけと添付を引き取る。
     private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
+        if let running = runningHosted(sessionId: sessionId) {
+            select(.hosted(running.id))
+            return
+        }
         let session = host(project, resuming: sessionId)
         outbox.move(from: roomId, to: .hosted(session.id))
         shells.move(from: roomId, to: .hosted(session.id))
@@ -389,11 +393,19 @@ final class ChatModel {
     }
 
     /// 前回アプリが止まった時に動いていたセッションを同じ cwd で `--resume` する。書きかけも戻す。選択は未選択の時だけ移す。
-    func resumeRestored(_ record: HostedSessionRecord) -> HostedSession {
+    /// 同じ会話を既にホストしていれば起動せず nil。
+    func resumeRestored(_ record: HostedSessionRecord) -> HostedSession? {
+        guard runningHosted(sessionId: record.sessionId) == nil else { return nil }
         let session = host(SettingsStore.shared.project(atPath: record.cwd, orNamed: record.name), resuming: record.sessionId)
         if let draft = record.draft { outbox.drafts[.hosted(session.id)] = draft }
         if selection == nil { select(.hosted(session.id)) }
         return session
+    }
+
+    /// 同じ会話を動かしているホスト中のセッション（二重に起動しないための最終確認）。
+    private func runningHosted(sessionId: String) -> HostedSession? {
+        SessionRestore.runningHostIndex(sessionId: sessionId,
+                                        hosted: hosted.map { ($0.lastSessionId, $0.end == nil) }).map { hosted[$0] }
     }
 
     /// claude を起動して一覧に加える（上限で止まった時の知らせも受ける）。
@@ -403,6 +415,15 @@ final class ChatModel {
         hosted.append(session)
         session.start()
         return session
+    }
+
+    /// アプリの終了時。ホスト中の claude 全部に同時に切断（SIGHUP）を送る（待つのは呼ぶ側。次の起動で同じ会話を再開できるように）。
+    func sendHangUpToHostedSessions() -> ChildProcessControl.PendingHangUp {
+        let targets = hosted.filter { $0.end == nil }.compactMap { session -> ChildProcessControl.Target? in
+            guard let pid = session.pid, let startedAt = session.processStartedAt else { return nil }
+            return ChildProcessControl.Target(pid: pid, startedAt: startedAt)
+        }
+        return ChildProcessControl.sendHangUp(targets)
     }
 
     /// 終了の確認に使う、動いているホスト中のルーム。

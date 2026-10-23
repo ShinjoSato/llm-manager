@@ -56,7 +56,8 @@ extension ClaudeTerminalView {
         releasePendingArrowHoldIfDone(cursor: menu?.cursor)
         let unreadable = block == .menu && menu == nil ? ChoiceMenu.unreadable(screen: screen, waiting: waiting, screenChangedAt: lastDataTime) : nil
         logMenuScreen(menu: menu, unreadable: unreadable, screen: screen)
-        let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable)
+        let next = ScreenState(status: status, permissionPrompt: prompt, inputBlock: block, menuPrompt: menu, unreadableMenu: unreadable,
+                               claudeVersion: sessionWaitingCache?.version)
         guard next != screenState else { return }
         screenState = next
         onScreenStateChanged?(next)   // Timer は main runloop なのでメインスレッド
@@ -134,8 +135,9 @@ extension ClaudeTerminalView {
         guard let pid = claudePid else { return nil }
         let now = Date()
         if !fresh, let cache = sessionWaitingCache, now.timeIntervalSince(cache.at) < 1 { return cache.value }
-        let value = ClaudeSessionRegistry().record(forPid: pid)?.waiting
-        sessionWaitingCache = (now, value)
+        let record = ClaudeSessionRegistry().record(forPid: pid)
+        let value = record?.waiting
+        sessionWaitingCache = (now, value, record?.version ?? sessionWaitingCache?.version)
         return value
     }
 
@@ -154,6 +156,11 @@ extension ClaudeTerminalView {
     /// 1 行の文字列。TUI は空白を書かずにカーソル移動で桁を飛ばすので、未記入のセル（NUL）を空白に戻す（全角の後半セルは除く）。
     private static func text(of line: BufferLine) -> String {
         line.translateToString(trimRight: true, skipNullCellsFollowingWide: true).replacingOccurrences(of: "\u{0}", with: " ")
+    }
+
+    /// 「端末の画面」に出す表示。カードの読み取りと違い、右の別の欄も含めて見えているまま出す。
+    func displayScreenLines() -> [String] {
+        TerminalScreen.droppingTrailingBlankLines(rawScreenLines().map(Self.text(of:)))
     }
 
     /// 上限の検査は右の別の欄も含めて全幅で読む（`screenLines` と違い欄で切らない）。

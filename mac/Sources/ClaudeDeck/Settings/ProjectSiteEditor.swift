@@ -34,7 +34,7 @@ struct ProjectSiteEditor: View {
                 status(lookup)
             }
         } header: {
-            Text("サイト")
+            LinkageHeader(title: "サイト", shows: "タブの「サイト」")
         } footer: {
             Text("ディレクトリの詳細でプレビューする LP（Next.js の静的書き出し `out/` のあるフォルダ）。空ならプロジェクト直下と浅いサブフォルダから探します。")
                 .font(.caption).foregroundStyle(.secondary)

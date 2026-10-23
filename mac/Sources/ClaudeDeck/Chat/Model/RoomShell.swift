@@ -127,11 +127,15 @@ final class RoomShell {
     private static func launch(_ launch: ShellLaunch, in cwd: String) -> ShellTerminalView? {
         let view = ShellTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        view.startProcess(executable: launch.executable, args: launch.arguments, environment: launch.environmentList,
-                          execName: nil, currentDirectory: cwd)
-        let fd = view.process.childfd
+        // 印を付けるまでの間に他のスレッドの起動が master を受け継がないよう、起動と印付けを同じロックの中で行う。
+        let fd: Int32 = ChildProcessControl.withSpawnLock {
+            view.startProcess(executable: launch.executable, args: launch.arguments, environment: launch.environmentList,
+                              execName: nil, currentDirectory: cwd)
+            let fd = view.process.childfd
+            ChildProcessControl.setCloseOnExec(fd)
+            return fd
+        }
         guard view.process.running, fd >= 0, view.process.shellPid > 0 else { return nil }
-        _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
         return view
     }
 
