@@ -118,19 +118,22 @@ struct GitHubLinkEditor: View {
     }
 }
 
-/// プロジェクトの画面の「GitHub」の節。
-struct ProjectGitHubSection: View {
+/// プロジェクトの画面の紐づけの「GitHub」の行。開くと欄を出す。
+struct ProjectGitHubRow: View {
     let store: SettingsStore
     let project: ManagedProject
+    @State private var expanded = false
 
     var body: some View {
-        Section {
+        DisclosureGroup(isExpanded: $expanded) {
             GitHubLinkEditor(store: store, project: project, showsName: false)
-        } header: {
-            LinkageHeader(title: "GitHub", shows: "ボタンの「GitHub」")
-        } footer: {
-            Text("owner はユーザーか Organization の名前、リポジトリは名前だけ（owner/ は付けない）。Project 番号はボードの URL の末尾の数字です。全部空にすると紐づけを外します。「GitHub」タブと同じ値です。")
-                .font(.caption).foregroundStyle(.secondary)
+        } label: {
+            SettingsItemLabel(title: "GitHub",
+                              info: "見出しの「GitHub」ボタンが開く先。owner はユーザーか Organization、リポジトリは名前だけ、Project 番号はボードの URL の末尾の数字。全部空にすると外れます。「GitHub」タブと同じ値です。",
+                              summary: LinkageSummary.github(project.github), isEmpty: project.github == nil) {
+                Button(expanded ? "閉じる" : "編集") { expanded.toggle() }
+                    .controlSize(.small)
+            }
         }
     }
 }

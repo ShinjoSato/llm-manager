@@ -116,8 +116,8 @@ mac/
       BranchGraphModel.swift      ブランチの図の状態（読み込み・ref の変化の見張りとまとめての読み直し・もっと見る・詳細の読み込み）
       StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift。
-                                プロジェクトの紐づけの節は GitHubLinkEditor（GitHub タブと共通）・ProjectXcodeEditor・ProjectSiteEditor・ProjectLinksEditor）
+    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift（1 行の項目・ⓘ）。
+                                プロジェクトの紐づけの節の行は GitHubLinkEditor（GitHub タブと共通）・ProjectXcodeEditor・ProjectSiteEditor・ProjectAppStoreEditor・ProjectLinksEditor、実行コマンドは ProjectCommandsEditor）
     Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
     Notify/                     要対応を iCloud（CloudKit）に書いて解消したら消す AttentionNotifier と、設定画面に出す通知の設定・状態
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
@@ -159,7 +159,7 @@ mac/
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
       ChannelServer.swift         stdin を行で読み、中継して判断を stdout に返す（ログは stderr）
     Settings/                   設定（settings.json）の型・読み書き（0600・原子的・読めないファイルは上書きしない）・検証・
-                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）
+                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）・設定画面の 1 行の要約（LinkageSummary）
     Projects/                   ルームとプロジェクトの照合と、見出しのボタンの先
       GitHubLinks.swift           ルームの cwd と設定のプロジェクトの対応（ProjectMatcher）と GitHub の URL（ボード / リポジトリ）
       GitRemotes.swift            フォルダの .git/config（作業ツリーの gitdir: と commondir も）から github.com の remote を拾う（設定画面の GitHub の候補）
@@ -1354,25 +1354,29 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 **設定画面**（メニュー「claude-deck → 設定…」⌘,。ウィンドウは 1 つ）のタブ:
 - **プロジェクト**: 一覧（ドラッグ・「上へ / 下へ」で並べ替え）、「+」でフォルダを追加、「−」/右クリックで削除（確認あり）、名前・状態・メモの編集。
-  アイコンと色の下に**紐づけ**（ディレクトリの詳細の見出しに出るものを決めるもの）の節を GitHub・Xcode・サイト・リンクの順に並べ、節の見出しに「見出しの何が出るか」を添える。
-  「GitHub」の節は「GitHub」タブと同じ部品（`GitHubLinkEditor`。同じ値・同じ検証・同じ保存）。そのフォルダの git の remote にある github.com のリポジトリを候補のボタンに出し、
+  アイコンと色の下に**紐づけ**（ディレクトリの詳細の見出しに出るものを決めるもの）を 1 つの節にまとめ、GitHub・Xcode・サイト・App Store・リンクを **1 行 1 項目**（名前と ⓘ・今の値の要約・操作）で並べる。
+  閉じている時は 1 行で、行を開く（左の ›）と編集欄を出す。要約は `Sources/MonitorKit/Settings/LinkageSummary.swift`（テストあり）: GitHub は `owner/repo #N`、Xcode は「自動（ios/App.xcodeproj）」「指定（…）」「使わない」、
+  サイトは「自動（site）」「指定（…）」「見つかりません」（書き出しが無ければ「· 書き出しなし」）、App Store・リンクは「N 件」か「なし」。値が無い項目は要約を控えめに出す。
+  行の操作は GitHub「編集」・Xcode「自動 / 指定 / 使わない」のメニュー（開くと場所の候補と「その他を選ぶ…」）・サイト「フォルダを選ぶ…」・App Store「一覧を取得」か「追加」のメニュー・リンク「追加」。
+  説明（何が見出しに出るか・書き方の決まり）は項目名の横の ⓘ（ホバーか押すと出る）に置き、節の下の説明文は持たない。検証の問題（保存できない理由・指定した先が使えない理由・一覧の取得の失敗）は行の中に出す。
+  「GitHub」の行は「GitHub」タブと同じ部品（`GitHubLinkEditor`。同じ値・同じ検証・同じ保存）。そのフォルダの git の remote にある github.com のリポジトリを候補のボタンに出し、
   押すと owner / リポジトリに入れる（Project 番号はそのまま）。remote は `.git/config` を読むだけ（`git` / `gh` は実行しない）で、`.git` がファイル（作業ツリー・サブモジュール）なら `gitdir:` を辿り、
   その中の `commondir` があれば共通の `config` を読む。フォルダの外へ出る `.git` のリンク・リンクの `config`・256KB を超える `config` は読まない。origin を先に、残りは設定の順で、
   https / http / `git://` / `ssh://` / `git@github.com:owner/repo`（`.git` の有無を問わない）の github.com のものだけ候補にする（`Sources/MonitorKit/Projects/GitRemotes.swift`・テストあり）。
-  「Xcode」の節は「自動」（見つかったものを表示）・「指定する」（プロジェクトの中を `XcodeFinder` と同じ除外・深さで浅く探した候補（50 件まで）から選ぶか、「その他を選ぶ…」でフォルダの中のものを選ぶ。
+  「Xcode」の行は「自動」（見つかったものを要約に出す）・「指定」（プロジェクトの中を `XcodeFinder` と同じ除外・深さで浅く探した候補（50 件まで）から選ぶか、「その他を選ぶ…」でフォルダの中のものを選ぶ。
   外は選べない。初めは今自動で使っているもの）・「使わない」を選んだ時だけ保存する。指定した先が使えなければ理由を出す。
   「アイコンと色」の節で今の印のプレビューと、色のスウォッチ（11 色 + 「自動」）・アイコンのグリッド（`ProjectBadge.symbolChoices` の 40 個。既定の `folder` を押すか
   「既定に戻す」で `icon` を消す）から選ぶと即時に保存する（`ProjectBadgeEditor`）。
-  「リンク」の節で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
+  「リンク」の行で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
   全行が正しい間だけ保存し、途中の行がある間はファイルは前の内容のまま（行ごとに理由を赤で出す）。名前と URL が両方空の行は画面に残すだけで保存しない。
   開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
-  「実行コマンド」の節で名前・アイコン（候補から選ぶ・「既定」でキーを消す）・コマンド（複数行の等幅の欄）を追加・編集・「∧ / ∨」で並べ替え・削除。
+  「実行コマンド」の節は 1 行 1 コマンド（アイコン・名前・本文の先頭 1 行と、「∧ / ∨」の並べ替え・削除）で並べ、行を開くと名前・アイコン（候補から選ぶ・「既定」でキーを消す）・コマンド（複数行の等幅の欄）を編集する。説明は節の見出しの ⓘ。
   全行が正しい間だけ保存し（行ごとに理由を赤で出す。手で書いた不正な行も開いた時から出す）、名前とコマンドが両方空の行は画面に残すだけで保存しない。開いただけでは書き直さない。
   ここで書いた本文は確かめ済みにする（見出しから初めて押す時の確認を出さない）。
-  「サイト」の節で LP の場所を指定（相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
-  正しい相対パスの間だけ保存し、検出の結果（指定 / 自動で検出・書き出しの有無）を出す。
-  「App Store」の節で App Store Connect のアプリを紐づける（`ProjectAppStoreEditor`）: 「App Store Connect のアプリの一覧を取得」で一覧を取り（10 分覚える。「一覧を取り直す」はアプリの一覧だけを取り直し、詳細の文面の覚えは残す。開いただけでは取りに行かず、settings.json も書かない）、
-  「アプリを追加」のメニューから選ぶ。メニューの先頭の「候補」は、そのプロジェクトの `.claude/appstore.json`（`{"appId": "…", "platform": "IOS"}`）の appId と、
+  「サイト」の行で LP の場所を指定（開いた中の相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
+  正しい相対パスの間だけ保存し、検出の結果（指定 / 自動・書き出しの有無）を要約に出す。
+  「App Store」の行で App Store Connect のアプリを紐づける（`ProjectAppStoreEditor`）: 「一覧を取得」で一覧を取り（10 分覚える。「一覧を取り直す」はアプリの一覧だけを取り直し、詳細の文面の覚えは残す。開いただけでは取りに行かず、settings.json も書かない）、
+  「追加」のメニューから選ぶ（鍵の読み元と「一覧を取り直す」は行を開いた中）。メニューの先頭の「候補」は、そのプロジェクトの `.claude/appstore.json`（`{"appId": "…", "platform": "IOS"}`）の appId と、
   プロジェクト内の `.xcodeproj/project.pbxproj` の `PRODUCT_BUNDLE_IDENTIFIER` が一致するアプリ（大文字小文字は区別しない）。`$(NAME)` / `${NAME}`（`:lower` / `:upper` / `:rfc1034identifier` も）は
   同じプロジェクトの pbxproj と `.xcconfig`（条件付きの `NAME[sdk=…][config=…] = v` も）の値で解決し（値の重複は除き、変数ごとの解決は覚えて使い回す。互いに参照し合う変数は解決できないとする。組み合わせは 8 通りまで）、
   解決できない時は「`com.example.`」のように区切り 2 つ以上の決まった頭がある書き方で（隣り合う変数は 1 つにまとめ、変数は 3 つまで）、合うアプリが 1 件だけの時だけ候補にする（誤って当てるより出さない）。

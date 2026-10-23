@@ -11,29 +11,26 @@ struct ProjectAppStoreEditor: View {
     @State private var hints: AppStoreProjectHints?
     /// 候補はヒントか一覧が替わった時だけ作り直す（描くたびに照合しない）。
     @State private var candidates: [AppStoreCandidate] = []
+    @State private var expanded = false
     @FocusState private var focused: Int?
 
     private var appStore: AppStoreStore { .shared }
     private var key: String { SettingsStore.projectKey(id: project.id, field: "appStore") }
 
     var body: some View {
-        Section {
-            if draft.isEmpty {
-                Text("紐づけたアプリはありません").foregroundStyle(.secondary)
-            }
-            let problems = SettingsValidation.appStoreRowProblems(trimmed(draft))
+        let problems = SettingsValidation.appStoreRowProblems(trimmed(draft))
+        DisclosureGroup(isExpanded: $expanded) {
             ForEach(Array(draft.enumerated()), id: \.offset) { index, link in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         TextField("名前", text: nameBinding(index), prompt: Text("本番・検証用など"))
                             .settingsField { store.flushPending() }
                             .focused($focused, equals: index)
-                            .frame(width: 180)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(appStore.app(link.appId).map { "\($0.name)（\($0.bundleId)）" } ?? "appId \(link.appId)")
-                                .lineLimit(1).truncationMode(.middle)
-                            Text(link.appId).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                        }
+                            .frame(width: 160)
+                        Text(appStore.app(link.appId).map { "\($0.name)（\($0.bundleId)）" } ?? "appId \(link.appId)")
+                            .lineLimit(1).truncationMode(.middle)
+                            .foregroundStyle(.secondary)
+                            .help("appId \(link.appId)")
                         Spacer(minLength: 4)
                         Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }
                             .disabled(index == 0).help("上へ")
@@ -46,12 +43,14 @@ struct ProjectAppStoreEditor: View {
                     if problems.indices.contains(index) { SettingsProblems(problems: problems[index]) }
                 }
             }
-            addRow
-        } header: {
-            LinkageHeader(title: "App Store", shows: "タブの「App Store」")
-        } footer: {
-            Text("ディレクトリの詳細の「App Store」のタブで、版の状態・審査・メタデータの文面を App Store Connect から読んで出します（読むだけ）。鍵は appstore-plugin と同じ書式で環境変数か \(AppStoreEnvFile.displayPath) から読み（プロジェクトの .env は読みません）、この設定には書きません。候補は .claude/appstore.json の appId と、Xcode のプロジェクトのバンドル ID が一致するアプリです。")
-                .font(.caption).foregroundStyle(.secondary)
+            details
+        } label: {
+            SettingsItemLabel(title: "App Store",
+                              info: "詳細の「App Store」のタブで、版の状態・審査・メタデータを App Store Connect から読んで出します（読むだけ）。鍵は環境変数か \(AppStoreEnvFile.displayPath) から読み、この設定には書きません。追加の「候補」は .claude/appstore.json の appId か、Xcode のバンドル ID が一致するアプリです。",
+                              summary: LinkageSummary.count(draft.count), isEmpty: draft.isEmpty,
+                              note: note(hasRowProblems: problems.contains { !$0.isEmpty })) {
+                addControl
+            }
         }
         .onAppear { load(project.appStoreApps) }
         // 外で変わった時は欄を外の値に合わせる（溜めていた入力はストアが捨てて案内を出す。自分の保存では値が一致するので何もしない）。
@@ -95,51 +94,70 @@ struct ProjectAppStoreEditor: View {
         draft = apps
     }
 
+    /// 行に添える一言（一覧の取得に失敗した・閉じた中に保存できない行がある）。
+    private func note(hasRowProblems: Bool) -> SettingsNote? {
+        if let failure = appStore.apps.failure { return SettingsNote(text: failure.message) }
+        if hasRowProblems, !expanded { return SettingsNote(text: "名前が空の行があります（開いて直してください）") }
+        return nil
+    }
+
+    /// 行の操作: 一覧が取れていれば追加のメニュー、無ければ取得。
     @ViewBuilder
-    private var addRow: some View {
+    private var addControl: some View {
         let fetch = appStore.apps
-        HStack(spacing: 8) {
-            if let apps = fetch.value {
-                let linked = Set(draft.map(\.appId))
-                let rest = apps.filter { app in !candidates.contains { $0.app.id == app.id } }
-                Menu {
-                    if !candidates.isEmpty {
-                        Section("候補") {
-                            ForEach(candidates) { candidate in
-                                Button("\(candidate.app.name)（\(candidate.app.bundleId)）— \(candidate.reasonText)") { add(candidate.app) }
-                                    .disabled(linked.contains(candidate.app.id))
-                            }
+        if fetch.loading { ProgressView().controlSize(.small) }
+        if let apps = fetch.value {
+            let linked = Set(draft.map(\.appId))
+            let rest = apps.filter { app in !candidates.contains { $0.app.id == app.id } }
+            Menu {
+                if !candidates.isEmpty {
+                    Section("候補") {
+                        ForEach(candidates) { candidate in
+                            Button("\(candidate.app.name)（\(candidate.app.bundleId)）— \(candidate.reasonText)") { add(candidate.app) }
+                                .disabled(linked.contains(candidate.app.id))
                         }
                     }
-                    Section(candidates.isEmpty ? "アプリ" : "ほかのアプリ") {
-                        ForEach(rest) { app in
-                            Button("\(app.name)（\(app.bundleId)）") { add(app) }
-                                .disabled(linked.contains(app.id))
-                        }
-                    }
-                } label: {
-                    Label("アプリを追加", systemImage: "plus")
                 }
-                .fixedSize()
-                .disabled(apps.isEmpty)
-                if apps.isEmpty { Text("このキーで見られるアプリがありません").font(.caption).foregroundStyle(.secondary) }
-            } else {
-                Button { appStore.loadApps(force: true) } label: { Label("App Store Connect のアプリの一覧を取得", systemImage: "arrow.down.circle") }
-                    .disabled(fetch.loading)
+                Section(candidates.isEmpty ? "アプリ" : "ほかのアプリ") {
+                    ForEach(rest) { app in
+                        Button("\(app.name)（\(app.bundleId)）") { add(app) }
+                            .disabled(linked.contains(app.id))
+                    }
+                }
+            } label: {
+                Label("追加", systemImage: "plus")
             }
-            if fetch.loading { ProgressView().controlSize(.small) }
-            Spacer(minLength: 4)
-            if fetch.value != nil {
-                Button("一覧を取り直す") { appStore.reloadApps() }
-                    .controlSize(.small)
-                    .disabled(fetch.loading)
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(apps.isEmpty)
+            .help(apps.isEmpty ? "このキーで見られるアプリがありません" : "App Store Connect のアプリを紐づける")
+        } else {
+            Button("一覧を取得") { appStore.loadApps(force: true) }
+                .controlSize(.small)
+                .disabled(fetch.loading)
+                .help("App Store Connect のアプリの一覧を取得")
+        }
+    }
+
+    /// 開いた中の下の方: 鍵の読み元・取り直し・.claude/appstore.json の appId が見つからない旨。
+    @ViewBuilder
+    private var details: some View {
+        let fetch = appStore.apps
+        if let apps = fetch.value, apps.isEmpty {
+            Text("このキーで見られるアプリがありません").font(.caption).foregroundStyle(.secondary)
+        }
+        if appStore.credentialSource != nil || fetch.value != nil {
+            HStack(spacing: 8) {
+                if let source = appStore.credentialSource {
+                    Text("鍵の読み元: \(source.label)").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                if fetch.value != nil {
+                    Button("一覧を取り直す") { appStore.reloadApps() }
+                        .controlSize(.small)
+                        .disabled(fetch.loading)
+                }
             }
-        }
-        if let source = appStore.credentialSource {
-            Text("鍵の読み元: \(source.label)").font(.caption).foregroundStyle(.secondary)
-        }
-        if let failure = fetch.failure {
-            Text(failure.message).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
         }
         if let hints, let id = hints.configuredAppId, let apps = fetch.value, !apps.contains(where: { $0.id == id }) {
             Text(".claude/appstore.json の appId（\(id)）はこのキーで見られるアプリにありません").font(.caption).foregroundStyle(.orange)
@@ -176,6 +194,7 @@ struct ProjectAppStoreEditor: View {
     private func add(_ app: AppStoreApp) {
         guard !draft.contains(where: { $0.appId == app.id }) else { return }
         draft.append(AppStoreAppLink(appId: app.id, name: app.name.isEmpty ? app.bundleId : app.name))
+        expanded = true
         commitNow()
     }
 

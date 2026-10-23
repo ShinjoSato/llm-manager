@@ -9,6 +9,7 @@ struct ProjectLinksEditor: View {
     @State private var problems: [[String]] = []
     /// 最後に設定から欄へ入れた値。利用者が触るまでは空白を落としただけの差を書き直さないために持つ。
     @State private var loaded: [ProjectLink] = []
+    @State private var expanded = false
     @FocusState private var focused: Field?
 
     /// 画面で行を見分けるためだけの印（ファイルには書かない）。
@@ -51,21 +52,12 @@ struct ProjectLinksEditor: View {
     private var key: String { SettingsStore.projectKey(id: project.id, field: "links") }
 
     var body: some View {
-        Section {
-            if rows.isEmpty {
-                Text("リンクはありません").foregroundStyle(.secondary)
-            }
+        DisclosureGroup(isExpanded: $expanded) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        field("名前", text: binding(index, \.name, fallback: "")).focused($focused, equals: .name(row.id)).frame(width: 140)
+                        field("名前", text: binding(index, \.name, fallback: "")).focused($focused, equals: .name(row.id)).frame(width: 130)
                         field("https://…", text: binding(index, \.url, fallback: "")).focused($focused, equals: .url(row.id))
-                        Picker("種類", selection: kindBinding(index)) {
-                            ForEach(ProjectLinkKind.allCases, id: \.self) { Label($0.label, systemImage: $0.symbol).tag($0) }
-                        }
-                        .labelsHidden()
-                        .frame(width: 150)
-                        .help("種類（アイコンで見分け、メニューを区切ります）")
                         Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }
                             .disabled(index == 0).help("上へ")
                         Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }
@@ -75,9 +67,15 @@ struct ProjectLinksEditor: View {
                     }
                     .buttonStyle(.borderless)
                     HStack(spacing: 8) {
+                        Picker("種類", selection: kindBinding(index)) {
+                            ForEach(ProjectLinkKind.allCases, id: \.self) { Label($0.label, systemImage: $0.symbol).tag($0) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        .help("種類（アイコンで見分け、メニューを区切ります）")
                         Toggle("ピン", isOn: binding(index, \.pinned, fallback: false)).toggleStyle(.checkbox)
                             .help("会話と詳細の見出しに単独のボタンで出す（設定の順に \(ProjectLinks.pinLimit) つまで）")
-                        field("メモ（1 行）", text: binding(index, \.note, fallback: "")).focused($focused, equals: .note(row.id))
+                        Spacer(minLength: 4)
                         Toggle("毎月", isOn: binding(index, \.remind, fallback: false)).toggleStyle(.checkbox)
                         Stepper(value: binding(index, \.day, fallback: 1), in: 1...31) {
                             TextField("日", value: binding(index, \.day, fallback: 1), format: .number)
@@ -91,21 +89,21 @@ struct ProjectLinksEditor: View {
                         .disabled(!row.remind)
                         Text("日に確認").font(.caption).foregroundStyle(.secondary)
                     }
+                    field("メモ（1 行）", text: binding(index, \.note, fallback: "")).focused($focused, equals: .note(row.id))
                     if problems.indices.contains(index) {
                         SettingsProblems(problems: problems[index])
                     }
                 }
             }
-            Button {
-                let row = Row(ProjectLink(name: "", url: ""))
-                rows.append(row)
-                focused = .name(row.id)
-            } label: { Label("リンクを追加", systemImage: "plus") }
-        } header: {
-            LinkageHeader(title: "リンク", shows: "タブの「リンク」・ボタンの「リンク」とピン")
-        } footer: {
-            Text("LP やデザインなど、このプロジェクトの会話の見出しの「リンク」から既定のブラウザで開くアドレス（http / https）。名前はプロジェクトの中で重ねられません。「毎月 N 日に確認」は、その日を過ぎてアプリから開いていなければ印を出します（最終確認日は link-visits.json に持ち、この設定には書きません）。")
-                .font(.caption).foregroundStyle(.secondary)
+        } label: {
+            SettingsItemLabel(title: "リンク",
+                              info: "見出しの「リンク」とピン、詳細の「リンク」のタブから既定のブラウザで開くアドレス（http / https）。名前はプロジェクトの中で重ねられません。「毎月 N 日に確認」は、その日を過ぎてアプリから開いていなければ印を出します（最終確認日はこの設定には書きません）。",
+                              summary: LinkageSummary.count(trimmed.count), isEmpty: trimmed.isEmpty,
+                              note: !expanded && problems.contains { !$0.isEmpty } ? SettingsNote(text: "保存できない行があります（開いて直してください）") : nil) {
+                Button { addRow() } label: { Label("追加", systemImage: "plus") }
+                    .controlSize(.small)
+                    .help("リンクを追加")
+            }
         }
         .onAppear { load(project.links) }
         // 外で変わった時は欄を外の値に合わせる（溜めていた入力はストアが捨てて案内を出す。自分の保存では値が一致するので何もしない）。
@@ -117,6 +115,14 @@ struct ProjectLinksEditor: View {
         .onChange(of: rows) { commit() }
         .onChange(of: focused) { store.flushPending() }
         .onDisappear { store.flushPending(force: true) }
+    }
+
+    private func addRow() {
+        let row = Row(ProjectLink(name: "", url: ""))
+        rows.append(row)
+        expanded = true
+        // 開いた欄が描かれてから移す。
+        DispatchQueue.main.async { focused = .name(row.id) }
     }
 
     private func field(_ title: String, text: Binding<String>) -> some View {
