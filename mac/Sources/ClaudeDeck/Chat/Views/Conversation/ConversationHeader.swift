@@ -4,7 +4,8 @@ import MonitorKit
 struct ConversationHeader: View {
     let model: ChatModel
     let room: Room
-    var inWindow = false
+    /// 別ウィンドウの印（nil はメイン）。
+    var window: UUID? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -33,7 +34,7 @@ struct ConversationHeader: View {
             .frame(minWidth: HeaderLayout.titleMinWidth, alignment: .leading)
             Spacer(minLength: 12)
             // 名前を最小幅まで縮めてからボタンを「…」に回す。
-            EditorButtons(model: model, room: room, opensWindow: !inWindow).layoutPriority(1)
+            EditorButtons(model: model, room: room, window: window).layoutPriority(1)
         }
         .centerHeaderBar()
     }
@@ -52,11 +53,12 @@ struct StatusBadge: View {
     }
 }
 
-/// 見出しの「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」と、押した結果の短い一言。
+/// 見出しの実行コマンド・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」と、押した結果の短い一言。
 struct EditorButtons: View {
     let model: ChatModel
     let room: Room
-    var opensWindow = true
+    /// 別ウィンドウの印（nil はメイン。別ウィンドウには「別ウィンドウで開く」を出さない）。
+    var window: UUID? = nil
     @State private var confirmingClose = false
     @Environment(\.openTerminalScreen) private var openTerminal
 
@@ -70,13 +72,17 @@ struct EditorButtons: View {
         if let links = HeaderAction.links(priority: 2, editors: editors, target: target) { actions.append(links) }
         actions += HeaderAction.xcode(openPriority: 4, closePriority: 1, editors: editors, target: target,
                                       project: xcodeProject) { confirmingClose = true }
-        if opensWindow { actions.append(HeaderAction.openInWindow(priority: 3, subpriority: -1) { [model, room] in model.openWindow(for: room.id) }) }
+        if window == nil { actions.append(HeaderAction.openInWindow(priority: 3, subpriority: -1) { [model, room] in model.openWindow(for: room.id) }) }
         if let session = room.hosted, session.isRunning, let openTerminal {
             actions.append(HeaderAction.terminalScreen(priority: 4, subpriority: -1) { openTerminal(session) })
         }
+        // 実行コマンドは既存のボタンより先に「…」へ回す。
+        let commands = HeaderAction.commands(priority: 0, commands: editors.projectCommands(for: target, cwd: room.cwd)) { [model, room, window] command in
+            model.requestCommand(command, in: room, window: window)
+        }
         return HStack(spacing: 6) {
             EditorNoteText(note: editors.notes[target.key])
-            HeaderActionRow(actions: actions).layoutPriority(1)
+            HeaderActionRow(actions: commands + actions).layoutPriority(1)
         }
         .xcodeCloseConfirmation(isPresented: $confirmingClose, editors: editors, target: target, project: xcodeProject)
     }

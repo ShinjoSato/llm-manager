@@ -38,11 +38,13 @@ final class QuitCoordinator {
         }
         guard let model else { return .terminateNow }
         let busy = QuitConfirmation.busy(model.runningHostedRooms)
-        guard !busy.isEmpty else { return .terminateNow }
+        let terminals = model.busyTerminalNames
+        guard !busy.isEmpty || !terminals.isEmpty else { return .terminateNow }
 
         let alert = NSAlert()
-        alert.messageText = "作業中のセッションがあります"
-        alert.informativeText = QuitConfirmation.message(busy: busy, resumesOnLaunch: LaunchSettings.shared.resumeOnLaunch)
+        alert.messageText = busy.isEmpty ? "ターミナルで動いているものがあります" : "作業中のセッションがあります"
+        alert.informativeText = QuitConfirmation.message(busy: busy, terminals: terminals,
+                                                         resumesOnLaunch: LaunchSettings.shared.resumeOnLaunch)
         alert.alertStyle = .warning
         // Return で中断しないよう、既定（最初のボタン）はキャンセルにする。
         alert.addButton(withTitle: "キャンセル")

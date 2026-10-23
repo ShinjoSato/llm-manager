@@ -121,6 +121,12 @@ final class EditorLauncher {
         ProjectLinks.pinned(matchedProject(target)?.links ?? [])
     }
 
+    /// 紐づいたプロジェクトの実行コマンドのうち流せるもの（ターミナルを開けないルームでは出さない。描画の中で毎回引く）。
+    func projectCommands(for target: EditorTarget, cwd: String) -> [ProjectCommand] {
+        guard RoomShells.canOpen(cwd) else { return [] }
+        return ProjectCommands.runnable(matchedProject(target)?.commands ?? [])
+    }
+
     /// 紐づいたプロジェクトの id（最終確認日の記録に使う）。
     func projectID(for target: EditorTarget) -> UUID? {
         matchedProject(target)?.id

@@ -91,6 +91,49 @@ public enum SettingsValidation {
         }
     }
 
+    public static func projectCommandProblems(_ command: ProjectCommand) -> [String] {
+        var problems: [String] = []
+        let name = command.name.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty {
+            problems.append("コマンドの名前を入れてください")
+        } else if name.count > ProjectCommands.nameLimit {
+            problems.append("コマンドの名前は \(ProjectCommands.nameLimit) 文字までです")
+        } else if name.contains(where: \.isNewline) {
+            problems.append("コマンドの名前は 1 行にしてください")
+        }
+        let body = command.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.isEmpty {
+            problems.append("実行するコマンドを入れてください")
+        } else if command.command.count > ProjectCommands.commandLimit {
+            problems.append("コマンドは \(ProjectCommands.commandLimit) 文字までです")
+        }
+        if ProjectCommands.containsHiddenCharacters(command.name) || ProjectCommands.containsHiddenCharacters(command.command) {
+            problems.append("見えない文字（方向制御・ゼロ幅）は使えません")
+        }
+        if ProjectCommands.launchesHeadlessClaude(command.command) {
+            problems.append("claude の headless 起動（-p / --print）は実行コマンドにできません（API 課金の経路になるため）")
+        }
+        return problems
+    }
+
+    /// 行ごとの問題。同じ名前が前の行にもあれば、後の行の問題にする。
+    public static func projectCommandRowProblems(_ commands: [ProjectCommand]) -> [[String]] {
+        var seen = Set<String>()
+        return commands.map { command in
+            var problems = projectCommandProblems(command)
+            let name = command.name.trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty, !seen.insert(name).inserted { problems.append("同じ名前のコマンドが他にもあります") }
+            return problems
+        }
+    }
+
+    /// コマンドのアイコン: 書くなら空でないこと（無ければ既定）。
+    public static func commandIconProblem(_ icon: String?) -> String? {
+        guard let icon else { return nil }
+        return icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "アイコンが空です（SF Symbol の名前を書くか、キーを消してください）。既定の \(ProjectCommands.defaultSymbol) で出します" : nil
+    }
+
     public static func boardProblems(_ board: GitHubBoard) -> [String] {
         var problems: [String] = []
         if board.name.trimmingCharacters(in: .whitespaces).isEmpty { problems.append("名前を入れてください") }
@@ -128,6 +171,13 @@ public enum SettingsValidation {
                 if let p = reminderDayProblem(link.reminderDay) { result.append("「\(project.name)」のリンク「\(link.name)」: \(p)（保存で落とします）") }
             }
             if let site = project.site, let p = sitePathProblem(site.path) { result.append("「\(project.name)」のサイト: \(p)") }
+            for (command, problems) in zip(project.commands, projectCommandRowProblems(project.commands)) {
+                for p in problems { result.append("「\(project.name)」のコマンド「\(command.name)」: \(p)") }
+                if let p = commandIconProblem(command.icon) { result.append("「\(project.name)」のコマンド「\(command.name)」: \(p)") }
+            }
+            if project.ignoredCommands.isSet {
+                result.append("「\(project.name)」の実行コマンド: 形が正しくないため無視しました（[{\"name\": \"名前\", \"command\": \"コマンド\"}] の形で書いてください）")
+            }
             if project.ignoredSite.isSet { result.append("「\(project.name)」のサイト: 形が正しくないため無視しました（{\"path\": \"相対パス\"} の形で書いてください）") }
             for (app, problems) in zip(project.appStoreApps, appStoreRowProblems(project.appStoreApps)) {
                 for p in problems { result.append("「\(project.name)」の App Store「\(app.name)」: \(p)") }
