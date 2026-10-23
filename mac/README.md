@@ -110,8 +110,10 @@ mac/
         PixelAvatar.swift           ルーム一覧と見出しのドット絵キャラ（絵は DeckCore の PixelCharacter）
         ChatTheme.swift             色・文字・時刻の書式のトークン（色はテーマ（ナイト / ライト）ごとの値を描く時の外観で選ぶ。AppKit 側の色も）
     Stage/                      右側のステージパネル（360px）
-      StagePanel.swift            見出し（ステージ / プレビューの切り替え・開閉）・ステージ・畳んだ状態
+      StagePanel.swift            見出し（ステージ / プレビュー / ブランチの切り替え・開閉）・ステージ・畳んだ状態
       StagePreviewPanel.swift     プレビュー（選択中のルームのプロジェクトの LP。開発サーバー → 書き出し → 案内）
+      StageBranchPanel.swift      ブランチ（選択中のルームのフォルダの git の図。線と点・ref の札・説明・相対の日付・押すと開く詳細）
+      BranchGraphModel.swift      ブランチの図の状態（読み込み・ref の変化の見張りとまとめての読み直し・もっと見る・詳細の読み込み）
       StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
     Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift。
@@ -234,6 +236,14 @@ mac/
       DetachedBubbles.swift       別ウィンドウで開いている吹き出し（sessionId と項目の id の鍵・同じ吹き出しは 1 枚・開ける吹き出しの判定・タイトル）
     Stage/                      ステージパネルの文言・判定（StageLogic）、3D の寸法・配置・動き（StageBlueprint / StageScene）、
                                 SceneKit のノードへの起こし（StageSceneRig）・背景側の色（StageBackdrop）・設定画面の見本（CharacterGallery）
+    Git/                        ステージパネルの「ブランチ」（読むだけの git）
+      GitRunner.swift             git の場所（Xcode / コマンドラインツールの実体。/usr/bin/git の導入ダイアログを避ける）・子の環境・
+                                  読むだけのサブコマンドの許可リスト・起動（1 か所・新しいプロセスグループ・時間と出力の上限・取り消し）
+      GitLogParser.swift          log / for-each-ref / show / diff-tree の出力の読み取り（区切りは NUL）とコミット・ref・変わったファイルの型
+      GitGraph.swift              レーンの割り当て（GitGraphLayout）と図の横の寸法（GitGraphGeometry）
+      GitRefLabels.swift          コミットごとの ref の札（同じコミットのローカルとリモートを 1 枚に・今の HEAD）と相対の日付
+      GitRepository.swift         図と詳細の読み込み（GitRepositoryReader）・リポジトリの場所（git dir と共通の dir）
+      GitRefWatcher.swift         git dir と共通の dir の FSEvents の見張りと、図に関わる変化かの判定（GitWatchFilter）
     Theme/                      カラーテーマ（DeckTheme: ナイト / ライトの色の組）・会話の Markdown の文字の段階（ChatTypeScale）
     Notify/                     通知にする要対応の組み立て（AttentionNoticeSource）と iCloud を使えるかの確認・失敗の文言（CloudKitNoticeStore）
     Support/                    共通の下回り
@@ -241,14 +251,14 @@ mac/
                                   Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
       TerminationSignals.swift    SIGTERM / SIGINT / SIGHUP を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
       ChildProcessControl.swift   PTY の master・パイプ・ソケットに CLOEXEC を付ける（forkpty と同じロックで）・終了時にホスト中の claude へ同時に SIGHUP を送って待つ
-      ChildEnvironment.swift      子プロセス（claude・開発サーバー・mcpbridge）の環境から API キーと Claude Code の子セッション印を除く
+      ChildEnvironment.swift      子プロセス（claude・開発サーバー・mcpbridge・git）の環境から API キーと Claude Code の子セッション印を除く
       SecureFile.swift            0600・置き換えで書く
       DeckPaths.swift             Application Support / Caches / Logs の claude-deck と、環境変数で差し替える設定ファイルの場所
       Paths.swift                 realpath・フォルダか・ファイルの種類・URL の 1 区間のエンコード
       Concurrency.swift           一度だけ通す印（OnceFlag）と、持ち主が消えたら止まる繰り返し（repeatingTask）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
-                                Server / Remote / Settings / Sites / Previews / AppStore / Notify / Stage / Shell / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift・Shell/ShellPTYTestSupport.swift（ダミーのシェルを PTY で起動）
+                                Server / Remote / Settings / Sites / Previews / AppStore / Notify / Stage / Git / Shell / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift・Shell/ShellPTYTestSupport.swift（ダミーのシェルを PTY で起動）
   docs/remote-api.md            iPhone 向けの口の仕様（エンドポイント・型・ペアリング・TLS・上限）
   docs/pty-daemon.md            アプリを閉じても claude を動かし続ける常駐プロセスの設計と試作の記録（未実装）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
@@ -774,11 +784,37 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
 文言・判定は `Sources/MonitorKit/Stage/StageLogic.swift`、ステージの組み立ては `StageBlueprint.swift`・`StageScene.swift`、
 SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・テストあり）、画面は `Sources/ClaudeDeck/Stage/`。
 
-- **見出し**: 「ステージ / プレビュー」の切り替え（アイコンだけ・名前はホバーで出す。UserDefaults `stagePanel.view`）・畳むボタン。ステージは 3D 表示だけ（以前の 2D / 3D の保存値 `stagePanel.mode` はパネル表示時に消す）。
+- **見出し**: 「ステージ / プレビュー / ブランチ」の切り替え（アイコンだけ・名前はホバーで出す。最後に選んだものを UserDefaults `stagePanel.view` に覚える）・畳むボタン。ステージは 3D 表示だけ（以前の 2D / 3D の保存値 `stagePanel.mode` はパネル表示時に消す）。
 - **プレビュー**: 選択中のルームの cwd から設定のプロジェクトを引き（`ProjectMatcher`）、その LP を会話の横で見る（`StagePreviewPanel.swift`）。
   開発サーバーが動いていてアドレスが分かればそれ、無ければ書き出し（`out/`）、どちらも無ければ案内と「開発サーバーを起動」「サイトの欄を開く」のボタン。
   開発サーバーの状態・起動 / 停止・出力、表示幅の切り替え・再読み込み・ブラウザで開くはサイトの欄と同じ部品（`SitePreviewParts.swift`）で、
   パネルの幅（360px）と残りの高さに収まるよう縮めて出す。ルームが無い・プロジェクトに入っていない時はその旨を出す。
+- **ブランチ**: 選択中のルームの cwd の git のリポジトリを、VS Code の Git Graph のような図で出す（`StageBranchPanel.swift`・判定と読み込みは `Sources/MonitorKit/Git/`・テストあり）。
+  作業ツリーなら共通のリポジトリの全ブランチと、その作業ツリーの HEAD。リポジトリでない・フォルダが無い・git が無い（Xcode のコマンドラインツールが無い）時はその旨と「読み直す」（git が無い時は押すと git の場所を探し直す）。
+  - **一覧**: ブランチ・リモート・タグと HEAD から新しい順（`log --date-order --branches --remotes --tags HEAD`。スタッシュとノートは混ぜない）に直近 300 件。
+    上限に達していれば末尾の「もっと見る」で 300 件ずつ足す（3000 件まで）。行は 24px の固定で、一覧は Lazy に積む。
+    大きなリポジトリで時間切れになった時は `--date-order` を外して読み直す（もう一度時間切れならその旨を出す）。
+  - **1 行**: 左にレーンの線と点（点はコミットの列・HEAD は二重丸・マージは白抜き。列が替わる所は曲線）、ref の札（2 枚まで・残りは「+N」）、
+    説明の 1 行目、右に相対の日付（「3時間前」）。作者・日時・短い ID・札の全体はホバーで出す。見出しにリポジトリの名前（作業ツリーの印）・今のブランチ・件数・読み直し。
+  - **札**: ローカルのブランチ・`origin/…` のリモート・タグ・切り離された HEAD。同じコミットを指す同じ名前のローカルとリモートは 1 枚（雲の印）にまとめ、
+    今の HEAD のブランチは濃く塗って太字にし、先頭に並べる。長い名前は真ん中を「…」で詰める（16 文字）。色はそのコミットのレーンの色、タグは灰。
+  - **レーン**: 子が待っている親の列を引き継ぎ、最初の親は同じ列・他の親はすでに待っている列があればそこへ合流、無ければ右の空いた列へ置き、
+    終わった列は詰める（`GitGraphLayout`）。色はレーンごとに決まった順（`ThemePalette.graphLanes` の 8 色・ナイト / ライトでパネルの地に対して 3:1 以上）で、
+    今使っていない最初の色を取る。列が多い時は列の幅を 10px から 5px まで詰めて図の幅を 100px 前後に収め（20 列まで重ならない）、それでも入らない列は右端に寄せて描く（`GitGraphGeometry`）。
+    色は描くたびに今のテーマ（ナイト / ライト）から引く。
+  - **詳細**: 行を押すとその下に開く（もう一度押すと閉じる）。本文（選択できる）・作者・日時・コミッター（作者と違う時）・ID とコピー・親（読み込んだ範囲なら押すとそこへ移る）・
+    変わったファイル（追加 / 変更 / 削除 / 名前の変更 / 複製。マージは最初の親との差分・根は全部が追加。300 件まで描く。名前の変更の判定（`-M`）が時間切れなら判定を外して読み直す）。左には下へ続く線をそのまま伸ばす。
+  - **リアルタイム**: git dir と共通の dir を FSEvents で下層まで見張り、`HEAD`・`refs/` の下・`packed-refs`・`logs/HEAD`・reftable 形式の `reftable/` の下（`tables.list`・`*.ref`）の変化（`.lock` は除く）だけで、
+    0.6 秒まとめてから読み直す（決まった間隔の取り直しはしない。index や objects の書き換えでは読まない）。見張るのは「ブランチ」を開いていてパネルが開いている間だけで、
+    ルームを替えたら見張り直す。読み直しに失敗した時は前の図のまま見出しに印を出す。
+  - **安全**: git は読むだけのサブコマンド（rev-parse・symbolic-ref・for-each-ref・log・show・diff-tree）だけを許可リストで通す（status・fetch 等は使わない）。
+    `--no-pager`・`--no-optional-locks`・`-c core.fsmonitor=false`・`-c core.pager=cat`・`-c log.showSignature=false`・`-c color.ui=false`・`-c core.quotePath=false`・
+    `-c i18n.logOutputEncoding=UTF-8`（利用者の設定で NUL の区切りを崩さない）・`-c protocol.allow=never` とプロトコル別の `protocol.<名前>.allow=never`・`-c core.sshCommand=false`
+    （`GIT_NO_LAZY_FETCH` を知らない版でも partial clone の遅延取得で通信や外部コマンドを走らせない）を付け、`show` / `diff-tree` には `--no-ext-diff --no-textconv` も付ける。
+    `safe.bareRepository` は付けない（bare を cwd にしたルームを読めなくしないため）。
+    環境は API キー・子セッション印・利用者の `GIT_*` を除いたうえで `GIT_OPTIONAL_LOCKS=0`・`GIT_TERMINAL_PROMPT=0`・`GIT_NO_LAZY_FETCH=1`・`LC_ALL=C`。
+    1 回 5 秒・出力 16MB（詳細は 1MB）を上限に、新しいプロセスグループで起動し、時間切れ・取り消しではグループごと止める。git は `/usr/bin/git`（無い時に導入のダイアログを出す）ではなく、
+    `DEVELOPER_DIR`・`xcode-select` の選択・コマンドラインツール・Xcode・Homebrew の実体を探す。コミットの ID は 16 進だけを受け付ける。
 - **ステージ**: セッション 1 つ分の段々のピラミッド（議事堂）を描く。寸法・色・ボクセルの厚み・カメラの画角（縦 34°・見下ろし 0.42rad）と
   収め方・跳ね・脈・光り方の数値は、three.js で描いていた頃の見た目に合わせてある。
   - 親エージェントは最上段に立つ（状態で姿勢と色が変わる: 稼働中=立ち・緑 / 権限待ち=立ち・amber / 入力待ち=立ち・青 /

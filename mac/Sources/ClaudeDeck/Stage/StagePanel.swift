@@ -7,7 +7,7 @@ enum StageTheme {
     static let width: CGFloat = 360
 }
 
-/// 右側のステージパネル: ステージ（3D）・いまの動き・随伴するサブエージェント・ライブフィード。見出しでサイトのプレビューに切り替える。
+/// 右側のステージパネル: ステージ（3D）・いまの動き・随伴するサブエージェント・ライブフィード。見出しでサイトのプレビューとブランチの図に切り替える。
 struct StagePanel: View {
     let model: ChatModel
 
@@ -98,6 +98,11 @@ struct StagePanel: View {
             VStack(alignment: .leading, spacing: 0) {
                 header
                 StagePreviewPanel(model: model)
+            }
+        case .branches:
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                StageBranchPanel(model: model)
             }
         }
     }
