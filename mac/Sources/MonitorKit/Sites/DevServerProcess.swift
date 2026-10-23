@@ -58,7 +58,7 @@ public final class DevServerProcess: @unchecked Sendable {
         }
         let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global(qos: .utility))
         // 持ち主が手放しても、刈り取るまでは自分を保つ（ゾンビを残さない）。刈り取りで source を外して輪を切る。
-        source.setEventHandler { process.leaderExited() }
+        source.setEventHandler { process.leaderExited(notified: true) }
         process.lock.withLock {
             process.output = handle
             process.exitSource = source
@@ -107,8 +107,9 @@ public final class DevServerProcess: @unchecked Sendable {
         return Data(tail)
     }
 
-    private func leaderExited() {
-        guard let exit = peekExit() else { return }
+    private func leaderExited(notified: Bool = false) {
+        let info = notified ? ProcessGroup.exitAfterNotice(pid) : ProcessGroup.peekExit(pid)
+        guard let exit = info.map({ DevServerExit(siginfoCode: $0.si_code, status: $0.si_status) }) else { return }
         let report = lock.withLock { () -> Bool in
             exited = exit
             exitSource?.cancel()
@@ -229,6 +230,15 @@ struct ProcessGroup {
         var info = siginfo_t()
         guard waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0, info.si_pid == pid else { return nil }
         return info
+    }
+
+    /// 終わりの知らせ（kqueue の NOTE_EXIT）を受けた後に、刈り取れる形になるまで待って見る（知らせはその少し前に届くことがあり、刈り取り済みなら nil）。
+    static func exitAfterNotice(_ pid: pid_t) -> siginfo_t? {
+        var info = siginfo_t()
+        while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) != 0 {
+            guard errno == EINTR else { return nil }
+        }
+        return info.si_pid == pid ? info : nil
     }
 
     /// 止める手順（SIGTERM → 猶予の後 SIGKILL）を 1 つ進める。止め切って（またはあきらめて）刈り取ったら true。
