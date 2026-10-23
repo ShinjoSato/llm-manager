@@ -208,6 +208,14 @@ final class RemoteAccessUnitTests: XCTestCase {
         XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: exitId, cancel: true), in: context(.menu(exiting)))), "confirm_required",
                        "claude の終了になる取り消しは明示が要る")
         XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: exitId, cancel: true, confirmExit: true), in: context(.menu(exiting)))), "ok")
+        let trust = MenuPrompt(context: [], question: "Is this a project you created or one you trust?",
+                               options: [.init(number: nil, label: "No, exit"), .init(number: nil, label: "Yes, I trust this folder")],
+                               cursor: 0, footer: "Enter to confirm · Esc to cancel", tabs: nil)
+        let trustId = RemoteMenu.menuId(trust, generation: 0)
+        XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: trustId, choice: 0), in: context(.menu(trust)))), "confirm_required",
+                       "claude の終了になる選択肢も明示が要る")
+        XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: trustId, choice: 0, confirmExit: true), in: context(.menu(trust)))), "ok")
+        XCTAssertEqual(code(RemoteChecks.menuAnswer(.init(menuId: trustId, choice: 1), in: context(.menu(trust)))), "ok")
         XCTAssertEqual(code(RemoteChecks.menuTab(.init(menuId: id, direction: .next), in: ctx)), "ok")
         XCTAssertEqual(code(RemoteChecks.menuTab(.init(menuId: id, direction: .next), in: context(nil))), "gone")
     }

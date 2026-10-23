@@ -255,6 +255,22 @@ final class ChatMarkdownTests: XCTestCase {
         XCTAssertEqual(code.map { String(s[$0.range].characters) }, "code")
     }
 
+    func testInlineSingleTildesStayPlain() {
+        let text = "a@host:~/project/x$ grep\nb@host:~/project/y$"
+        let s = ChatMarkdown.inline(text)
+        XCTAssertEqual(String(s.characters), text)
+        XCTAssertNil(s.runs.first { $0.inlinePresentationIntent?.contains(.strikethrough) == true })
+    }
+
+    func testInlineDoubleTildesStrikeAndCodeKeepsTildes() {
+        let s = ChatMarkdown.inline("~~消す~~ と `cd ~/a ~/b` と \\~ と ~")
+        XCTAssertEqual(String(s.characters), "消す と cd ~/a ~/b と ~ と ~")
+        let strike = s.runs.first { $0.inlinePresentationIntent?.contains(.strikethrough) == true }
+        XCTAssertEqual(strike.map { String(s[$0.range].characters) }, "消す")
+        let code = s.runs.first { $0.inlinePresentationIntent?.contains(.code) == true }
+        XCTAssertEqual(code.map { String(s[$0.range].characters) }, "cd ~/a ~/b")
+    }
+
     func testInlineLinkAndItalic() {
         let s = ChatMarkdown.inline("[PR](https://github.com/x/y/pull/1) と *斜体*")
         let link = s.runs.first { $0.link != nil }

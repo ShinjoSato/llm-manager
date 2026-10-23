@@ -37,8 +37,8 @@ mac/
     Terminal/                   Claude Code を PTY でホストする端末ビュー（1 つの型を役割ごとの extension に分ける）
       ClaudeTerminalView.swift    本体（ClaudeStatus・ScreenState・持ち物・PTY 受信の傍受）
       ClaudeTerminalView+Launch.swift  claude の起動（環境からの API キー除去・--resume）
-      ClaudeTerminalView+Input.swift   入力（貼り付け・Enter・画像の取り込み待ち・権限 / 選択メニュー / タブへの回答）
-      ClaudeTerminalView+Screen.swift  画面の読み取り（状態の監視・実画面の行・背景色・選択メニューの解析・画面の写し）
+      ClaudeTerminalView+Input.swift   入力（貼り付け・Enter・画像の取り込み待ち・権限 / 選択メニュー / タブへの回答・「端末の画面」のキー）
+      ClaudeTerminalView+Screen.swift  画面の読み取り（状態の監視・実画面の行・背景色・選択メニューの解析・画面の写し・「端末の画面」に出す全幅の行）
       ClaudeTerminalView+Limit.swift   画面末尾の上限表示の監視と強制終了
     Chat/                       チャット画面（ルーム一覧・会話・入力欄・権限カード・選択肢カード）
       Model/                      ChatModel と、それが束ねる部品（@Observable・画面に依らない）
@@ -82,7 +82,7 @@ mac/
           LinkOverviewView.swift      中央の横断のリンク一覧と、「ディレクトリ」の固定行「リンク」（LinkOverviewListRow）
         Conversation/               中央の会話
           ConversationView.swift      見出し + バナー + チャット（ChatPane: 吹き出しの一覧 + 入力欄）。メインの中央と別ウィンドウで共通
-          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」のボタン
+          ConversationHeader.swift    見出し（名前・状態・ブランチ）と「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」のボタン
           RoomWindowView.swift        別ウィンドウの中身（1 ルームの会話・会話の取得と既読・ルームが消えた時の案内・そのウィンドウで出す警告）
           BubbleWindowView.swift      吹き出しの別ウィンドウの中身（ルーム名・時刻・全文コピーのボタンと、縦にスクロールする Markdown の本文。大きさは会話の返答と同じ）
           HeaderActions.swift         見出しのボタン列（入りきらない時は優先度の低いものから「…」のメニューへ。ディレクトリの詳細と共通）
@@ -93,6 +93,7 @@ mac/
           MenuCard.swift              選択肢のカード（選択肢の行・AskUserQuestion のタブ）
           UnreadableMenuCard.swift    選択肢が読めない時のカード
           PromptCardParts.swift       カードの共通部品（見出し・等幅の抜粋・控えめなボタン・枠・終了の確認）
+          TerminalScreenSheet.swift   「端末の画面」のシート（端末の今の表示・送れるキーのボタンとキーボード）と、カード・見出しから開く口
         Composer/                   入力欄
           Composer.swift              入力欄（⏎ 送信 / ⇧⏎ 改行・外部ルームでは「伝言」モード・添付ボタン）
           AttachmentStrip.swift       入力欄の上の添付チップ
@@ -190,10 +191,14 @@ mac/
                                   終了の確認の要否と文言（QuitConfirmation）・「作業が終わったら終了」の待ち（QuitWait）
       Attachments.swift           添付: 送る形の組み立て（画像パスの貼り付け用エスケープ・本文へのパスの一覧）・ペーストボードからの拾い出し・一時保存と掃除
       AttachmentPasteTextView.swift 添付を受ける文字欄（⌘V のメニュー検証・貼り付け・ドロップ）。入力欄の SubmitTextView の土台
-      PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去）と、画面からの権限プロンプト / 選択メニューの判定
+      PTYInput.swift              PTY に送るキー列（貼り付け・Enter・権限の Yes / Esc・矢印・制御文字の除去・「端末の画面」から送れるキーの表 `TerminalKey`）と、画面からの権限プロンプト / 選択メニューの判定
       MenuPrompt.swift            選択メニューの中身の読み取り（ChoiceMenu.parse）と、矢印で選択肢まで動かして Enter する手順（MenuNavigator）・問いのタブを移る手順（MenuTabMover）
       MenuScreenLog.swift         選択肢カードを出した・読めなかった画面の写しを直近数件残す
-      ScreenPane.swift            画面の右に縦線で区切って出る別の欄（差分パネル）を除いて左だけにする
+      MenuOpsLog.swift            カードの操作の各段階（押した・送信中の付け外し・矢印や Enter の一手・結果）を直近 500 行残す（本文は入れない）
+      PromptOperations.swift      カードの送信中の台帳（押したカードの印にだけ付ける・12 秒の上限・自分の印の時だけ外す）・結果を 1 回だけ渡す箱・カードの印
+      PromptCardBoard.swift       カードが自分の body で読む送信中と一言の置き場（期限で外す掃除・操作の記録）
+      ClaudeCodeVersions.swift    画面の読み取りを確かめた Claude Code の版の一覧（無い版のカードに案内を出す）
+      ScreenPane.swift            画面の右に出る別の欄（差分パネル。縦線か空白の桁で区切られる）を除いて左だけにする
       ComposerSync.swift          入力欄とモデルの下書きの同期判定（変換中は本当の外部変更の時だけ書き戻す）
       ComposerPlaceholder.swift   入力欄の空欄の案内の出し分け（端末ビューの表示内容で見る・変換中は隠す）
       RoomListMode.swift          左の一覧の見方（ルーム / ディレクトリ）と要対応の件数
@@ -222,6 +227,7 @@ mac/
   docs/pty-daemon.md            アプリを閉じても claude を動かし続ける常駐プロセスの設計と試作の記録（未実装）
   Resources/Info.plist          .app 用 Info.plist の雛形（バンドル ID・iCloud コンテナは bundle.sh が config/ の値で埋める）
   scripts/bundle.sh             claude-deck.app を組み立てて署名する（プロファイルがあれば Apple Development + iCloud、無ければ ad-hoc。チャネルの実行ファイルも同梱）
+  scripts/install.sh            develop を最新にして組み立て、動いている claude-deck を普通に終了させてから /Applications のものと入れ替えて起動し直す
   scripts/statusline.sh         Claude Code の statusLine。表示に加えて使用量を Application Support に残す
 ```
 
@@ -653,7 +659,7 @@ Claude Code のセッションを**チャットアプリの操作感**で扱う�
   - **見出しのボタンが入りきらない時**（会話の見出しも同じ）: 名前とパスは省略表示（最小 140px）まで縮め、それでも入らなければ優先度の低いボタンから
     「…」（`ellipsis.circle`。ホバーで「ほかの操作」と回したボタンの名前）のメニューにまとめる。メニューの項目は同じ動作を呼ぶ
     （「GitHub」「リンク」で開く先が複数ならサブメニュー、処理中は状態を添えて押せない。「閉じる」の確認はメニューから押しても出る）。
-    回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
+    回す順は、詳細が「設定で編集」→「閉じる」→「Finder」→ ピン →「リンク」→「GitHub」→「Xcode」→「VS Code」→「Claude Code を起動」、会話が「閉じる」→ ピン →「リンク」→「GitHub」→「端末の画面」→「Xcode」→「VS Code」（ピンは「リンク」と同じ段で、その直前に右から隠れる）。
     候補は `ViewThatFits` で入るものを選ぶ（`Views/Conversation/HeaderActions.swift`）。回す順の計算は `Sources/MonitorKit/Chat/HeaderOverflow.swift`（テストあり）。
   - **サイト**（先頭のタブ）: プロジェクトの LP をアプリの中でプレビューする（`Views/Directory/SitePreviewSection.swift`）。
     - 場所: 設定の `site`（下記「設定（settings.json）」）があればそれ、無ければプロジェクト直下と 2 階層までのサブフォルダから探す
@@ -752,7 +758,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 ### 会話（中央）
 
-- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」。表示の切替は無く、どのルームも常にチャット。
+- 見出し: アイコン・名前・ブランチ・状態バッジ・「VS Code」「GitHub」「リンク」「Xcode」「閉じる」「別ウィンドウで開く」「端末の画面」。表示の切替は無く、どのルームも常にチャット。
+  「端末の画面」（`terminal`）はホスト中で claude が動いているルームだけに出し、「Xcode」と同じ段でその直前に「…」へ回る（下記「端末の画面」）。
   「別ウィンドウで開く」（`macwindow.badge.plus`）はメインの見出しにだけ出し、別ウィンドウの見出しには出さない。優先度は「GitHub」と同じ段でその直前に「…」へ回る。
   見出しのボタンはアイコンだけで、ホバーで名前と開く先を出す。「VS Code」は常に出す。
   「Xcode」「閉じる」はプロジェクト配下（浅い範囲・`ios/` 等のサブディレクトリを含む）に `.xcworkspace` / `.xcodeproj` があるルームだけ出す（`XcodeFinder`。`.xcworkspace` 優先・最も浅い階層。
@@ -919,7 +926,11 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   プロンプトを読み取り、**許可 = `1`（1. Yes）/ 拒否 = `Esc`** を PTY に送る（選択肢の数で「No」の番号が変わるため拒否は Esc）。
   キーは Claude Code v2.1.251 / v2.1.286 の実際の TUI で確認した。画面にプロンプトが無ければ何も送らない。
   押した時のカードの内容と今の画面のプロンプトが違う（別の確認に替わった）場合も何も送らず、カードを今の内容に更新する。
-- 押してから結果が出るまでは、そのカードのボタンを無効にして二度押しを防ぐ。
+- 押してから結果が出るまでは、**押したカードだけ**ボタンを無効にして二度押しを防ぐ（下の「選択肢カード」の「送信中」と同じ仕組み）。
+  端末のプロンプトのカードの印は中身と表示の世代（同じ文面が続けて出ても別のカード）、Channels のカードの印は確認の key。
+  押しても送れない時（送っている最中・送り終えた直後の同じカード・答え終わった・内容が替わった）はカードに理由を出す。
+- 端末の画面から読んだカードは、claude の版が確かめた版（`ClaudeCodeVersions`）に無ければ「この版の Claude Code は未確認です。うまく答えられない時は端末の画面から答えてください。」を出す。
+- ホスト中のルームでは右下に「端末の画面」のボタンを出す（送信中でも押せる。下記「端末の画面」）。
 
 ### 選択肢カード
 
@@ -928,6 +939,8 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   問いより上の本文（plan の中身・trust 確認のフォルダ・質問の見出し）、問い（選択肢の直前の行）、選択肢（番号・文言・下の字下げの説明行）、
   今「❯」が付いている行。選択肢は「❯ n.」から番号が 1 ずつ続く範囲だけを取る（plan 本文の番号付きリストを混ぜない）。
   番号の無いメニュー（trust 確認）は「❯」の行と、空行を挟まずに同じ字下げで並ぶ行を選択肢とする。
+  trust 確認（v2.1.300）は問いの段落の「?」までを問いにし、その後ろの文と下の説明（「読み書き・実行できる」等。リンクの「Security guide」は除く）は本文の後ろに残す。
+  「No, exit」のように選ぶと claude が終了する選択肢は、Esc と同じく確認を挟む（iPhone からは `confirmExit` が要る。Claude が書く選択肢は Esc が終了になるメニューの時だけ終了と読む）。
   「❯」の行は操作案内（`Enter to … · Esc to …`。無ければ画面の末尾）から上へ 24 行以内だけ探し、会話の返答（`⏺`）の行に当たれば探すのをやめる
   （履歴の発話 `❯ …` を選択肢と読まないため）。番号の無い「❯」の行は操作案内が出ている時だけ選択肢とみなす。
   本文は上の罫線までの囲み。罫線が見当たらなければ空行・会話の行（`⏺` / `❯`）・経過表示（`✻ … (3s)` 等）の手前で止める（照合に使うので変わる行を入れない）。
@@ -940,7 +953,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   未反映の矢印は常に 0 か 1 個で、これは**ナビゲーションをまたいでも**保つ: 約 1 秒待っても「❯」が動かなければ**再送せずに**やめ、
   未反映の矢印を残してやめた時は印（`PendingArrowHold`）を残して、次に押しても「反映待ち」として動かさない。印は「❯」が動いた
   （残りの矢印が反映された）・端末の出力が 1.5 秒止まった・5 秒経った時に外す（残りの矢印を次の移動の 1 歩と数えて 1 行先で確定しないため）。
-  やめた後もカードのボタンは 1.5 秒押せないままにする。
+  送り終えた（やめた）後も、押したカードのボタンは 1.5 秒押せないままにする（画面が描き替わるまで古いカードが今の画面と一致して見えるため）。
 - 最初に、押した時のカードと今の画面のメニュー（本文・問い・選択肢の文言。「❯」の位置は除く）が同じかを確かめ、違えば何も送らない。
   動かしている途中で問い・本文・選択肢の数が変わったら Enter を押さずにやめる。着いた時も全体を照合してから Enter を送る。
   「❯」が動かない・メニューが消えた時も Enter を押さずにやめて理由を出す（矢印で「❯」を動かした分は端末に残る）。
@@ -978,7 +991,40 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - 入力欄の上に重なったメニュー（上の「入力欄の上に重なるダイアログ」）はその範囲だけを読み、番号付きの選択肢が読めれば通常のカードにする。
 - 中身を読み取れないメニュー（`/auto-mode-setup` のウィザード等）は、その旨と「キャンセル（Esc）」だけのカードを出す。押した時のカードと今の画面が同じ「読めないメニュー」
   （メニューの範囲の行の写し `UnreadableMenu`）の時だけ送る。Esc が終了になるメニューでは同じく確認を挟む。
-- 押してから結果が出るまではカードのボタンを無効にして二度押しを防ぐ（端末ビューが途中で無くなっても送信中の印は外す）。外部セッションは対象外。
+- **送信中（二度押しの防止）はカード単位**（`PromptOperationBook` / `PromptCardBoard`。判定は MonitorKit でテストあり）:
+  - 押すと、押したカードの印（`PromptCardIdentity`: 本文・問い・選択肢・チェック・タブ。「❯」の位置は含めないので、動かしている途中で別のカードにならない）にだけ
+    「送信中…」を付ける。結果が返ってから 1.5 秒は同じカードを押せないままにするが、**次に出た問いのカード（印が違う）は送信中を引き継がずに生まれ、すぐ押せる**。
+  - 送っている最中（矢印で動かしている間）は、同じルームの別のカードも押させない（`isNavigatingMenu`・`PendingArrowHold` と合わせて、矢印を重ねない）。
+  - 送信中には**上限 12 秒**と操作の印（UUID）を持たせ、上限を過ぎたら必ず外して「応答を確かめられませんでした。端末の画面で確かめてください。」を出す。
+    結果は「1 回だけ渡す箱」（`OnceDelivery`）で受け、端末から結果が返らなくても 12 秒で時間切れの結果（iPhone には `unconfirmed`）を返す。後から返った結果は渡さない（失敗なら一言だけ出す）。
+    送信中を外すのは自分の印の時だけ（遅れて届いた古い操作の完了で、今の操作の印を外さない）。
+  - カードは自分の body で送信中と一言を読み（親の `MessageList` の描き直しに頼らない）、期限の時刻に描き直す時計も持つ。期限切れの印は板の掃除でも外す。
+  - **押しても送れない時は必ずカードに理由を出す**（送っている最中・同じカードの描き替え待ち・前の矢印の反映待ち・動かしている最中・文字入力の行など）。
+    答え終わった・内容が替わった・位置を合わせられない等は従来どおり警告も出す。端末ビューが途中で無くなっても結果は返し、送信中は外す。外部セッションは対象外。
+- **trust 確認**（v2.1.300 は問いの下に説明とリンク「Security guide」が入る）は、選択肢の上で最も近い「?」を含む段落の「?」までを問いとして読む
+  （`Quick safety check: Is this a project you created or one you trust?`）。「❯」の初期位置は「No, exit」で、**claude の終了になる選択肢（「No, exit」）を押した時も
+  Esc と同じ終了の確認を挟む**（`MenuPrompt.choiceExits`）。
+- **操作の記録**: 押した時刻・カードの印・選んだ番号、navigator / tab mover の各手（待った回数をまとめる）・送ったキー（矢印・Enter・Esc）・結果・送信中の付け外し・
+  カードを出した時の送信中の値を `~/Library/Logs/claude-deck/menu-ops.log` に**直近 500 行**残す（`MenuOpsLog`。会話の本文は入れない・0600・外へは送らない）。
+  固まった時はこの記録と `menu-screens.log` を突き合わせる。
+- **確かめていない版の案内**: セッションファイル（`~/.claude/sessions/<pid>.json`）の `version` が確かめた版（`ClaudeCodeVersions.verified`: 2.1.286・2.1.288・2.1.300）に
+  無ければ、カードに「この版の Claude Code（版）は未確認です。うまく答えられない時は端末の画面から答えてください。」を出す（版が読めない時は出さない）。
+  TUI を確かめた版を足す時は、この一覧とテストの写し（`Tests/ClaudeDeckTests/Fixtures/ClaudeCode-<版>/`）を足す。
+- 選択肢カード・読めない選択肢のカードの右下に「端末の画面」のボタンを出す。カードの無効化の外に置くので、カードが「送信中…」のまま止まっても押せる（下記「端末の画面」）。
+
+### 端末の画面（カードで答えられない時の逃げ道）
+
+- カードの読み取りが TUI の変化に追いつかず答えられなくなった時に、アプリを再起動せずに抜け出すためのシート。ホスト中で claude が動いているルームの
+  見出しの「端末の画面」と、権限カード・選択肢カード・読めない選択肢のカードの「端末の画面」から開く（外部セッションには出さない。メイン・別ウィンドウのどちらでも開ける）。
+- 上半分に端末の今の表示を等幅で出す（罫線・❯ もそのまま。右の別の欄も含めた全幅で、末尾の空行は落とす。0.3 秒ごとに読み直し、変わった時だけ描き直す。
+  縦横にスクロールでき、「表示をコピー」で文字としてクリップボードに写せる）。claude が終わった後は最後の画面を出し、キーは押せない。
+- 下に送れるキーのボタン: ← ↑ ↓ → Enter Esc Tab Space と数字 1〜9。押した時だけ 1 回送る。シートにフォーカスがある間はキーボードの
+  矢印・Return（テンキーの Enter も）・Esc・Tab・Space・1〜9 も同じキーとして送る（押しっぱなしの繰り返しは送らない。⌘ / ⌃ / ⌥ 付きは拾わない）。
+  キーと送る列の対応は `PTYInput.swift` の `TerminalKey`（テストあり。矢印は端末のモードに合わせて CSI / SS3）。**文字の自由入力の口は無い**（入力欄の送信の守りを迂回しないため）。
+- 送らない時: カードから ❯ を動かしている最中（`isNavigatingMenu`）・入力欄からの送信の途中・権限カードの回答を送った直後（押せない間）・claude が動いていない時。
+  理由をシートの下に出す。矢印を送った後は、カードの矢印と同じ `PendingArrowHold` を残し、反映されるまでカードからの移動を「反映待ち」で待たせる。
+- Esc が claude の終了になるメニュー（選択肢カード・読めない選択肢のカードと同じ判定）では、Esc を送る前に確認ダイアログを挟む。
+- Esc は端末に送るキーなのでシートを閉じない。閉じるのは「閉じる」（⌘W）。
 
 ### 外部セッション（ターミナル等で起動したもの）
 
@@ -1196,6 +1242,22 @@ cp config/Local.example.xcconfig config/Local.xcconfig   # 雛形を写して自
 
 ### `.app` として起動する
 
+普段使いは `/Applications` に入れて、Spotlight・Launchpad・Dock から起動する。入れるのも更新するのも次の 1 つ:
+
+```sh
+cd /Users/shinjo/project/ai-manager/mac
+./scripts/install.sh           # develop を最新に → 組み立て → 動いている claude-deck を終了 → /Applications/claude-deck.app と入れ替え → 起動
+```
+
+- develop にいて作業ツリーがきれいな時だけ `git pull --ff-only` する（違えば止まる）。今の作業ツリーのまま組み立てるなら `--no-pull`。
+- 動いている claude-deck（同じバンドル ID）には ⌘Q と同じ普通の終了を頼むので、稼働中・権限待ちがあれば確認が出る。取りやめた・180 秒で終わらなかった時は入れ替えない。
+  ホスト中のセッションは終了の時に記録され、起動し直すと再開する（「終了と次の起動」）。初回は端末から claude-deck を操作する許可（オートメーション）を macOS が尋ねる。
+- 入れる先に同じ名前の別のアプリ（バンドル ID が違う）がある時は消さずに止まる。組み立ては一時フォルダで行い、`mac/dist/` は変えない。
+- オプション: `--dest <dir>`（既定 `/Applications`）/ `--no-pull` / `--no-launch` / `--adhoc` / `--build-system auto|default|native`（後ろの 2 つは bundle.sh に渡す）。
+- Channels のチャネルを `.mcp.json` に登録する時は `/Applications/claude-deck.app/Contents/MacOS/claude-deck-channel` を指せば、更新のたびに新しくなる。
+
+組み立てだけをする時（`mac/dist/` に作る）:
+
 ```sh
 cd /Users/shinjo/project/ai-manager/mac
 ./scripts/bundle.sh            # → mac/dist/claude-deck.app（config/ の値に合うプロファイルがあれば Apple Development、無ければ ad-hoc）
@@ -1206,7 +1268,7 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 - `auto` は通常の `swift build` を試し、失敗したら `--build-system native` で再ビルドする。Metal Toolchain が無い環境では通常ビルドが SwiftTerm の `Shaders.metal` のコンパイルで失敗するため（`xcodebuild -downloadComponent MetalToolchain` で入れれば通常ビルドが通る）。
 - 依存のリソースバンドル（`SwiftTerm_SwiftTerm.bundle`）は `Contents/Resources/` に同梱する。claude-deck は SwiftTerm の Metal レンダラーを有効にしていないため、現状このバンドルは参照されない（有効化する場合は SPM の `Bundle.module` が `.app` 直下を探す点に注意）。
 - バンドル ID（`CFBundleIdentifier`）と `DeckICloudContainer` は `config/` の値で Info.plist に埋める。署名はチーム ID・コンテナが設定されていて、このアプリ用のプロビジョニングプロファイルがあれば Apple Development（iCloud のエンタイトルメント付き。上の「iPhone への通知」）、無ければ ad-hoc（`codesign -s -`）。Developer ID 署名・公証・配布・自動アップデートはしない。別の Mac へコピーすると Gatekeeper に止められる前提（右クリック → 開く）。
-- `/Applications` へ置く場合は `--out /Applications` またはコピー。置き場所に関わらず、設定は `~/Library/Application Support/claude-deck/settings.json` を読む（上の「設定（settings.json）」。Finder 起動には環境変数が渡らないので `CLAUDE_DECK_SETTINGS` は効かない）。
+- 置き場所に関わらず、設定は `~/Library/Application Support/claude-deck/settings.json` を読む（上の「設定（settings.json）」。Finder 起動には環境変数が渡らないので `CLAUDE_DECK_SETTINGS` は効かない）。
 - 生成物 `mac/dist/` と `mac/.build/` は git 管理外。
 - アイコン（任意）: `mac/Resources/AppIcon.icns` を置くと同梱される。1024px の PNG から作る例:
   ```sh
@@ -1232,12 +1294,14 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
   MonitorKit のクライアントで sandora（描けた）と mirio（ビルド失敗の文言）で確かめたが、アプリの画面での操作（グリッド・シートでの切り替え）とアプリからの初回の承認は目視で未確認。
 - 権限プロンプト・選択メニューの読み取りは端末画面の文言（`Do you want to …?` と `1. Yes`、`❯ n.` の選択肢、`Enter to confirm` 等の操作案内）に依る。
   **Claude Code の TUI の更新で判定を見直す必要がある**: `PTYInput.swift` の `InputBlock` / `ChoiceMenu` / `PermissionPrompt` / `InputBox`、`MenuPrompt.swift`
-  （v2.1.286 の trust 確認・AskUserQuestion・plan 承認・入力欄の例文と NBSP で確認）。文言・配置（罫線と ❯ の位置関係、操作案内の有無）に依存している。
-  入力欄が上下の罫線で囲まれること・右の差分パネルが縦線 `│` 1 本で区切られることも前提（`ScreenPane.swift`。全角の幅は近似）。
-- 選択肢カードからの回答（矢印 + Enter）は、テストのフィクスチャ（v2.1.286 の実画面の写し）で読み取りと手順を確かめたのみで、
-  本物の claude で押して先へ進むところは目視で未確認。AskUserQuestion の複数選択（チェックボックス）・複数の問い（タブ）は
-  押すたびに今の画面のメニューでカードを出し直す作りで、実画面の写しでは未確認（チェック欄の記号・Enter で切り替わるかも未確認）。「Type something.」の行を「❯」が通過する時の描き方も未確認
-  （文言が変わって選択肢の数が読めなくなれば Enter を押さずにやめる）。
+  （v2.1.286 の trust 確認・AskUserQuestion・plan 承認・入力欄の例文と NBSP、v2.1.300 の trust 確認・AskUserQuestion の 3 問・長い問い・複数選択で確認。
+  v2.1.300 の画面の写しは `Tests/ClaudeDeckTests/Fixtures/ClaudeCode-2.1.300/`）。文言・配置（罫線と ❯ の位置関係、操作案内の有無）に依存している。
+  入力欄が上下の罫線で囲まれること・右の差分パネルが縦線 `│` 1 本か、全行で空白の桁（左の欄の罫線がその手前で切れる）で区切られることも前提
+  （`ScreenPane.swift`。全角の幅は近似）。確かめた版の一覧は `ClaudeCodeVersions.swift`。
+- 選択肢カードからの回答（矢印 + Enter）は、テストのフィクスチャ（v2.1.286 / v2.1.300 の実画面の写し）で読み取りと手順を確かめた。
+  v2.1.300 では AskUserQuestion の複数の問い（タブ）・長い問い・複数選択（`[✔]` と Next）を、作業用のフォルダで本物の claude をアプリと同じ部品で動かして確定まで通した。
+  アプリの画面から押して先へ進むところの目視は未確認。「Type something.」の行を「❯」が通過する時の描き方も未確認
+  （文言が変わって選択肢の数が読めなくなれば Enter を押さずにやめる）。右の差分パネルの空白の区切りは、発生した形をなぞった合成の画面でのみ確認。
 - 送った伝言の吹き出しはアプリのメモリにだけ持つ（再起動で消える）。
 - 外部セッションの権限カード（Channels 経由の許可 / 拒否）は既存の permissions の経路（アプリ内サーバーに移した）をそのまま使っており、外部ルームでの実機確認はしていない。
 - ステージの 3D は、オフスクリーン描画（`SCNRenderer`）の画像を three.js 版の 3D（ヘッドレスブラウザで撮影）と状態ごとに見比べて合わせた。

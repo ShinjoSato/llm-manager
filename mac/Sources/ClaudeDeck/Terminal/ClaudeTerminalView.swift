@@ -26,6 +26,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         var menuPrompt: MenuPrompt?
         /// 選択メニューは出ているが中身を読めない時の写し。
         var unreadableMenu: UnreadableMenu?
+        /// セッションファイルの claude の版（読めなければ nil）。
+        var claudeVersion: String?
     }
 
     /// `screenState` が変わったときに呼ばれる（メインスレッド）。
@@ -38,6 +40,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     var pendingArrowHold: PendingArrowHold?
     /// 最後に画面の写しを残したメニュー（同じものを何度も書かない）。
     var lastLoggedMenu: Int?
+    /// 選択肢の操作の各手を残す先（本文は渡さない）。
+    var opsLog: ((String, [(String, String)]) -> Void)?
 
     var limitHandled = false
     var limitCheckPending = false
@@ -54,8 +58,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
 
     deinit { statusTimer?.invalidate() }
 
-    /// セッションファイルの返事待ちの状態と読んだ時刻（画面の判定のたびにファイルを読まないため）。
-    var sessionWaitingCache: (at: Date, value: SessionWaiting?)?
+    /// セッションファイルの返事待ちの状態・版と読んだ時刻（画面の判定のたびにファイルを読まないため）。
+    var sessionWaitingCache: (at: Date, value: SessionWaiting?, version: String?)?
 
     /// 送信を途中で取りやめ、端末の入力欄に本文や画像を残したかもしれない時の、次の送信の扱い。
     var leftoverCheck: LeftoverCheck = .none

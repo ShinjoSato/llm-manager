@@ -64,7 +64,40 @@ struct SendingIndicator: View {
     }
 }
 
+/// 画面の読み取りを確かめていない版の claude で動いている時の一言。
+struct UntestedVersionNote: View {
+    let version: String?
+
+    var body: some View {
+        if let note = ClaudeCodeVersions.untestedNote(version) {
+            Label(note, systemImage: "exclamationmark.triangle")
+                .font(ChatTheme.caption)
+                .foregroundStyle(ChatTheme.secondary)
+        }
+    }
+}
+
+/// カードの送信中と一言が期限で外れた時に描き直させる時計（掃除の予約が遅れても、期限を過ぎた表示を残さないため）。
+private struct CardClock: ViewModifier {
+    let next: Date?
+    let tick: () -> Void
+
+    func body(content: Content) -> some View {
+        content.task(id: next) {
+            guard let next else { return }
+            try? await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow) + 0.05), tolerance: PromptOperationBook.timerTolerance)
+            guard !Task.isCancelled else { return }
+            tick()
+        }
+    }
+}
+
 extension View {
+    /// カードの見た目が次に変わる時刻（`next`）に `tick` を呼ぶ。
+    func cardClock(next: Date?, tick: @escaping () -> Void) -> some View {
+        modifier(CardClock(next: next, tick: tick))
+    }
+
     /// 要対応のカードの枠（会話の末尾に amber で出す）。
     func cardFrame() -> some View {
         padding(14)
@@ -72,14 +105,17 @@ extension View {
             .roundedSurface(12, fill: ChatTheme.cardFill, stroke: ChatTheme.cardBorder, lineWidth: 1.5)
     }
 
-    /// Esc が claude の終了になるメニューで送る前に確かめる。照合には確認を開いた時のメニュー（`presenting`）を使う。
-    func exitConfirmation<Menu>(presenting: Binding<Menu?>, onExit: @escaping (Menu) -> Void) -> some View {
+    /// Esc（か終了になる選択肢）が claude の終了になるメニューで送る前に確かめる。照合には確認を開いた時のメニュー（`presenting`）を使う。
+    func exitConfirmation<Menu>(presenting: Binding<Menu?>,
+                                button: @escaping (Menu) -> String = { _ in "終了する（Esc）" },
+                                message: @escaping (Menu) -> String = { _ in "このメニューで Esc を押すと、取り消しではなく Claude Code の終了になります。" },
+                                onExit: @escaping (Menu) -> Void) -> some View {
         let isPresented = Binding(get: { presenting.wrappedValue != nil }, set: { if !$0 { presenting.wrappedValue = nil } })
         return confirmationDialog("claude を終了しますか？", isPresented: isPresented, presenting: presenting.wrappedValue) { menu in
-            Button("終了する（Esc）", role: .destructive) { onExit(menu) }
+            Button(button(menu), role: .destructive) { onExit(menu) }
             Button("やめる", role: .cancel) {}
-        } message: { _ in
-            Text("このメニューで Esc を押すと、取り消しではなく Claude Code の終了になります。")
+        } message: { menu in
+            Text(message(menu))
         }
     }
 }

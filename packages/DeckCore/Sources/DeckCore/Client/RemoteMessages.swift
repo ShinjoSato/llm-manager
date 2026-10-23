@@ -34,6 +34,10 @@ public enum RemoteResultText {
             return "mac 側の表示が替わっていました。最新の内容を確かめてからもう一度押してください。"
         case "busy":
             return "直前の操作を mac で送っている最中です。終わってからもう一度。"
+        case "unconfirmed":
+            return "mac で応答を確かめられませんでした。後から反映されることがあるので、送り直す前に画面の様子を確かめてください。"
+        case "navigating":
+            return "mac で前の操作の選択肢を動かしているところです。終わってからもう一度。"
         case "timeout":
             return "mac での操作が 30 秒で戻りませんでした。後から反映されることがあるので、送り直す前に画面の様子を確かめてください。"
         case "ended":
