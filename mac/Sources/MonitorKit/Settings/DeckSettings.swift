@@ -403,4 +403,10 @@ public struct GitHubBoard: Codable, Equatable, Identifiable, Sendable {
     public func sameBoard(as other: GitHubBoard) -> Bool {
         owner.caseInsensitiveCompare(other.owner) == .orderedSame && number == other.number
     }
+
+    /// 画面の欄の中身から組む（前後の空白は落とし、番号が読めなければ 0）。
+    public static func draft(name: String, owner: String, number: String) -> GitHubBoard {
+        GitHubBoard(name: name.trimmingCharacters(in: .whitespaces), owner: owner.trimmingCharacters(in: .whitespaces),
+                    number: SettingsValidation.parseNumber(number) ?? 0)
+    }
 }

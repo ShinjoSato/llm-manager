@@ -17,6 +17,11 @@ public enum LinkageSummary {
         return text.isEmpty ? none : text
     }
 
+    /// リポジトリに紐づかないボード: `owner #N`。
+    public static func board(_ board: GitHubBoard) -> String {
+        github(GitHubLink(owner: board.owner, projectNumber: board.number > 0 ? board.number : nil))
+    }
+
     /// Xcode: 「自動（ios/App.xcodeproj）」「指定（…）」「使わない」。`scanned` が偽の間は自動の中身を探している旨、
     /// `choosing`（「指定」を選んだがまだ場所を選んでいない）の間は未選択にする。
     public static func xcode(_ link: XcodeLink?, detected: String?, scanned: Bool, choosing: Bool = false) -> String {

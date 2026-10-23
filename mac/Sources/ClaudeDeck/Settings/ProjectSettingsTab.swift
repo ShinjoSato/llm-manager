@@ -2,36 +2,47 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
+/// 左の一覧で選べるもの（プロジェクトか、一番下の固定の行「横断ボード」）。
+enum ProjectListItem: Hashable {
+    case project(UUID)
+    case boards
+}
+
 /// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・アイコンと色・紐づけ（GitHub・Xcode・サイト・App Store・リンク）・実行コマンド。
+/// 一覧の一番下の固定の行で、リポジトリに紐づかないボードを編集する。
 struct ProjectSettingsTab: View {
     let store: SettingsStore
     let navigation: SettingsNavigation
-    @State private var selection: UUID?
+    @State private var selection: ProjectListItem?
     @State private var deleting: ManagedProject?
 
     private var selected: ManagedProject? {
-        store.projects.first { $0.id == selection }
+        guard case .project(let id) = selection else { return nil }
+        return store.projects.first { $0.id == id }
     }
+
+    private var firstProject: ProjectListItem? { store.projects.first.map { .project($0.id) } }
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 List(selection: $selection) {
-                    ForEach(store.projects) { project in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(project.name).font(.body.weight(.medium))
-                            Text(project.status.label).font(.caption).foregroundStyle(.secondary)
+                    Section {
+                        if store.projects.isEmpty {
+                            Text("プロジェクトがありません").font(.callout).foregroundStyle(.secondary)
                         }
-                        .tag(project.id)
-                        .contextMenu {
-                            Button("一覧から削除…", role: .destructive) { deleting = project }
+                        ForEach(store.projects) { project in
+                            ProjectListRow(project: project)
+                                .tag(ProjectListItem.project(project.id))
+                                .contextMenu {
+                                    Button("一覧から削除…", role: .destructive) { deleting = project }
+                                }
                         }
+                        .onMove { store.move(from: $0, to: $1) }
                     }
-                    .onMove { store.move(from: $0, to: $1) }
-                }
-                .overlay {
-                    if store.projects.isEmpty {
-                        Text("プロジェクトがありません").font(.callout).foregroundStyle(.secondary)
+                    Section {
+                        BoardsListRow(count: store.settings.boards.count)
+                            .tag(ProjectListItem.boards)
                     }
                 }
                 Divider()
@@ -49,7 +60,9 @@ struct ProjectSettingsTab: View {
             .frame(width: 220)
             .disabled(!store.isEditable)
             Divider()
-            if let project = selected {
+            if selection == .boards {
+                BoardSettingsPane(store: store)
+            } else if let project = selected {
                 ProjectDetailForm(store: store, project: project)
                     .id(project.id)
             } else {
@@ -59,19 +72,22 @@ struct ProjectSettingsTab: View {
             }
         }
         .onAppear {
-            if selection == nil { selection = store.projects.first?.id }
+            if selection == nil { selection = firstProject }
         }
-        .onChange(of: navigation.focusProject, initial: true) { _, id in
-            guard let id else { return }
-            if store.projects.contains(where: { $0.id == id }) { selection = id }
-            navigation.focusProject = nil
+        .onChange(of: navigation.focus, initial: true) { _, item in
+            switch item {
+            case .project(let id): if store.projects.contains(where: { $0.id == id }) { selection = item }
+            case .boards: selection = item
+            case nil: return
+            }
+            navigation.focus = nil
         }
         .confirmationDialog("「\(deleting?.name ?? "")」を一覧から削除しますか？",
                             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("削除", role: .destructive) {
                 if let project = deleting {
                     store.remove(id: project.id)
-                    if selection == project.id { selection = store.projects.first?.id }
+                    if selection == .project(project.id) { selection = firstProject }
                 }
                 deleting = nil
             }
@@ -86,7 +102,51 @@ struct ProjectSettingsTab: View {
         guard !urls.isEmpty else { return }
         let before = Set(store.projects.map(\.id))
         store.add(paths: urls.map(\.path))
-        if let added = store.projects.last(where: { !before.contains($0.id) }) { selection = added.id }
+        if let added = store.projects.last(where: { !before.contains($0.id) }) { selection = .project(added.id) }
+    }
+}
+
+/// 一覧のプロジェクトの行: 名前と、状態・GitHub の紐づけの要約（あれば）。
+private struct ProjectListRow: View {
+    let project: ManagedProject
+
+    private var github: String? {
+        guard project.github != nil else { return nil }
+        let summary = LinkageSummary.github(project.github)
+        return summary == LinkageSummary.none ? nil : summary
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(project.name).font(.body.weight(.medium)).lineLimit(1)
+            HStack(spacing: 4) {
+                Text(project.status.label).fixedSize()
+                if let github {
+                    Text("·")
+                    Text(github).lineLimit(1).truncationMode(.middle).help(github)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// 一覧の一番下の固定の行（並べ替え・削除の対象にしない）。
+private struct BoardsListRow: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: BoardSettingsPane.symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("横断ボード").font(.body.weight(.medium))
+                Text(LinkageSummary.count(count)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .help("リポジトリに紐づかないボード")
     }
 }
 

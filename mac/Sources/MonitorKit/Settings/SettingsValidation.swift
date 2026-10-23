@@ -142,6 +142,15 @@ public enum SettingsValidation {
         return problems
     }
 
+    /// 画面の欄のボードを保存できない理由。`excluding` の行（編集中の自分）を除いて同じボードがあればそれも出す。
+    public static func boardProblems(_ board: GitHubBoard, among boards: [GitHubBoard], excluding id: UUID?) -> [String] {
+        let problems = boardProblems(board)
+        if problems.isEmpty, boards.contains(where: { $0.id != id && $0.sameBoard(as: board) }) {
+            return ["同じボードが既にあります"]
+        }
+        return problems
+    }
+
     /// 読めない扱いにする問題（画面の一覧・削除が id とパスで行を見分けるため、重複や相対パスがあると壊れる）。
     public static func blockingProblems(_ settings: DeckSettings) -> [String] {
         var result: [String] = []
