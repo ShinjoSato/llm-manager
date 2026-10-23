@@ -43,7 +43,7 @@ struct ProjectSiteEditor: View {
                               info: "詳細の「サイト」のタブでプレビューする LP（Next.js の静的書き出し out/ のあるフォルダ）。空ならプロジェクト直下と浅いサブフォルダから探します。",
                               summary: LinkageSummary.site(configured: project.site, lookup: lookup, exported: exported),
                               isEmpty: project.site == nil && lookup != nil && lookup?.location == nil,
-                              note: note) {
+                              notes: notes) {
                 Button("フォルダを選ぶ…") { chooseFolder() }
                     .controlSize(.small)
             }
@@ -57,6 +57,11 @@ struct ProjectSiteEditor: View {
             text = site?.path ?? ""
         }
         .onChange(of: focused) { store.flushPending() }
+        // 開いた時は書き出しの有無を見直す（探した後に out/ ができていることがある）。
+        .onChange(of: expanded) { _, open in
+            guard open, let location = lookup?.location else { return }
+            exported = FileManager.default.fileExists(atPath: location.exportIndex)
+        }
         .onDisappear { store.flushPending(force: true) }
         .task(id: "\(project.path)|\(project.site?.path ?? "")") {
             let project = project
@@ -70,10 +75,10 @@ struct ProjectSiteEditor: View {
     }
 
     /// 行に添える問題（入力の形・指定した先が使えない理由）。
-    private var note: SettingsNote? {
-        if let problem { return SettingsNote(text: problem) }
-        if let reason = lookup?.problem { return SettingsNote(text: reason, isError: false) }
-        return nil
+    private var notes: [SettingsNote] {
+        if let problem { return [SettingsNote(text: problem)] }
+        if let reason = lookup?.problem { return [SettingsNote(text: reason, isError: false)] }
+        return []
     }
 
     /// 空は自動（キーを消す）、正しい相対パスは指定として保存。不正な間は保存しない。

@@ -12,13 +12,15 @@ public enum LinkageSummary {
         guard let link else { return none }
         let owner = link.owner.trimmingCharacters(in: .whitespaces)
         let repo = link.repo?.trimmingCharacters(in: .whitespaces) ?? ""
-        var text = repo.isEmpty ? owner : "\(owner)/\(repo)"
+        var text = repo.isEmpty || owner.isEmpty ? owner + repo : "\(owner)/\(repo)"
         if let number = link.projectNumber { text += text.isEmpty ? "#\(number)" : " #\(number)" }
         return text.isEmpty ? none : text
     }
 
-    /// Xcode: 「自動（ios/App.xcodeproj）」「指定（…）」「使わない」。`scanned` が偽の間は自動の中身を探している旨にする。
-    public static func xcode(_ link: XcodeLink?, detected: String?, scanned: Bool) -> String {
+    /// Xcode: 「自動（ios/App.xcodeproj）」「指定（…）」「使わない」。`scanned` が偽の間は自動の中身を探している旨、
+    /// `choosing`（「指定」を選んだがまだ場所を選んでいない）の間は未選択にする。
+    public static func xcode(_ link: XcodeLink?, detected: String?, scanned: Bool, choosing: Bool = false) -> String {
+        if choosing, link?.configuredPath == nil { return "指定（未選択）" }
         switch link {
         case .path(let path): return "指定（\(path)）"
         case .disabled: return "使わない"

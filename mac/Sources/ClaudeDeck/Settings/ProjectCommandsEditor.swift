@@ -16,12 +16,13 @@ struct ProjectCommandsEditor: View {
 
     /// 画面で行を見分けるためだけの印（ファイルには書かない）。
     private struct Row: Identifiable, Equatable {
-        let id = UUID()
+        let id: UUID
         var name: String
         var command: String
         var icon: String?
 
-        init(_ command: ProjectCommand) {
+        init(_ command: ProjectCommand, id: UUID = UUID()) {
+            self.id = id
             name = command.name
             self.command = command.command
             icon = command.icon
@@ -161,6 +162,7 @@ struct ProjectCommandsEditor: View {
 
     private func remove(_ index: Int) {
         guard rows.indices.contains(index) else { return }
+        expanded.remove(rows[index].id)
         rows.remove(at: index)
         store.flushPending()
     }
@@ -190,7 +192,14 @@ struct ProjectCommandsEditor: View {
     }
 
     private func load(_ commands: [ProjectCommand]) {
-        rows = commands.map(Row.init)
+        // 同じ名前の行は印を引き継ぐ（外で書き換わっても開いていた行を閉じない）。
+        var previous = rows
+        rows = commands.map { command in
+            let name = command.name.trimmingCharacters(in: .whitespaces)
+            guard let index = previous.firstIndex(where: { $0.name.trimmingCharacters(in: .whitespaces) == name }) else { return Row(command) }
+            return Row(command, id: previous.remove(at: index).id)
+        }
+        expanded.formIntersection(rows.map(\.id))
         loaded = rows.map(\.raw)
         // 手で書いた不正な行も、開いた時から理由を出す。
         problems = rowProblems

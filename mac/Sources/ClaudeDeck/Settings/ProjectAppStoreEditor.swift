@@ -48,7 +48,7 @@ struct ProjectAppStoreEditor: View {
             SettingsItemLabel(title: "App Store",
                               info: "詳細の「App Store」のタブで、版の状態・審査・メタデータを App Store Connect から読んで出します（読むだけ）。鍵は環境変数か \(AppStoreEnvFile.displayPath) から読み、この設定には書きません。追加の「候補」は .claude/appstore.json の appId か、Xcode のバンドル ID が一致するアプリです。",
                               summary: LinkageSummary.count(draft.count), isEmpty: draft.isEmpty,
-                              note: note(hasRowProblems: problems.contains { !$0.isEmpty })) {
+                              notes: notes(rowProblems: problems)) {
                 addControl
             }
         }
@@ -94,11 +94,20 @@ struct ProjectAppStoreEditor: View {
         draft = apps
     }
 
-    /// 行に添える一言（一覧の取得に失敗した・閉じた中に保存できない行がある）。
-    private func note(hasRowProblems: Bool) -> SettingsNote? {
-        if let failure = appStore.apps.failure { return SettingsNote(text: failure.message) }
-        if hasRowProblems, !expanded { return SettingsNote(text: "名前が空の行があります（開いて直してください）") }
-        return nil
+    /// 行に添える一言（一覧の取得の失敗と、閉じている時は保存できない行・appId の不一致）。
+    private func notes(rowProblems: [[String]]) -> [SettingsNote] {
+        var notes: [SettingsNote] = []
+        if let failure = appStore.apps.failure { notes.append(SettingsNote(text: failure.message)) }
+        guard !expanded else { return notes }
+        notes += SettingsNote.rowProblems(rowProblems)
+        if let mismatch = configuredAppIdMismatch { notes.append(SettingsNote(text: mismatch, isError: false)) }
+        return notes
+    }
+
+    /// .claude/appstore.json の appId が、このキーで見られるアプリに無い旨。
+    private var configuredAppIdMismatch: String? {
+        guard let hints, let id = hints.configuredAppId, let apps = appStore.apps.value, !apps.contains(where: { $0.id == id }) else { return nil }
+        return ".claude/appstore.json の appId（\(id)）はこのキーで見られるアプリにありません"
     }
 
     /// 行の操作: 一覧が取れていれば追加のメニュー、無ければ取得。
@@ -159,8 +168,8 @@ struct ProjectAppStoreEditor: View {
                 }
             }
         }
-        if let hints, let id = hints.configuredAppId, let apps = fetch.value, !apps.contains(where: { $0.id == id }) {
-            Text(".claude/appstore.json の appId（\(id)）はこのキーで見られるアプリにありません").font(.caption).foregroundStyle(.orange)
+        if let mismatch = configuredAppIdMismatch {
+            Text(mismatch).font(.caption).foregroundStyle(.orange)
         }
     }
 

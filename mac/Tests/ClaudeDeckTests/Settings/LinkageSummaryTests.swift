@@ -9,6 +9,8 @@ final class LinkageSummaryTests: XCTestCase {
         XCTAssertEqual(LinkageSummary.github(GitHubLink(owner: " o ", repo: " ")), "o")
         XCTAssertEqual(LinkageSummary.github(GitHubLink(owner: "", projectNumber: 2)), "#2")
         XCTAssertEqual(LinkageSummary.github(GitHubLink(owner: "")), "なし")
+        XCTAssertEqual(LinkageSummary.github(GitHubLink(owner: " ", repo: "llm-manager")), "llm-manager")
+        XCTAssertEqual(LinkageSummary.github(GitHubLink(owner: "", repo: "llm-manager", projectNumber: 8)), "llm-manager #8")
     }
 
     func testXcode() {
@@ -17,6 +19,9 @@ final class LinkageSummaryTests: XCTestCase {
         XCTAssertEqual(LinkageSummary.xcode(nil, detected: nil, scanned: false), "自動（探しています…）")
         XCTAssertEqual(LinkageSummary.xcode(.path("App.xcworkspace"), detected: "ios/App.xcodeproj", scanned: true), "指定（App.xcworkspace）")
         XCTAssertEqual(LinkageSummary.xcode(.disabled, detected: "ios/App.xcodeproj", scanned: true), "使わない")
+        XCTAssertEqual(LinkageSummary.xcode(nil, detected: nil, scanned: true, choosing: true), "指定（未選択）")
+        XCTAssertEqual(LinkageSummary.xcode(.disabled, detected: nil, scanned: true, choosing: true), "指定（未選択）")
+        XCTAssertEqual(LinkageSummary.xcode(.path("A.xcodeproj"), detected: nil, scanned: true, choosing: true), "指定（A.xcodeproj）")
     }
 
     func testSite() {

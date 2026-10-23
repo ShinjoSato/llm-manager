@@ -99,7 +99,7 @@ struct ProjectLinksEditor: View {
             SettingsItemLabel(title: "リンク",
                               info: "見出しの「リンク」とピン、詳細の「リンク」のタブから既定のブラウザで開くアドレス（http / https）。名前はプロジェクトの中で重ねられません。「毎月 N 日に確認」は、その日を過ぎてアプリから開いていなければ印を出します（最終確認日はこの設定には書きません）。",
                               summary: LinkageSummary.count(trimmed.count), isEmpty: trimmed.isEmpty,
-                              note: !expanded && problems.contains { !$0.isEmpty } ? SettingsNote(text: "保存できない行があります（開いて直してください）") : nil) {
+                              notes: expanded ? [] : SettingsNote.rowProblems(problems)) {
                 Button { addRow() } label: { Label("追加", systemImage: "plus") }
                     .controlSize(.small)
                     .help("リンクを追加")

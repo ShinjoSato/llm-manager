@@ -38,9 +38,9 @@ struct ProjectXcodeEditor: View {
         } label: {
             SettingsItemLabel(title: "Xcode",
                               info: "見出しの「Xcode」「閉じる」と、詳細の「iPhone」のタブ・プレビューが開く .xcodeproj / .xcworkspace。自動はプロジェクトの浅い所から .xcworkspace を優先して最も浅いものを使います。開くと場所を選べます。",
-                              summary: LinkageSummary.xcode(project.xcode, detected: scan?.detected, scanned: scan != nil),
+                              summary: LinkageSummary.xcode(project.xcode, detected: scan?.detected, scanned: scan != nil, choosing: choosingPath),
                               isEmpty: project.xcode == .disabled || (project.xcode == nil && scan != nil && scan?.detected == nil),
-                              note: note) {
+                              notes: notes) {
                 Picker("使い方", selection: Binding(get: { mode }, set: select)) {
                     Text("自動").tag(Mode.auto)
                     Text("指定").tag(Mode.specified)
@@ -92,12 +92,12 @@ struct ProjectXcodeEditor: View {
     }
 
     /// 行に添える問題（選べなかった理由・指定した先が使えない理由）。
-    private var note: SettingsNote? {
-        if let chooseProblem { return SettingsNote(text: chooseProblem) }
+    private var notes: [SettingsNote] {
+        if let chooseProblem { return [SettingsNote(text: chooseProblem)] }
         if let scan, scan.resolution.source == .configured, let problem = scan.resolution.problem {
-            return SettingsNote(text: problem, isError: false)
+            return [SettingsNote(text: problem, isError: false)]
         }
-        return nil
+        return []
     }
 
     private func select(_ next: Mode) {

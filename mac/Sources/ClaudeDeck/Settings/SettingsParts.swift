@@ -49,6 +49,12 @@ struct SettingsSectionHeader: View {
 struct SettingsNote: Equatable {
     var text: String
     var isError = true
+
+    /// 閉じた中に保存できない行がある旨（行の数を添える）。
+    static func rowProblems(_ problems: [[String]]) -> [SettingsNote] {
+        let count = problems.filter { !$0.isEmpty }.count
+        return count > 0 ? [SettingsNote(text: "保存できない行があります（\(count) 行・開いて直してください）")] : []
+    }
 }
 
 /// 設定の 1 行: 名前と ⓘ・今の値の要約・操作。値が無い時は要約を控えめに出す。
@@ -57,7 +63,7 @@ struct SettingsItemLabel<Actions: View>: View {
     var info: String?
     let summary: String
     var isEmpty = false
-    var note: SettingsNote?
+    var notes: [SettingsNote] = []
     @ViewBuilder var actions: () -> Actions
 
     var body: some View {
@@ -76,7 +82,7 @@ struct SettingsItemLabel<Actions: View>: View {
                 Spacer(minLength: 8)
                 actions()
             }
-            if let note {
+            ForEach(notes, id: \.text) { note in
                 Text(note.text)
                     .font(.caption)
                     .foregroundStyle(note.isError ? Color.red : Color.orange)
@@ -88,8 +94,8 @@ struct SettingsItemLabel<Actions: View>: View {
 }
 
 extension SettingsItemLabel where Actions == EmptyView {
-    init(title: String, info: String? = nil, summary: String, isEmpty: Bool = false, note: SettingsNote? = nil) {
-        self.init(title: title, info: info, summary: summary, isEmpty: isEmpty, note: note) { EmptyView() }
+    init(title: String, info: String? = nil, summary: String, isEmpty: Bool = false, notes: [SettingsNote] = []) {
+        self.init(title: title, info: info, summary: summary, isEmpty: isEmpty, notes: notes) { EmptyView() }
     }
 }
 

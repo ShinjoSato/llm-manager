@@ -1,3 +1,4 @@
+import AppKit
 import MonitorKit
 import SwiftUI
 
@@ -7,6 +8,10 @@ struct GitHubLinkEditor: View {
     let store: SettingsStore
     let project: ManagedProject
     var showsName = true
+    /// 欄が消える時に溜めた変更を書き切るか（行を閉じるたびにストア全体を書かないよう、行の側で持つ時は切る）。
+    var flushesOnDisappear = true
+    /// 保存できない理由が変わった時に知らせる。
+    var onProblems: (([String]) -> Void)?
     @State private var owner = ""
     @State private var repo = ""
     @State private var number = ""
@@ -40,7 +45,8 @@ struct GitHubLinkEditor: View {
         .onChange(of: repo) { commit() }
         .onChange(of: number) { commit() }
         .onChange(of: focused) { store.flushPending() }
-        .onDisappear { store.flushPending(force: true) }
+        .onChange(of: problems) { _, value in onProblems?(value) }
+        .onDisappear { if flushesOnDisappear { store.flushPending(force: true) } }
         .task(id: project.path) {
             let path = project.path
             let found = await Task.detached(priority: .utility) { GitRemotes.githubCandidates(projectPath: path) }.value
@@ -123,17 +129,37 @@ struct ProjectGitHubRow: View {
     let store: SettingsStore
     let project: ManagedProject
     @State private var expanded = false
+    /// 開いた欄の保存できない理由。ある間は閉じない（閉じると欄ごと途中の入力が消えるため）。
+    @State private var draftProblems: [String] = []
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            GitHubLinkEditor(store: store, project: project, showsName: false)
+        DisclosureGroup(isExpanded: Binding(get: { expanded }, set: setExpanded)) {
+            GitHubLinkEditor(store: store, project: project, showsName: false, flushesOnDisappear: false) { draftProblems = $0 }
         } label: {
             SettingsItemLabel(title: "GitHub",
                               info: "見出しの「GitHub」ボタンが開く先。owner はユーザーか Organization、リポジトリは名前だけ、Project 番号はボードの URL の末尾の数字。全部空にすると外れます。「GitHub」タブと同じ値です。",
-                              summary: LinkageSummary.github(project.github), isEmpty: project.github == nil) {
-                Button(expanded ? "閉じる" : "編集") { expanded.toggle() }
+                              summary: LinkageSummary.github(project.github), isEmpty: project.github == nil,
+                              notes: expanded ? [] : savedProblems) {
+                Button(expanded ? "閉じる" : "編集") { setExpanded(!expanded) }
                     .controlSize(.small)
+                    .disabled(expanded && !draftProblems.isEmpty)
+                    .help(expanded && !draftProblems.isEmpty ? "保存できない入力がある間は閉じられません" : "")
             }
         }
+        .onDisappear { store.flushPending(force: true) }
+    }
+
+    /// 設定に書かれている紐づけの問題（手で書いた不正な値など）。
+    private var savedProblems: [SettingsNote] {
+        (project.github.map(SettingsValidation.linkProblems) ?? []).map { SettingsNote(text: $0, isError: false) }
+    }
+
+    private func setExpanded(_ open: Bool) {
+        guard open || draftProblems.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        if !open { store.flushPending() }
+        expanded = open
     }
 }
