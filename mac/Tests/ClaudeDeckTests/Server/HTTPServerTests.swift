@@ -100,6 +100,36 @@ final class HTTPServerTests: XCTestCase {
         XCTAssertTrue(garbage.hasPrefix("HTTP/1.1 400"), garbage)
     }
 
+    /// 大きな本文は認めた要求にだけ・検査を通る相手にだけ読み、読み終えるまでの締め切りもその要求だけ延ばす。
+    func testBodyAllowanceIsLimitedToAllowedRequests() async throws {
+        let options = HTTPServerOptions(maxBodyBytes: 16, readTimeout: 0.5,
+                                        bodyAllowance: { $0.path == "/big" ? HTTPBodyAllowance(maxBytes: 64, readTimeout: 5) : nil },
+                                        rejection: { request, _ in request.header("x-deny") != nil ? .json(401, ["ok": false]) : nil })
+        let custom = HTTPServer(options: options) { request in .json(200, ["bytes": request.body.count]) }
+        defer { custom.stop() }
+        let bound = try await startListening(custom)
+        func post(_ path: String, _ count: Int, extra: String = "", delay: TimeInterval = 0) throws -> String {
+            let body = String(repeating: "a", count: count)
+            let head = "POST \(path) HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: \(count)\r\n\(extra)\r\n"
+            return try rawRequest(head, port: bound, delayedBody: body, delay: delay)
+        }
+        let allowed = try post("/big", 40)
+        XCTAssertTrue(allowed.hasPrefix("HTTP/1.1 200") && allowed.contains(#""bytes":40"#), allowed)
+        XCTAssertTrue(try post("/small", 40).hasPrefix("HTTP/1.1 413"), "認めていない要求の上限はそのまま")
+        XCTAssertTrue(try post("/big", 65).hasPrefix("HTTP/1.1 413"), "認めた上限も超えれば断る")
+        XCTAssertTrue(try post("/big", 40, extra: "X-Deny: 1\r\n").hasPrefix("HTTP/1.1 401"), "検査を通らない相手には読ませない")
+        let slow = try post("/big", 40, delay: 1)
+        XCTAssertTrue(slow.hasPrefix("HTTP/1.1 200"), "締め切りを延ばす: \(slow)")
+        XCTAssertTrue(try post("/small", 8, delay: 1).hasPrefix("HTTP/1.1 408"), "他の要求の締め切りは延ばさない")
+    }
+
+    func testReleasedBodyIsGoneFromEveryCopy() {
+        let request = HTTPRequest(method: "POST", path: "/x", body: Data(repeating: 1, count: 1024))
+        let copy = request
+        copy.releaseBody()
+        XCTAssertTrue(request.body.isEmpty, "写しから手放しても元から消える")
+    }
+
     func testExpectContinueIsAnswered() async throws {
         let body = F.json(["session_id": sessionId, "hook_event_name": "Stop"])
         let response = try rawRequest("POST /hook HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nExpect: 100-continue\r\n\r\n",
@@ -441,7 +471,9 @@ final class HTTPServerTests: XCTestCase {
     }
 
     /// 生のソケットで 1 リクエスト送り、応答をすべて読む。
-    private func rawRequest(_ head: String, thenAfterContinue body: String? = nil, halfClose: Bool = false) throws -> String {
+    private func rawRequest(_ head: String, thenAfterContinue body: String? = nil, halfClose: Bool = false,
+                            port: Int? = nil, delayedBody: String? = nil, delay: TimeInterval = 0) throws -> String {
+        let port = port ?? self.port
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(fd) }
         var addr = sockaddr_in()
@@ -462,6 +494,10 @@ final class HTTPServerTests: XCTestCase {
             let n = read(fd, &buf, buf.count)
             if n > 0 { out.append(contentsOf: buf[0..<n]) }
             _ = body.withCString { write(fd, $0, strlen($0)) }
+        }
+        if let delayedBody {
+            Thread.sleep(forTimeInterval: delay)
+            _ = delayedBody.withCString { write(fd, $0, strlen($0)) }
         }
         if halfClose { shutdown(fd, SHUT_WR) }
         while true {

@@ -47,7 +47,39 @@ public enum ChatMarkdown {
     public static func inline(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace,
                                                               failurePolicy: .returnPartiallyParsedIfPossible)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        return (try? AttributedString(markdown: escapingSingleTildes(text), options: options)) ?? AttributedString(text)
+    }
+
+    /// 単独の `~` を文字として残す（標準の解釈は `~` 1 つでも取り消し線にするので、`~/project` を 2 つ含む行に線が入る）。`~~` とコードの中はそのまま。
+    static func escapingSingleTildes(_ text: String) -> String {
+        guard text.contains("~") else { return text }
+        let chars = Array(text)
+        var out = ""
+        out.reserveCapacity(chars.count + 8)
+        var i = 0
+        // 開いているインラインのコードの ` の数（0 ならコードの外）。
+        var codeFence = 0
+        while i < chars.count {
+            let c = chars[i]
+            var run = 1
+            while i + run < chars.count, chars[i + run] == c { run += 1 }
+            if c == "`" {
+                if codeFence == 0 { codeFence = run } else if run == codeFence { codeFence = 0 }
+            } else if c == "\\" {
+                // エスケープ済みの次の文字は触らない。
+                out.append(c)
+                if i + 1 < chars.count { out.append(chars[i + 1]) }
+                i += 2
+                continue
+            } else if c == "~", run == 1, codeFence == 0 {
+                out.append("\\~")
+                i += 1
+                continue
+            }
+            out.append(String(repeating: c, count: run))
+            i += run
+        }
+        return out
     }
 
     /// 吹き出しのリンクで開いてよいか。本文は外部由来なので、ローカルファイルや他アプリを起こすスキームは開かない。

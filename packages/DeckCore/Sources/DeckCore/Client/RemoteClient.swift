@@ -81,8 +81,8 @@ public final class RemoteClient: Sendable {
         try await action(builder.menuDismiss(roomId: roomId, body))
     }
 
-    public func sendMessage(roomId: String, text: String) async throws -> RemoteActionResult {
-        try await action(builder.message(roomId: roomId, text: text))
+    public func sendMessage(roomId: String, text: String, images: [RemoteMessageImage] = []) async throws -> RemoteActionResult {
+        try await action(builder.message(roomId: roomId, text: text, images: images))
     }
 
     /// `/v1/events` を張る。相手が閉じたら（取り消し・口を閉じた・古いストリームとして切られた）終わる。

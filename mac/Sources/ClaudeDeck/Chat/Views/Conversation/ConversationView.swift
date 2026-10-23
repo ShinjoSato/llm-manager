@@ -7,6 +7,7 @@ struct ConversationView: View {
     let room: Room
     /// 別ウィンドウの中か（見出しに「別ウィンドウで開く」を出さない）。
     var inWindow = false
+    @State private var terminalSession: HostedSession?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +20,12 @@ struct ConversationView: View {
         .environment(\.openURL, OpenURLAction { url in
             ChatMarkdown.isOpenableLink(url) ? .systemAction : .discarded
         })
+        .environment(\.openTerminalScreen, OpenTerminalScreenAction { terminalSession = $0 })
+        .sheet(item: $terminalSession) { session in
+            TerminalScreenSheet(session: session, roomName: room.name) { [prompts = model.prompts] key in
+                prompts.sendTerminalKey(session, key)
+            }
+        }
     }
 }
 

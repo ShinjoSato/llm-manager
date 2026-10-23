@@ -47,6 +47,8 @@ final class HostedSession: Identifiable {
     var inputBlock: InputBlock? { screen.inputBlock }
     var menuPrompt: MenuPrompt? { screen.menuPrompt }
     var unreadableMenu: UnreadableMenu? { screen.unreadableMenu }
+    /// claude の版（セッションファイルから。読めなければ nil）。
+    var claudeVersion: String? { screen.claudeVersion }
     /// チャット欄からの送信の途中（画像の取り込み待ち〜Enter）。
     private(set) var isSending = false
     private(set) var end: End?
@@ -78,6 +80,8 @@ final class HostedSession: Identifiable {
         terminal.onScreenStateChanged = { [weak self] in self?.update($0) }
         terminal.onSendingChanged = { [weak self] in self?.isSending = $0 }
         terminal.onLimitReached = { [weak self] in self?.handleLimitReached() }
+        let menuKey = "menu:\(id.uuidString)"
+        terminal.opsLog = { event, fields in MenuOpsLog.shared.record(event, [("key", menuKey)] + fields) }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
     }
 
@@ -150,6 +154,17 @@ final class HostedSession: Identifiable {
     func cancelUnreadableMenu(_ expected: UnreadableMenu) -> ClaudeTerminalView.UnreadableCancelResult {
         guard isRunning else { return .gone }
         return terminal.cancelUnreadableMenu(expected)
+    }
+
+    /// 「端末の画面」から決まったキーを 1 回送る。
+    func sendKey(_ key: TerminalKey) -> ClaudeTerminalView.KeySendResult {
+        guard isRunning else { return .ended }
+        return terminal.sendKey(key)
+    }
+
+    /// 端末の今の表示（終了後は最後の画面）。
+    func screenText() -> [String] {
+        terminal.displayScreenLines()
     }
 
     /// 端末に出ている答えられる表示（会話末尾のカードと同じ優先順）。
