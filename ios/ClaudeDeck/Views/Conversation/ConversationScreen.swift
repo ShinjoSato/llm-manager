@@ -5,6 +5,11 @@ import SwiftUI
 struct ConversationScreen: View {
     @Bindable var model: AppModel
     let roomId: String
+    /// 2 列で一覧の側に接続の帯が見えている間は重ねて出さない。
+    var showsBanner = true
+    /// 2 列で一覧を畳んでいる間は、一覧の上の案内をこちらに出す。
+    var showsListNotices = false
+    @State private var viewer = UUID()
 
     var body: some View {
         Group {
@@ -29,7 +34,8 @@ struct ConversationScreen: View {
 
     private func content(_ room: RemoteRoom) -> some View {
         VStack(spacing: 0) {
-            ConnectionBanner(model: model)
+            if showsBanner { ConnectionBanner(model: model) }
+            if showsListNotices { ListNotices(model: model) }
             if room.kind == .external { ExternalBanner() }
             MessageList(model: model, room: room)
             ComposerBar(model: model, room: room)
@@ -37,9 +43,9 @@ struct ConversationScreen: View {
         .toolbar {
             ToolbarItem(placement: .principal) { ConversationTitle(room: room) }
         }
-        .onAppear { model.open(sessionId: room.sessionId) }
-        .onChange(of: room.sessionId) { _, sid in model.open(sessionId: sid) }
-        .onDisappear { model.close(sessionId: room.sessionId) }
+        .onAppear { model.open(sessionId: room.sessionId, viewer: viewer) }
+        .onChange(of: room.sessionId) { _, sid in model.open(sessionId: sid, viewer: viewer) }
+        .onDisappear { model.close(viewer: viewer) }
     }
 }
 
@@ -94,7 +100,8 @@ private struct ExternalBanner: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: DeckTheme.readableWidth, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .background(DeckTheme.waiting.opacity(0.07))
         .overlay(alignment: .bottom) { Rectangle().fill(DeckTheme.border).frame(height: 1) }
     }
@@ -126,6 +133,8 @@ private struct MessageList: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 16)
+                .frame(maxWidth: DeckTheme.readableWidth)
+                .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
