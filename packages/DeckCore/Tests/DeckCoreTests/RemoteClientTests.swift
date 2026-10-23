@@ -287,7 +287,7 @@ final class SSEParserTests: XCTestCase {
 final class RemoteMessagesTests: XCTestCase {
     func testResultCodesHaveHumanText() {
         for code in ["gone", "changed", "busy", "timeout", "ended", "app_unavailable", "failed", "not_found", "invalid",
-                     "unavailable", "confirm_required", "blocked_permission", "blocked_menu", "leftover", "aborted", "stuck",
+                     "unavailable", "confirm_required", "blocked_permission", "blocked_menu", "leftover", "late_leftover", "aborted", "stuck",
                      "vanished", "settling"] {
             let text = RemoteResultText.text(for: .failure(code, "server"), operation: .menu)
             XCTAssertNotNil(text, code)

@@ -285,12 +285,14 @@ final class PasteCheckTests: XCTestCase {
     }
 
     func testPlaceholderShapedBodyIsNotJudgedMissing() {
-        // 入っても例文と同じ形なので InputBox.text は空を返す。確かめられないので従来どおり送る。
+        // 例文と同じ形の本文は、描き方を読めない経路では本文として読む。判定は空欄と見分けにくい形として確かめずに送る。
         let plain = #"Try "fix lint errors""#
-        XCTAssertEqual(InputBox.text(screen: ["─────────", "❯ " + plain, "─────────"]), "")
+        XCTAssertEqual(InputBox.text(screen: ["─────────", "❯ " + plain, "─────────"]), plain)
         XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: plain), .unknown)
         XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "\u{1b}[200~" + plain + "\u{1b}[201~"), .unknown)
-        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "Try \"a\nb\""), .missing)
+        // 2 行に分かれても、入力欄の読み取りと同じくつないで見る。
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "Try \"a\nb\""), .unknown)
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "Try \"a\nb\nc\""), .missing)
         XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: "Try it"), .missing)
     }
 
@@ -307,11 +309,11 @@ final class PasteCheckTests: XCTestCase {
         XCTAssertTrue(LeftoverCheck.warnOnce.decide(box: "") == (.send, .none))
         XCTAssertTrue(LeftoverCheck.warnOnce.decide(box: nil) == (.send, .warnOnce))
         // 貼り付けが入らなかった後は、遅れて入った本文が消えるまで何度でも止める。
-        let strict = LeftoverCheck.untilClear(baseline: "")
+        let strict = LeftoverCheck.untilClear(baseline: "", body: "hello")
         XCTAssertTrue(strict.decide(box: "hello") == (.refuse(strict: true), strict))
         XCTAssertTrue(strict.decide(box: nil) == (.refuse(strict: true), strict))
         XCTAssertTrue(strict.decide(box: "") == (.send, .none))
-        let images = LeftoverCheck.untilClear(baseline: "[Image #1]")
+        let images = LeftoverCheck.untilClear(baseline: "[Image #1]", body: "hello")
         XCTAssertTrue(images.decide(box: "[Image #1]") == (.send, .none))
         XCTAssertTrue(images.decide(box: "[Image #1] hello") == (.refuse(strict: true), images))
     }

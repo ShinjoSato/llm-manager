@@ -361,7 +361,7 @@ final class SessionRestorer {
     /// 通常の送信と同じく、選択待ち・送信中は送らない。端末の入力欄が空で見えるまで待つ。
     private func isReady(_ session: HostedSession) -> Bool {
         guard session.isRunning, session.inputBlock == nil, !session.isSending, session.externalDuplicate == nil else { return false }
-        return InputBox.text(screen: session.terminal.screenLines())?.isEmpty == true
+        return session.terminal.inputBoxText(session.terminal.screenLines())?.isEmpty == true
     }
 
     private func putDraft(for session: HostedSession) {

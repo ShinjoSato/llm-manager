@@ -46,6 +46,12 @@ struct ConversationView: View {
             ChatMarkdown.isOpenableLink(url) ? .systemAction : .discarded
         })
         .environment(\.openTerminalScreen, OpenTerminalScreenAction { terminalSession = $0 })
+        // 警告の「端末の画面を開く」は、警告が出ていたウィンドウで開く。
+        .onChange(of: model.outbox.terminalScreenRequest, initial: true) { _, request in
+            guard let request, request.room == room.id, request.window == window else { return }
+            model.outbox.terminalScreenRequest = nil
+            terminalSession = room.hosted
+        }
         .sheet(item: $terminalSession) { session in
             TerminalScreenSheet(session: session, roomName: room.name) { [prompts = model.prompts] key in
                 prompts.sendTerminalKey(session, key)
@@ -78,6 +84,9 @@ struct ChatPane: View {
         let outbox = model.outbox
         VStack(spacing: 0) {
             MessageList(model: model, room: room, items: items)
+            if let session = room.hosted, let escape = session.leftover, session.inputBlock == nil {
+                LeftoverBanner(escape: escape, roomId: room.id, session: session, outbox: outbox)
+            }
             Composer(text: Binding(get: { outbox.drafts[room.id] ?? "" }, set: { outbox.drafts[room.id] = $0 }),
                      disabledReason: outbox.inputDisabledReason(for: room),
                      sendBlockedReason: outbox.sendBlockedReason(for: room),
