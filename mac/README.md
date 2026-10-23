@@ -45,7 +45,7 @@ mac/
         ChatModel.swift             ルーム一覧（監視のセッション + ホスト中のセッション）・選択・別ウィンドウで開いているルーム・既読・claude の起動と終了。下の部品を束ねる
         ChatOutbox.swift            下書き・添付・ホスト中のセッションへの送信・送った画像の仮の吹き出し（ルームごと）
         ChatRelay.swift             外部セッションへの伝言と、手元で持つ点線の吹き出し
-        ChatHandover.swift          外部セッションの claude を止めてアプリで再開する（引き継ぎ）
+        ChatHandover.swift          外部セッションの claude を止めて（または VS Code のタブが閉じられるのを待って）アプリで再開する（引き継ぎ）・同じ会話が外で動き出した時の見張り
         PromptResponder.swift       権限確認（Channels・端末）と選択肢メニューへの回答（画面のカードと iPhone が同じ経路）
         TranscriptCache.swift       開いたルームの会話の取得と追記の購読（直近 4 ルームと、メイン・別ウィンドウで出しているものを持つ）・吹き出しの画像の読み込み
         EditorLauncher.swift        見出し・詳細の「VS Code」「Finder」「GitHub」「リンク」「Xcode」「閉じる」と結果の短い一言（押した先ごと）
@@ -107,7 +107,7 @@ mac/
           ComposerTextView.swift      Return を横取りする NSTextView（⌘V の添付は MonitorKit の AttachmentPasteTextView）
         ChatImageViews.swift        吹き出しの画像（サムネイルの格子・拡大表示のシート・表示時に読み込んで NSCache に持つ ChatImageLoader）
         MarkdownView.swift          Claude の吹き出しの Markdown 描画（表の列幅揃え・横スクロール・コードブロックのコピーのボタン・解析結果のキャッシュ）
-        ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ）・伝言の点線吹き出し・Channels 未設定の案内
+        ExternalSessionViews.swift  外部ルームのバナー（アプリに引き継ぐ・VS Code のタブを閉じたら / 今すぐ止めて）・同じ会話が外で動き出した時の警告の帯・伝言の点線吹き出し・Channels 未設定の案内
         PixelAvatar.swift           ルーム一覧と見出しのドット絵キャラ（絵は DeckCore の PixelCharacter）
         ChatTheme.swift             色・文字・時刻の書式のトークン（色はテーマ（ナイト / ライト）ごとの値を描く時の外観で選ぶ。AppKit 側の色も）
     Stage/                      右側のステージパネル（360px）
@@ -117,8 +117,8 @@ mac/
       BranchGraphModel.swift      ブランチの図の状態（読み込み・ref の変化の見張りとまとめての読み直し・もっと見る・詳細の読み込み）
       StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift。
-                                プロジェクトの紐づけの節は GitHubLinkEditor（GitHub タブと共通）・ProjectXcodeEditor・ProjectSiteEditor・ProjectLinksEditor）
+    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift（1 行の項目・ⓘ）。
+                                プロジェクトの紐づけの節の行は GitHubLinkEditor（GitHub タブと共通）・ProjectXcodeEditor・ProjectSiteEditor・ProjectAppStoreEditor・ProjectLinksEditor、実行コマンドは ProjectCommandsEditor）
     Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
     Notify/                     要対応を iCloud（CloudKit）に書いて解消したら消す AttentionNotifier と、設定画面に出す通知の設定・状態
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
@@ -160,7 +160,7 @@ mac/
       ChannelRelay.swift          受け口への長ポーリング（再試行 5 秒・30 分で諦める）と応答の読み分け
       ChannelServer.swift         stdin を行で読み、中継して判断を stdout に返す（ログは stderr）
     Settings/                   設定（settings.json）の型・読み書き（0600・原子的・読めないファイルは上書きしない）・検証・
-                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）
+                                projects.json からの移行・旧 TSV / 書き出したものの取り込み・「+」と設定画面が共有するストア（SettingsStore）・設定画面の 1 行の要約（LinkageSummary）
     Projects/                   ルームとプロジェクトの照合と、見出しのボタンの先
       GitHubLinks.swift           ルームの cwd と設定のプロジェクトの対応（ProjectMatcher）と GitHub の URL（ボード / リポジトリ）
       GitRemotes.swift            フォルダの .git/config（作業ツリーの gitdir: と commondir も）から github.com の remote を拾う（設定画面の GitHub の候補）
@@ -212,7 +212,8 @@ mac/
       LimitState.swift            上限到達の記録（limit-state.json）と、続けて止めた分をまとめた知らせの文言
     Chat/                       チャット画面の UI に依らないロジック（テスト対象）
       RelayNotes+Failure.swift    伝言の送信失敗の理由（監視の失敗種別を言葉にする。伝言そのものは DeckCore）
-      SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
+      SessionHandover.swift       アプリに引き継ぐ: sessionId の検証・起動元の確かめ（ターミナル / VS Code 系の拡張）・終了対象の確認（pid / sessionId / 起動時刻 / プロセス）・SIGINT → SIGTERM
+      HandoverWatch.swift         VS Code のタブを閉じたら引き継ぐ待ち（HandoverCloseWait）・引き継いだ後に同じ会話が外で動き出したかの判定（ExternalDuplicate）
       RoomRedirects.swift         引き継ぎで移った後に元のルーム宛てに届く取り込みの結果を、移し先のルームへ付け替える表
       SessionRestore.swift        前回のセッションの記録の読み書き（HostedSessionsFile・HostedSessionsLock）・再開するかの判定・
                                   再開の直後に落ちたかの判定・続きを頼む時機（ResumeNudgeGate）・
@@ -1161,15 +1162,20 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - Esc が claude の終了になるメニュー（選択肢カード・読めない選択肢のカードと同じ判定）では、Esc を送る前に確認ダイアログを挟む。
 - Esc は端末に送るキーなのでシートを閉じない。閉じるのは「閉じる」（⌘W）。
 
-### 外部セッション（ターミナル等で起動したもの）
+### 外部セッション（ターミナル・VS Code 等で起動したもの）
 
 アプリの外で起動した claude には本人の入力として届く経路が無い。ここから出来るのは **伝言** と **権限の許可・拒否（Channels のみ）**、
 そして **アプリに引き継ぐ**（アプリの PTY で同じ会話を再開して、以降は通常のルームとして操作する）の 3 つ。
 
-- 見出しに「外部セッション」タグ、その下にバナー（起動元に応じた説明と「アプリに引き継ぐ」ボタン）。
-- **引き継げるのはターミナルで対話起動した claude だけ**（`~/.claude/sessions/<pid>.json` の `entrypoint` が `cli` で、`kind` があれば `interactive`）。
-  VS Code 拡張（`claude-vscode`）等で動いているセッションは止めると元の画面が壊れるので、ボタンを出さずに理由を表示する（`SessionHandover.unsupportedSourceReason`）。
-  `entrypoint` は環境変数 `CLAUDE_CODE_ENTRYPOINT` を引き継ぐので、Claude Code の中（VS Code 拡張の Bash 等）から起動した claude は `cli` にならず引き継げない。
+- 見出しに「外部セッション」タグ、その下にバナー（起動元に応じた説明と引き継ぎのボタン）。
+- **引き継げるのはターミナルで対話起動した claude と、VS Code 系のエディタの Claude 拡張の claude**（`SessionHandover.checkSource`）。
+  - ターミナル: `~/.claude/sessions/<pid>.json` の `entrypoint` が `cli` で、`kind` があれば `interactive`。ボタンは［アプリに引き継ぐ］。
+  - VS Code: `entrypoint` が `claude-vscode` で、**かつ**プロセスの実行ファイルがエディタの設定フォルダの下の拡張の claude
+    （`~/.vscode/extensions/anthropic.claude-code-<版>/…/claude`。`.vscode-insiders`・`.cursor`・`.windsurf` 等の `.<名前>/extensions/anthropic.claude-code-*/` の下も同じ。
+    `SessionHandover.isEditorExtensionBinary`）。entrypoint だけでは決めない。ボタンは［VS Code のタブを閉じたら引き継ぐ］と［今すぐ止めて引き継ぐ］。
+  - それ以外（Claude デスクトップアプリ・SDK 等）はボタンを出さずに理由を表示する。
+  `entrypoint` は環境変数 `CLAUDE_CODE_ENTRYPOINT` を引き継ぐので、Claude Code の中（VS Code 拡張の Bash 等）から起動した claude は
+  `claude-vscode` になりうるが、実行ファイルが拡張の場所に無いので引き継がない。
 - **伝言**: 入力欄が黄色の「伝言」モードになり（注記「受け手には別セッションからのメッセージとして届きます」）、アプリ内の監視が
   受信箱ソケットへ直接書く（`MonitorStore.sendMessage`）。受け手には `Another Claude session sent a message:` に続けて
   届き、**本人の指示にはならない**（権限承認・スラッシュコマンド・設定変更は不可。v2.1.286 で確認）。
@@ -1180,9 +1186,10 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   - 送信失敗は吹き出しの下とダイアログに理由を出す（`not_found` / `not_alive` / `no_socket` / `unreachable`）。
 - **権限**: 監視の `permissions`（Channels を載せたセッションのみ。アプリ内サーバーの `/api/channel/permissions` に届く）があれば許可 / 拒否カードを出して `store.decide` で返す（二度押し不可）。
   状態が権限待ちのまま 3 秒経っても permissions が無い時は「確認がまだ届いていません。Channels を載せていないセッションは、ここからは答えられません（ターミナルで答えてください）」を出す。
-- **アプリに引き継ぐ**: 確認ダイアログ（終了する pid・中断されること・再開すること・元のウィンドウは閉じないこと）→ キャンセルなら何もしない。
+- **アプリに引き継ぐ・今すぐ止めて引き継ぐ**: 確認ダイアログ（終了する pid・中断されること・再開すること・元のウィンドウは閉じないこと。
+  VS Code の時は「VS Code 側の claude を止めてアプリで再開します。VS Code のタブはそのまま残るので、そこでは打たないでください。打つと同じ会話が 2 本動きます」）→ キャンセルなら何もしない。
   1. 終了対象を確かめる（`SessionHandover.verify`）: 自分の uid / プロセスが claude（argv[0] か実行ファイルの場所）/ `~/.claude/sessions/<pid>.json` が
-     その pid で同じ sessionId / 起動元が `cli` の対話セッション / レジストリの `procStart`（無い版は `startedAt`）とカーネルの起動時刻が一致（pid の再利用を見分ける）。
+     その pid で同じ sessionId / 起動元が上の条件を満たす対話セッション / レジストリの `procStart`（無い版は `startedAt`）とカーネルの起動時刻が一致（pid の再利用を見分ける）。
      どれかが外れたら何も送らずに中止する。
   2. SIGINT → 最大 5 秒待つ → 残っていて**同じプロセスのまま**（uid と起動時刻が同じ。実行パスは取れないことがあるので見ない）なら SIGTERM → 最大 3 秒待つ。
      終了を確認できなければ再開しない（同じ会話の二重起動を避ける）。
@@ -1193,7 +1200,19 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
      外部ルームの書きかけと添付は新しいルームへ移す（`ChatOutbox.move`）。取り込み中だった添付もそのまま新しいルームの取り込み中として扱い、
      後から元のルーム宛てに届く取り込みの結果は `RoomRedirects` で新しいルームへ付け替える（全部届いたら表は空になる）。
      引き継ぎが失敗・取りやめになって新しいルームが無い時は従来どおり、外部ルームが一覧から消えた時点で片付ける。
-  - 上限到達中（`LimitWatch.isLimitReached`）は引き継がない（確認ダイアログの間・終了待ちの間に到達した場合も、止める前／再開前に判定し直す）。
+  - 上限到達中（`LimitWatch.isLimitReached`）・終了の確認中は引き継がない（確認ダイアログの間・終了待ちの間にそうなった場合も、止める前／再開前に判定し直し、
+    止めた後なら再開を見送って知らせる）。プロセスが居ない（実行ファイルを読めない）セッションはボタンを出さず「このセッションは終了しています」で断る。
+- **VS Code のタブを閉じたら引き継ぐ**（安全側。アプリは VS Code のプロセスにシグナルを送らない）: 押した時に上と同じ確かめ（`SessionHandover.checkTarget`）をして、
+  その pid の素性（uid と起動時刻）を覚えて待ちに入る。帯は「VS Code でこの会話のタブを閉じてください（閉じたら自動でアプリに引き継ぎます）」と［やめる］。
+  0.5 秒ごとに見張り（`HandoverCloseWait`。`~/.claude/sessions` の読み取りはメインの外）、元の claude が終わり（ゾンビ・pid の再利用・同じプロセスの記録が別の sessionId に
+  替わったのも終わったとみなす）、同じ sessionId の生きた claude（記録と起動時刻が合うもの）が他に無い状態が 2.5 秒続いたら（拡張が起動し直した時の記録が出るのを待つ）、
+  同じ cwd で同じ経路の `claude --resume=<sessionId>` を起動する。選択は元の外部ルームを選んでいた時だけ新しいルームへ移す（中央の表示は変えない）。
+  別の claude が同じ会話を動かしている間は、その旨を帯に出して待ち続ける。
+  上限に達したら待ちをやめて知らせ、終了の確認中は再開しない。同じ会話をアプリがホストし始めたら黙って外す。待ちは記録しない（アプリの終了で消える）。
+  待っている間は外部ルームの入力欄を「引き継ぎ中…」にし、ルームが消えても書きかけと添付を片付けない（再開したルームへ移す）。
+- **引き継いだ後の守り**: ホスト中のルームの会話と同じ sessionId を、アプリの外の claude（ホスト中の pid 以外で記録と起動時刻が合うもの）が動かし始めたら（`ExternalDuplicate`。1 秒ごと・読み取りはメインの外）、
+  ホストのルームに警告の帯（「VS Code で同じ会話が動き出しました（pid N）。VS Code のタブを閉じてください。…」。ターミナル等なら起動元に合わせた文言）を出し、
+  入力欄を無効にして理由を出す（iPhone からの送信・再開後の続きの頼みも止める）。止まったら帯と止めを外す。権限・選択肢のカードへの回答は止めない。
   - **制約: npm 版（node で動く）claude は引き継げない**。実体が `node` で argv[0] も `node` になり、プロセスが claude だと確かめられないため
     安全側に倒して中止する（ネイティブ版 `~/.local/share/claude/versions/<版>` は引き継げる）。
 
@@ -1355,25 +1374,31 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 **設定画面**（メニュー「claude-deck → 設定…」⌘,。ウィンドウは 1 つ）のタブ:
 - **プロジェクト**: 一覧（ドラッグ・「上へ / 下へ」で並べ替え）、「+」でフォルダを追加、「−」/右クリックで削除（確認あり）、名前・状態・メモの編集。
-  アイコンと色の下に**紐づけ**（ディレクトリの詳細の見出しに出るものを決めるもの）の節を GitHub・Xcode・サイト・リンクの順に並べ、節の見出しに「見出しの何が出るか」を添える。
-  「GitHub」の節は「GitHub」タブと同じ部品（`GitHubLinkEditor`。同じ値・同じ検証・同じ保存）。そのフォルダの git の remote にある github.com のリポジトリを候補のボタンに出し、
+  アイコンと色の下に**紐づけ**（ディレクトリの詳細の見出しに出るものを決めるもの）を 1 つの節にまとめ、GitHub・Xcode・サイト・App Store・リンクを **1 行 1 項目**（名前と ⓘ・今の値の要約・操作）で並べる。
+  閉じている時は 1 行で、行を開く（左の ›）と編集欄を出す。要約は `Sources/MonitorKit/Settings/LinkageSummary.swift`（テストあり）: GitHub は `owner/repo #N`、Xcode は「自動（ios/App.xcodeproj）」「指定（…）」「使わない」、
+  サイトは「自動（site）」「指定（…）」「見つかりません」（書き出しが無ければ「· 書き出しなし」）、App Store・リンクは「N 件」か「なし」。値が無い項目は要約を控えめに出す。
+  行の操作は GitHub「編集」（保存できない途中の入力がある間は閉じない。閉じている時は設定に書かれた値の問題を行に出す）・Xcode「自動 / 指定 / 使わない」のメニュー（開くと場所の候補と「その他を選ぶ…」。
+  自動・使わないの間でも、開いて場所を選ぶとその場で「指定」として保存する。「指定」を選んで候補が無く場所が未選択の間は要約を「指定（未選択）」にする）・サイト「フォルダを選ぶ…」・App Store「一覧を取得」か「追加」のメニュー・リンク「追加」。
+  説明（何が見出しに出るか・書き方の決まり）は項目名の横の ⓘ（ホバーか押すと出る）に置き、節の下の説明文は持たない。検証の問題は行の中に出す: 閉じている時は一言（保存できない行の数・指定した先が使えない理由・一覧の取得の失敗・`.claude/appstore.json` の appId の不一致）、開くと行ごとの理由。
+  サイトの書き出しの有無は行を開いた時にも確かめ直す。
+  「GitHub」の行は「GitHub」タブと同じ部品（`GitHubLinkEditor`。同じ値・同じ検証・同じ保存）。そのフォルダの git の remote にある github.com のリポジトリを候補のボタンに出し、
   押すと owner / リポジトリに入れる（Project 番号はそのまま）。remote は `.git/config` を読むだけ（`git` / `gh` は実行しない）で、`.git` がファイル（作業ツリー・サブモジュール）なら `gitdir:` を辿り、
   その中の `commondir` があれば共通の `config` を読む。フォルダの外へ出る `.git` のリンク・リンクの `config`・256KB を超える `config` は読まない。origin を先に、残りは設定の順で、
   https / http / `git://` / `ssh://` / `git@github.com:owner/repo`（`.git` の有無を問わない）の github.com のものだけ候補にする（`Sources/MonitorKit/Projects/GitRemotes.swift`・テストあり）。
-  「Xcode」の節は「自動」（見つかったものを表示）・「指定する」（プロジェクトの中を `XcodeFinder` と同じ除外・深さで浅く探した候補（50 件まで）から選ぶか、「その他を選ぶ…」でフォルダの中のものを選ぶ。
+  「Xcode」の行は「自動」（見つかったものを要約に出す）・「指定」（プロジェクトの中を `XcodeFinder` と同じ除外・深さで浅く探した候補（50 件まで）から選ぶか、「その他を選ぶ…」でフォルダの中のものを選ぶ。
   外は選べない。初めは今自動で使っているもの）・「使わない」を選んだ時だけ保存する。指定した先が使えなければ理由を出す。
   「アイコンと色」の節で今の印のプレビューと、色のスウォッチ（11 色 + 「自動」）・アイコンのグリッド（`ProjectBadge.symbolChoices` の 40 個。既定の `folder` を押すか
   「既定に戻す」で `icon` を消す）から選ぶと即時に保存する（`ProjectBadgeEditor`）。
-  「リンク」の節で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
+  「リンク」の行で LP 等のリンクを追加（名前と URL）・編集・削除・「∧ / ∨」で並べ替え。URL は http / https で host のあるもの、名前は空でなく同じプロジェクト内で重ねない。
   全行が正しい間だけ保存し、途中の行がある間はファイルは前の内容のまま（行ごとに理由を赤で出す）。名前と URL が両方空の行は画面に残すだけで保存しない。
   開いただけ・空白を落としただけでは書き直さない（利用者が欄を触ってから）。
-  「実行コマンド」の節で名前・アイコン（候補から選ぶ・「既定」でキーを消す）・コマンド（複数行の等幅の欄）を追加・編集・「∧ / ∨」で並べ替え・削除。
+  「実行コマンド」の節は 1 行 1 コマンド（アイコン・名前・本文の先頭 1 行と、「∧ / ∨」の並べ替え・削除）で並べ、行を開くと名前・アイコン（候補から選ぶ・「既定」でキーを消す）・コマンド（複数行の等幅の欄）を編集する。説明は節の見出しの ⓘ。
   全行が正しい間だけ保存し（行ごとに理由を赤で出す。手で書いた不正な行も開いた時から出す）、名前とコマンドが両方空の行は画面に残すだけで保存しない。開いただけでは書き直さない。
   ここで書いた本文は確かめ済みにする（見出しから初めて押す時の確認を出さない）。
-  「サイト」の節で LP の場所を指定（相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
-  正しい相対パスの間だけ保存し、検出の結果（指定 / 自動で検出・書き出しの有無）を出す。
-  「App Store」の節で App Store Connect のアプリを紐づける（`ProjectAppStoreEditor`）: 「App Store Connect のアプリの一覧を取得」で一覧を取り（10 分覚える。「一覧を取り直す」はアプリの一覧だけを取り直し、詳細の文面の覚えは残す。開いただけでは取りに行かず、settings.json も書かない）、
-  「アプリを追加」のメニューから選ぶ。メニューの先頭の「候補」は、そのプロジェクトの `.claude/appstore.json`（`{"appId": "…", "platform": "IOS"}`）の appId と、
+  「サイト」の行で LP の場所を指定（開いた中の相対パスの入力・「フォルダを選ぶ…」（プロジェクトの外は選べない）・候補のボタン）・「自動に戻す」（キーを消す）。
+  正しい相対パスの間だけ保存し、検出の結果（指定 / 自動・書き出しの有無）を要約に出す。
+  「App Store」の行で App Store Connect のアプリを紐づける（`ProjectAppStoreEditor`）: 「一覧を取得」で一覧を取り（10 分覚える。「一覧を取り直す」はアプリの一覧だけを取り直し、詳細の文面の覚えは残す。開いただけでは取りに行かず、settings.json も書かない）、
+  「追加」のメニューから選ぶ（鍵の読み元と「一覧を取り直す」は行を開いた中）。メニューの先頭の「候補」は、そのプロジェクトの `.claude/appstore.json`（`{"appId": "…", "platform": "IOS"}`）の appId と、
   プロジェクト内の `.xcodeproj/project.pbxproj` の `PRODUCT_BUNDLE_IDENTIFIER` が一致するアプリ（大文字小文字は区別しない）。`$(NAME)` / `${NAME}`（`:lower` / `:upper` / `:rfc1034identifier` も）は
   同じプロジェクトの pbxproj と `.xcconfig`（条件付きの `NAME[sdk=…][config=…] = v` も）の値で解決し（値の重複は除き、変数ごとの解決は覚えて使い回す。互いに参照し合う変数は解決できないとする。組み合わせは 8 通りまで）、
   解決できない時は「`com.example.`」のように区切り 2 つ以上の決まった頭がある書き方で（隣り合う変数は 1 つにまとめ、変数は 3 つまで）、合うアプリが 1 件だけの時だけ候補にする（誤って当てるより出さない）。

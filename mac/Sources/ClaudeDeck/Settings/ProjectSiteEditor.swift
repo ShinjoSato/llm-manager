@@ -8,6 +8,9 @@ struct ProjectSiteEditor: View {
     let project: ManagedProject
     @State private var text = ""
     @State private var lookup: SiteLookup?
+    /// 書き出し（out/index.html）があるか。探した時に一緒に見る。
+    @State private var exported = false
+    @State private var expanded = false
     @FocusState private var focused: Bool
 
     private var key: String { SettingsStore.projectKey(id: project.id, field: "site") }
@@ -16,28 +19,34 @@ struct ProjectSiteEditor: View {
     }
 
     var body: some View {
-        Section {
+        DisclosureGroup(isExpanded: $expanded) {
             HStack(spacing: 8) {
                 TextField("場所", text: $text, prompt: Text("空なら自動（例: site）"))
+                    .settingsField { store.flushPending() }
                     .focused($focused)
-                    .onSubmit { store.flushPending() }
-                Button("フォルダを選ぶ…") { chooseFolder() }
-                    .controlSize(.small)
                 if project.site != nil {
                     Button("自動に戻す") { text = "" }
                         .controlSize(.small)
                 }
             }
-            if let problem {
-                Text(problem).font(.caption).foregroundStyle(.red)
-            } else if let lookup {
-                status(lookup)
+            if project.site == nil, let lookup, lookup.candidates.count > 1 {
+                HStack(spacing: 6) {
+                    Text("候補:").font(.caption).foregroundStyle(.secondary)
+                    ForEach(lookup.candidates, id: \.self) { candidate in
+                        Button(candidate == "." ? "直下" : candidate) { text = candidate }
+                            .controlSize(.small)
+                    }
+                }
             }
-        } header: {
-            LinkageHeader(title: "サイト", shows: "タブの「サイト」")
-        } footer: {
-            Text("ディレクトリの詳細でプレビューする LP（Next.js の静的書き出し `out/` のあるフォルダ）。空ならプロジェクト直下と浅いサブフォルダから探します。")
-                .font(.caption).foregroundStyle(.secondary)
+        } label: {
+            SettingsItemLabel(title: "サイト",
+                              info: "詳細の「サイト」のタブでプレビューする LP（Next.js の静的書き出し out/ のあるフォルダ）。空ならプロジェクト直下と浅いサブフォルダから探します。",
+                              summary: LinkageSummary.site(configured: project.site, lookup: lookup, exported: exported),
+                              isEmpty: project.site == nil && lookup != nil && lookup?.location == nil,
+                              notes: notes) {
+                Button("フォルダを選ぶ…") { chooseFolder() }
+                    .controlSize(.small)
+            }
         }
         .onAppear { text = project.site?.path ?? "" }
         .onChange(of: text) { _, value in commit(value) }
@@ -48,34 +57,28 @@ struct ProjectSiteEditor: View {
             text = site?.path ?? ""
         }
         .onChange(of: focused) { store.flushPending() }
+        // 開いた時は書き出しの有無を見直す（探した後に out/ ができていることがある）。
+        .onChange(of: expanded) { _, open in
+            guard open, let location = lookup?.location else { return }
+            exported = FileManager.default.fileExists(atPath: location.exportIndex)
+        }
         .onDisappear { store.flushPending(force: true) }
         .task(id: "\(project.path)|\(project.site?.path ?? "")") {
             let project = project
-            lookup = await Task.detached(priority: .userInitiated) { SiteLocator.lookup(project: project) }.value
+            let found = await Task.detached(priority: .userInitiated) { () -> (SiteLookup, Bool) in
+                let lookup = SiteLocator.lookup(project: project)
+                return (lookup, lookup.location.map { FileManager.default.fileExists(atPath: $0.exportIndex) } ?? false)
+            }.value
+            lookup = found.0
+            exported = found.1
         }
     }
 
-    @ViewBuilder
-    private func status(_ lookup: SiteLookup) -> some View {
-        if let reason = lookup.problem {
-            Text(reason).font(.caption).foregroundStyle(.orange)
-        } else if let location = lookup.location {
-            let exported = FileManager.default.fileExists(atPath: location.exportIndex)
-            let place = location.relativePath == "." ? "プロジェクト直下" : location.relativePath
-            Text("\(location.source == .configured ? "指定" : "自動で検出"): \(place)（\(exported ? "書き出しあり" : "out/ はまだありません")）")
-                .font(.caption).foregroundStyle(.secondary)
-        } else {
-            Text("見つかりません").font(.caption).foregroundStyle(.secondary)
-        }
-        if project.site == nil, lookup.candidates.count > 1 {
-            HStack(spacing: 6) {
-                Text("候補:").font(.caption).foregroundStyle(.secondary)
-                ForEach(lookup.candidates, id: \.self) { candidate in
-                    Button(candidate == "." ? "直下" : candidate) { text = candidate }
-                        .controlSize(.small)
-                }
-            }
-        }
+    /// 行に添える問題（入力の形・指定した先が使えない理由）。
+    private var notes: [SettingsNote] {
+        if let problem { return [SettingsNote(text: problem)] }
+        if let reason = lookup?.problem { return [SettingsNote(text: reason, isError: false)] }
+        return []
     }
 
     /// 空は自動（キーを消す）、正しい相対パスは指定として保存。不正な間は保存しない。
@@ -101,6 +104,7 @@ struct ProjectSiteEditor: View {
         guard let relative = SiteLocator.relativePath(of: url.path, in: project.path) else {
             NSSound.beep()
             text = url.path
+            expanded = true
             return
         }
         text = relative
