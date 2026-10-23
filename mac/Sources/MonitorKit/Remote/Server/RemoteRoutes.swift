@@ -115,6 +115,8 @@ public struct RemoteRoutes: Sendable {
             return Self.encoded(200, response)
         case ("GET", let path) where path.count == 6 && path[0] == "sessions" && path[2] == "items" && path[4] == "images":
             return await image(sessionId: path[1], itemId: path[3], index: path[5])
+        case ("GET", let path) where path.count == 3 && path[0] == "rooms" && path[2] == "terminal":
+            return await terminalScreen(roomId: path[1])
         case ("POST", ["permissions", "decision"]):
             return await action(request, RemotePermissionDecisionRequest.self) { body, control in
                 await control.remoteDecide(key: body.key, decision: body.decision)
@@ -151,6 +153,8 @@ public struct RemoteRoutes: Sendable {
             }
         case ["messages"]:
             return await message(request, roomId: roomId)
+        case ["terminal", "key"]:
+            return await terminalKey(request, roomId: roomId)
         default:
             return Self.error(404, "not_found", "not found")
         }
@@ -166,6 +170,40 @@ public struct RemoteRoutes: Sendable {
         case .value(let value): body = value
         }
         let result = await controlRef.run { control in await perform(body, control) }
+        return Self.encoded(Self.status(of: result), result)
+    }
+
+    // MARK: - 端末の画面
+
+    /// 本文（端末の表示）を含むので、認証を通った端末にだけ返す（`handle` の前で認証済み）。
+    private func terminalScreen(roomId: String) async -> HTTPResponse {
+        guard RemoteRoomID(roomId) != nil else { return Self.error(404, "not_found", "ルームが見つかりません") }
+        switch await controlRef.terminalScreen(roomId) {
+        case nil:
+            return Self.error(503, "app_unavailable", RemoteControlRef.unavailable.message ?? "")
+        case .failure(let refusal)?:
+            return Self.error(Self.status(of: refusal), refusal.code, refusal.message ?? "")
+        case .success(let screen)?:
+            return Self.encoded(200, screen)
+        }
+    }
+
+    /// 表に無いキーは mac に渡す前に断る。
+    private func terminalKey(_ request: HTTPRequest, roomId: String) async -> HTTPResponse {
+        let body: RemoteTerminalKeyRequest
+        switch Self.decode(request, RemoteTerminalKeyRequest.self) {
+        case .rejected(let response): return response
+        case .value(let value): body = value
+        }
+        let key: TerminalKey
+        switch RemoteChecks.terminalKey(body.key) {
+        case .failure(let refusal): return Self.result(refusal)
+        case .success(let value): key = value
+        }
+        let confirmExit = body.confirmExit == true
+        let result = await controlRef.run { control in
+            await control.remoteSendTerminalKey(roomId: roomId, key: key, confirmExit: confirmExit)
+        }
         return Self.encoded(Self.status(of: result), result)
     }
 
@@ -251,7 +289,7 @@ public struct RemoteRoutes: Sendable {
         if result.ok { return 200 }
         switch result.code {
         case "not_found": return 404
-        case "invalid": return 400
+        case "invalid", "unsupported_key": return 400
         case "too_many_images", "image_too_large": return 413
         case "unsupported_image": return 415
         case "images_busy": return 503

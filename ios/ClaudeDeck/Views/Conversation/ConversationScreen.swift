@@ -10,6 +10,8 @@ struct ConversationScreen: View {
     /// 2 列で一覧を畳んでいる間は、一覧の上の案内をこちらに出す。
     var showsListNotices = false
     @State private var viewer = UUID()
+    /// 「端末の画面」を開いているルーム。
+    @State private var terminalRoom: TerminalSheetTarget?
 
     var body: some View {
         Group {
@@ -37,15 +39,43 @@ struct ConversationScreen: View {
             if showsBanner { ConnectionBanner(model: model) }
             if showsListNotices { ListNotices(model: model) }
             if room.kind == .external { ExternalBanner() }
-            MessageList(model: model, room: room)
+            MessageList(model: model, room: room, onOpenTerminal: canOpenTerminal(room) ? { openTerminal(room) } : nil)
             ComposerBar(model: model, room: room)
         }
         .toolbar {
             ToolbarItem(placement: .principal) { ConversationTitle(room: room) }
+            if canOpenTerminal(room) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { openTerminal(room) } label: { Image(systemName: "terminal") }
+                        .accessibilityLabel("端末の画面")
+                        .accessibilityIdentifier("open-terminal")
+                }
+            }
+        }
+        // 全画面のカバーと違い、シートは下の会話を閉じた扱いにしない（未読を数えない）。
+        .sheet(item: $terminalRoom) { target in
+            TerminalScreenSheet(model: model, roomId: target.id, roomName: target.name)
         }
         .onAppear { model.open(sessionId: room.sessionId, viewer: viewer) }
         .onChange(of: room.sessionId) { _, sid in model.open(sessionId: sid, viewer: viewer) }
         .onDisappear { model.close(viewer: viewer) }
+    }
+}
+
+/// 「端末の画面」で開くルーム。
+private struct TerminalSheetTarget: Identifiable {
+    let id: String
+    let name: String
+}
+
+extension ConversationScreen {
+    /// ホスト中で claude が動いているルームだけ（mac の見出しのボタンと同じ）。
+    private func canOpenTerminal(_ room: RemoteRoom) -> Bool {
+        room.kind == .hosted && room.ended == nil
+    }
+
+    private func openTerminal(_ room: RemoteRoom) {
+        terminalRoom = TerminalSheetTarget(id: room.id, name: room.name)
     }
 }
 
@@ -110,6 +140,7 @@ private struct ExternalBanner: View {
 private struct MessageList: View {
     @Bindable var model: AppModel
     let room: RemoteRoom
+    let onOpenTerminal: (() -> Void)?
 
     var body: some View {
         let items = model.items(for: room.sessionId)
@@ -124,7 +155,7 @@ private struct MessageList: View {
                         EntryView(model: model, entry: entry, sessionId: room.sessionId, runningToolId: runningId)
                     }
                     ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
-                        CardView(model: model, room: room, card: card)
+                        CardView(model: model, room: room, card: card, onOpenTerminal: onOpenTerminal)
                     }
                     if let notice = model.notices[room.id] {
                         NoticeLine(notice: notice) { model.clearNotice(room.id) }

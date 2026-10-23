@@ -50,6 +50,11 @@ public final class RemoteControlRef {
         return .success(control.remoteImageStore)
     }
 
+    /// 端末の今の表示。受け手が無ければ nil。
+    func terminalScreen(_ roomId: String) -> Result<RemoteTerminalScreen, RemoteActionResult>? {
+        control?.remoteTerminalScreen(roomId: roomId)
+    }
+
     /// 受け手が無ければ nil（渡すはずだったものを呼び出し側で片付けるため）。
     func runIfAttached(_ body: @MainActor @Sendable (RemoteControl) async -> RemoteActionResult) async -> RemoteActionResult? {
         guard let control else { return nil }

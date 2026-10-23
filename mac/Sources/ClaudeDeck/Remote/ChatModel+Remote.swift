@@ -153,6 +153,26 @@ extension ChatModel: RemoteControl {
         return room.hosted == nil ? RemoteChecks.imagesNotAccepted : nil
     }
 
+    // MARK: - 端末の画面
+
+    func remoteTerminalScreen(roomId: String) -> Result<RemoteTerminalScreen, RemoteActionResult> {
+        guard let room = room(roomId) else { return .failure(Self.roomNotFound) }
+        guard let session = room.hosted else { return .failure(Self.notHosted) }
+        guard session.isRunning else { return .failure(Self.terminalEnded) }
+        return .success(session.remoteScreen())
+    }
+
+    func remoteSendTerminalKey(roomId: String, key: TerminalKey, confirmExit: Bool) async -> RemoteActionResult {
+        await withHostedRoom(roomId) { _, session in
+            if let refusal = RemoteChecks.terminalKeyRefusal(key, confirmExit: confirmExit, escapeExits: session.escapeExits) {
+                return refusal
+            }
+            return prompts.sendTerminalKey(session, key)
+        }
+    }
+
+    private static let terminalEnded = RemoteActionResult.failure("ended", "claude が動いていないため、端末の画面は出せません。")
+
     static func result(of completion: SendCompletion) -> RemoteActionResult {
         switch completion {
         case .submitted: return .success("submitted")

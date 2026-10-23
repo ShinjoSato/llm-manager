@@ -163,6 +163,15 @@ extension ClaudeTerminalView {
         TerminalScreen.droppingTrailingBlankLines(rawScreenLines().map(Self.text(of:)))
     }
 
+    /// 「端末の画面」を iPhone に渡す形（行は `displayScreenLines` と同じ。カーソルは画面の上端からの位置）。
+    func remoteScreen(escapeExits: Bool, at date: Date = Date()) -> RemoteTerminalScreen {
+        let term = getTerminal()
+        let location = term.getCursorLocation()
+        return RemoteTerminalScreen.limited(lines: displayScreenLines(), cursor: RemoteTerminalCursor(row: location.y, column: location.x),
+                                            columns: term.cols, rows: term.rows, capturedAt: date.timeIntervalSince1970 * 1000,
+                                            escapeExits: escapeExits)
+    }
+
     /// 上限の検査は右の別の欄も含めて全幅で読む（`screenLines` と違い欄で切らない）。
     func limitScreenLines() -> [String] {
         rawScreenLines().map(Self.text(of:))

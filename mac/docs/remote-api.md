@@ -3,7 +3,7 @@
 claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す API。iPhone アプリ（#121）はこの文書に従う。
 外部サービスは使わない（通知だけは iCloud 経由。#122）。
 
-- 型（Codable）は共有パッケージ `packages/DeckCore` の `Sources/DeckCore/Remote/`（`RemoteAPIModels.swift`・`RemotePinning.swift`）と
+- 型（Codable）は共有パッケージ `packages/DeckCore` の `Sources/DeckCore/Remote/`（`RemoteAPIModels.swift`・`RemoteTerminal.swift`（端末の画面）・`RemotePinning.swift`）と
   `Sources/DeckCore/Models/MonitorModels.swift`（`SessionSnapshot`・`PendingPermission`・`TranscriptItem` 等）。
   iPhone 側のクライアント（ピン留めの URLSession・要求の組み立て・SSE・結果コードの文言・再接続の待ち）も `Sources/DeckCore/Client/` にある。
   DeckCore は Foundation / Security / CryptoKit だけに依存させる（macOS 14 / iOS 17）。
@@ -79,6 +79,8 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | POST | `/v1/rooms/{roomId}/menu/tab` | `RemoteMenuTabRequest {menuId, direction: next\|previous}` → `RemoteActionResult` |
 | POST | `/v1/rooms/{roomId}/menu/dismiss` | `RemoteMenuDismissRequest {menuId, confirmExit?}` → `RemoteActionResult`（中身を読めないメニューを Esc で閉じる） |
 | POST | `/v1/rooms/{roomId}/messages` | `RemoteMessageRequest {text, images?}` → `RemoteActionResult`（本文 32KB まで。画像は下の「画像付きのメッセージ」。画像があれば本文は空でよい） |
+| GET | `/v1/rooms/{roomId}/terminal` | → `RemoteTerminalScreen`（ホスト中のルームの端末の今の表示。下の「端末の画面」） |
+| POST | `/v1/rooms/{roomId}/terminal/key` | `RemoteTerminalKeyRequest {key, confirmExit?}` → `RemoteActionResult`（決まったキーを 1 回だけ送る。下の「端末の画面」） |
 
 `roomId` は `h:<UUID>`（mac がホスト中のセッション）か `e:<sessionId>`（外部セッション）。
 
@@ -160,10 +162,45 @@ iPhone は押した時に確認を出してから `confirmExit: true` で送る�
   送り始めた後は画像のパスが端末に書かれている（貼り付けモードの端末では先に貼ったパス、そうでない端末では本文末尾の「添付:」の一覧）ので、
   入らなかったように見えても遅れて入って読まれうる（`.notPasted` を含む）。入力欄の添付と同じく残して起動時の掃除（7 日より古いもの）に任せる。
 
+### 端末の画面（カードで答えられない時の逃げ道）
+
+mac の「端末の画面」のシート（`mac/README.md`「端末の画面」）と同じことを iPhone からする口。**新しい claude の起動口・文字の自由入力は無い**。
+
+- `GET /v1/rooms/{roomId}/terminal` → `RemoteTerminalScreen`:
+
+  ```jsonc
+  {
+    "lines": ["╭────╮", "│ >  │"],     // 端末の今の表示（上の行から。mac のシートと同じく右の別の欄も含めて見えているまま・末尾の空行と右端の空白は除く）
+    "cursor": { "row": 1, "column": 4 },  // カーソルの位置（0 始まり・lines の位置）。lines の外（末尾の空行を落とした所・切った行）なら null
+    "columns": 120, "rows": 40,           // 端末の幅（桁）と高さ（行）
+    "capturedAt": 0,                      // 読み取った時刻（epoch ミリ秒）
+    "escapeExits": false                  // Esc で claude が終わるメニューが出ている（Esc には confirmExit が要る）
+  }
+  ```
+
+  - ホスト中で claude が動いているルームだけ。外部セッションは `unavailable`（409）、claude が終わったルームは `ended`（409）、
+    ルームが無いか形の違う `roomId` は `not_found`（404）、mac の画面の準備ができていなければ `app_unavailable`（503）。失敗の本文は `RemoteErrorBody`。
+  - **会話の記録（transcript）に無いもの（差分パネル・打ちかけの入力・ダイアログ等、端末に見えているもの全部）も TLS で iPhone に渡す**。
+    端末の本文を含むので、他の口と同じく認証済みの端末だけ・`Cache-Control: no-store`。大きさは 300 行・1 行 1024 文字で切る（下を残す。端末の高さ・幅より十分に大きい）。
+  - mac は頼まれた時に端末の画面を読むだけで、取り直しの間隔は iPhone が決める（iPhone アプリはシートを開いている間だけ 0.7 秒ごと。
+    つながっていない間は取りに行かずに 4 倍の間隔で待ち、`capturedAt` 以外が同じなら描き直さない。重なった取り直しは通し番号（`RemoteResponseOrder`）で
+    古い応答を捨て、キーを送る前に出した取り直しの応答も捨てる）。
+  - この口の無い古い mac では GET が 405 `method_not_allowed`、キーの POST が 404 `not_found` になる。iPhone は「Mac の claude-deck を更新してください」と出す
+    （`RemoteResultText.outdatedMac`）。
+- `POST /v1/rooms/{roomId}/terminal/key` `{"key": "<値>", "confirmExit": true?}` → `RemoteActionResult`:
+  - `key` は `left` / `up` / `down` / `right` / `enter` / `escape` / `tab` / `space` / `1`〜`9` だけ（`RemoteTerminalKey`。mac のシートの `TerminalKey` と同じ表・同じ並び）。
+    それ以外は mac の画面に渡す前に `unsupported_key`（400）で断る。
+  - mac のシートと**同じ経路**（`PromptResponder.sendTerminalKey` → `HostedSession.sendKey`）で 1 回だけ送る。
+    権限の回答を送っている間は `busy`、カードから選択肢を動かしている間は `navigating`、入力欄からの送信の途中は `sending`、
+    claude が動いていなければ `ended`、外部セッションは `unavailable` で断る（どれも 409）。
+    送った後は mac のシートと同じく、反映まで矢印の移動待ち・選択待ちのカードの送信中を持つ（`busy` が state に出る）。
+  - Esc で claude が終わるメニュー（`escapeExits`）に `escape` を送るには `confirmExit: true` が要る（無ければ `confirm_required`（409）。mac のシートの確認と同じ）。
+  - 成功は `sent`。
+
 ## 操作の結果（`RemoteActionResult`）
 
 `{"ok": true|false, "code": "<code>", "message": "<日本語|null>"}`。HTTP の状態は `ok` なら 200、
-`not_found` 404・`invalid` 400・`too_many_images` / `image_too_large` 413・`unsupported_image` 415・`app_unavailable` / `images_busy` 503・`image_store_failed` 500・`failed` 502・それ以外の失敗は 409。
+`not_found` 404・`invalid` / `unsupported_key` 400・`too_many_images` / `image_too_large` 413・`unsupported_image` 415・`app_unavailable` / `images_busy` 503・`image_store_failed` 500・`failed` 502・それ以外の失敗は 409。
 
 | 操作 | 成功の code | 主な失敗の code |
 |---|---|---|
@@ -174,6 +211,7 @@ iPhone は押した時に確認を出してから `confirmExit: true` で送る�
 | 読めない選択肢を閉じる | `cancelled` / `answered` | `gone`・`changed`・`confirm_required`・`busy` |
 | 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`・`aborted`・`busy`・`ended`・`unavailable`・`timeout`・`too_many_images`・`image_too_large`・`unsupported_image`・`images_busy`・`image_store_failed` |
 | 送信（外部） | `relayed` | `failed`（受信箱に届かない）・`unavailable`・`images_not_accepted`（画像を付けた） |
+| 端末のキー | `sent` | `unsupported_key`・`confirm_required`（Esc で終わるメニューに `confirmExit` 無しの Esc）・`busy`（権限の回答中）・`navigating`（カードの移動中）・`sending`（入力欄の送信中）・`ended`・`unavailable`（外部セッション） |
 | 共通 | | `not_found`（ルームが無い）・`invalid`（本文の形・空・長すぎ）・`app_unavailable`（mac の画面の準備ができていない） |
 
 結果コードの意味:
@@ -189,6 +227,9 @@ iPhone は押した時に確認を出してから `confirmExit: true` で送る�
 | `failed` | false | 届けられなかった（伝言の受信箱・Channels への答え） |
 | `timeout` | false | mac での操作が 30 秒で戻らなかった。**操作は続いていて、後から反映されることがある**ので、再送の前に `state` で端末の様子を確かめる |
 | `busy` | false | 直前の操作を送っている最中（終わってから） |
+| `navigating` | false | mac でカードから選択肢を動かしている最中（終わってから） |
+| `sending` | false | mac で入力欄からの送信の途中（端末のキーは貼り付けと Enter の間に割り込ませない） |
+| `unsupported_key` | false | 送れるキーの表（`RemoteTerminalKey`）に無い値 |
 | `too_many_images` | false | 画像の枚数が上限（4 枚）を超えた |
 | `image_too_large` | false | 画像の大きさ（1 枚 3MB・合計 8MB）か寸法（一辺 8000 ピクセル・1600 万画素）が上限を超えた |
 | `unsupported_image` | false | PNG / JPEG でない・宣言した型と中身が違う・壊れている（途中で切れている） |
@@ -206,5 +247,7 @@ iPhone は押した時に確認を出してから `confirmExit: true` で送る�
   - 送信: 画面と同じ `HostedSession.send`（貼り付け前と Enter 直前に選択待ちを判定して止める・取りやめた本文の残りを確かめる）。
     画像は入力欄の添付と同じ `Attachment` にして同じ `send(_:attachments:)` に渡す（`ChatOutbox.sendFromRemote`。送った画像は mac の会話にも仮の吹き出しで出る）。
     mac の入力欄の書きかけ・添付には触れない。外部セッションは画面と同じ伝言（mac にも点線の吹き出しで出る。画像は付けられない）。
+  - 端末の画面: 表示は mac のシートと同じ行（`displayScreenLines`）。キーは表に無い値を口で断り、mac のシートと同じ `PromptResponder.sendTerminalKey`
+    （カードの移動中・入力欄の送信中・権限の回答中は送らない・Esc で終わるメニューは確認を要る）で 1 回だけ送る。
 - iPhone からの失敗は mac に警告を出さず、結果だけを返す。
 - 料金事故ゼロの方針は変わらない（新しい claude の起動口・headless の口は無い。API キーも使わない）。

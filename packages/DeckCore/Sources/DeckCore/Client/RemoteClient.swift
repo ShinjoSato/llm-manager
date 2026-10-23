@@ -85,6 +85,15 @@ public final class RemoteClient: Sendable {
         try await action(builder.message(roomId: roomId, text: text, images: images))
     }
 
+    /// ホスト中のルームの端末の今の表示。断られた時（ホスト中でない・claude が終了）は `.http` を投げる。
+    public func terminalScreen(roomId: String) async throws -> RemoteTerminalScreen {
+        try await json(builder.terminalScreen(roomId: roomId))
+    }
+
+    public func sendTerminalKey(roomId: String, key: RemoteTerminalKey, confirmExit: Bool = false) async throws -> RemoteActionResult {
+        try await action(builder.terminalKey(roomId: roomId, RemoteTerminalKeyRequest(key: key, confirmExit: confirmExit ? true : nil)))
+    }
+
     /// `/v1/events` を張る。相手が閉じたら（取り消し・口を閉じた・古いストリームとして切られた）終わる。
     public func events(transcripts: [String]?) -> AsyncThrowingStream<RemoteStreamEvent, Error> {
         AsyncThrowingStream { continuation in
