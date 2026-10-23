@@ -102,7 +102,7 @@ public enum ProcessRunner {
             let process = Process()
             process.executableURL = executable
             process.arguments = arguments
-            let out = Pipe(), err = Pipe()
+            let out = ChildProcessControl.makeFoundationPipe(), err = ChildProcessControl.makeFoundationPipe()
             process.standardOutput = out
             process.standardError = err
             process.standardInput = FileHandle.nullDevice

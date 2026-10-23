@@ -226,7 +226,8 @@ mac/
     Support/                    共通の下回り
       DeckCoreExport.swift        共有パッケージ DeckCore（../packages/DeckCore）を再公開する（監視のドメイン型・Remote API の型・
                                   Markdown の解析・会話の組み立て・ルームのグループ化・ドット絵は DeckCore にある。iPhone アプリと共有）
-      TerminationSignals.swift    SIGTERM / SIGINT を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
+      TerminationSignals.swift    SIGTERM / SIGINT / SIGHUP を何もしないハンドラで捕まえる（子に SIG_IGN を漏らさない）
+      ChildProcessControl.swift   PTY の master・パイプ・ソケットに CLOEXEC を付ける（forkpty と同じロックで）・終了時にホスト中の claude へ同時に SIGHUP を送って待つ
       ChildEnvironment.swift      子プロセス（claude・開発サーバー・mcpbridge）の環境から API キーと Claude Code の子セッション印を除く
       SecureFile.swift            0600・置き換えで書く
       DeckPaths.swift             Application Support / Caches / Logs の claude-deck と、環境変数で差し替える設定ファイルの場所
@@ -298,7 +299,7 @@ mac/
   監視（一覧・会話・使用量）は続ける。5 秒ごとに取り直すので、そのプロセスを止めれば自動で引き継ぐ（`MonitorStore.serverState`）
 - アプリが起動していない間のフックは届かない（curl は `--max-time 1` で諦めるだけで、Claude Code 側は止まらない）。
   取りこぼしてよい扱いにしている: 権限待ち・入力待ちはフックでしか分からないが、次のフックかログの追記で状態は戻る
-- SIGTERM / SIGINT は `SIG_IGN` ではなく何もしないハンドラ（`TerminationSignals`）で既定動作だけ外し、通常の終了経路に乗せる。
+- SIGTERM / SIGINT / SIGHUP は `SIG_IGN` ではなく何もしないハンドラ（`TerminationSignals`）で既定動作だけ外し、通常の終了経路に乗せる。
   `SIG_IGN` は exec を越えて子に残り、ホスト中の claude（SwiftTerm の forkpty 経路）が SIGTERM を無視して
   上限到達時の `terminate()` が効かなくなるため。ハンドラは exec で既定に戻るので子に漏れない（`TerminationSignalsTests`）
 
@@ -1097,25 +1098,48 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 ### 終了と次の起動（前回のセッションの再開）
 
 アプリを終了するとホスト中の claude は PTY ごと閉じて止まる。次の起動で同じ会話を自動で続けられるよう、記録して再開する。
+止め方は `Sources/MonitorKit/Support/ChildProcessControl.swift`（テストあり・ダミーのプロセスで確かめる）。
 判定と記録の読み書きは `Sources/MonitorKit/Chat/SessionRestore.swift`・上限の記録は `Sources/MonitorKit/Limit/LimitState.swift`（どちらもテストあり）、
 つなぎは `Chat/Model/SessionRestorer.swift`・`App/QuitCoordinator.swift`・`App/LimitWatch.swift`。
 
-- **記録**: 動いているホスト中のセッション（名前・cwd・sessionId・最後の状態・書きかけ）を `ChatModel.hosted` そのものから組み立て
+- **PTY の master を後の子に漏らさない**: SwiftTerm の forkpty は master に CLOEXEC を付けないので、起動の直後（`launchClaude`）に付ける。
+  付けないと後から起動した claude が先の claude の master を持ち、アプリが終わっても先の claude に切断が届かず、起動順の逆に 1 本ずつしか終わらない。
+  開発サーバー・mcpbridge は `POSIX_SPAWN_CLOEXEC_DEFAULT` で起動するので master を受け継がず、そのパイプ・Foundation の `Pipe`（`EditorActions`・`XcodeSelection`）・
+  設定の監視の fd・伝言のソケットにも CLOEXEC を付けて claude に渡さない（Foundation の `Pipe` は付かないので `makeFoundationPipe` で作る）。
+  作ってから印を付けるまでの間に forkpty が割り込まないよう、「forkpty + master への印」と「パイプ・ソケットを作って印」は同じロック（`withSpawnLock`）で囲む。
+- **終了時に止める**: `applicationWillTerminate`（⌘Q・ウィンドウ・SIGTERM / SIGINT / SIGHUP・ログアウト）で記録と設定を書き切った後、
+  ホスト中の claude 全部へ同時に SIGHUP を送り（起動時刻が記録と合う pid だけ。待たない）、開発サーバー・mcpbridge を止めてから、
+  送った時から 3 秒の締め切りまで後片付けを待つ（`ChildProcessControl.sendHangUp` / `waitForExit`。終了を長く引き止めない）。
+  シグナルの経路では、開発サーバー等を止める前に記録を書く。
+  終わらなかった分はアプリの終了で master が閉じて切断が届き、次の起動が終わるのを待つ（下の「前回の claude の終了待ち」）。
+- **記録**: 動いているホスト中のセッション（名前・cwd・sessionId・最後の状態・書きかけ・claude の pid と起動時刻）を `ChatModel.hosted` そのものから組み立て
   （一覧 `rooms` は次の周回まで古いので使わない）、見送り中の分と合わせて
   `~/Library/Application Support/claude-deck/hosted-sessions.json`（`CLAUDE_DECK_HOSTED_SESSIONS` で差し替え）に 0600・置き換えで書く。
-  ルームの起動・閉じる時・アプリの終了時（SIGTERM / SIGINT を含む）と 3 秒ごと（中身が変わった時だけ）に書くので、強制終了・クラッシュでも直前の分が残る。
+  ルームの起動・閉じる時・アプリの終了時（SIGTERM / SIGINT / SIGHUP を含む）と 3 秒ごと（中身が変わった時だけ）に書くので、強制終了・クラッシュでも直前の分が残る。
   `/exit` で終了した claude とまだ sessionId の分からないルームは記録しない。壊れた・知らない版のファイルは空とみなして書き直す。
+  pid と起動時刻（`pid`・`procStart`。epoch 秒・カーネルの値）は後から足した任意の項目で、無い古い記録もそのまま読む（版は 1 のまま）。
 - **二重起動**: 記録の隣の `hosted-sessions.json.lock` を起動中ずっと flock で持つ（exec で閉じるので子の claude には残らない）。
-  取れない時（別の claude-deck が動いている）は再開も記録の書き込みもせず、その旨を帯に出す。
+  前のアプリが終わる途中（claude の後片付けを待っている）だと取れないので、8 秒まで取り直す。
+  それでも取れない時（別の claude-deck が動いている）は再開も記録の書き込みもせず、その旨を帯に出す。
 - **起動時の再開**（設定「起動と終了」の「起動時に前回のセッションを再開する」。既定はオン・UserDefaults）: 監視が始まって残量を読むまで待ってから（最大 10 秒）、
   記録したものを同じ cwd で `claude --resume=<sessionId>` で起動する（「アプリに引き継ぐ」と同じ `launchClaude(in:resumeSessionId:)`。UUID 形式のみ・API キー除去は維持）。
-  - 同じ sessionId が別の claude で動いていれば起動せず（`SessionHandover.liveDuplicate`。前回の claude がまだ終了の途中のこともある）、記録は見送りに残す。
+  - **前回の claude の終了待ち**: 記録の pid が今も動いていて、自分のユーザーで起動時刻が記録と合う（= 前回このアプリがホストしていた claude が後片付けの途中）時は、
+    見送らずに 0.5 秒ごとに見張り、終わったら判定し直して再開する（`SessionRestore.isPreviousProcess`・`PreviousExitWait`）。
+    待っている間は一覧の上の帯に「前回アプリでホストしていた claude N 件が終わるのを待っています」を出す。
+    15 秒待っても終わらなければ「同じ会話が動いている」の見送りに回して帯で知らせる。終了の確認中・保留中は待ちを進めない。
+    帯の［破棄］で待ちをやめて記録を捨てる。待っている間に「起動時に前回のセッションを再開する」を切ったら、自動の分は終わっても再開しない（［再開する］から始めた待ちは再開する）。
+  - 同じ会話を「アプリに引き継ぐ」の途中なら起動せず見送りに残す（引き継ぎ側が起動する）。ホストを始める直前にも、同じ会話を動いているホスト中のセッションがあれば起動せずそれを選ぶ。
+  - それ以外で同じ sessionId が別の claude で動いていれば起動せず（`SessionHandover.liveDuplicate`）、記録は見送りに残す。
     sessionId の形が想定外・フォルダが無い・同じ会話を既にホストしている時は起動しない。
   - 上限到達中（`LimitWatch.isLimitReached`）は起動せず見送りに残す。
   - **再開の直後に落ちた時**: 自動で再開した時刻を記録に `restoredAt` として持ち、正常に終わる時（`applicationWillTerminate`）に外す。
     次の起動で印が残っていて 2 分以内なら、再開が原因で落ちた疑いがあるので自動では再開せず見送りに回す。
   - 見送った分は一覧の上の帯に「再開を見送ったセッション N 件（上限 / 再開の直後に落ちた / 同じ会話が動いている）［再開する］［破棄］」で出し、記録にも残し続ける
-    （次の起動でもう一度判定する）。［再開する］はまだ上限中なら何もしない。
+    （次の起動でもう一度判定する）。［再開する］はまだ上限中・終了の確認中や保留中なら何もしない。
+  - 終了待ち・見送り中の会話の claude が監視に外部ルームとして見えている間は、外部ルームの帯をターミナル起動の文言ではなく
+    「前回アプリでホストしていた会話です」にし、判定前は「確かめています…」、待ち中は「終了を待っています…」、
+    見送り中はその会話だけの［再開する］（前の claude が終わる途中ならまた終わるのを待つ）と、引き継げる時だけ［アプリに引き継ぐ］（前の claude が終わらない時の逃げ道）を出す。
+    引き継ぎ中は［再開する］を出さない。引き継ぎ等で同じ会話をホストし始めたら待ちと見送りから外す。
   - 再開した件数（続きを頼んだ件数・見送り）を一覧の上の帯に出す（× で閉じる）。選択は未選択の時だけ移す。書きかけは入力欄に戻す。
 - **上限の記録**: `LimitWatch` は起動時から残量を見張り、到達の解ける時刻（と理由）を `limit-state.json`（`CLAUDE_DECK_LIMIT_STATE` で差し替え・0600・置き換え）に書き、
   解けたら消す。起動時はこれを読んで到達を持ち越すので、usage.json が古い（セッションが止まっていて statusLine が書いていない）間も、リセット時刻までは再開しない。
@@ -1134,7 +1158,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   「作業が終わったら終了」は `.terminateLater` で保留し、稼働中のルームが無い状態が 3 秒続いたら終了する（ツールの合間の一瞬では終えない）。
   待っている間は一覧の上に帯（［取り消す］）を出す。待っている間にもう一度 ⌘Q を押すとすぐ終える。ウィンドウの閉じるボタンでは終えず、待ちを続けたままウィンドウを隠す（Dock から出し直せる）。
   保留中は run loop がモーダルの mode で回るので、記録と待ちのタイマーは common の mode に載せている。
-- **SIGTERM / SIGINT での終了**（`MonitorBridge` のハンドラ → `QuitCoordinator.terminateBySignal`）は確認を出さず、記録だけ書き切って必ず終える
+- **SIGTERM / SIGINT / SIGHUP での終了**（`MonitorBridge` のハンドラ → `QuitCoordinator.terminateBySignal`）は確認を出さず、記録だけ書き切って必ず終える
   （保留中なら `NSApp.reply(toApplicationShouldTerminate: true)`、確認ダイアログの表示中なら `NSApp.abortModal()` してから終了へ進める）。
 - **ログアウト・再起動・シャットダウン**（quit の Apple Event に `kAEQuitReason` が付く）でも確認を出さず、記録だけ書き切って終える。
 

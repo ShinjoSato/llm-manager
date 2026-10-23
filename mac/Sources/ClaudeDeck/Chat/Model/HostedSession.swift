@@ -38,6 +38,8 @@ final class HostedSession: Identifiable {
     @ObservationIgnored private let observer = TerminalProcessObserver()
 
     private(set) var pid: Int32?
+    /// claude の起動時刻（カーネルの値）。次の起動で、前回の claude がまだ終わる途中かを見分けるために記録へ残す。
+    @ObservationIgnored private(set) var processStartedAt: Date?
     /// 端末の画面から読んだ状態（終了後は状態以外を消す）。
     private(set) var screen = ClaudeTerminalView.ScreenState()
     var localStatus: ClaudeStatus { screen.status }
@@ -96,7 +98,14 @@ final class HostedSession: Identifiable {
             return
         }
         self.pid = pid
+        processStartedAt = ProcessFacts.inspect(pid: pid)?.startedAt
         MonitorBridge.store.registerHostedProcess(pid: pid)
+    }
+
+    /// 次の起動で再開するための記録。
+    func record(sessionId: String, status: SessionStatus, draft: String?) -> HostedSessionRecord {
+        HostedSessionRecord(name: project.name, cwd: project.path, sessionId: sessionId, status: status, draft: draft,
+                            pid: pid, procStart: processStartedAt?.timeIntervalSince1970)
     }
 
     /// 今の sessionId（監視の対応表から引けなければ最後に解決できたもの）。

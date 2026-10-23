@@ -33,10 +33,7 @@ public final class DevServerProcess: @unchecked Sendable {
                              deliveryQueue: DispatchQueue = .main,
                              onOutput: @escaping @Sendable (Data) -> Void,
                              onExit: @escaping @Sendable (DevServerExit) -> Void) throws -> DevServerProcess {
-        var fds: [Int32] = [0, 0]
-        guard pipe(&fds) == 0 else { throw PosixSpawnError.failed(errno) }
-        let (readFD, writeFD) = (fds[0], fds[1])
-        _ = fcntl(readFD, F_SETFD, FD_CLOEXEC)
+        guard let (readFD, writeFD) = ChildProcessControl.makePipe() else { throw PosixSpawnError.failed(errno) }
         let (pid, rc) = ProcessGroup.spawn(executable: executable, arguments: arguments, environment: environment,
                                            directory: directory) { actions in
             posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
