@@ -61,7 +61,13 @@ final class HostedSession: Identifiable {
 
     @ObservationIgnored var onLimitReached: ((HostedSession) -> Void)?
     /// 入らなかった本文を端末の入力欄からそのまま送った（アプリの入力欄に戻した同じ本文を消すため）。
-    @ObservationIgnored var onLeftoverSubmitted: ((_ body: String) -> Void)?
+    @ObservationIgnored var onLeftoverSubmitted: ((_ id: String, _ confirmed: Bool) -> Void)?
+    /// 端末の入力欄を消し終えた（警告・案内・「端末の画面」のどこから始めても呼ぶ）。
+    @ObservationIgnored var onClearFinished: ((ClaudeTerminalView.ClearOutcome) -> Void)?
+    /// 端末の入力欄を消している最中。
+    private(set) var isClearingInput = false
+    /// 最後に入力欄を消し終えた結末と時刻（「端末の画面」のシートに出す）。
+    private(set) var lastClear: (outcome: ClaudeTerminalView.ClearOutcome, at: Date)?
     /// 入らなかった本文の残りを確かめられるまで送らずにいる間の抜け道（送れるなら nil）。
     var leftover: LeftoverEscape? { screen.leftover }
     /// iPhone に出すカードの世代と答えた ID（同じ文面で出し直された確認を古い表示から答えさせないため）。
@@ -90,7 +96,12 @@ final class HostedSession: Identifiable {
         terminal.opsLog = { event, fields in MenuOpsLog.shared.record(event, [("key", menuKey)] + fields) }
         let sendKey = "send:\(id.uuidString)"
         terminal.sendLog = { event, fields in MenuOpsLog.send.record(event, [("key", sendKey)] + fields) }
-        terminal.onLeftoverSubmitted = { [weak self] body in self?.onLeftoverSubmitted?(body) }
+        terminal.onLeftoverSubmitted = { [weak self] id, confirmed in self?.onLeftoverSubmitted?(id, confirmed) }
+        terminal.onClearingChanged = { [weak self] in self?.isClearingInput = $0 }
+        terminal.onClearFinished = { [weak self] outcome in
+            self?.lastClear = (outcome, Date())
+            self?.onClearFinished?(outcome)
+        }
         observer.onTerminated = { [weak self] code in self?.handleExit(code) }
     }
 
@@ -137,10 +148,10 @@ final class HostedSession: Identifiable {
     @ObservationIgnored private(set) var userSendCount = 0
 
     /// `byUser` が false なのはアプリが自分で送る頼み（利用者の送信として数えない）。
-    func send(_ text: String, attachments: [Attachment] = [], byUser: Bool = true,
+    func send(_ text: String, attachments: [Attachment] = [], byUser: Bool = true, sendId: String = UUID().uuidString,
               completion: @escaping (SendCompletion) -> Void) -> ClaudeTerminalView.SendResult? {
         guard isRunning else { return nil }
-        let result = terminal.sendMessage(text, attachments: attachments, completion: completion)
+        let result = terminal.sendMessage(text, attachments: attachments, sendId: sendId, completion: completion)
         if byUser, case .started = result { userSendCount += 1 }
         return result
     }
@@ -177,10 +188,10 @@ final class HostedSession: Identifiable {
         return terminal.submitLeftover()
     }
 
-    /// 端末の入力欄を空にする（結末は始めた時だけ `completion` に返る）。
-    func clearInput(completion: @escaping (ClaudeTerminalView.ClearOutcome) -> Void) -> ClaudeTerminalView.LeftoverActionResult {
+    /// 端末の入力欄を空にする（結末は始めた時だけ `onClearFinished` に返る）。
+    func clearInput() -> ClaudeTerminalView.LeftoverActionResult {
         guard isRunning else { return .ended }
-        return terminal.clearInput(completion: completion)
+        return terminal.clearInput()
     }
 
     /// 入力欄を読めない状態が続いた時に、確かめられないまま次の送信を通す。

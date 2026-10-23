@@ -458,6 +458,9 @@ final class ChatModel {
     private func host(_ project: ManagedProject, resuming sessionId: String? = nil) -> HostedSession {
         let session = HostedSession(project: project, resumeSessionId: sessionId)
         session.onLimitReached = { [weak self] session in self?.limitReached(session) }
+        let roomId = RoomID.hosted(session.id)
+        session.onLeftoverSubmitted = { [weak outbox = self.outbox] id, confirmed in outbox?.leftoverSubmitted(id: id, confirmed: confirmed, in: roomId) }
+        session.onClearFinished = { [weak outbox = self.outbox] outcome in outbox?.clearFinished(outcome, in: roomId) }
         hosted.append(session)
         session.start()
         return session

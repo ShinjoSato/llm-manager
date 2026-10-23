@@ -7,8 +7,9 @@ public enum LeftoverCheck: Sendable, Equatable {
     /// 残りがあれば 1 回だけ知らせる（未知の薄字表示を本文と誤認しても、もう一度送れば送れる）。
     case warnOnce
     /// 貼り付けが入らなかった送信の後。遅れて入った本文と戻した本文が二重にならないよう、入力欄が貼る前（`baseline`）か空と確かめるまで送らない。
-    /// `body` は入らなかった本文（貼り付けの印を除いたもの）。入力欄に見えているかを確かめるためだけに持ち、記録には書かない。
-    case untilClear(baseline: String, body: String)
+    /// `body` は入らなかった本文（貼り付けの印を除いたもの。入力欄に見えるかを確かめるためだけに持ち、記録には書かない）、`id` はその送信の印。
+    /// `touched` は止めている間に「端末の画面」から履歴を呼び出しうるキーを送った印（入力欄の中身を本文と取り違えないため）。
+    case untilClear(baseline: String, body: String, id: String = "", touched: Bool = false)
 
     public enum Decision: Sendable, Equatable {
         case send
@@ -28,16 +29,25 @@ public enum LeftoverCheck: Sendable, Equatable {
             // 入力欄が読めない時は残りを確かめられないが、くっつく害は小さいので送る（印は残す）。
             guard let box else { return (.send, .warnOnce) }
             return (box.isEmpty ? .send : .refuse(strict: false), .none)
-        case .untilClear(let baseline, _):
+        case .untilClear(let baseline, _, _, _):
             guard let box, box.isEmpty || box == baseline else { return (.refuse(strict: true), self) }
             return (.send, .none)
         }
     }
 
+    /// 入らなかった本文が今の入力欄にどう見えているか。止めている間に入力欄を触っていれば見えないとみなす。
+    public func match(box: String?) -> InputBoxMatch.Match {
+        guard case .untilClear(let baseline, let body, _, let touched) = self, !touched, let box else { return .none }
+        return InputBoxMatch.match(box: box, baseline: baseline, body: body)
+    }
+
     /// 入らなかった本文が今の入力欄に見えているか（そのまま Enter で送ってよいか）。
-    public func showsBody(box: String?) -> Bool {
-        guard case .untilClear(let baseline, let body) = self, let box else { return false }
-        return InputBoxMatch.showsBody(box: box, baseline: baseline, body: body)
+    public func showsBody(box: String?) -> Bool { match(box: box) != .none }
+
+    /// 止めている間に入力欄を触った（履歴の呼び出し等）。以後は本文が見えているとはみなさない。
+    public var touched: LeftoverCheck {
+        guard case .untilClear(let baseline, let body, let id, _) = self else { return self }
+        return .untilClear(baseline: baseline, body: body, id: id, touched: true)
     }
 
     /// 確かめられるまで止めている間の抜け道（止めていなければ nil）。`unreadableFor` は入力欄を読めない状態が続いている秒数。
@@ -47,10 +57,10 @@ public enum LeftoverCheck: Sendable, Equatable {
         return LeftoverEscape(box: showsBody(box: box) ? .showsBody : .other, canForce: false)
     }
 
-    /// 入らなかった本文（確かめている間だけ）。
-    public var lateBody: String? {
-        guard case .untilClear(_, let body) = self else { return nil }
-        return body
+    /// 入らなかった送信の印（確かめている間だけ）。
+    public var lateId: String? {
+        guard case .untilClear(_, _, let id, _) = self else { return nil }
+        return id
     }
 
     /// 記録に書く名前。
@@ -108,23 +118,59 @@ public struct UnreadableSpan: Sendable, Equatable {
 
 /// 入力欄の文字と本文の突き合わせ。端末の折り返しで空白や改行の位置が変わるので、空白を除いて比べる。
 public enum InputBoxMatch {
-    /// `box` の `baseline`（貼る前）より後ろに `body` が入っているか。長文は `[Pasted text #N …]` に畳まれるので、新しい畳みの印も本文とみなす。
-    public static func showsBody(box: String, baseline: String, body: String) -> Bool {
+    public enum Match: Sendable, Equatable {
+        case none
+        /// 本文の文字がそのまま見えている（送った本文が同じと確かめられる）。
+        case text
+        /// 長文が畳まれた印が 1 つだけ増え、その行数が本文と合う（中身までは確かめられない）。
+        case folded
+    }
+
+    /// `box` の `baseline`（貼る前）より後ろに `body` が入っているか。
+    public static func match(box: String, baseline: String, body: String) -> Match {
         let shown = compact(box)
         let before = compact(baseline)
         let added = !before.isEmpty && shown.hasPrefix(before) ? String(shown.dropFirst(before.count)) : shown
         let target = compact(body)
-        guard !added.isEmpty, !target.isEmpty else { return false }
-        if added.contains(target) { return true }
-        return foldedCount(shown) > foldedCount(before)
+        guard !added.isEmpty, !target.isEmpty else { return .none }
+        if added.contains(target) { return .text }
+        // 畳みの印は改行の数を `+N lines` に出す（v2.1.309）。増えた印が 1 つだけで、行数が合う時だけ本文とみなす。
+        var remaining = foldedTokens(before)
+        var new: [Int] = []
+        for token in foldedTokens(shown) {
+            if let index = remaining.firstIndex(of: token) { remaining.remove(at: index) } else { new.append(token.lines) }
+        }
+        guard truncatedCount(shown) == truncatedCount(before), new.count == 1 else { return .none }
+        return new[0] == body.filter { $0 == "\n" }.count ? .folded : .none
+    }
+
+    public static func showsBody(box: String, baseline: String, body: String) -> Bool {
+        match(box: box, baseline: baseline, body: body) != .none
     }
 
     /// 畳まれた貼り付けの表示か。
-    public static func isFolded(_ box: String) -> Bool { foldedCount(compact(box)) > 0 }
+    public static func isFolded(_ box: String) -> Bool {
+        let compacted = compact(box)
+        return !foldedTokens(compacted).isEmpty || truncatedCount(compacted) > 0
+    }
 
-    static func foldedCount(_ compacted: String) -> Int {
-        compacted.components(separatedBy: "[Pastedtext#").count - 1
-            + compacted.components(separatedBy: "[...Truncatedtext#").count - 1
+    struct FoldedToken: Equatable {
+        let number: String
+        let lines: Int
+    }
+
+    /// 空白を除いた文字の中の `[Pastedtext#N+Mlines]`（M が無ければ 0 行）。
+    static func foldedTokens(_ compacted: String) -> [FoldedToken] {
+        guard let regex = try? NSRegularExpression(pattern: #"\[Pastedtext#(\d+)(?:\+(\d+)lines?)?\]"#) else { return [] }
+        let text = compacted as NSString
+        return regex.matches(in: compacted, range: NSRange(location: 0, length: text.length)).map { result in
+            let lines = result.range(at: 2).location == NSNotFound ? 0 : Int(text.substring(with: result.range(at: 2))) ?? -1
+            return FoldedToken(number: text.substring(with: result.range(at: 1)), lines: lines)
+        }
+    }
+
+    static func truncatedCount(_ compacted: String) -> Int {
+        compacted.components(separatedBy: "[...Truncatedtext#").count - 1
     }
 
     static func compact(_ text: String) -> String {
@@ -134,11 +180,14 @@ public enum InputBoxMatch {
 
 /// 送信の記録（send-ops.log）に書く項目。本文は書かず、長さ・指紋・形だけにする。
 public enum SendOpsFields {
-    /// 本文の長さ・行数と SHA-256 の先頭 8 桁。
+    /// 起動ごとの鍵（短い本文を辞書で逆算されないよう、指紋は鍵付きにする。同じ起動の中でだけ見比べられる）。
+    static let launchKey = SymmetricKey(size: .bits256)
+
+    /// 本文の長さ・行数と、起動ごとの鍵で作った HMAC-SHA256 の先頭 8 桁。
     public static func text(_ text: String, prefix: String) -> [(String, String)] {
-        let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        let code = HMAC<SHA256>.authenticationCode(for: Data(text.utf8), using: launchKey).map { String(format: "%02x", $0) }.joined()
         return [("\(prefix)Len", "\(text.count)"), ("\(prefix)Lines", "\(text.split(separator: "\n", omittingEmptySubsequences: false).count)"),
-                ("\(prefix)Sha", String(digest.prefix(8)))]
+                ("\(prefix)Mac", String(code.prefix(8)))]
     }
 
     /// 入力欄の読み取り結果（読めたか・長さ・指紋・本文を含むか・畳まれた表示か・画像の印の数）。
@@ -147,7 +196,8 @@ public enum SendOpsFields {
         if box.isEmpty { return [(prefix, "empty")] }
         var fields: [(String, String)] = [(prefix, "text")] + text(box, prefix: prefix)
         if let body {
-            fields.append(("\(prefix)HasBody", InputBoxMatch.showsBody(box: box, baseline: baseline ?? "", body: body) ? "yes" : "no"))
+            let match = InputBoxMatch.match(box: box, baseline: baseline ?? "", body: body)
+            fields.append(("\(prefix)HasBody", match == .text ? "text" : match == .folded ? "folded" : "no"))
         }
         fields.append(("\(prefix)Folded", InputBoxMatch.isFolded(box) ? "yes" : "no"))
         fields.append(("\(prefix)Images", "\(AttachmentFormat.imageTokenCount(in: box))"))
@@ -195,14 +245,6 @@ public enum LeftoverChoice: Sendable, Equatable {
 }
 
 extension ComposerRestore {
-    /// 入力欄に戻した本文 `restored` と、端末から送った本文 `submitted`（添付の一覧が後ろに付きうる）が同じ送信のものか。
-    public static func isSameSend(restored: String, submitted: String) -> Bool {
-        let text = restored.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sent = submitted.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sent.isEmpty else { return text.isEmpty }
-        return sent == text || (!text.isEmpty && sent.hasPrefix(text + "\n\n")) || (text.isEmpty && sent.hasPrefix(AttachmentFormat.listHeader))
-    }
-
     /// 端末からそのまま送った本文を、入力欄に戻した書きかけから外す（戻した本文は先頭に置いている）。戻した後に書き換えていれば nil（外さない）。
     public static func draft(removing sent: String, from current: String) -> String? {
         if current == sent { return "" }

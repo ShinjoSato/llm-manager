@@ -73,10 +73,16 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     }
     /// 残りを確かめている間に入力欄を読めない状態がいつから続いているか。
     var leftoverUnreadable = UnreadableSpan()
-    /// 入らなかった本文を端末の入力欄からそのまま送った（アプリの入力欄に戻した同じ本文を消させるため）。引数は送った本文。
-    var onLeftoverSubmitted: ((String) -> Void)?
+    /// 入らなかった本文を端末の入力欄からそのまま送った（アプリの入力欄に戻した同じ本文を消させるため）。
+    /// `id` は入らなかった送信の印、`confirmed` は送った入力欄の文字が本文と同じと確かめられたか。
+    var onLeftoverSubmitted: ((_ id: String, _ confirmed: Bool) -> Void)?
+    /// 端末の入力欄を消し終えた（どこから始めても呼ぶ）。
+    var onClearFinished: ((ClearOutcome) -> Void)?
     /// 端末の入力欄を消している最中。
-    var isClearingInput = false
+    var isClearingInput = false {
+        didSet { if isClearingInput != oldValue { onClearingChanged?(isClearingInput) } }
+    }
+    var onClearingChanged: ((Bool) -> Void)?
     /// 送信の各段階を残す先（本文は渡さない）。
     var sendLog: ((String, [(String, String)]) -> Void)?
 

@@ -28,7 +28,7 @@ struct TerminalScreenSheet: View {
     static let refreshInterval: Duration = .milliseconds(300)
 
     var body: some View {
-        TerminalScreenPanel(roomName: roomName, lines: lines, running: session.isRunning, notice: notice,
+        TerminalScreenPanel(roomName: roomName, lines: lines, running: session.isRunning, notice: shownNotice,
                             keyboardActive: focused, onKey: press, onFocus: { focused = true },
                             onCopy: { SystemActions.copy(lines.joined(separator: "\n")) }, onClose: { dismiss() })
             .focusable(interactions: .edit)
@@ -53,6 +53,14 @@ struct TerminalScreenSheet: View {
                 }
             }
             .exitConfirmation(presenting: $exitKey) { deliver($0) }
+    }
+
+    /// 「入力欄を消す」を押した後に消し終えたら、その結末を出す。
+    private var shownNotice: TerminalKeyNotice? {
+        guard let notice, notice.key == .clearInput, notice.result.ok, let last = session.lastClear, last.at >= notice.at,
+              let text = ChatOutbox.clearMessage(last.outcome) else { return notice }
+        let result: RemoteActionResult = last.outcome == .cleared ? .success("cleared") : .failure("clear", text)
+        return TerminalKeyNotice(key: .clearInput, result: result, at: last.at, detail: text)
     }
 
     /// Esc で claude が終わるメニューでは、カードと同じく確かめてから送る。
@@ -85,8 +93,11 @@ struct TerminalKeyNotice: Equatable {
     let key: TerminalKey
     let result: RemoteActionResult
     let at: Date
+    /// 送った後の結末（入力欄を消し終えた等）。あればこちらを出す。
+    var detail: String? = nil
 
     var text: String {
+        if let detail { return detail }
         guard result.ok else { return result.message ?? "送れませんでした。" }
         return key == .clearInput ? "入力欄を消すキーを送っています（\(ChatTime.seconds(at))）" : "\(key.label) を送りました（\(ChatTime.seconds(at))）"
     }
@@ -192,7 +203,7 @@ struct TerminalScreenPanel: View {
                 Text(notice.text)
                     .font(ChatTheme.caption)
                     .foregroundStyle(notice.result.ok ? ChatTheme.secondary : ChatTheme.error)
-                    .lineLimit(2)
+                    .lineLimit(3)
             }
             Spacer(minLength: 8)
             Text(keyboardActive ? "キーボードからも送れます" : "端末の表示をクリックするとキーボードからも送れます")

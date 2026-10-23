@@ -398,9 +398,8 @@ public enum PasteCheck {
     /// `before` は貼る前、`after` は今の入力欄の文字（`InputBox.text`。読めなければ nil）、`body` は貼った本文。
     public static func judge(before: String?, after: String?, body: String) -> Verdict {
         guard let after else { return .unknown }
-        // 例文と同じ形の本文は入っても空欄と見分けられないので、確かめずに送る。
-        let text = plainText(body)
-        if !text.contains("\n"), InputBox.isPlaceholder(text) { return .unknown }
+        // 案内と同じ形の本文（入力欄の読み取りと同じく 2 行までをつないで見る）は空欄と見分けにくいので、確かめずに送る。
+        if InputBox.looksPlaceholder(plainText(body).components(separatedBy: "\n")) { return .unknown }
         if after.isEmpty || after == before { return .missing }
         return .pasted
     }

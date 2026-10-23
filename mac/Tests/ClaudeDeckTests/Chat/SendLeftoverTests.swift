@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import MonitorKit
 
@@ -35,8 +36,41 @@ private enum WorkingScreen {
     }
 }
 
+/// 実画面の描き方の読み取りの見本。入力欄の行を v2.1.309 の案内と同じく、先頭 1 文字を反転（カーソル）・残りを薄字にする。
+enum ScreenTones {
+    static func faintBox(_ screen: [String], cursorFirst: Bool = true) -> CellToneReader {
+        let rows = boxRows(screen)
+        return { row in
+            let characters = Array(screen[row])
+            guard rows.contains(row) else { return characters.map { _ in .plain } }
+            var first = true
+            return characters.map { character in
+                if character.isWhitespace || character == "❯" { return .plain }
+                defer { first = false }
+                return first && cursorFirst ? .inverse : .dim
+            }
+        }
+    }
+
+    /// 全部が普通の文字（打った本文）。
+    static func plain(_ screen: [String]) -> CellToneReader {
+        { row in screen.indices.contains(row) ? Array(screen[row]).map { _ in .plain } : nil }
+    }
+
+    static func boxRows(_ screen: [String]) -> Set<Int> {
+        guard let start = InputBox.promptRow(screen: screen) else { return [] }
+        var rows: Set<Int> = [start]
+        for index in (start + 1)..<screen.count {
+            let line = screen[index].trimmingCharacters(in: .whitespaces)
+            if !line.isEmpty, line.allSatisfy({ $0 == "─" }) { break }
+            rows.insert(index)
+        }
+        return rows
+    }
+}
+
 final class WorkingScreenInputBoxTests: XCTestCase {
-    /// キューに積んだメッセージがあると、空欄に薄字の案内が出る。空として読む（前は本文と読み、残りがあると止め続けた）。
+    /// キューに積んだメッセージがあると、空欄に薄字の案内が出る。薄字と読めた時は空として読む。
     func testQueuedHintPlaceholdersReadAsEmpty() {
         for hint in ["Press up to edit queued messages",
                      "Press up to select a queued message, then Enter to edit it",
@@ -45,20 +79,63 @@ final class WorkingScreenInputBoxTests: XCTestCase {
                      "Press Enter to edit the selected message, or up again for history",
                      "Press Enter to edit the selected message, or up again for an older one"] {
             let screen = WorkingScreen.screen(queued: ["次はビルドも確かめて"], box: ["❯\u{00A0}" + hint])
-            XCTAssertEqual(InputBox.text(screen: screen), "", hint)
+            let box = InputBox.text(screen: screen, tones: ScreenTones.faintBox(screen))
+            XCTAssertEqual(box, "", hint)
             XCTAssertNil(InputBlock.detect(screen: screen), hint)
-            XCTAssertTrue(LeftoverCheck.untilClear(baseline: "", body: "x").decide(box: InputBox.text(screen: screen)).0 == .send, hint)
+            XCTAssertTrue(LeftoverCheck.untilClear(baseline: "", body: "x").decide(box: box).0 == .send, hint)
         }
-        XCTAssertEqual(InputBox.text(screen: WorkingScreen.screen(box: ["❯ Message @reviewer…"])), "")
-        // 案内に似ているだけの本文は本文として読む。
-        XCTAssertEqual(InputBox.text(screen: WorkingScreen.screen(box: ["❯ Press up to edit queued messages please"])),
-                       "Press up to edit queued messages please")
-        XCTAssertEqual(InputBox.text(screen: WorkingScreen.screen(box: ["❯ Message @reviewer… と送って"])), "Message @reviewer… と送って")
+        let agent = WorkingScreen.screen(box: ["❯ Message @reviewer…"])
+        XCTAssertEqual(InputBox.text(screen: agent, tones: ScreenTones.faintBox(agent)), "")
+        // カーソルが無い（全部薄字）時も、次の依頼の候補のような決まっていない文も、薄字なら空。
+        let suggestion = WorkingScreen.screen(box: ["❯ run the tests"])
+        XCTAssertEqual(InputBox.text(screen: suggestion, tones: ScreenTones.faintBox(suggestion, cursorFirst: false)), "")
+    }
+
+    /// 案内と同じ形でも、打った文字（薄字でない）か描き方を読めない時は本文として読む（空と読み違えて二重に貼らないため）。
+    func testPlaceholderShapedTextIsBodyUnlessFaint() {
+        for lines in [["❯ Press up to edit queued messages"], ["❯ Try \"fix lint errors\""], ["❯ Try \"a", "  b\""]] {
+            let screen = WorkingScreen.screen(box: lines)
+            let expected = lines.map { $0.replacingOccurrences(of: "❯ ", with: "").trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
+            XCTAssertEqual(InputBox.text(screen: screen), expected, "描き方を読めない")
+            XCTAssertEqual(InputBox.text(screen: screen, tones: ScreenTones.plain(screen)), expected, "打った文字")
+        }
+        // 一部だけ薄字（打った文字の後ろに候補が続く等）も本文。
+        let mixed = WorkingScreen.screen(box: ["❯ Try \"x\""])
+        let row = InputBox.promptRow(screen: mixed)
+        let partly: CellToneReader = { index in
+            let faint = ScreenTones.faintBox(mixed)(index)
+            guard index == row, var tones = faint, let last = tones.lastIndex(of: .dim) else { return faint }
+            tones[last] = .plain
+            return tones
+        }
+        XCTAssertEqual(InputBox.text(screen: mixed, tones: partly), "Try \"x\"")
+        // 1 文字だけの本文にカーソル（反転）が乗っていても、薄字が無ければ空にしない。
+        let single = WorkingScreen.screen(box: ["❯ a"])
+        let singleRow = InputBox.promptRow(screen: single)
+        let cursorOnly: CellToneReader = { index in
+            Array(single[index]).map { index == singleRow && $0 == "a" ? .inverse : .plain }
+        }
+        XCTAssertEqual(InputBox.text(screen: single, tones: cursorOnly), "a")
+        // 描き方の行が足りない時も空にしない。
+        XCTAssertEqual(InputBox.text(screen: mixed, tones: { _ in [] }), "Try \"x\"")
+    }
+
+    /// 2 行の本文が例文と同じ形でも、入ったら「入った」と読んで Enter を送る（空と読み違えて取りやめ、残りの後ろへ同じ本文を貼らないため）。
+    func testTwoLinePlaceholderShapedBodyIsNotMissing() {
+        let body = "\u{1b}[200~Try \"fix\n lint\"\u{1b}[201~"
+        let screen = WorkingScreen.screen(box: ["❯ Try \"fix", "   lint\""])
+        let after = InputBox.text(screen: screen, tones: ScreenTones.plain(screen))
+        XCTAssertEqual(after, "Try \"fix\nlint\"")
+        XCTAssertNotEqual(PasteCheck.judge(before: "", after: after, body: body), .missing)
+        // 入力欄の読み取りと同じく 2 行までをつないで案内の形かを見るので、確かめずに送る側になる。
+        XCTAssertEqual(PasteCheck.judge(before: "", after: "", body: body), .unknown)
     }
 
     /// 作業中の画面（返答・スピナー・キューの発話・下の statusLine とエージェント一覧）でも、入力欄の中身だけを読む。
     func testWorkingScreenReadsOnlyTheBox() {
-        XCTAssertEqual(InputBox.text(screen: WorkingScreen.screen(box: ["❯\u{00A0}"])), "")
+        let empty = WorkingScreen.screen(box: ["❯\u{00A0}"])
+        XCTAssertEqual(InputBox.text(screen: empty), "")
+        XCTAssertEqual(InputBox.text(screen: empty, tones: ScreenTones.faintBox(empty)), "")
         let typed = WorkingScreen.screen(queued: ["次はビルドも確かめて"], box: ["❯ 一行目の本文", "  二行目"])
         XCTAssertEqual(InputBox.text(screen: typed), "一行目の本文\n二行目")
         XCTAssertNil(InputBlock.detect(screen: typed))
@@ -71,17 +148,35 @@ final class WorkingScreenInputBoxTests: XCTestCase {
         let folded = WorkingScreen.screen(box: ["❯ [Pasted text #1 +12 lines]"])
         let after = InputBox.text(screen: folded)
         XCTAssertEqual(after, "[Pasted text #1 +12 lines]")
-        let body = "\u{1b}[200~" + String(repeating: "長い本文\n", count: 13) + "\u{1b}[201~"
+        let body = "\u{1b}[200~" + Array(repeating: "長い本文", count: 13).joined(separator: "\n") + "\u{1b}[201~"
         XCTAssertEqual(PasteCheck.judge(before: "", after: after, body: body), .pasted)
-        let hinted = InputBox.text(screen: WorkingScreen.screen(queued: ["先の依頼"], box: ["❯ Press up to edit queued messages"]))
+        let hintedScreen = WorkingScreen.screen(queued: ["先の依頼"], box: ["❯ Press up to edit queued messages"])
+        let hinted = InputBox.text(screen: hintedScreen, tones: ScreenTones.faintBox(hintedScreen))
+        XCTAssertEqual(hinted, "")
         XCTAssertEqual(PasteCheck.judge(before: hinted, after: after, body: body), .pasted)
         // 入る前（案内のまま）は入っていない。
         XCTAssertEqual(PasteCheck.judge(before: hinted, after: hinted, body: body), .missing)
-        XCTAssertTrue(LeftoverCheck.untilClear(baseline: "", body: PasteCheck.plainText(body)).showsBody(box: after))
-        // 2 回目の畳みも新しい印として数える。
-        XCTAssertTrue(InputBoxMatch.showsBody(box: "[Pasted text #1 +12 lines][Pasted text #2 +3 lines]",
-                                              baseline: "[Pasted text #1 +12 lines]", body: "別の長文"))
-        XCTAssertFalse(InputBoxMatch.showsBody(box: "[Pasted text #1 +12 lines]", baseline: "[Pasted text #1 +12 lines]", body: "別の長文"))
+        XCTAssertEqual(LeftoverCheck.untilClear(baseline: "", body: PasteCheck.plainText(body)).match(box: after), .folded)
+    }
+
+    /// 畳みの印で本文とみなすのは、増えた印が 1 つだけで `+N lines` が本文の改行の数と合う時だけ。
+    func testFoldedMatchIsStrict() {
+        let fourLines = "一\n二\n三\n四"
+        XCTAssertEqual(InputBoxMatch.match(box: "[Pasted text #1 +12 lines][Pasted text #2 +3 lines]",
+                                           baseline: "[Pasted text #1 +12 lines]", body: fourLines), .folded)
+        XCTAssertEqual(InputBoxMatch.match(box: "[Pasted text #2 +5 lines]", baseline: "", body: fourLines), .none, "行数が合わない")
+        XCTAssertEqual(InputBoxMatch.match(box: "[Pasted text #1 +3 lines] [Pasted text #2 +3 lines]", baseline: "", body: fourLines), .none,
+                       "増えた印が 2 つ")
+        XCTAssertEqual(InputBoxMatch.match(box: "[Pasted text #1 +12 lines]", baseline: "[Pasted text #1 +12 lines]", body: fourLines), .none)
+        XCTAssertEqual(InputBoxMatch.match(box: "[Pasted text #3]", baseline: "", body: "改行の無い長文"), .folded)
+        XCTAssertEqual(InputBoxMatch.match(box: "[...Truncated text #1 +300 lines...]", baseline: "", body: fourLines), .none)
+        // 止めている間に「端末の画面」から入力欄を触ったら、本文が見えているとはみなさない。
+        let check = LeftoverCheck.untilClear(baseline: "", body: "本文", id: "s1")
+        XCTAssertEqual(check.match(box: "本文"), .text)
+        XCTAssertEqual(check.touched.match(box: "本文"), .none)
+        XCTAssertEqual(check.touched.lateId, "s1")
+        XCTAssertTrue(check.touched.decide(box: "本文").0 == .refuse(strict: true), "触っても止めるのは続ける")
+        XCTAssertEqual(LeftoverCheck.warnOnce.touched, .warnOnce)
     }
 
     /// 写しの選択肢の画面では入力欄を読めない（nil）。記録には画面の形だけを残し、文字は書かない。
@@ -169,26 +264,25 @@ final class LeftoverEscapeTests: XCTestCase {
         let body = "テストを直して"
         var check = LeftoverCheck.untilClear(baseline: "", body: body)
         // 遅れて入った本文が見えている間は何度でも止め、そのまま送るを出す。
-        let late = InputBox.text(screen: WorkingScreen.screen(box: ["❯ " + body]))
+        let lateScreen = WorkingScreen.screen(box: ["❯ " + body])
+        let late = InputBox.text(screen: lateScreen, tones: ScreenTones.plain(lateScreen))
         XCTAssertTrue(check.decide(box: late) == (.refuse(strict: true), check))
         XCTAssertEqual(LeftoverChoice.choices(strict: true, escape: check.escape(box: late, unreadableFor: 0)),
                        [.openTerminal, .submitAsIs, .clearInput])
         // キューの案内が出ている空欄（端末で消した・送った後）は空とみなして送る。
-        let hinted = InputBox.text(screen: WorkingScreen.screen(queued: [body], box: ["❯ Press up to edit queued messages"]))
+        let hintedScreen = WorkingScreen.screen(queued: [body], box: ["❯ Press up to edit queued messages"])
+        let hinted = InputBox.text(screen: hintedScreen, tones: ScreenTones.faintBox(hintedScreen))
         let (decision, next) = check.decide(box: hinted)
         XCTAssertEqual(decision, .send)
         check = next
         XCTAssertEqual(check, .none)
     }
 
-    func testSameSend() {
-        XCTAssertTrue(ComposerRestore.isSameSend(restored: "本文\n", submitted: "本文"))
-        XCTAssertTrue(ComposerRestore.isSameSend(restored: "本文", submitted: "本文\n\n添付:\n/tmp/a.txt"))
-        XCTAssertTrue(ComposerRestore.isSameSend(restored: "", submitted: "添付:\n/tmp/a.txt"))
-        XCTAssertFalse(ComposerRestore.isSameSend(restored: "本文", submitted: "iPhone から送った別の本文"))
-        XCTAssertFalse(ComposerRestore.isSameSend(restored: "本文", submitted: "本文の続き"))
-        XCTAssertEqual(LeftoverCheck.untilClear(baseline: "", body: "b").lateBody, "b")
-        XCTAssertNil(LeftoverCheck.warnOnce.lateBody)
+    /// 端末から送った本文がどの送信のものかは、本文ではなく送信の印で突き合わせる。
+    func testLateId() {
+        XCTAssertEqual(LeftoverCheck.untilClear(baseline: "", body: "b", id: "send-1").lateId, "send-1")
+        XCTAssertNil(LeftoverCheck.warnOnce.lateId)
+        XCTAssertNotEqual(LeftoverCheck.untilClear(baseline: "", body: "b", id: "a"), LeftoverCheck.untilClear(baseline: "", body: "b", id: "c"))
     }
 
     func testDraftRemovingRestoredText() {
@@ -212,13 +306,23 @@ final class SendOpsFieldsTests: XCTestCase {
         let map = Dictionary(fields, uniquingKeysWith: { first, _ in first })
         XCTAssertEqual(map["bodyLen"], "\(secret.count)")
         XCTAssertEqual(map["bodyLines"], "2")
-        XCTAssertEqual(map["bodySha"]?.count, 8)
-        XCTAssertTrue(map["bodySha"]?.allSatisfy(\.isHexDigit) ?? false)
-        XCTAssertEqual(map["boxHasBody"], "yes")
+        XCTAssertEqual(map["bodyMac"]?.count, 8)
+        XCTAssertTrue(map["bodyMac"]?.allSatisfy(\.isHexDigit) ?? false)
+        XCTAssertNil(map["bodySha"])
+        XCTAssertEqual(map["boxHasBody"], "text")
         XCTAssertEqual(map["boxFolded"], "no")
         XCTAssertEqual(map["boxSameAsBefore"], "no")
         let line = MenuOpsLog.line("refuse", fields, date: Date(timeIntervalSince1970: 0))
         XCTAssertFalse(line.contains("秘密"))
+    }
+
+    /// 指紋は起動ごとの鍵付き（素の SHA-256 ではないので、短い本文を辞書で逆算できない）。同じ起動の中では同じ値になる。
+    func testFingerprintIsKeyedPerLaunch() {
+        let a = SendOpsFields.text("はい", prefix: "b").first { $0.0 == "bMac" }?.1
+        XCTAssertEqual(a, SendOpsFields.text("はい", prefix: "b").first { $0.0 == "bMac" }?.1)
+        XCTAssertNotEqual(a, SendOpsFields.text("いいえ", prefix: "b").first { $0.0 == "bMac" }?.1)
+        let plainSha = SHA256.hash(data: Data("はい".utf8)).map { String(format: "%02x", $0) }.joined()
+        XCTAssertNotEqual(a, String(plainSha.prefix(8)))
     }
 
     func testBoxStates() {

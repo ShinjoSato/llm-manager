@@ -132,9 +132,35 @@ extension ClaudeTerminalView {
             leftoverUnreadable.reset()
             return nil
         }
-        let box = InputBox.text(screen: screen)
+        let box = inputBoxText(screen)
         let unreadableFor = leftoverUnreadable.observe(readable: box != nil, now: now)
         return leftoverCheck.escape(box: box, unreadableFor: unreadableFor)
+    }
+
+    /// 端末の入力欄の文字。薄字の案内は、実画面の描き方で薄字と読めた時だけ空とみなす。
+    func inputBoxText(_ screen: [String]) -> String? {
+        InputBox.text(screen: screen, tones: toneReader())
+    }
+
+    /// 実画面の行の各文字の描き方（薄字・反転。全角の後半セルは `screenLines` と同じく飛ばす）。
+    func toneReader() -> CellToneReader {
+        let lines = rawScreenLines()
+        return { row in
+            guard lines.indices.contains(row) else { return nil }
+            var tones: [CellTone] = []
+            var text = ""
+            _ = lines[row].translateToString(trimRight: true, skipNullCellsFollowingWide: true) { cell in
+                let character = cell.getCharacter()
+                let before = text.count
+                text.append(character)
+                if text.count > before {
+                    let style = cell.attribute.style
+                    tones.append(style.contains(.dim) ? .dim : style.contains(.inverse) ? .inverse : .plain)
+                }
+                return character
+            }
+            return tones
+        }
     }
 
     /// 入力欄の ❯ 行の文字の描き方（薄字・色付きの文字の数。記録用で、例文や候補の薄字を本文と読み違えていないかの手がかり）。

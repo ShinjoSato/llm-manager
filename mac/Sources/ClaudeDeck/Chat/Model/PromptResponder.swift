@@ -115,6 +115,8 @@ final class PromptResponder {
             return .failure("clearing", "端末の入力欄を消しているところです。終わってからもう一度押してください。")
         case .blocked:
             return .failure("blocked", "確認や選択肢が出ている間は入力欄を消しません（キーがそちらに効くため）。先に答えてください。")
+        case .unreadable:
+            return .failure("unreadable", "端末の入力欄が見つからないため消しません（キーがどこに効くか分からないため）。上の表示で様子を確かめてください。")
         case .ended:
             return .failure("ended", "claude が動いていないため送れません。")
         }

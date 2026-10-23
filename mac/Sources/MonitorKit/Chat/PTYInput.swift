@@ -311,6 +311,18 @@ public enum ChoiceMenu {
     }
 }
 
+/// 端末の 1 文字の描き方（入力欄の薄字の案内を見分けるため）。
+public enum CellTone: Sendable, Equatable {
+    case plain
+    /// 薄字（SGR 2）。
+    case dim
+    /// 反転（カーソル）。
+    case inverse
+}
+
+/// 画面の行（`screen` の添字）から、その行の各文字（`Array(screen[row])` と同じ並び）の描き方を返す。読めなければ nil。
+public typealias CellToneReader = (Int) -> [CellTone]?
+
 /// 端末下部の入力欄（罫線の直下の ❯ 行から次の罫線まで）。
 public enum InputBox {
     /// 入力欄の ❯ 行。`❯ n. …` は下を罫線で閉じている時だけ入力欄とみなす（v2.1.286 で選択メニューは ❯ の下を閉じない）。
@@ -337,20 +349,58 @@ public enum InputBox {
         return (closingRule(lines, after: prompt) ?? prompt) + 1
     }
 
-    /// 入力欄に入っている文字（空なら ""）。入力欄が見つからなければ nil。空欄の時の薄字の例文（Try "…"）は空とみなす。
-    public static func text(screen: [String]) -> String? {
+    /// 入力欄に入っている文字（空なら ""）。入力欄が見つからなければ nil。
+    /// 空欄の薄字の案内（例文・キューの案内・次の依頼の候補）は、`tones` で欄の文字がすべて薄字と読めた時だけ空とみなす。
+    /// 描き方を読めない時（`tones` が nil）は案内と同じ形でも本文として返す（本文を空と読み違えて二重に貼らないため）。
+    public static func text(screen: [String], tones: CellToneReader? = nil) -> String? {
         let lines = TerminalScreen.droppingTrailingBlankLines(screen)
         guard let start = promptIndex(lines) else { return nil }
-        var parts: [String] = []
-        for (offset, line) in lines[start...].enumerated() {
-            if offset > 0, PermissionPrompt.isSeparator(line) { break }
-            var t = Substring(line.trimmed)
-            if offset == 0 { t = t.dropFirst().drop(while: \.isWhitespace) }
-            if !t.isEmpty { parts.append(String(t)) }
-        }
-        // 例文は折り返して 2 行になることもあるので、行をつないで見る。
-        if !parts.isEmpty, parts.count <= 2, isPlaceholder(parts.joined(separator: " ")) { return "" }
+        let rows = boxRows(lines, start: start)
+        let parts = rows.map { content(lines[$0], prompt: $0 == start) }.filter { !$0.isEmpty }
+        if !parts.isEmpty, let tones, isFaint(lines, rows: rows, prompt: start, tones: tones) { return "" }
         return parts.joined(separator: "\n")
+    }
+
+    /// 入力欄の ❯ 行から下の罫線の手前までの行。
+    static func boxRows(_ lines: [String], start: Int) -> [Int] {
+        var rows = [start]
+        for index in (start + 1)..<max(start + 1, lines.count) {
+            if PermissionPrompt.isSeparator(lines[index]) { break }
+            rows.append(index)
+        }
+        return rows
+    }
+
+    /// 欄の 1 行の文字（前後の空白と、❯ 行なら先頭の ❯ を除く）。
+    static func content(_ line: String, prompt: Bool) -> String {
+        var t = Substring(line.trimmed)
+        if prompt { t = t.dropFirst().drop(while: \.isWhitespace) }
+        return String(t)
+    }
+
+    /// 欄の空白以外の文字がすべて薄字か。案内は先頭 1 文字にカーソル（反転）が乗ることがあるので、先頭だけは反転も許す（v2.1.309 の描き方）。
+    static func isFaint(_ lines: [String], rows: [Int], prompt: Int, tones: CellToneReader) -> Bool {
+        var seen: [CellTone] = []
+        for row in rows {
+            let characters = Array(lines[row])
+            var skippedPrompt = row != prompt
+            for (index, character) in characters.enumerated() where !character.isWhitespace {
+                if !skippedPrompt, character == "❯" {
+                    skippedPrompt = true
+                    continue
+                }
+                guard let rowTones = tones(row), rowTones.indices.contains(index) else { return false }
+                seen.append(rowTones[index])
+            }
+        }
+        guard let first = seen.first, first != .plain, seen.contains(.dim) else { return false }
+        return seen.dropFirst().allSatisfy { $0 == .dim }
+    }
+
+    /// 案内と同じ形の文か（行をつないで見る。折り返して 2 行になることもあるため）。
+    static func looksPlaceholder(_ lines: [String]) -> Bool {
+        let parts = lines.map { $0.trimmed }.filter { !$0.isEmpty }
+        return !parts.isEmpty && parts.count <= 2 && isPlaceholder(parts.joined(separator: " "))
     }
 
     /// 入力欄の ❯ 行の位置（`screen` の添字）。入力欄が見つからなければ nil。
@@ -359,9 +409,12 @@ public enum InputBox {
     }
 
     /// 通常の空の入力欄だけが見えているか。入力欄が空で、最後の会話・ステータス行との間に罫線（重ね表示の上端）が無い。
+    /// 古い返事待ちを信じるかの目安なので、描き方を読まずに案内と同じ形の文も空とみなす。
     public static func isPlainEmpty(screen: [String]) -> Bool {
         let lines = Array(TerminalScreen.droppingTrailingBlankLines(screen).suffix(ChoiceMenu.tailLines))
-        guard let prompt = promptIndex(lines), text(screen: lines) == "" else { return false }
+        guard let prompt = promptIndex(lines) else { return false }
+        let parts = boxRows(lines, start: prompt).map { content(lines[$0], prompt: $0 == prompt) }.filter { !$0.isEmpty }
+        guard parts.isEmpty || looksPlaceholder(parts) else { return false }
         let above = lines[..<(prompt - 1)]
         guard let separator = above.lastIndex(where: PermissionPrompt.isSeparator) else { return true }
         return above.lastIndex(where: ChoiceMenu.isConversationLine).map { $0 > separator } ?? false

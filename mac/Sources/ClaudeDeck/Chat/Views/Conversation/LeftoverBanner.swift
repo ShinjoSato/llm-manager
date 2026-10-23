@@ -62,7 +62,7 @@ struct LeftoverBanner: View {
     static func help(_ choice: LeftoverChoice) -> String {
         switch choice {
         case .openTerminal: return "端末の今の表示を見て、入力欄に何が入っているかを確かめる"
-        case .submitAsIs: return "端末の入力欄に入っている本文を Enter で送り、この入力欄に戻した同じ本文は消す"
+        case .submitAsIs: return "端末の入力欄に入っている本文を Enter で送る（同じ本文と確かめられれば、この入力欄に戻した分は消す）"
         case .clearInput: return "端末の入力欄を空にする（この入力欄の本文は残すので、消えたら送り直せる）"
         case .forceSend: return "端末の入力欄を確かめないまま、この入力欄の本文を送る（入っていれば二重に送られる）"
         }

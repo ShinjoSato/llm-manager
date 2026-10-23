@@ -167,7 +167,7 @@ claude-deck（mac アプリ）が**同じ Wi-Fi の iPhone アプリ**に出す 
 | 選択肢 | `confirmed` / `toggled`（複数選択のチェック切り替え）/ `cancelled` / `answered` | `gone`・`changed`（`menuId` 違い・途中で替わった・Channels で答える）・`unavailable`（文字入力の選択肢）・`confirm_required`（`cancelExits` の取り消し、または終了になる選択肢（trust 確認の「No, exit」）なのに `confirmExit` が無い）・`stuck`・`vanished`・`settling`・`navigating`（前の操作で選択肢を動かしている最中）・`unconfirmed`（mac で 12 秒以内に端末の結果を確かめられなかった）・`ended`・`busy`・`timeout` |
 | タブ | `moved` / `answered` | 同上 |
 | 読めない選択肢を閉じる | `cancelled` / `answered` | `gone`・`changed`・`confirm_required`・`busy` |
-| 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`（端末の入力欄に前の本文が残っているか確かめられない。片付けは mac の「端末の入力欄を消す」「そのまま送る」で行い、iPhone からの口は無い）・`aborted`・`busy`・`ended`・`unavailable`・`timeout`・`too_many_images`・`image_too_large`・`unsupported_image`・`images_busy`・`image_store_failed` |
+| 送信（ホスト中） | `submitted` | `blocked_permission` / `blocked_menu`（選択待ち。Enter が選択の確定になるため送らない）・`leftover`（端末の入力欄に前の本文が残っているようなので 1 回だけ止めた。もう一度送ると通る）・`late_leftover`（入らなかった本文が遅れて入ったか確かめられないので、片付くまで止める。片付けは mac の「端末の入力欄を消す」「そのまま送る」で行い、iPhone からの口は無い）・`aborted`・`busy`・`ended`・`unavailable`・`timeout`・`too_many_images`・`image_too_large`・`unsupported_image`・`images_busy`・`image_store_failed` |
 | 送信（外部） | `relayed` | `failed`（受信箱に届かない）・`unavailable`・`images_not_accepted`（画像を付けた） |
 | 共通 | | `not_found`（ルームが無い）・`invalid`（本文の形・空・長すぎ）・`app_unavailable`（mac の画面の準備ができていない） |
 
