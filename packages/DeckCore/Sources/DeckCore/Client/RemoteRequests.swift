@@ -149,10 +149,14 @@ public struct RemoteRequestBuilder: Sendable {
         return req
     }
 
-    private func post<Body: Encodable>(_ segments: [String], _ body: Body, authorized: Bool = true) throws -> URLRequest {
-        var req = try request("POST", segments, authorized: authorized)
+    private func post<Body: Encodable>(_ segments: [String], _ body: Body, authorized: Bool = true,
+                                       timeout: TimeInterval? = nil) throws -> URLRequest {
+        var req = try request("POST", segments, timeout: timeout, authorized: authorized)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(body)
+        let encoder = JSONEncoder()
+        // base64 の `/` を `\/` にして画像付きの本文を膨らませない。
+        encoder.outputFormatting = .withoutEscapingSlashes
+        req.httpBody = try encoder.encode(body)
         return req
     }
 
@@ -208,7 +212,11 @@ public struct RemoteRequestBuilder: Sendable {
         try post(["rooms", roomId, "menu", "dismiss"], body)
     }
 
-    public func message(roomId: String, text: String) throws -> URLRequest {
-        try post(["rooms", roomId, "messages"], RemoteMessageRequest(text: text))
+    /// 画像を付けると上りに時間がかかるので、待ちを延ばす。
+    static let imageActionTimeout: TimeInterval = 90
+
+    public func message(roomId: String, text: String, images: [RemoteMessageImage] = []) throws -> URLRequest {
+        try post(["rooms", roomId, "messages"], RemoteMessageRequest(text: text, images: images),
+                 timeout: images.isEmpty ? nil : Self.imageActionTimeout)
     }
 }

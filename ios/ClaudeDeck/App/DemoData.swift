@@ -20,9 +20,9 @@ enum DemoData {
     static let mirioRoomId = "h:5D1B9C2E-7A41-4E0B-9F3A-2C8D6E1F0A11"
 
     static func state(now: Double) -> RemoteState {
-        let input = RemoteSendState(mode: .input, disabledReason: nil)
-        let blocked = RemoteSendState(mode: .input, disabledReason: "選択肢に答えると送れます")
-        let relay = RemoteSendState(mode: .relay, disabledReason: nil)
+        let input = RemoteSendState(mode: .input, disabledReason: nil, acceptsImages: true)
+        let blocked = RemoteSendState(mode: .input, disabledReason: "選択肢に答えると送れます", acceptsImages: true)
+        let relay = RemoteSendState(mode: .relay, disabledReason: nil, acceptsImages: false)
         let menu = RemoteMenu(menuId: "m1", context: ["## 計画", "1. 一覧のキャッシュを足す", "2. 試験を書く"],
                               question: "Would you like to proceed?",
                               options: [RemoteMenuOption(index: 0, number: 1, label: "Yes, and auto-accept edits", detail: [], checked: nil, isSubmit: false, selectable: true),

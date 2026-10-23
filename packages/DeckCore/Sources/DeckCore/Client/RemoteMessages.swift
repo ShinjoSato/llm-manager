@@ -34,6 +34,10 @@ public enum RemoteResultText {
             return "mac 側の表示が替わっていました。最新の内容を確かめてからもう一度押してください。"
         case "busy":
             return "直前の操作を mac で送っている最中です。終わってからもう一度。"
+        case "unconfirmed":
+            return "mac で応答を確かめられませんでした。後から反映されることがあるので、送り直す前に画面の様子を確かめてください。"
+        case "navigating":
+            return "mac で前の操作の選択肢を動かしているところです。終わってからもう一度。"
         case "timeout":
             return "mac での操作が 30 秒で戻りませんでした。後から反映されることがあるので、送り直す前に画面の様子を確かめてください。"
         case "ended":
@@ -62,6 +66,19 @@ public enum RemoteResultText {
             return "端末の入力欄に前の書きかけが残っているので送りませんでした。mac で入力欄を空にしてください。"
         case "aborted":
             return "送る途中で端末の様子が変わったので、送るのをやめました。"
+        case "too_many_images":
+            return "画像は 1 通に \(RemoteImageLimits.maxCount) 枚までです。減らしてから送ってください。"
+        case "image_too_large":
+            return "画像が大きすぎるため送りませんでした（1 枚 \(RemoteImageLimits.maxBytes / 1024 / 1024)MB・"
+                + "合計 \(RemoteImageLimits.maxTotalBytes / 1024 / 1024)MB・一辺 \(RemoteImageLimits.maxPixelSide) ピクセルまで）。"
+        case "unsupported_image":
+            return "送れない画像です（PNG か JPEG で、壊れていないもの）。別の画像を選んでください。"
+        case "images_not_accepted":
+            return "このルームには画像を付けられません（外部セッションへの伝言は文字だけです）。画像を外してから送ってください。"
+        case "images_busy":
+            return "Mac が他の画像を受け取っている最中です。少し待ってから送り直してください。"
+        case "image_store_failed":
+            return "Mac で画像を一時保存できませんでした（ディスクの空きや権限を確かめてください）。"
         case "stuck", "vanished", "settling":
             return "端末の選択肢の動きを確かめられなかったので、途中でやめました。画面の様子を確かめてください。"
         default:

@@ -43,6 +43,8 @@ let package = Package(
             // チャネルは実行ファイルを stdin/stdout で繋いで確かめるので、先にビルドさせる。
             dependencies: ["MonitorKit", "claude-deck-channel", .product(name: "SwiftTerm", package: "SwiftTerm"),
                            .product(name: "DeckCore", package: "DeckCore")],
+            // 本物の Claude Code の画面の写し（選択肢・trust 確認の読み取りを版ごとに固定する）。
+            resources: [.copy("Fixtures")],
             swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]
         )
     ]

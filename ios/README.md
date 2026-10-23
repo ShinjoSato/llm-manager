@@ -14,7 +14,7 @@ API の仕様は `mac/docs/remote-api.md`、通信と型は共有パッケージ
 | ルーム一覧 | 要対応 / 稼働中 / 待機（Mac の並び順のまま）。ドット絵のアイコン・外部タグ・ブランチ・状態と直近の一行・時刻・未読（開いていない間に届いた応答の数）・要回答の印 |
 | 会話 | ユーザーは右の青、Claude は左の暗色（Markdown の見出し・表・リスト・引用・コード）、画像のサムネイル（押すと全画面）、ツールは「ツール N件 ▸」、外部セッションへ送った伝言は点線の吹き出し |
 | カード | 権限（Channels → 端末のプロンプトの順。許可 / 拒否）、選択肢（選択・複数選択・問いのタブ・キャンセル。Esc が終了になるメニューは確認してから `confirmExit`）、読めない選択肢（閉じるだけ）、Channels の無い外部セッションの案内 |
-| 入力欄 | ホスト中のセッションはメッセージ、外部セッションは伝言。Mac が送れない理由（選択待ち等）を出している間は無効。ハードウェアキーボードでは ⏎ 送信・⇧⏎（⌥⏎）改行。本文は UITextView（`ComposerTextView`）で、⏎ を IME に渡す前（`pressesBegan`）に変換中かを見て、変換中なら確定に使う。ソフトウェアキーボードの改行キーは改行のまま |
+| 入力欄 | ホスト中のセッションはメッセージ、外部セッションは伝言。Mac が送れない理由（選択待ち等）を出している間は無効。ホスト中のセッション（Mac の `send.acceptsImages` が true）には写真を添えられる（下の「画像を送る」）。ハードウェアキーボードでは ⏎ 送信・⇧⏎（⌥⏎）改行。本文は UITextView（`ComposerTextView`）で、⏎ を IME に渡す前（`pressesBegan`）に変換中かを見て、変換中なら確定に使う。ソフトウェアキーボードの改行キーは改行のまま |
 | 接続 | Mac 名・再接続・ペアリングの解除（Mac から取り消し + 鍵を消す）・要対応の通知の入り切り |
 | 通知 | Mac で要対応が続くと iCloud 経由でプッシュ（アプリを閉じていても・外出先でも）。開くと該当ルームへ（つながっていなければ案内を出し、つながって一覧が届いたら開く） |
 
@@ -30,6 +30,14 @@ API の仕様は `mac/docs/remote-api.md`、通信と型は共有パッケージ
 
 操作の結果は `RemoteResultText`（DeckCore）で日本語にして会話の末尾に出す（`answered` / `gone` / `changed` / `busy` / `timeout` / `blocked_menu` …）。
 `timeout` は「後から反映されることがある」旨を出し、自動では送り直さない。
+
+## 画像を送る
+
+- 入力欄の左の写真のボタン（`PhotosPicker`・複数選択可・残りの枚数まで。写真ライブラリの許可は要らない）で選ぶと、入力欄の上にサムネイルを並べ、× で外せる。本文が空でも画像だけで送れる。
+- 上限は Mac と同じ `RemoteImageLimits`（1 通 4 枚・1 枚 3MB・合計 8MB）。送る前に `ComposerImagePreparer`（`Model/ComposerImages.swift`）で
+  長辺 2048 ピクセルまで縮め、向きを反映し、位置情報などのメタデータを落として書き直す。PNG（スクリーンショット等）は 1 枚 2MB に収まれば PNG のまま、
+  それ以外（HEIC を含む）と収まらない PNG は JPEG（品質を下げ、それでも入らなければさらに縮める）にする。整えられなかった写真は理由を出す。
+- 送信中・失敗の扱いは文字の送信と同じ（送れたら本文と画像を空にし、送れなければ残して理由を出す）。伝言（外部セッション）と、画像を知らない古い Mac には付けない。
 
 ## 接続と切れた時
 
@@ -66,13 +74,13 @@ ios/
   Info.plist                  上の追加分だけ（GENERATE_INFOPLIST_FILE と合わせる。フォルダ同期の外に置いてリソース扱いさせない）
   ClaudeDeck/
     App/                      @main・RootView・画面確認用の見本データ（Debug のみ）
-    Model/                    AppModel（接続・一覧・会話・操作・通知から開く）・PairingKeychain・RoomCards（カードの優先順・リンクの解析）・RoomSelection（2 列の選択）
+    Model/                    AppModel（接続・一覧・会話・操作・通知から開く・送る前の画像）・ComposerImages（写真を送れる形に整える）・PairingKeychain・RoomCards（カードの優先順・リンクの解析）・RoomSelection（2 列の選択）
     Notify/                   要対応の通知（iCloud の購読・通知の受け口 DeckAppDelegate・設定の欄）
     ja.lproj/                 通知の見出し・本文のキー
     Theme/DeckTheme.swift     mac のチャット画面と同じトークン
     Views/                    PixelAvatar・接続の帯と設定・Pairing/・Rooms/・Conversation/（MarkdownView は mac から移植）
     Assets.xcassets           アプリアイコン（scripts/make-app-icon.sh で DeckCore のドット絵から描く）・AccentColor
-  ClaudeDeckTests/            リンクの解析と確認待ち・キーチェーン・カードの優先順・2 列の選択・入力欄の変換中の判定・DeckCore の判定（iOS 上）・自己署名 TLS への接続（ATS の確認）
+  ClaudeDeckTests/            リンクの解析と確認待ち・キーチェーン・カードの優先順・2 列の選択・入力欄の変換中の判定・DeckCore の判定（iOS 上）・自己署名 TLS への接続（ATS の確認）・写真の整え方と入力欄の画像
   scripts/make-app-icon.sh    アイコンを描き直す
 ```
 
