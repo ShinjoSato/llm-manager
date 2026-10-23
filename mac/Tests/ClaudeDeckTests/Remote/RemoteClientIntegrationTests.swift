@@ -106,6 +106,30 @@ final class RemoteClientIntegrationTests: XCTestCase {
         }
     }
 
+    /// 終了になる選択肢の印が iPhone のクライアントまで届き、確認付きで送り直せる。
+    func testExitingChoiceMarkReachesClient() async throws {
+        let trust = MenuPrompt(context: [], question: "Is this a project you created or one you trust?",
+                               options: [.init(number: nil, label: "No, exit"), .init(number: nil, label: "Yes, I trust this folder")],
+                               cursor: 0, footer: "Enter to confirm · Esc to cancel", tabs: nil)
+        var state = FakeRemoteControl.sampleState()
+        state.rooms[0].menu = RemoteMenu(trust, generation: 0)
+        control.state = state
+        let pairing = try await pairFromQR()
+        let client = RemoteClient(pairing: pairing)
+        defer { client.invalidate() }
+
+        let rooms = try await client.rooms()
+        let room = try XCTUnwrap(rooms.rooms.first)
+        let menu = try XCTUnwrap(room.menu)
+        XCTAssertTrue(menu.choiceExits(0))
+        XCTAssertFalse(menu.choiceExits(1))
+        XCTAssertEqual(menu.label(of: 0), "No, exit")
+
+        control.result = .success("confirmed")
+        _ = try await client.answerMenu(roomId: room.id, RemoteMenuAnswerRequest(menuId: menu.menuId, choice: 0, confirmExit: true))
+        XCTAssertEqual(control.calls.last, "menu \(room.id) \(menu.menuId) choice=0 cancel=false exit=true")
+    }
+
     // MARK: - 画像付きの送信
 
     private func storedImageFiles() -> [String] {

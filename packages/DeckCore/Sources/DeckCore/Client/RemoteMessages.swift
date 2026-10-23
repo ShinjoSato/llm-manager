@@ -57,7 +57,7 @@ public enum RemoteResultText {
                 ? "文字を入力する選択肢はここからは選べません。キャンセルしてから入力欄で伝えてください。"
                 : "このルームには今は送れません。"
         case "confirm_required":
-            return "取り消すと claude が終了します。確認してから押してください。"
+            return "この操作で claude が終了します。確認してから押してください。"
         case "blocked_permission":
             return "端末で権限の確認が出ているので送りませんでした。先に許可 / 拒否してください。"
         case "blocked_menu":
