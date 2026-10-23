@@ -63,7 +63,7 @@ final class PairingLinkTests: XCTestCase {
         XCTAssertEqual(model.pairingError?.text, "この QR は期限切れです。mac で新しい QR を出してください。")
         let newer = try! PairingOffer.parse(pairingURL(version: RemoteAPI.version + 1), source: .camera).get()
         await model.confirmPairing(newer)
-        XCTAssertTrue(model.pairingError?.text.contains("iPhone アプリを更新") == true)
+        XCTAssertTrue(model.pairingError?.text.contains("iPhone・iPad のアプリを更新") == true)
         XCTAssertNil(model.pairing)
     }
 }
@@ -142,6 +142,20 @@ final class RoomCardTests: XCTestCase {
         XCTAssertEqual(groups[0].rooms.map(\.id), ["a", "c"])
         XCTAssertEqual(groups[2].rooms.map(\.id), ["d"], "知らない区分は待機へ")
     }
+
+    func testSelectionIsDroppedWhenRoomLeavesList() {
+        XCTAssertEqual(RoomSelection.kept("b", among: ["a", "b"]), "b")
+        XCTAssertNil(RoomSelection.kept("b", among: ["a"]), "一覧から消えたら右を案内に戻す")
+        XCTAssertNil(RoomSelection.kept("b", among: []), "一覧が空になった（別の Mac とペアリングし直した）時も外す")
+        XCTAssertNil(RoomSelection.kept(nil, among: ["a"]), "何も選んでいなければ勝手に選ばない")
+    }
+
+    func testCompactPathFollowsSelection() {
+        XCTAssertEqual(RoomSelection.path(for: "h:1"), ["h:1"], "2 列から狭くしても開いていた会話のまま")
+        XCTAssertEqual(RoomSelection.path(for: nil), [])
+        XCTAssertNil(RoomSelection.selection(from: []), "一覧へ戻ったら選択を外す")
+        XCTAssertEqual(RoomSelection.selection(from: ["h:1"]), "h:1")
+    }
 }
 
 /// 共有パッケージの判定が iOS の上でも同じに動くか（Security・URL の組み立て・文言）。
@@ -190,6 +204,12 @@ final class OfflineDiagnosisTests: XCTestCase {
         XCTAssertEqual(ConnectionBanner.wifiNote(for: .ambiguousOffline, onWiFi: true), "")
         XCTAssertEqual(ConnectionBanner.wifiNote(for: .ambiguousOffline, onWiFi: nil), "", "判定が届く前は言わない")
         XCTAssertTrue(ConnectionBanner.wifiNote(for: .ambiguousOffline, onWiFi: false).contains("Wi-Fi"))
+        XCTAssertTrue(ConnectionBanner.wifiNote(for: .ambiguousOffline, onWiFi: false).hasPrefix(DeviceKind.name), "端末に合った呼び名で言う")
+    }
+
+    func testDeviceNameFollowsIdiom() {
+        XCTAssertEqual(DeviceKind.name(for: .pad), "iPad")
+        XCTAssertEqual(DeviceKind.name(for: .phone), "iPhone")
     }
 
     func testPairingErrorKnowsWhenSettingsHelp() {

@@ -60,6 +60,14 @@ struct HeaderAction: Identifiable {
         return item
     }
 
+    /// 「端末の画面」（ホスト中のルームだけ）。
+    static func terminalScreen(priority: Int, subpriority: Int, action: @escaping () -> Void) -> HeaderAction {
+        var item = HeaderAction.button(id: "terminal", priority: priority, symbol: "terminal", name: "端末の画面",
+                                       detail: "今の端末の表示を見て、矢印・Enter・Esc などのキーを直接送る（カードで答えられない時に）", action: action)
+        item.subpriority = subpriority
+        return item
+    }
+
     /// 「Xcode」と「閉じる」（`project` が無ければ出さない）。閉じるは `onClose` で確認を開く。
     static func xcode(openPriority: Int, closePriority: Int, editors: EditorLauncher, target: EditorTarget,
                       project: URL?, onClose: @escaping () -> Void) -> [HeaderAction] {

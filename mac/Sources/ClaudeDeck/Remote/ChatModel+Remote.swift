@@ -24,10 +24,11 @@ extension ChatModel: RemoteControl {
                                     generation: session.promptTracker.generation)
             busy = busy || prompts.busyKeys.contains(PromptResponder.ptyPermissionKey(session))
                 || prompts.busyKeys.contains(PromptResponder.ptyMenuKey(session))
-            send = RemoteSendState(mode: .input, disabledReason: ChatOutbox.inputDisabledReason(for: room) ?? (session.isSending ? "送信中…" : nil))
+            send = RemoteSendState(mode: .input, disabledReason: ChatOutbox.inputDisabledReason(for: room) ?? (session.isSending ? "送信中…" : nil),
+                                   acceptsImages: true)
         } else {
             cards = RemoteRoomCards(channelsPending: false, card: nil, generation: 0)
-            send = RemoteSendState(mode: .relay, disabledReason: outbox.inputDisabledReason(for: room))
+            send = RemoteSendState(mode: .relay, disabledReason: outbox.inputDisabledReason(for: room), acceptsImages: false)
         }
         return RemoteRoom(id: room.id.string, kind: room.hosted == nil ? .external : .hosted,
                           phase: RemoteRoomPhase(RoomPhase(status: room.status)), name: room.name, branch: room.branch,
@@ -119,22 +120,37 @@ extension ChatModel: RemoteControl {
 
     // MARK: - 送信
 
-    func remoteSendMessage(roomId: String, text: String) async -> RemoteActionResult {
-        guard let room = room(roomId) else { return Self.roomNotFound }
-        guard let session = room.hosted else { return await relayFromRemote(text, to: room) }
-        if let reason = ChatOutbox.inputDisabledReason(for: room) {
-            return .failure(RemoteChecks.sendBlockedCode(ended: session.end != nil, inputBlock: session.inputBlock), reason)
+    func remoteSendMessage(roomId: String, text: String, images: [Attachment]) async -> RemoteActionResult {
+        // 端末まで渡らずに終わる時は、届いた画像の一時ファイルをここで消す。
+        func refuse(_ result: RemoteActionResult) -> RemoteActionResult {
+            outbox.discardRemoteImages(images)
+            return result
         }
-        if session.isSending, let busy = ClaudeTerminalView.SendResult.busy.refusal { return .failure(busy.code, busy.message) }
-        // mac の入力欄の書きかけ・添付には触れない（iPhone の本文だけを送る）。
+        guard let room = room(roomId) else { return refuse(Self.roomNotFound) }
+        guard let session = room.hosted else {
+            if !images.isEmpty { return refuse(RemoteChecks.imagesNotAccepted) }
+            return await relayFromRemote(text, to: room)
+        }
+        if let reason = ChatOutbox.inputDisabledReason(for: room) {
+            return refuse(.failure(RemoteChecks.sendBlockedCode(ended: session.end != nil, inputBlock: session.inputBlock), reason))
+        }
+        if session.isSending, let busy = ClaudeTerminalView.SendResult.busy.refusal { return refuse(.failure(busy.code, busy.message)) }
+        // mac の入力欄の書きかけ・添付には触れない（iPhone の本文と画像だけを、入力欄の添付と同じ経路で送る）。
         return await RemoteOperationWait.wait { done in
-            let result = session.send(text) { completion in done(Self.result(of: completion)) }
+            let result = outbox.sendFromRemote(text, images: images, to: room) { completion in done(Self.result(of: completion)) }
             if result == nil {
                 done(.failure("ended", "claude は動いていません。"))
             } else if let refusal = result?.refusal {
                 done(.failure(refusal.code, refusal.message))
             }
         }
+    }
+
+    var remoteImageStore: AttachmentStore { outbox.attachmentStore }
+
+    func remoteImageTargetRefusal(roomId: String) -> RemoteActionResult? {
+        guard let room = room(roomId) else { return Self.roomNotFound }
+        return room.hosted == nil ? RemoteChecks.imagesNotAccepted : nil
     }
 
     static func result(of completion: SendCompletion) -> RemoteActionResult {

@@ -1,9 +1,9 @@
-# claude-deck（iPhone）
+# claude-deck（iPhone・iPad）
 
-同じ Wi-Fi の Mac で動いている claude-deck（`mac/`）の「iPhone 連携」の口につなぎ、Claude Code のセッションを見て答える iPhone アプリ。
+同じ Wi-Fi の Mac で動いている claude-deck（`mac/`）の「iPhone 連携」の口につなぎ、Claude Code のセッションを見て答える iPhone・iPad アプリ。
 API の仕様は `mac/docs/remote-api.md`、通信と型は共有パッケージ `packages/DeckCore`。
 
-- SwiftUI・iOS 17 以上・iPhone のみ・ダーク固定
+- SwiftUI・iOS 17 以上・iPhone と iPad の両対応（`TARGETED_DEVICE_FAMILY = 1,2`。iPad は全向き・Split View / Slide Over 可）・ダーク固定
 - バンドル ID `$(DECK_BUNDLE_PREFIX).ios` / チーム `$(DEVELOPMENT_TEAM)`（どちらも `config/Local.xcconfig` に書く。下の「署名・識別子」）/ 署名は自動 / 版は `MARKETING_VERSION`（0.1.0）と `CURRENT_PROJECT_VERSION`（1）
 
 ## できること
@@ -14,12 +14,30 @@ API の仕様は `mac/docs/remote-api.md`、通信と型は共有パッケージ
 | ルーム一覧 | 要対応 / 稼働中 / 待機（Mac の並び順のまま）。ドット絵のアイコン・外部タグ・ブランチ・状態と直近の一行・時刻・未読（開いていない間に届いた応答の数）・要回答の印 |
 | 会話 | ユーザーは右の青、Claude は左の暗色（Markdown の見出し・表・リスト・引用・コード）、画像のサムネイル（押すと全画面）、ツールは「ツール N件 ▸」、外部セッションへ送った伝言は点線の吹き出し |
 | カード | 権限（Channels → 端末のプロンプトの順。許可 / 拒否）、選択肢（選択・複数選択・問いのタブ・キャンセル。Esc が終了になるメニューは確認してから `confirmExit`）、読めない選択肢（閉じるだけ）、Channels の無い外部セッションの案内 |
-| 入力欄 | ホスト中のセッションはメッセージ、外部セッションは伝言。Mac が送れない理由（選択待ち等）を出している間は無効 |
+| 入力欄 | ホスト中のセッションはメッセージ、外部セッションは伝言。Mac が送れない理由（選択待ち等）を出している間は無効。ホスト中のセッション（Mac の `send.acceptsImages` が true）には写真を添えられる（下の「画像を送る」）。ハードウェアキーボードでは ⏎ 送信・⇧⏎（⌥⏎）改行。本文は UITextView（`ComposerTextView`）で、⏎ を IME に渡す前（`pressesBegan`）に変換中かを見て、変換中なら確定に使う。ソフトウェアキーボードの改行キーは改行のまま |
 | 接続 | Mac 名・再接続・ペアリングの解除（Mac から取り消し + 鍵を消す）・要対応の通知の入り切り |
 | 通知 | Mac で要対応が続くと iCloud 経由でプッシュ（アプリを閉じていても・外出先でも）。開くと該当ルームへ（つながっていなければ案内を出し、つながって一覧が届いたら開く） |
 
+### 画面の組み方（iPhone・iPad）
+
+- 横幅が regular（iPad の全画面・広い Split View）: 左にルーム一覧・右に会話の 2 列（`NavigationSplitView`。縦向きでも 2 列で出し、一覧は左上のボタンで畳める）。
+  未選択の時は右に案内を出す。選んだルームが一覧から消えたら選択を外して案内に戻す（`RoomSelection.kept`）。通知から開くルームも右に開く。
+  接続の帯と一覧の上の案内（監視が止まっている・通知のルームを開けなかった）は一覧の側に出し、一覧を畳んでいる間だけ右の側に出す。
+- 横幅が compact（iPhone・iPad の狭い Split View / Slide Over）: 一覧 → 会話の積み上げ（消えたルームの会話は「もう一覧にありません」を出したまま）。
+- 開いている会話は 2 列と積み上げで共有するので、Split View の幅を変えても同じ会話のまま。画面が作り直される間の「開いた・閉じた」は画面ごとの印で受け、最後に開いた画面だけが閉じられる（未読・アプリ内の通知が狂わない）。
+- 文言の端末名は `DeviceKind`（iPhone / iPad）で出し分ける。QR の読み取りは iPad の横向き・逆さでも映像を水平に保つ（`AVCaptureDevice.RotationCoordinator`）。
+- 会話の本文と入力欄は最大 760pt、ペアリングの画面は最大 560pt に収めて中央に寄せる（`DeckTheme.readableWidth` / `formWidth`）。
+
 操作の結果は `RemoteResultText`（DeckCore）で日本語にして会話の末尾に出す（`answered` / `gone` / `changed` / `busy` / `timeout` / `blocked_menu` …）。
 `timeout` は「後から反映されることがある」旨を出し、自動では送り直さない。
+
+## 画像を送る
+
+- 入力欄の左の写真のボタン（`PhotosPicker`・複数選択可・残りの枚数まで。写真ライブラリの許可は要らない）で選ぶと、入力欄の上にサムネイルを並べ、× で外せる。本文が空でも画像だけで送れる。
+- 上限は Mac と同じ `RemoteImageLimits`（1 通 4 枚・1 枚 3MB・合計 8MB）。送る前に `ComposerImagePreparer`（`Model/ComposerImages.swift`）で
+  長辺 2048 ピクセルまで縮め、向きを反映し、位置情報などのメタデータを落として書き直す。PNG（スクリーンショット等）は 1 枚 2MB に収まれば PNG のまま、
+  それ以外（HEIC を含む）と収まらない PNG は JPEG（品質を下げ、それでも入らなければさらに縮める）にする。整えられなかった写真は理由を出す。
+- 送信中・失敗の扱いは文字の送信と同じ（送れたら本文と画像を空にし、送れなければ残して理由を出す）。伝言（外部セッション）と、画像を知らない古い Mac には付けない。
 
 ## 接続と切れた時
 
@@ -56,13 +74,13 @@ ios/
   Info.plist                  上の追加分だけ（GENERATE_INFOPLIST_FILE と合わせる。フォルダ同期の外に置いてリソース扱いさせない）
   ClaudeDeck/
     App/                      @main・RootView・画面確認用の見本データ（Debug のみ）
-    Model/                    AppModel（接続・一覧・会話・操作・通知から開く）・PairingKeychain・RoomCards（カードの優先順・リンクの解析）
+    Model/                    AppModel（接続・一覧・会話・操作・通知から開く・送る前の画像）・ComposerImages（写真を送れる形に整える）・PairingKeychain・RoomCards（カードの優先順・リンクの解析）・RoomSelection（2 列の選択）
     Notify/                   要対応の通知（iCloud の購読・通知の受け口 DeckAppDelegate・設定の欄）
     ja.lproj/                 通知の見出し・本文のキー
     Theme/DeckTheme.swift     mac のチャット画面と同じトークン
     Views/                    PixelAvatar・接続の帯と設定・Pairing/・Rooms/・Conversation/（MarkdownView は mac から移植）
     Assets.xcassets           アプリアイコン（scripts/make-app-icon.sh で DeckCore のドット絵から描く）・AccentColor
-  ClaudeDeckTests/            リンクの解析と確認待ち・キーチェーン・カードの優先順・DeckCore の判定（iOS 上）・自己署名 TLS への接続（ATS の確認）
+  ClaudeDeckTests/            リンクの解析と確認待ち・キーチェーン・カードの優先順・2 列の選択・入力欄の変換中の判定・DeckCore の判定（iOS 上）・自己署名 TLS への接続（ATS の確認）・写真の整え方と入力欄の画像
   scripts/make-app-icon.sh    アイコンを描き直す
 ```
 
@@ -104,13 +122,14 @@ cp config/Local.example.xcconfig config/Local.xcconfig   # DEVELOPMENT_TEAM・DE
 ```sh
 xcodebuild -project ios/ClaudeDeck.xcodeproj -scheme ClaudeDeck -destination 'platform=iOS Simulator,name=iPhone 17' build
 xcodebuild -project ios/ClaudeDeck.xcodeproj -scheme ClaudeDeck -destination 'platform=iOS Simulator,name=iPhone 17' test
+xcodebuild -project ios/ClaudeDeck.xcodeproj -scheme ClaudeDeck -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' test
 # 実機向け（署名なしで通るかだけ）
 xcodebuild -project ios/ClaudeDeck.xcodeproj -scheme ClaudeDeck -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 # 共有パッケージ
 cd packages/DeckCore && swift test
 ```
 
-画面だけ見たい時は Debug ビルドを起動引数 `-demo rooms` / `-demo conversation` で開く（通信しない見本のデータ）。
+画面だけ見たい時は Debug ビルドを起動引数 `-demo rooms` / `-demo conversation` で開く（通信しない見本のデータ）。iPad のシミュレータで開くと 2 列で描く（`-demo conversation` は右に mirio の会話を開いた状態）。
 
 ## TestFlight に出す
 

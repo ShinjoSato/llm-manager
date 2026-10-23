@@ -24,7 +24,7 @@ Claude Code を「マネージャー」として運用するためのプロジ�
 | 権限確認の中継（Channels） | 実装済み（実機の claude では未確認） | `mac/Sources/ClaudeDeckChannel`・`mac/Sources/MonitorKit/Channel` |
 | 上限の残量（statusLine） | 稼働 | `mac/scripts/statusline.sh` |
 | iPhone 連携の口（同じ Wi-Fi・TLS・ペアリング） | mac 側実装済み（既定は無効） | `mac/Sources/MonitorKit/Remote`・`mac/Sources/ClaudeDeck/Remote`・仕様 `mac/docs/remote-api.md` |
-| iPhone アプリ（claude-deck iOS） | 実装済み（シミュレータで確認・実機と TestFlight は未確認） | `ios/`（詳細 `ios/README.md`） |
+| iPhone・iPad アプリ（claude-deck iOS） | 実装済み（シミュレータで確認・実機と TestFlight は未確認） | `ios/`（詳細 `ios/README.md`） |
 | mac / iPhone の共有パッケージ（DeckCore） | 稼働 | `packages/DeckCore` |
 | 要対応の iPhone 通知（iCloud・CloudKit のプライベート DB） | 実装済み・**保留中（既定で無効）**。コンテナ・App ID・プロファイルの登録を見送っている（2026-10-05 ユーザー判断） | `mac/Sources/ClaudeDeck/Notify`・`ios/ClaudeDeck/Notify`・`packages/DeckCore/Sources/DeckCore/Notify`（手順 `mac/README.md`「iPhone への通知」） |
 | App Store Connect の版・審査・メタデータの表示（読むだけ） | 実装済み（本物の API で取得を確認・画面の目視は未確認） | `mac/Sources/MonitorKit/AppStore`・`mac/Sources/ClaudeDeck/Chat/Views/Directory/AppStoreSection.swift` |
@@ -70,14 +70,15 @@ Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts
 - **画面の構成**:
   - 左端の切り替えバーで左の一覧を「ルーム」（監視のセッション + ホスト中のセッションを要対応 / 稼働中 / 待機で並べる）と「ディレクトリ」（設定に登録したプロジェクト。最上部の固定行「リンク」で横断のリンク一覧）に切り替える。「一覧の切り替えバー」「ルーム一覧」
   - 中央は `ChatModel.center` で、会話（`TranscriptStore` から組み立てたチャット。端末ビューは画面に載せず、PTY の受信と画面読み取りだけに使う）・ディレクトリの詳細（見出しの操作と、その下のタブ（サイト・画像・iPhone・App Store・リンク・スレッド）で選んだ節だけを欄いっぱいに出す本文。サイト・iPhone・App Store は該当しないプロジェクトでは出さず、最後に開いたタブをプロジェクトごとに覚える。判定は `mac/Sources/MonitorKit/Projects/DirectoryTabs.swift`）・横断のリンク一覧を出し分ける。「会話（中央）」「ルーム一覧」
-  - 見出しのボタン（VS Code・GitHub・リンク・ピン・Xcode・閉じる・別ウィンドウで開く・ディレクトリでは起動・Finder・設定で編集）はアイコンだけで、入りきらなければ優先度の低いものから「…」へ回す。「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` がある時だけで、「閉じる」は AppleScript でそのワークスペースだけを閉じる（初回は macOS のオートメーション許可が要る）。
+  - 見出しのボタン（VS Code・GitHub・リンク・ピン・Xcode・閉じる・別ウィンドウで開く・端末の画面（ホスト中のルームだけ）・ディレクトリでは起動・Finder・設定で編集）はアイコンだけで、入りきらなければ優先度の低いものから「…」へ回す。「Xcode」「閉じる」は `.xcworkspace` / `.xcodeproj` がある時だけで、「閉じる」は AppleScript でそのワークスペースだけを閉じる（初回は macOS のオートメーション許可が要る）。
   - 右はステージパネル（360px。SceneKit の 3D ステージと、選択中のルームのプロジェクトの LP のプレビューを切り替える）。「ステージパネル」
   - ルームは一覧の右クリックか見出しのボタンで別ウィンドウにも開ける（`RoomWindows`・同じルームは 1 枚・中身は同じ `ConversationView` で送信と回答は同じ経路・下書きと添付はルームごとに共有・メインで他を見ている間も取得と既読を続ける・別ウィンドウ同士は macOS のタブにまとめられる・閉じてもセッションは止めない・復元しない）。「別ウィンドウ」
   - Claude の返答の吹き出しは右クリックかホバーで出るボタンで 1 つだけ別ウィンドウに出せる（`BubbleWindows`・開いた時点の本文の写しを `MarkdownView` で描き、ルームが閉じても見続けられる・タイトルは「ルーム名 · 時刻」・全文コピーのボタン・同じ吹き出し（sessionId と項目の id）は 1 枚・吹き出し同士は別の tabbingIdentifier でタブにまとめられる・⌘W で閉じる・寿命はルームの別ウィンドウと同じ。作り方と置き方は `DetachedWindow` で共通）。「吹き出しの別ウィンドウ」
   - 設定画面（「claude-deck → 設定…」⌘,）のタブはプロジェクト・GitHub・iPhone 連携・キャラクター・書き出し・読み込み・起動と終了・外観（ナイト / ライト）。「設定（settings.json）」
   - コードは画面が `mac/Sources/ClaudeDeck/`（`Chat/Model/`・`Chat/Views/` の `RoomList` / `Directory` / `Links` / `Conversation` / `Composer`・`Terminal/`（`ClaudeTerminalView` を `+Launch` / `+Input` / `+Screen` / `+Limit` の extension に分ける）・`Stage/`・`Settings/`）、UI に依らない判定は `mac/Sources/MonitorKit/`（テストあり）。
-- **ホスト中のセッションへの送信と回答**: 入力欄は ⏎ 送信・⇧⏎ 改行で、PTY に bracketed paste で本文を入れ、入ったのを画面で確かめてから Enter（画像は先にパスを貼って `[Image #N]` を確かめる）。**端末で選択待ち（権限プロンプト・plan 承認・AskUserQuestion・trust 確認・入力欄に重なったダイアログ・セッションファイルの `waitingFor`）の間は送らない**（Enter が選択の確定になるため）。権限カードは Channels があれば `store.decide`、無ければ端末に許可 `1` / 拒否 `Esc`。選択肢カードは ↑/↓ で「❯」を 1 行ずつ動かし、着いたのを画面で確かめてから Enter（番号キーは使わない）。どれも押した時のカードと今の画面が違えば送らない。「入力欄と PTY への送信」「権限カード」「選択肢カード」
-  - **Claude Code の TUI を更新したら判定を見直す**: `mac/Sources/MonitorKit/Chat/PTYInput.swift`・`MenuPrompt.swift`・`ScreenPane.swift`（入力欄は上下に罫線・メニューは ❯ の下を罫線で閉じない、重ね表示のダイアログは入力欄の上の罫線に案内行が接する、差分パネルは縦線 1 本で区切る、が前提。v2.1.286 / v2.1.288 で確認）。選択肢カードは本物の claude での目視が未確認。
+- **ホスト中のセッションへの送信と回答**: 入力欄は ⏎ 送信・⇧⏎ 改行で、PTY に bracketed paste で本文を入れ、入ったのを画面で確かめてから Enter（画像は先にパスを貼って `[Image #N]` を確かめる）。**端末で選択待ち（権限プロンプト・plan 承認・AskUserQuestion・trust 確認・入力欄に重なったダイアログ・セッションファイルの `waitingFor`）の間は送らない**（Enter が選択の確定になるため）。権限カードは Channels があれば `store.decide`、無ければ端末に許可 `1` / 拒否 `Esc`。選択肢カードは ↑/↓ で「❯」を 1 行ずつ動かし、着いたのを画面で確かめてから Enter（番号キーは使わない）。どれも押した時のカードと今の画面が違えば送らない。**カードで答えられない時の逃げ道**は「端末の画面」のシート（ホスト中のルームの見出しとカードから開く・端末の今の表示を 0.3 秒ごとに出し、← ↑ ↓ → Enter Esc Tab Space 1〜9 だけを 1 回ずつ送る・文字の自由入力は無い・カードの移動中 / 入力欄の送信中 / 権限の回答中は送らない・キーの表は `PTYInput.swift` の `TerminalKey`）。「入力欄と PTY への送信」「権限カード」「選択肢カード」「端末の画面」
+  - **送信中（二度押しの防止）はカード単位**: 押したカードの印（`PromptCardIdentity`）にだけ付け、次の問いのカードは引き継がずに生まれる。上限 12 秒で必ず外して案内を出し、外すのは自分の印の時だけ。カードは自分の body で `PromptCardBoard` を読む。押しても送れない時は必ずカードに理由を出す。操作の各段階は `~/Library/Logs/claude-deck/menu-ops.log`（直近 500 行・本文なし・0600）。判定は `mac/Sources/MonitorKit/Chat/PromptOperations.swift`（テストあり）。「選択肢カード」
+  - **Claude Code の TUI を更新したら判定を見直す**: `mac/Sources/MonitorKit/Chat/PTYInput.swift`・`MenuPrompt.swift`・`ScreenPane.swift`（入力欄は上下に罫線・メニューは ❯ の下を罫線で閉じない、重ね表示のダイアログは入力欄の上の罫線に案内行が接する、差分パネルは縦線 1 本か全行で空白の桁で区切る（左の欄の罫線がその手前で切れる）、が前提。v2.1.286 / v2.1.288 / v2.1.300 で確認）。確かめた版は `ClaudeCodeVersions.swift` の 1 か所に持ち、セッションファイルの `version` が無い版ならカードに案内を出す。版を足す時は一覧と画面の写し（`mac/Tests/ClaudeDeckTests/Fixtures/ClaudeCode-<版>/`）を足す。選択肢カードの押下は本物の claude（アプリの画面）での目視が未確認。
 - **外部セッション（ターミナル等で起動したもの）**: 入力欄は「伝言」（受信箱ソケットへ直接書く。本人の指示・権限承認にはならない）、権限は Channels がある時だけ許可 / 拒否。「アプリに引き継ぐ」は同じ sessionId の claude かを確かめて SIGINT → SIGTERM し、終了を確認できて同じ sessionId の生存 pid が他に無い時だけ同じ cwd で `claude --resume=<sessionId>`（UUID 形式のみ）を PTY で起動する（ターミナル起動の対話セッションだけ・npm 版は不可）。「外部セッション」
 - **終了と次の起動**: ホスト中のセッションを `hosted-sessions.json` に記録し（隣の `.lock` を flock で持ち、別の claude-deck が動いていれば再開も書き込みもしない）、次の起動で `claude --resume=<sessionId>` で再開して、稼働中だったものには続きを頼む。上限到達中・同じ会話が動いている・直前の自動再開で落ちた時は見送りとして帯に出す。⌘Q・ウィンドウを閉じる時に稼働中・権限待ちがあれば確認を出す。「終了と次の起動」
 - **サイト（LP）のプレビューと開発サーバー**: ディレクトリの詳細とステージパネルで、Next.js の書き出し（`out/`）をアプリ内の静的配信（サイトごとに 127.0.0.1 の OS が選ぶポート・GET / HEAD のみ・`out/` の配下だけ・LAN には出さない）で見る。開発サーバー（`npm run dev`）は ▶ を押した時だけ起動し（自動起動しない）、ルームではなくプロジェクトに付く（ルームを閉じても止めない）。停止・アプリの終了・設定からの削除でプロセスグループごと止めるが、アプリの強制終了・クラッシュでは残りうる。「ルーム一覧」の「サイト」
@@ -88,11 +89,11 @@ Channels のチャネル（`claude-deck-channel`）と statusLine（`mac/scripts
   紐づけは設定画面のプロジェクトの「App Store」の節で一覧から選ぶ（候補は `.claude/appstore.json` の appId と Xcode のバンドル ID が一致するもの）。「ルーム一覧」の「App Store」・「設定（settings.json）」
 - **リンク**: settings.json の `links`（名前・URL・種類・ピン・メモ・毎月の確認日）を見出しの「リンク」・ピンのボタン・ディレクトリの詳細・横断のリンク一覧から開く。開くのは http / https で host のあるものだけ。最終確認日は `link-visits.json`、確認の印はアプリの中だけ（通知はしない）。「会話（中央）」「ルーム一覧」「設定（settings.json）」
 - **アプリ内サーバー（:8766）**: `127.0.0.1:8766` で `POST /hook`・`POST /api/channel/permissions`・`GET /api/health` だけを出す（Host / Origin / 接続元はループバックのみ）。ポートは `CLAUDE_DECK_SERVER_PORT`（`off` で開かない）。**アプリ側の SIGTERM / SIGINT は `SIG_IGN` にしない**（exec を越えてホスト中の claude に残り、上限到達時の `terminate()` が効かなくなる。何もしないハンドラで捕捉して通常の終了経路に乗せる）。実装は `mac/Sources/MonitorKit/Server/`。「アプリ内サーバー（:8766）」
-- **iPhone 連携の口**: 設定画面の「iPhone 連携」タブで有効にした時だけ（**既定は無効**）、選んだ LAN のインターフェースの IPv4・既定ポート 8767 で **TLS のみ**で待ち受ける（0.0.0.0 にはしない。`/hook` 等は LAN に出さない）。自己署名の証明書を QR の指紋で iPhone にピン留めさせ、端末トークン（mac にはハッシュだけ）で全 API を Bearer で受ける。**iPhone からの操作は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理に渡す**（`promptId` / `menuId` が今のものと一致する時だけ・選択待ちでは送らない）。有効にした時と別のネットワークでは開かない。新しい claude の起動口・headless の口は無い。実機ではファイアウォールの「受信接続を許可」を確かめる。仕様は `mac/docs/remote-api.md`。「iPhone 連携」
+- **iPhone 連携の口**: 設定画面の「iPhone 連携」タブで有効にした時だけ（**既定は無効**）、選んだ LAN のインターフェースの IPv4・既定ポート 8767 で **TLS のみ**で待ち受ける（0.0.0.0 にはしない。`/hook` 等は LAN に出さない）。自己署名の証明書を QR の指紋で iPhone にピン留めさせ、端末トークン（mac にはハッシュだけ）で全 API を Bearer で受ける。**iPhone からの操作は `ChatModel+Remote.swift` が画面のカード・入力欄と同じ処理に渡す**（`promptId` / `menuId` が今のものと一致する時だけ・選択待ちでは送らない）。iPhone から画像（PNG / JPEG・1 通 4 枚・1 枚 3MB・合計 8MB・1600 万画素まで。`RemoteImageLimits`）を付けて送れ、mac は検証して入力欄の添付と同じ一時保存先・同じ経路で送る（外部セッションの伝言には付けない）。有効にした時と別のネットワークでは開かない。新しい claude の起動口・headless の口は無い。実機ではファイアウォールの「受信接続を許可」を確かめる。仕様は `mac/docs/remote-api.md`。「iPhone 連携」
 - **要対応の iPhone 通知（iCloud）**: 要対応が 5 秒続いたら自分の iCloud（CloudKit のプライベート DB）にレコード `AttentionNotice`（ルーム名・定型文・時刻・ルーム / セッション ID だけ。**会話の本文・ツールの入力は載せない**）を書き、解消したら消す。**コンテナが空・未定義の起動（`swift run` を含む）と、エンタイトルメントの無い起動（ad-hoc）では無効**。**iCloud コンテナ・App ID・プロファイルの登録はユーザーが行う**（コンテナは消せない。Claude は `-allowProvisioningUpdates` も実行しない）。手順は「iPhone への通知（iCloud・CloudKit）」。
 - **ビルド/実行**: `cd mac && swift build` / `swift run` / `swift test`。Swift 6.3 / Xcode 26.5 で確認済み（Swift 6.4 / Xcode 27 では `--build-system native` を付けて確認）。
 - **署名・識別子**: チーム ID・バンドル ID・iCloud コンテナはリポジトリに書かず、`config/Local.xcconfig`（追跡しない。雛形は `config/Local.example.xcconfig`）に `DEVELOPMENT_TEAM`・`DECK_BUNDLE_PREFIX`・`DECK_ICLOUD_CONTAINER` を書く。既定（`config/Deck.xcconfig`）はチーム・コンテナ空・`local.claude-deck`。iPhone の Xcode プロジェクトは全構成が `Deck.xcconfig` を土台にし、mac の bundle.sh も同じファイルを読む（環境変数 `CLAUDE_DECK_TEAM_ID` / `CLAUDE_DECK_BUNDLE_PREFIX` / `CLAUDE_DECK_ICLOUD_CONTAINER` で上書き可）。「署名・識別子」
-- **`.app` 化**: `mac/scripts/bundle.sh`（`--help` で使い方）→ `mac/dist/claude-deck.app` → `open mac/dist/claude-deck.app`。チーム ID とコンテナが設定されていて、このアプリ用の macOS のプロビジョニングプロファイルがあれば Apple Development で署名して iCloud のエンタイトルメントを付け、無ければ ad-hoc。チャネル `Contents/MacOS/claude-deck-channel` も同梱。Metal Toolchain が無い環境では自動で `--build-system native` に切り替える。Developer ID 署名・公証・配布・自動更新はしない。「`.app` として起動する」
+- **`.app` 化**: 普段は `mac/scripts/install.sh`（develop を最新に → 組み立て → 動いている claude-deck を普通に終了させて → `/Applications/claude-deck.app` と入れ替え → 起動。終了の確認で取りやめれば入れ替えない。`--no-pull` / `--no-launch` / `--dest`）。組み立てだけなら `mac/scripts/bundle.sh`（`--help` で使い方）→ `mac/dist/claude-deck.app`。TestFlight はサンドボックス必須で中心機能が動かないため使わない。チーム ID とコンテナが設定されていて、このアプリ用の macOS のプロビジョニングプロファイルがあれば Apple Development で署名して iCloud のエンタイトルメントを付け、無ければ ad-hoc。チャネル `Contents/MacOS/claude-deck-channel` も同梱。Metal Toolchain が無い環境では自動で `--build-system native` に切り替える。Developer ID 署名・公証・配布・自動更新はしない。「`.app` として起動する」
 
 ## 共有パッケージ DeckCore（`packages/DeckCore`）
 
@@ -103,17 +104,18 @@ mac アプリと iPhone アプリで共有する、プラットフォームに�
 - mac の `MonitorKit` は DeckCore にローカル依存（`.package(path: "../packages/DeckCore")`）し、`@_exported import` で再公開する（画面側の import はそのまま）。
 - テスト: `cd packages/DeckCore && swift test`。mac 側の `RemoteClientIntegrationTests` は mac の口をループバックに立て、DeckCore のクライアントで QR → ペアリング → 一覧 → SSE → 操作 → 取り消しまで通す。
 
-## iPhone アプリ（`ios/`）
+## iPhone・iPad アプリ（`ios/`）
 
-SwiftUI・iOS 17 以上・iPhone のみ。バンドル ID `$(DECK_BUNDLE_PREFIX).ios`・チームは `DEVELOPMENT_TEAM`（どちらも `config/Local.xcconfig`）・配布は TestFlight（アーカイブ・アップロードはユーザーが行う）。詳細は `ios/README.md`。
+SwiftUI・iOS 17 以上・iPhone と iPad の両対応（同じアプリ。iPad は全向き・Split View / Slide Over 可）。バンドル ID `$(DECK_BUNDLE_PREFIX).ios`・チームは `DEVELOPMENT_TEAM`（どちらも `config/Local.xcconfig`）・配布は TestFlight（アーカイブ・アップロードはユーザーが行う）。詳細は `ios/README.md`。
 - Xcode プロジェクト `ios/ClaudeDeck.xcodeproj` は手書き（フォルダ同期のグループなので、`ios/ClaudeDeck/`・`ios/ClaudeDeckTests/` にファイルを置けば自動で入る）。DeckCore はローカルの Swift Package として参照。共有スキーム `ClaudeDeck`。
-- 画面: ペアリング（カメラで QR・貼り付け・`claude-deck://pair` で開かれたリンク。**どれも名前と指紋の確認画面を経てから送る**）、ルーム一覧、会話、権限 / 選択肢カード、入力欄、接続の設定（解除）。見た目・文言は mac のチャット画面にそろえる（`ios/ClaudeDeck/Theme/DeckTheme.swift`）。
+- 画面: ペアリング（カメラで QR・貼り付け・`claude-deck://pair` で開かれたリンク。**どれも名前と指紋の確認画面を経てから送る**）、ルーム一覧、会話、権限 / 選択肢カード、入力欄（ホスト中のセッションには PhotosPicker で写真を添えられる。送る前に長辺 2048 まで縮めてメタデータを落とし、2MB に収まる PNG は PNG のまま・それ以外は JPEG にする）、接続の設定（解除）。見た目・文言は mac のチャット画面にそろえる（`ios/ClaudeDeck/Theme/DeckTheme.swift`）。
+- 画面の組み方: 横幅が regular（iPad）なら左にルーム一覧・右に会話の 2 列（`NavigationSplitView`・未選択は案内・選んだルームが一覧から消えたら外す・通知から開くルームも 2 列で開く）、compact（iPhone・iPad の狭い Split View）は一覧 → 会話の積み上げ。選択は両方で共有し、幅が変わっても同じ会話を開いたまま（`ios/ClaudeDeck/Views/Rooms/RoomListScreen.swift`・判定は `Model/RoomSelection.swift`）。会話・入力欄は読みやすい最大幅に収める。ハードウェアキーボードでは入力欄で ⏎ 送信・⇧⏎ 改行（UITextView の `pressesBegan` で IME に渡す前に変換中かを見て、変換中の ⏎ は確定。実機のキーボードでは未確認）。文言の端末名は `DeviceKind` で iPhone / iPad を出し分ける。
 - 接続: `/v1/events?transcripts=*` を 1 本張り、届いた `state` で一覧、`transcript` で開いている会話の追記と未読を数える。切れたら理由（別の Wi-Fi・スリープ・口が無効・回数制限・指紋違い・取り消し）と案内を出し、1→30 秒の指数的な待ち（回数制限は 1〜2 分）で張り直す。裏に回ったら閉じ、前に出たら張り直す。指紋違い・取り消しは再ペアリングを促して止まる。
 - 鍵: 接続先・指紋・端末トークンはキーチェーン（`AfterFirstUnlockThisDeviceOnly`）。
 - 通知: 設定の「要対応を通知する」（既定は切）で通知の許可と iCloud の購読（`ios/ClaudeDeck/Notify/`）。通知を開くと該当ルームへ（未接続なら案内を出して、つながったら開く）。エンタイトルメントは `ios/ClaudeDeck.iCloud.entitlements`（`aps-environment`・iCloud）で、**既定のビルドには付けない**（実機の自動署名が消せないコンテナを勝手に登録しないため。有効にする時に `CODE_SIGN_ENTITLEMENTS` に設定する）。
 - TLS: CA の検証はせず、証明書の SHA-256 がピンと一致した時だけ `.useCredential`。ATS の例外は `NSAllowsLocalNetworking` だけ。`ITSAppUsesNonExemptEncryption` は false（暗号は OS の TLS と、指紋の SHA-256 だけで、輸出規制の申告が要らない範囲のため）。
 - 画面確認用: Debug ビルドを `-demo rooms` / `-demo conversation` の起動引数で開くと、通信せずに見本のデータで描く。
-- ビルド / テスト: `xcodebuild -project ios/ClaudeDeck.xcodeproj -scheme ClaudeDeck -destination 'platform=iOS Simulator,name=iPhone 17' build`（`test` でユニットテスト。アプリの中で自己署名の TLS に指紋だけで繋がる試験を含む）。
+- ビルド / テスト: `xcodebuild -project ios/ClaudeDeck.xcodeproj -scheme ClaudeDeck -destination 'platform=iOS Simulator,name=iPhone 17' build`（`test` でユニットテスト。アプリの中で自己署名の TLS に指紋だけで繋がる試験を含む）。iPad は `name=iPad Pro 11-inch (M5)` でも通す。
 
 ## Claude Code セッション監視（mac アプリの中）
 
