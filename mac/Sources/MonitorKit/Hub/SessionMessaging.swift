@@ -56,7 +56,7 @@ public enum SessionMessaging {
         }
         addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
 
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = ChildProcessControl.makeSocket(domain: AF_UNIX, type: SOCK_STREAM)
         guard fd >= 0 else { return String(cString: strerror(errno)) }
         defer { close(fd) }
         var noSigPipe: Int32 = 1

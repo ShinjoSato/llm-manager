@@ -5,6 +5,8 @@ import MonitorKit
 struct RoomListView: View {
     @Bindable var model: ChatModel
     @State private var showingLauncher = false
+    /// ターミナルで何かが動いているルームを閉じる前の確認。
+    @State private var closing: HostedSession?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,7 +15,7 @@ struct RoomListView: View {
             if !model.store.connection.isConnected { ConnectionNotice(connection: model.store.connection) }
             if let notice = HookServerNotice.text(for: model.store.serverState) { HookServerNotice(text: notice) }
             if QuitCoordinator.shared.isWaiting { QuitWaitNotice(coordinator: .shared) }
-            if model.restorer.notice != nil || !model.restorer.deferred.isEmpty { RestoreNotice(restorer: model.restorer) }
+            if model.restorer.notice != nil || !model.restorer.deferred.isEmpty || !model.restorer.waiting.isEmpty { RestoreNotice(restorer: model.restorer) }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     switch model.listMode {
@@ -27,6 +29,16 @@ struct RoomListView: View {
             .scrollIndicators(.never)
         }
         .background(ChatTheme.sidebar)
+        .confirmationDialog("ターミナルで動いているものがあります", isPresented: Binding(get: { closing != nil },
+                                                                          set: { if !$0 { closing = nil } })) {
+            Button("閉じる", role: .destructive) {
+                if let session = closing { model.close(session) }
+                closing = nil
+            }
+            Button("やめる", role: .cancel) { closing = nil }
+        } message: {
+            Text("「\(closing?.project.name ?? "")」のターミナルで何かが動いています。ルームを閉じると、そのシェルと動いているものも止めます。")
+        }
     }
 
     private var header: some View {
@@ -165,7 +177,13 @@ struct RoomListView: View {
         Button("別ウィンドウで開く") { model.openWindow(for: room.id) }
         Divider()
         if let session = room.hosted {
-            Button(session.end == nil ? "ルームを閉じる（claude を終了）" : "ルームを閉じる") { model.close(session) }
+            Button(session.end == nil ? "ルームを閉じる（claude を終了）" : "ルームを閉じる") {
+                if model.shells.busyRooms.contains(room.id) {
+                    closing = session
+                } else {
+                    model.close(session)
+                }
+            }
         }
         Button("Finder で表示") { SystemActions.revealInFinder(path: room.cwd) }
     }

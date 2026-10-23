@@ -430,10 +430,3 @@ final class GitRunnerTests: XCTestCase {
         XCTAssertNil(GitRunner.locate(environment: [:], selectedDeveloperDir: nil, isExecutable: { $0 == "/usr/bin/git" }))
     }
 }
-
-private extension Result {
-    var failure: Failure? {
-        if case .failure(let error) = self { return error }
-        return nil
-    }
-}

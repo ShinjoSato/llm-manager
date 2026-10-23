@@ -19,13 +19,15 @@ enum MonitorBridge {
         store.stop()
     }
 
-    /// SIGTERM / SIGINT では applicationWillTerminate が呼ばれないので、通常の終了経路に乗せる。
+    /// SIGTERM / SIGINT / SIGHUP では applicationWillTerminate が呼ばれないので、通常の終了経路に乗せる。
     private static func installTerminationSignals() {
         guard signalSources.isEmpty else { return }
-        TerminationSignals.installNoopHandlers(for: [SIGTERM, SIGINT])
-        for sig in [SIGTERM, SIGINT] {
+        TerminationSignals.installNoopHandlers()
+        for sig in TerminationSignals.handled {
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             source.setEventHandler {
+                // 開発サーバー等を止めている間に強制終了されても、ホスト中のセッションの記録は残す。
+                QuitCoordinator.shared.model?.restorer.saveNow()
                 // 終了の確認や保留で applicationWillTerminate まで届かなくても、開発サーバーと mcpbridge は先に止める。
                 DevServerStore.shared.stopAllBlocking()
                 IOSPreviewService.shared.stopAllBlocking()

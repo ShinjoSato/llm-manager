@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import MonitorKit
 
@@ -60,6 +61,14 @@ struct HeaderAction: Identifiable {
         return item
     }
 
+    /// 「端末の画面」（ホスト中のルームだけ）。
+    static func terminalScreen(priority: Int, subpriority: Int, action: @escaping () -> Void) -> HeaderAction {
+        var item = HeaderAction.button(id: "terminal", priority: priority, symbol: "terminal", name: "端末の画面",
+                                       detail: "今の端末の表示を見て、矢印・Enter・Esc などのキーを直接送る（カードで答えられない時に）", action: action)
+        item.subpriority = subpriority
+        return item
+    }
+
     /// 「Xcode」と「閉じる」（`project` が無ければ出さない）。閉じるは `onClose` で確認を開く。
     static func xcode(openPriority: Int, closePriority: Int, editors: EditorLauncher, target: EditorTarget,
                       project: URL?, onClose: @escaping () -> Void) -> [HeaderAction] {
@@ -113,6 +122,14 @@ struct HeaderAction: Identifiable {
                                                                  name: due ? "\(link.name)（確認が必要）" : link.name, busyStatus: nil) {
                                     editors.openLink(link, for: target)
                                 }))
+        }
+    }
+
+    /// 実行コマンド（設定の順に 1 つずつ。ホバーで本文を見せる）。
+    static func commands(priority: Int, commands: [ProjectCommand], run: @escaping (ProjectCommand) -> Void) -> [HeaderAction] {
+        commands.map { command in
+            .button(id: "command:\(command.name)", priority: priority, symbol: CommandSymbol.resolve(command), name: command.name,
+                    detail: ProjectCommands.help(for: command)) { run(command) }
         }
     }
 
@@ -182,5 +199,13 @@ struct HeaderActionRow: View {
             }
         }
         .fixedSize()
+    }
+}
+
+/// 実行コマンドのアイコン（この OS に無い名前は既定に落とす）。
+enum CommandSymbol {
+    static func resolve(_ command: ProjectCommand) -> String {
+        let name = ProjectCommands.symbol(for: command)
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil) == nil ? ProjectCommands.defaultSymbol : name
     }
 }

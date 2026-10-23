@@ -81,6 +81,8 @@ final class ChatModel {
     let editors: EditorLauncher
     /// ホスト中のセッションの記録と、起動時の再開。
     let restorer = SessionRestorer()
+    /// ルームのターミナルと、ルームごとに開いていたタブ。
+    let shells = RoomShells()
     /// 別ウィンドウで開いているルーム。
     private(set) var detached = DetachedRooms<RoomID>()
     /// 別ウィンドウを出す（無ければ作り、あれば前に出す）・閉じる。ウィンドウを持つ側が設定する。
@@ -165,6 +167,7 @@ final class ChatModel {
     private func discardVanishedExternalRooms(_ all: [Room]) {
         guard store.connection.isConnected else { return }
         outbox.discardVanishedExternalRooms(alive: Set(all.map(\.id)))
+        shells.reconcile(rooms: all) { [handover] in handover.inProgress.contains($0) }
     }
 
     private func buildRooms() -> [Room] {
@@ -289,9 +292,32 @@ final class ChatModel {
     }
 
     /// メインと別ウィンドウで出している会話。`includingHiddenMain` ならメインが詳細等を出している間も選択中のルームを含める（戻った時のため）。
+    /// 既読にする時（`includingHiddenMain` が false）は、ターミナルのタブを出しているウィンドウの会話を数えない。
     func shownSessionIds(includingHiddenMain: Bool) -> [String] {
-        let main = includingHiddenMain || center == .room ? selectedRoom?.sessionId : nil
-        return ShownSessions.sessionIds(main: main, detached: detached.rooms.map { room(id: $0)?.sessionId })
+        let mainShowsChat = selection.map { shells.tab(for: $0, window: nil) == .claude } ?? true
+        let main = includingHiddenMain || (center == .room && mainShowsChat) ? selectedRoom?.sessionId : nil
+        let windows = detached.entries.map { entry -> String? in
+            guard includingHiddenMain || shells.tab(for: entry.room, window: entry.token) == .claude else { return nil }
+            return room(id: entry.room)?.sessionId
+        }
+        return ShownSessions.sessionIds(main: main, detached: windows)
+    }
+
+    // MARK: - ターミナル
+
+    /// 実行コマンドを押した（確かめることがあれば確認を出す。送れなければ警告を出す）。`window` は押したウィンドウ（nil はメイン）。
+    func requestCommand(_ command: ProjectCommand, in room: Room, window: UUID?) {
+        if let failure = shells.request(command, in: room, window: window) { alerts.message = failure }
+    }
+
+    /// 確認で「送る」を押した。
+    func confirmCommand(_ confirmation: ShellConfirmation) {
+        if let failure = shells.confirm(confirmation, room: room(id: confirmation.room)) { alerts.message = failure }
+    }
+
+    /// ターミナルで何かが動いているルームの名前と、ルームの無くなったシェル（終了の確認に使う）。
+    var busyTerminalNames: [String] {
+        shells.busyRooms.compactMap { room(id: $0)?.name } + shells.busyOrphanNames.map { "\($0)（閉じたルーム）" }
     }
 
     // MARK: - 別ウィンドウ
@@ -305,6 +331,7 @@ final class ChatModel {
     /// 別ウィンドウが閉じられた（セッションはそのまま）。
     func roomWindowClosed(_ token: UUID) {
         detached.close(token)
+        shells.windowClosed(token)
     }
 
     /// 警告をメインに出すか（出したウィンドウが閉じられていればメインに回す）。
@@ -347,24 +374,38 @@ final class ChatModel {
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         outbox.forgetRoom(.hosted(session.id))
+        shells.close(.hosted(session.id))
         restorer.saveNow()
     }
 
     /// 引き継ぎで外部の claude を止められた。同じ会話を `--resume` で起動し、外部ルームの書きかけと添付を引き取る。
     private func resume(project: ManagedProject, sessionId: String, from roomId: RoomID) {
+        if let running = runningHosted(sessionId: sessionId) {
+            select(.hosted(running.id))
+            return
+        }
         let session = host(project, resuming: sessionId)
         outbox.move(from: roomId, to: .hosted(session.id))
+        shells.move(from: roomId, to: .hosted(session.id))
         if let duplicate = detached.retarget(from: roomId, to: .hosted(session.id)) { dismissRoomWindow(duplicate) }
         select(.hosted(session.id))
         restorer.saveNow()
     }
 
     /// 前回アプリが止まった時に動いていたセッションを同じ cwd で `--resume` する。書きかけも戻す。選択は未選択の時だけ移す。
-    func resumeRestored(_ record: HostedSessionRecord) -> HostedSession {
+    /// 同じ会話を既にホストしていれば起動せず nil。
+    func resumeRestored(_ record: HostedSessionRecord) -> HostedSession? {
+        guard runningHosted(sessionId: record.sessionId) == nil else { return nil }
         let session = host(SettingsStore.shared.project(atPath: record.cwd, orNamed: record.name), resuming: record.sessionId)
         if let draft = record.draft { outbox.drafts[.hosted(session.id)] = draft }
         if selection == nil { select(.hosted(session.id)) }
         return session
+    }
+
+    /// 同じ会話を動かしているホスト中のセッション（二重に起動しないための最終確認）。
+    private func runningHosted(sessionId: String) -> HostedSession? {
+        SessionRestore.runningHostIndex(sessionId: sessionId,
+                                        hosted: hosted.map { ($0.lastSessionId, $0.end == nil) }).map { hosted[$0] }
     }
 
     /// claude を起動して一覧に加える（上限で止まった時の知らせも受ける）。
@@ -374,6 +415,15 @@ final class ChatModel {
         hosted.append(session)
         session.start()
         return session
+    }
+
+    /// アプリの終了時。ホスト中の claude 全部に同時に切断（SIGHUP）を送る（待つのは呼ぶ側。次の起動で同じ会話を再開できるように）。
+    func sendHangUpToHostedSessions() -> ChildProcessControl.PendingHangUp {
+        let targets = hosted.filter { $0.end == nil }.compactMap { session -> ChildProcessControl.Target? in
+            guard let pid = session.pid, let startedAt = session.processStartedAt else { return nil }
+            return ChildProcessControl.Target(pid: pid, startedAt: startedAt)
+        }
+        return ChildProcessControl.sendHangUp(targets)
     }
 
     /// 終了の確認に使う、動いているホスト中のルーム。

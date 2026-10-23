@@ -73,7 +73,7 @@ public enum XcodeSelection {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
         process.arguments = ["-p"]
         process.environment = ["PATH": "/usr/bin:/bin"]
-        let output = Pipe()
+        let output = ChildProcessControl.makeFoundationPipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do {

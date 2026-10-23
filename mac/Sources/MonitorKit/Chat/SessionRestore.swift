@@ -9,13 +9,20 @@ public struct HostedSessionRecord: Codable, Sendable, Equatable {
     public var status: SessionStatus
     /// 入力欄の書きかけ（無ければ nil）。
     public var draft: String?
+    /// ホストしていた claude の pid（前回の claude がまだ終わる途中かを見分けるため。古い記録には無い）。
+    public var pid: Int32?
+    /// その pid の起動時刻（epoch 秒・カーネルの値）。pid の再利用と見分けるため。
+    public var procStart: Double?
 
-    public init(name: String, cwd: String, sessionId: String, status: SessionStatus, draft: String? = nil) {
+    public init(name: String, cwd: String, sessionId: String, status: SessionStatus, draft: String? = nil,
+                pid: Int32? = nil, procStart: Double? = nil) {
         self.name = name
         self.cwd = cwd
         self.sessionId = sessionId
         self.status = status
         self.draft = draft
+        self.pid = pid
+        self.procStart = procStart
     }
 }
 
@@ -103,6 +110,20 @@ public final class HostedSessionsLock: @unchecked Sendable {
         return HostedSessionsLock(url: lockURL, fd: fd)
     }
 
+    /// 前のアプリの終了（ホスト中の claude の後片付けを最大数秒待つ）と余裕の分。
+    public static let previousAppGrace: Duration = .seconds(8)
+
+    /// 前のアプリが終わる途中だと取れないので、`within` まで取り直す。
+    public static func acquire(for file: HostedSessionsFile, within: Duration,
+                               pollInterval: Duration = .milliseconds(250)) async -> HostedSessionsLock? {
+        let deadline = ContinuousClock.now + within
+        while true {
+            if let lock = acquire(for: file) { return lock }
+            guard ContinuousClock.now < deadline else { return nil }
+            try? await Task.sleep(for: pollInterval)
+        }
+    }
+
     public func release() {
         guard fd >= 0 else { return }
         flock(fd, LOCK_UN)
@@ -121,8 +142,12 @@ public enum SessionRestore {
         case launch(nudge: Bool)
         /// 上限到達中なので今は起動しない（一覧に残して、解除後に再開できるようにする）。
         case deferredByLimit
-        /// 同じ会話が別の claude で動いている（前回の claude の終了途中もある）。二重に動かさず、記録は見送りに残す。
+        /// 同じ会話が別の claude で動いている。二重に動かさず、記録は見送りに残す。
         case runningElsewhere(Int32)
+        /// 前回このアプリがホストしていた claude（pid）がまだ終わる途中。終わるのを見張ってから再開する。
+        case awaitingExit(Int32)
+        /// 同じ会話を「アプリに引き継ぐ」の途中。引き継ぎ側が起動するので、こちらは起動せず見送りに残す。
+        case handingOver
         /// 再開できない（sessionId の形が想定外・フォルダが無い・同じ会話を既にホストしている）。
         case skipped(String)
     }
@@ -138,27 +163,47 @@ public enum SessionRestore {
     }
 
     /// 前回の記録それぞれをどう扱うか。同じ sessionId の重複は先のものだけを見る。
+    /// `previousProcess` は記録の claude がまだ動いていればその pid（`isPreviousProcess` で確かめたものだけ）。
     public static func plan(records: [HostedSessionRecord], limitReached: Bool, askToContinue: Bool,
                             hostedSessionIds: Set<String>, directoryExists: (String) -> Bool,
-                            liveDuplicate: (String) -> Int32?) -> [Plan] {
+                            liveDuplicate: (String) -> Int32?,
+                            previousProcess: (HostedSessionRecord) -> Int32? = { _ in nil },
+                            handingOver: Set<String> = []) -> [Plan] {
         var seen: Set<String> = []
         var plans: [Plan] = []
         for record in records where seen.insert(record.sessionId).inserted {
             plans.append(Plan(record: record, decision: decide(record, limitReached: limitReached, askToContinue: askToContinue,
                                                                hostedSessionIds: hostedSessionIds,
-                                                               directoryExists: directoryExists, liveDuplicate: liveDuplicate)))
+                                                               directoryExists: directoryExists, liveDuplicate: liveDuplicate,
+                                                               previousProcess: previousProcess, handingOver: handingOver)))
         }
         return plans
     }
 
     static func decide(_ record: HostedSessionRecord, limitReached: Bool, askToContinue: Bool, hostedSessionIds: Set<String>,
-                       directoryExists: (String) -> Bool, liveDuplicate: (String) -> Int32?) -> Decision {
+                       directoryExists: (String) -> Bool, liveDuplicate: (String) -> Int32?,
+                       previousProcess: (HostedSessionRecord) -> Int32?, handingOver: Set<String>) -> Decision {
         guard SessionHandover.isResumableSessionId(record.sessionId) else { return .skipped("sessionId の形式が想定外です") }
         if hostedSessionIds.contains(record.sessionId) { return .skipped("すでにこのアプリで動いています") }
+        if handingOver.contains(record.sessionId) { return .handingOver }
         guard directoryExists(record.cwd) else { return .skipped("フォルダが見つかりません（\(record.cwd)）") }
-        if let other = liveDuplicate(record.sessionId) { return .runningElsewhere(other) }
+        let previous = previousProcess(record)
+        if let other = liveDuplicate(record.sessionId), other != previous { return .runningElsewhere(other) }
         if limitReached { return .deferredByLimit }
+        if let previous { return .awaitingExit(previous) }
         return .launch(nudge: askToContinue && needsNudge(record.status))
+    }
+
+    /// ホストを始める直前の最終確認。同じ会話を動いているホスト中のセッションがあればその位置（二重に起動せずそれを選ぶ）。
+    public static func runningHostIndex(sessionId: String, hosted: [(sessionId: String?, running: Bool)]) -> Int? {
+        hosted.firstIndex { $0.running && $0.sessionId == sessionId }
+    }
+
+    /// 記録の pid が今も前回ホストしていたその claude か（自分のユーザーで、起動時刻がカーネルの値と合う時だけ）。
+    public static func isPreviousProcess(_ record: HostedSessionRecord, facts: ProcessFacts?, ownUid: uid_t) -> Bool {
+        guard let pid = record.pid, pid > 1, let procStart = record.procStart,
+              let facts, !facts.isZombie, facts.uid == ownUid else { return false }
+        return abs(facts.startedAt.timeIntervalSince1970 - procStart) < 1
     }
 
     /// 自動で再開してからこの時間内に再び起動したら、再開が原因で落ちた疑いがあるので自動では再開しない。
@@ -195,7 +240,7 @@ public enum SessionRestore {
         return "再開を見送ったセッション \(reasons.count) 件（\(detail)）"
     }
 
-    /// 再開したことを一覧の上に出す文。
+    /// 再開したことを一覧の上に出す文。終了待ちの分は待ちの帯に出すのでここには書かない。
     public static func summary(launched: Int, nudged: Int, deferred: Int, elsewhere: Int, skipped: Int) -> String? {
         var parts: [String] = []
         if launched > 0 {
@@ -206,6 +251,39 @@ public enum SessionRestore {
         if elsewhere > 0 { parts.append("\(elsewhere) 件は同じ会話の claude がまだ動いているため見送りました") }
         if skipped > 0 { parts.append("\(skipped) 件は再開できませんでした") }
         return parts.isEmpty ? nil : parts.joined(separator: "。")
+    }
+
+    /// 前回の claude の終了を待っている間の帯の文。
+    public static func waitingSummary(_ count: Int) -> String? {
+        count > 0 ? "前回アプリでホストしていた claude \(count) 件が終わるのを待っています（終わったら再開します）" : nil
+    }
+
+    /// 終了を待ちきれずに見送った時の文。
+    public static func gaveUpSummary(_ count: Int) -> String {
+        "前回の claude \(count) 件が \(Int(PreviousExitWait.timeout)) 秒待っても終わらないため、再開を見送りました"
+    }
+}
+
+/// 前回ホストしていた claude が終わるのを待つ（終わったら再開し、上限を過ぎたら見送る）。
+public struct PreviousExitWait: Sendable, Equatable {
+    /// claude は SIGHUP の後片付けに数秒かけるので、それより長めに待つ。
+    public static let timeout: TimeInterval = 15
+
+    public enum Step: Sendable, Equatable {
+        case wait
+        case exited
+        case giveUp
+    }
+
+    public let startedAt: Date
+
+    public init(startedAt: Date) {
+        self.startedAt = startedAt
+    }
+
+    public func step(alive: Bool, now: Date) -> Step {
+        guard alive else { return .exited }
+        return now.timeIntervalSince(startedAt) >= Self.timeout ? .giveUp : .wait
     }
 }
 
@@ -306,21 +384,28 @@ public enum QuitConfirmation {
         working(rooms).isEmpty
     }
 
-    /// 稼働中と権限待ちを分けて名前を 3 件まで並べ、待ちの扱いも書く。
-    public static func message(busy rooms: [Room], resumesOnLaunch: Bool) -> String {
-        var groups: [String] = []
-        let working = Self.working(rooms)
-        let permission = rooms.filter { $0.status == .permission }
-        if !working.isEmpty { groups.append("稼働中 \(working.count) 件（\(names(working))）") }
-        if !permission.isEmpty { groups.append("権限待ち \(permission.count) 件（\(names(permission))）") }
-        let tail = resumesOnLaunch ? "終了すると中断し、次の起動時に再開します。" : "終了すると中断します。"
-        return groups.joined(separator: "・") + "。" + tail
-            + "「作業が終わったら終了」は稼働中の作業が終わるのを待ちます（権限待ち・入力待ちのルームは待たずに中断します）。"
+    /// 稼働中と権限待ちを分けて名前を 3 件まで並べ、待ちの扱いも書く。`terminals` はルームのターミナルで何かが動いているもの（再開しない）。
+    public static func message(busy rooms: [Room], terminals: [String] = [], resumesOnLaunch: Bool) -> String {
+        var parts: [String] = []
+        if !rooms.isEmpty {
+            var groups: [String] = []
+            let working = Self.working(rooms)
+            let permission = rooms.filter { $0.status == .permission }
+            if !working.isEmpty { groups.append("稼働中 \(working.count) 件（\(names(working.map(\.name)))）") }
+            if !permission.isEmpty { groups.append("権限待ち \(permission.count) 件（\(names(permission.map(\.name)))）") }
+            let tail = resumesOnLaunch ? "終了すると中断し、次の起動時に再開します。" : "終了すると中断します。"
+            parts.append(groups.joined(separator: "・") + "。" + tail
+                + "「作業が終わったら終了」は稼働中の作業が終わるのを待ちます（権限待ち・入力待ちのルームは待たずに中断します）。")
+        }
+        if !terminals.isEmpty {
+            parts.append("ターミナルで動いているもの \(terminals.count) 件（\(names(terminals))）は、終了すると止めます（次の起動で再開しません）。")
+        }
+        return parts.joined(separator: "\n")
     }
 
-    private static func names(_ rooms: [Room]) -> String {
-        var list = rooms.prefix(3).map(\.name).joined(separator: "、")
-        if rooms.count > 3 { list += " ほか \(rooms.count - 3) 件" }
+    private static func names(_ names: [String]) -> String {
+        var list = names.prefix(3).joined(separator: "、")
+        if names.count > 3 { list += " ほか \(names.count - 3) 件" }
         return list
     }
 

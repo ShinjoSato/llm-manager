@@ -35,7 +35,7 @@ struct RoomWindowView: View {
     @ViewBuilder
     private func content(_ room: Room?) -> some View {
         if let room {
-            ConversationView(model: model, room: room, inWindow: true)
+            ConversationView(model: model, room: room, window: token)
                 .id(room.id)
         } else if !model.store.connection.isConnected {
             CenterPlaceholder(symbol: "arrow.triangle.2.circlepath", text: "セッションの監視を始めています…")

@@ -10,45 +10,88 @@ struct ExternalBanner: View {
         let busy = room.sessionId.map { model.handover.inProgress.contains($0) } ?? false
         let disabledReason = model.handover.disabledReason(for: room)
         let sourceReason = model.handover.sourceReason(for: room)
+        let pending = room.sessionId.flatMap { model.restorer.pending(sessionId: $0) }
+        let showsHandover: Bool = {
+            guard !busy, sourceReason == nil else { return false }
+            switch pending {
+            case nil: return true
+            // 見送り中は、前の claude が終わらない時の逃げ道として使える時だけ出す。
+            case .deferred: return disabledReason == nil
+            case .judging, .waiting: return false
+            }
+        }()
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: room.snapshot?.entrypoint == "cli" ? "terminal" : "macwindow")
+            Image(systemName: pending != nil ? "arrow.clockwise.circle"
+                  : room.snapshot?.entrypoint == "cli" ? "terminal" : "macwindow")
                 .font(.system(size: 14))
                 .foregroundStyle(ChatTheme.waiting)
-            Text(SessionHandover.sourceDescription(entrypoint: room.snapshot?.entrypoint)
-                 + "ここから送れるのは『伝言』と権限の許可・拒否だけです。"
-                 + (sourceReason.map { "\($0)。" } ?? "引き継ぐと、元のターミナルの claude を終了してこのアプリで会話を再開します。"))
+            Text(description(pending: pending, sourceReason: sourceReason, showsHandover: showsHandover))
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            if sourceReason != nil {
-                EmptyView()
-            } else if busy {
+            if busy {
                 ProgressView().controlSize(.small)
                 Text("引き継ぎ中…").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
+            } else if pending == .waiting || pending == .judging {
+                ProgressView().controlSize(.small)
+                Text(pending == .waiting ? "終了を待っています…" : "確かめています…")
+                    .font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
             } else {
-                Button { model.handover.request(room) } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.down.app")
-                        Text("アプリに引き継ぐ")
+                if case .deferred = pending, let sessionId = room.sessionId {
+                    actionButton("再開する", systemImage: "arrow.clockwise", enabled: true,
+                                 help: "前の claude が終わっていればこのアプリで再開し、終わる途中なら終わるのを待ってから再開します") {
+                        model.restorer.resumeDeferred(sessionId: sessionId)
                     }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(disabledReason == nil ? ChatTheme.onAccent : ChatTheme.tertiary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(RoundedRectangle(cornerRadius: 8)
-                        .fill(disabledReason == nil ? ChatTheme.accent : ChatTheme.inputSurface))
                 }
-                .buttonStyle(.plain)
-                .disabled(disabledReason != nil)
-                .help(disabledReason ?? "元のターミナルの claude を終了し、このアプリで同じ会話を再開します")
-                .fixedSize()
+                if showsHandover {
+                    actionButton("アプリに引き継ぐ", systemImage: "arrow.down.app", enabled: disabledReason == nil,
+                                 help: disabledReason ?? "元のターミナルの claude を終了し、このアプリで同じ会話を再開します") {
+                        model.handover.request(room)
+                    }
+                }
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
         .background(ChatTheme.externalBanner)
         .overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
+    }
+
+    private func actionButton(_ title: String, systemImage: String, enabled: Bool, help: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: systemImage)
+                Text(title)
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(enabled ? ChatTheme.onAccent : ChatTheme.tertiary)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 8).fill(enabled ? ChatTheme.accent : ChatTheme.inputSurface))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(help)
+        .fixedSize()
+    }
+
+    private func description(pending: SessionRestorer.Pending?, sourceReason: String?, showsHandover: Bool) -> String {
+        let limits = "ここから送れるのは『伝言』と権限の許可・拒否だけです。"
+        switch pending {
+        case .judging:
+            return "前回アプリでホストしていた会話です。このアプリで再開できるか確かめています。" + limits
+        case .waiting:
+            return "前回アプリでホストしていた会話です。前の claude が終わったら、このアプリで再開します。" + limits
+        case .deferred:
+            return "前回アプリでホストしていた会話です（再開を見送っています）。" + limits
+                + "［再開する］で、このアプリで同じ会話を再開します。"
+                + (showsHandover ? "前の claude が終わらない時は［アプリに引き継ぐ］で止めてから再開できます。" : "")
+        case nil:
+            return SessionHandover.sourceDescription(entrypoint: room.snapshot?.entrypoint) + limits
+                + (sourceReason.map { "\($0)。" } ?? "引き継ぐと、元のターミナルの claude を終了してこのアプリで会話を再開します。")
+        }
     }
 }
 

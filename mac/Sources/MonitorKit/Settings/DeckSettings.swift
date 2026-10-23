@@ -56,18 +56,31 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
     public var links: [ProjectLink]
     /// LP の場所（無ければ自動で探す）。
     public var site: ProjectSite?
+    /// Xcode のプロジェクトの紐づけ（無ければ自動で探す）。
+    public var xcode: XcodeLink?
     /// 印のアイコン（SF Symbol 名。無ければ `ProjectBadge.defaultSymbol`）。
     public var icon: String?
     /// 印の色（`ProjectColor` のキー。無ければ名前から決める）。
     public var color: String?
+    /// 紐づけた App Store Connect のアプリ（本番・検証用など。並びは配列の順）。
+    public var appStoreApps: [AppStoreAppLink]
+    /// ルームの見出しからターミナルで流すコマンド（並びは配列の順）。
+    public var commands: [ProjectCommand]
     /// 形が読めずに捨てた `site`（警告に出すだけで、保存・比較には含めない）。
     public var ignoredSite = IgnoredField()
+    /// 形が読めずに捨てた `xcode`（同上）。
+    public var ignoredXcode = IgnoredField()
+    /// 形が読めずに捨てた `appStore`（同上）。
+    public var ignoredAppStore = IgnoredField()
+    /// 形が読めずに捨てた `commands`（同上）。
+    public var ignoredCommands = IgnoredField()
 
-    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links, site, icon, color }
+    private enum CodingKeys: String, CodingKey { case id, name, path, status, note, github, links, site, xcode, icon, color, appStoreApps = "appStore", commands }
 
     public init(id: UUID = UUID(), name: String, path: String, status: ProjectStatus = .active, note: String = "",
                 github: GitHubLink? = nil, links: [ProjectLink] = [], site: ProjectSite? = nil,
-                icon: String? = nil, color: String? = nil) {
+                xcode: XcodeLink? = nil, icon: String? = nil, color: String? = nil, appStoreApps: [AppStoreAppLink] = [],
+                commands: [ProjectCommand] = []) {
         self.id = id
         self.name = name
         self.path = path
@@ -76,8 +89,11 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         self.github = github
         self.links = links
         self.site = site
+        self.xcode = xcode
         self.icon = icon
         self.color = color
+        self.appStoreApps = appStoreApps
+        self.commands = commands
     }
 
     public init(from decoder: Decoder) throws {
@@ -96,11 +112,33 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         } else {
             site = nil
         }
+        if c.contains(.xcode), (try? c.decodeNil(forKey: .xcode)) != true {
+            xcode = try? c.decode(XcodeLink.self, forKey: .xcode)
+            ignoredXcode.isSet = xcode == nil
+        } else {
+            xcode = nil
+        }
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         color = try c.decodeIfPresent(String.self, forKey: .color)
+        // `site` と同じく、手で書いた形が違っても設定全体は読む。
+        if c.contains(.appStoreApps), (try? c.decodeNil(forKey: .appStoreApps)) != true {
+            let decoded = try? c.decode([AppStoreAppLink].self, forKey: .appStoreApps)
+            appStoreApps = decoded ?? []
+            ignoredAppStore.isSet = decoded == nil
+        } else {
+            appStoreApps = []
+        }
+        // 手で書いた `commands` の形が違っても、設定全体を読めなくしない。
+        if c.contains(.commands), (try? c.decodeNil(forKey: .commands)) != true {
+            let decoded = try? c.decode([ProjectCommand].self, forKey: .commands)
+            commands = decoded ?? []
+            ignoredCommands.isSet = decoded == nil
+        } else {
+            commands = []
+        }
     }
 
-    /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。`site` / `icon` / `color` も無ければ書かない。
+    /// `links` は無い時だけ出さない（手で書いたファイルの形を変えないため）。`site` / `xcode` / `icon` / `color` / `appStore` / `commands` も無ければ書かない。
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
@@ -111,8 +149,11 @@ public struct ManagedProject: Codable, Equatable, Identifiable, Sendable {
         try c.encodeIfPresent(github, forKey: .github)
         if !links.isEmpty { try c.encode(links, forKey: .links) }
         try c.encodeIfPresent(site, forKey: .site)
+        try c.encodeIfPresent(xcode, forKey: .xcode)
         try c.encodeIfPresent(icon, forKey: .icon)
         try c.encodeIfPresent(color, forKey: .color)
+        if !appStoreApps.isEmpty { try c.encode(appStoreApps, forKey: .appStoreApps) }
+        if !commands.isEmpty { try c.encode(commands, forKey: .commands) }
     }
 
     /// フォルダから作る（表示名はフォルダ名）。
@@ -210,6 +251,30 @@ public struct ProjectLink: Codable, Equatable, Sendable {
     }
 }
 
+/// ルームの見出しからターミナルで流すコマンド。`command` は複数行でもよい（1 回の貼り付けとして入れて Enter）。
+public struct ProjectCommand: Codable, Equatable, Sendable {
+    public var name: String
+    public var command: String
+    /// SF Symbol の名前（無ければ `ProjectCommands.defaultSymbol`）。
+    public var icon: String?
+
+    public init(name: String, command: String, icon: String? = nil) {
+        self.name = name
+        self.command = command
+        self.icon = icon
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, command, icon }
+
+    /// アイコンが無ければ書かない。
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(command, forKey: .command)
+        try c.encodeIfPresent(icon, forKey: .icon)
+    }
+}
+
 /// リンクの種類。アイコンで見分け、メニューを区切る。知らない値は「その他」として読む。
 public enum ProjectLinkKind: String, LenientStringEnum, CaseIterable {
     case billing, dashboard, store, docs, other
@@ -255,6 +320,61 @@ public struct ProjectSite: Codable, Equatable, Sendable {
 
     public init(path: String) {
         self.path = path
+    }
+}
+
+/// プロジェクトに紐づけた App Store Connect のアプリ。`appId` は数字の文字列、`name` は画面に出す名前。
+public struct AppStoreAppLink: Codable, Equatable, Hashable, Sendable {
+    public var appId: String
+    public var name: String
+
+    public init(appId: String, name: String) {
+        self.appId = appId
+        self.name = name
+    }
+
+    /// 数でも書けるようにする（手で書いた `"appId": 123` を読めなくしない）。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let text = try? c.decode(String.self, forKey: .appId) {
+            appId = text
+        } else {
+            appId = String(try c.decode(Int.self, forKey: .appId))
+        }
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+    }
+
+    private enum CodingKeys: String, CodingKey { case appId, name }
+}
+
+/// Xcode のプロジェクトの紐づけ。`{"path": "ios/App.xcodeproj"}`（プロジェクトからの相対）か `{"disabled": true}`。
+public enum XcodeLink: Codable, Equatable, Sendable {
+    case path(String)
+    case disabled
+
+    private enum CodingKeys: String, CodingKey { case path, disabled }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // 両方あれば出さない方を採る（意図せず開かないため）。
+        if try c.decodeIfPresent(Bool.self, forKey: .disabled) == true {
+            self = .disabled
+            return
+        }
+        self = .path(try c.decode(String.self, forKey: .path))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .path(let path): try c.encode(path, forKey: .path)
+        case .disabled: try c.encode(true, forKey: .disabled)
+        }
+    }
+
+    public var configuredPath: String? {
+        if case .path(let path) = self { return path }
+        return nil
     }
 }
 

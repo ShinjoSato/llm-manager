@@ -274,10 +274,13 @@ public struct RemoteSendState: Codable, Sendable, Equatable {
     public var mode: RemoteSendMode
     /// 送れない理由（nil なら送れる）。
     public var disabledReason: String?
+    /// 画像を付けて送れるか。画像を知らない古い mac は載せない（nil）ので、iPhone は true の時だけ写真を選ばせる。
+    public var acceptsImages: Bool?
 
-    public init(mode: RemoteSendMode, disabledReason: String?) {
+    public init(mode: RemoteSendMode, disabledReason: String?, acceptsImages: Bool? = nil) {
         self.mode = mode
         self.disabledReason = disabledReason
+        self.acceptsImages = acceptsImages
     }
 }
 
@@ -421,13 +424,84 @@ public struct RemoteMenuDismissRequest: Codable, Sendable, Equatable {
     }
 }
 
-/// `POST /v1/rooms/{roomId}/messages`。添付は受け付けない。
-public struct RemoteMessageRequest: Codable, Sendable, Equatable {
-    public var text: String
+/// メッセージに付ける画像 1 枚（JSON では `data` を base64 で送る）。
+public struct RemoteMessageImage: Codable, Sendable, Equatable {
+    /// `image/png` か `image/jpeg`（`RemoteImageLimits.mediaTypes`）。
+    public var mediaType: String
+    public var data: Data
 
-    public init(text: String) {
-        self.text = text
+    public init(mediaType: String, data: Data) {
+        self.mediaType = mediaType
+        self.data = data
     }
+}
+
+/// `POST /v1/rooms/{roomId}/messages`。画像はホスト中のセッションにだけ付けられる（上限は `RemoteImageLimits`）。
+public struct RemoteMessageRequest: Codable, Sendable, Equatable {
+    /// 画像を付ける時は空でもよい。
+    public var text: String
+    /// 画像が無ければ省く（画像の無い要求は前と同じ形のまま）。
+    public var images: [RemoteMessageImage]?
+
+    public init(text: String, images: [RemoteMessageImage] = []) {
+        self.text = text
+        self.images = images.isEmpty ? nil : images
+    }
+}
+
+/// メッセージに付ける画像の上限（mac が検証し、iPhone は送る前にこれに収める）。
+public enum RemoteImageLimits {
+    public static let maxCount = 4
+    /// 1 枚の大きさ（base64 にする前）。
+    public static let maxBytes = 3 * 1024 * 1024
+    /// 1 通の合計（base64 にする前）。
+    public static let maxTotalBytes = 8 * 1024 * 1024
+    /// 縦横それぞれの画素数。
+    public static let maxPixelSide = 8000
+    /// 画素の総数（mac が検証で展開する時のメモリを抑える。iPhone は長辺 2048 に縮めるので十分に収まる）。
+    public static let maxPixels = 16_000_000
+    public static let mediaTypes: Set<String> = ["image/png", "image/jpeg"]
+    /// iPhone が送る前に縮める長辺の目安。
+    public static let preferredLongEdge = 2048
+    /// iPhone が 1 枚に使う大きさ（4 枚付けても合計の上限に収まる）。
+    public static let budgetBytes = min(maxBytes, maxTotalBytes / maxCount)
+
+    /// 要求全体に見込む画像の分。base64 の `/`（中身が偏らなければ 64 文字に 1 つ）を `\/` と書くクライアントの分として 1/8 を足す。
+    public static var maxEncodedBytes: Int {
+        let base64 = (maxTotalBytes + 2) / 3 * 4
+        return base64 + base64 / 8 + maxCount * 1024
+    }
+
+    /// 中身の先頭から分かる型（PNG / JPEG 以外は nil）。
+    public static func sniffedMediaType(_ data: Data) -> String? {
+        let bytes = [UInt8](data.prefix(8))
+        if bytes == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] { return "image/png" }
+        if bytes.count >= 3, bytes[0] == 0xff, bytes[1] == 0xd8, bytes[2] == 0xff { return "image/jpeg" }
+        return nil
+    }
+
+    /// 枚数・型・大きさ・宣言した型と中身の一致を見る。通れば nil（画像として読めるか・寸法は mac が ImageIO で見る）。
+    public static func problem(_ images: [RemoteMessageImage]) -> RemoteActionResult? {
+        guard images.count <= maxCount else { return tooMany }
+        var total = 0
+        for image in images {
+            let declared = image.mediaType.lowercased()
+            guard mediaTypes.contains(declared) else { return unsupported }
+            guard image.data.count <= maxBytes else { return tooLarge }
+            total += image.data.count
+            guard sniffedMediaType(image.data) == declared else {
+                return .failure("unsupported_image", "画像の中身が宣言した型（\(declared)）と違います。")
+            }
+        }
+        guard total <= maxTotalBytes else { return tooLarge }
+        return nil
+    }
+
+    public static let tooMany = RemoteActionResult.failure("too_many_images", "画像は 1 通に \(maxCount) 枚までです。")
+    public static let tooLarge = RemoteActionResult.failure(
+        "image_too_large", "画像が大きすぎます（1 枚 \(maxBytes / 1024 / 1024)MB・合計 \(maxTotalBytes / 1024 / 1024)MB・"
+            + "一辺 \(maxPixelSide) ピクセル・\(maxPixels / 1_000_000) メガピクセルまで）。")
+    public static let unsupported = RemoteActionResult.failure("unsupported_image", "送れるのは PNG か JPEG の画像だけです。")
 }
 
 /// 操作の結果。`code` は機械向け、`message` は人向け（日本語）。

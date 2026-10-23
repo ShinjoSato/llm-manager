@@ -124,14 +124,13 @@ public struct GitRunner: Sendable {
     /// 起動して stdout と stderr を読み切る。時間切れ・上限・取り消しではグループごと止める。
     static func execute(executable: String, arguments: [String], environment: [String: String], directory: String,
                         timeout: TimeInterval, limit: Int, cancelled: CancelFlag) -> Result<GitOutput, GitRunError> {
-        var outFDs: [Int32] = [0, 0], errFDs: [Int32] = [0, 0]
-        guard pipe(&outFDs) == 0 else { return .failure(.launchFailed(errno)) }
-        guard pipe(&errFDs) == 0 else {
+        guard let out = ChildProcessControl.makePipe() else { return .failure(.launchFailed(errno)) }
+        guard let err = ChildProcessControl.makePipe() else {
             let code = errno
-            close(outFDs[0]); close(outFDs[1])
+            close(out.read); close(out.write)
             return .failure(.launchFailed(code))
         }
-        for fd in outFDs + errFDs { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+        let outFDs = [out.read, out.write], errFDs = [err.read, err.write]
         let (pid, rc) = ProcessGroup.spawn(executable: executable, arguments: arguments, environment: environment,
                                            directory: directory) { actions in
             posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)

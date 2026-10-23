@@ -75,15 +75,18 @@ public struct PreviewCacheKey: Hashable, Sendable {
     public var projectId: UUID
     public var request: PreviewRenderRequest
     public var sourceModified: Date?
+    /// 描いた Xcode のプロジェクト（紐づけを替えた後に前の先の絵を出さないため）。
+    public var xcodeProject: String?
 
-    public init(projectId: UUID, request: PreviewRenderRequest, sourceModified: Date?) {
+    public init(projectId: UUID, request: PreviewRenderRequest, sourceModified: Date?, xcodeProject: String? = nil) {
         self.projectId = projectId
         self.request = request
         self.sourceModified = sourceModified
+        self.xcodeProject = xcodeProject
     }
 
     /// 同じ指定（更新時刻を問わない）の印。古い版を消す時に使う。
-    public var slot: String { Self.hash(request.slotText, length: 20) }
+    public var slot: String { Self.hash((xcodeProject.map { $0 + "\n" } ?? "") + request.slotText, length: 20) }
 
     public var fileStem: String {
         let millis = PreviewSnapshotInfo.millis(sourceModified) ?? 0

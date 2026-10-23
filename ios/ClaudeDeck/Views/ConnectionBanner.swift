@@ -34,7 +34,7 @@ struct ConnectionBanner: View {
     /// 理由が Wi-Fi か許可と分かっている時は、Wi-Fi の補足を重ねない（許可が無い時に Wi-Fi のせいにしない）。
     static func wifiNote(for issue: RemoteIssue, onWiFi: Bool?) -> String {
         guard onWiFi == false, issue.kind != .offline, issue.kind != .localNetworkDenied else { return "" }
-        return "iPhone が Wi-Fi につながっていません。\n"
+        return "\(DeviceKind.name) が Wi-Fi につながっていません。\n"
     }
 
     private var staleNote: String {
@@ -43,7 +43,7 @@ struct ConnectionBanner: View {
     }
 
     private var wifiNotice: some View {
-        InlineNotice(symbol: "wifi.slash", text: "iPhone が Wi-Fi につながっていません。Mac と同じ Wi-Fi につないでください。")
+        InlineNotice(symbol: "wifi.slash", text: "\(DeviceKind.name) が Wi-Fi につながっていません。Mac と同じ Wi-Fi につないでください。")
     }
 
     private func banner(color: Color, symbol: String?, title: String, detail: String?,
@@ -153,7 +153,7 @@ struct SettingsScreen: View {
                         }
                         .disabled(unpairing)
                     } footer: {
-                        Text("Mac の端末一覧からこの iPhone を取り消し、iPhone に残した鍵も消します。")
+                        Text("Mac の端末一覧からこの \(DeviceKind.name) を取り消し、\(DeviceKind.name) に残した鍵も消します。")
                     }
                 }
                 if let note = unpairNote {

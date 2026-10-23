@@ -27,15 +27,26 @@ final class EditorLauncher {
     /// owner の種類を問い合わせている最中の `EditorTarget.key`。二度押しで同じ先を二度開かない。
     private(set) var openingGitHub: Set<String> = []
 
-    @ObservationIgnored private var xcodeProjects: [String: URL?] = [:]
+    /// 自動で探した結果（cwd → 実体のパス）。
+    @ObservationIgnored private var detectedXcode: [String: String?] = [:]
     @ObservationIgnored private let githubOwners = GitHubOwnerKindResolver()
 
-    /// 結果は cwd で覚えるので、同じ場所を指すルームと詳細は同じ答えを引く。
-    func xcodeProject(for target: EditorTarget) -> URL? {
-        if let cached = xcodeProjects[target.cwd] { return cached }
-        let found = XcodeFinder.find(in: target.cwd).map { URL(fileURLWithPath: $0) }
-        xcodeProjects[target.cwd] = found
+    /// 設定の紐づけを描画の中で毎回引く。自動の走査だけ cwd で覚え、同じ場所を指すルームと詳細は同じ答えを引く。
+    func xcodeResolution(for target: EditorTarget) -> XcodeResolution {
+        let project = matchedProject(target)
+        guard project?.xcode == nil else {
+            // 指定・使わないに替わったら覚えを捨てる（自動に戻した時に探し直すため）。
+            detectedXcode[target.cwd] = nil
+            return XcodeLinks.resolve(project: project, cwd: target.cwd)
+        }
+        if let cached = detectedXcode[target.cwd] { return XcodeResolution(path: cached, source: .detected) }
+        let found = XcodeLinks.detect(in: target.cwd)
+        detectedXcode[target.cwd] = .some(found.path)
         return found
+    }
+
+    func xcodeProject(for target: EditorTarget) -> URL? {
+        xcodeResolution(for: target).url
     }
 
     func openInVSCode(_ target: EditorTarget) {
@@ -108,6 +119,12 @@ final class EditorLauncher {
     /// 見出しに単独のボタンで出すピン留めのリンク（描画の中で毎回引く）。
     func pinnedLinks(for target: EditorTarget) -> [ProjectLink] {
         ProjectLinks.pinned(matchedProject(target)?.links ?? [])
+    }
+
+    /// 紐づいたプロジェクトの実行コマンドのうち流せるもの（ターミナルを開けないルームでは出さない。描画の中で毎回引く）。
+    func projectCommands(for target: EditorTarget, cwd: String) -> [ProjectCommand] {
+        guard RoomShells.canOpen(cwd) else { return [] }
+        return ProjectCommands.runnable(matchedProject(target)?.commands ?? [])
     }
 
     /// 紐づいたプロジェクトの id（最終確認日の記録に使う）。

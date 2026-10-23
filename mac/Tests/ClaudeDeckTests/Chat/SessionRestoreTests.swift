@@ -57,6 +57,41 @@ final class HostedSessionsFileTests: XCTestCase {
         XCTAssertNil(file.loadSnapshot()?.restoredAt)
     }
 
+    func testProcessIdentityRoundTripsAndOldRecordsHaveNone() throws {
+        let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
+        let record = HostedSessionRecord(name: "app", cwd: "/tmp/app", sessionId: sessionA, status: .idle,
+                                         pid: 4321, procStart: 1_800_000_000)
+        try file.save([record])
+        XCTAssertEqual(file.load(), [record])
+        // pid を書かなかった版の記録もそのまま読める（版は上げない）。
+        let json = #"{"version":1,"savedAt":0,"sessions":[{"name":"a","cwd":"/a","sessionId":"\#(sessionA)","status":"idle"}]}"#
+        try Data(json.utf8).write(to: file.url)
+        let old = try XCTUnwrap(file.load().first)
+        XCTAssertNil(old.pid)
+        XCTAssertNil(old.procStart)
+    }
+
+    func testLockRetriesUntilPreviousAppReleases() async throws {
+        let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
+        let previous = try XCTUnwrap(HostedSessionsLock.acquire(for: file))
+        Task.detached {
+            try? await Task.sleep(for: .milliseconds(300))
+            previous.release()
+        }
+        let lock = await HostedSessionsLock.acquire(for: file, within: .seconds(5), pollInterval: .milliseconds(50))
+        XCTAssertNotNil(lock)
+    }
+
+    func testLockRetryGivesUpAfterLimit() async throws {
+        let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
+        let other = try XCTUnwrap(HostedSessionsLock.acquire(for: file))
+        defer { other.release() }
+        let started = ContinuousClock.now
+        let lock = await HostedSessionsLock.acquire(for: file, within: .milliseconds(300), pollInterval: .milliseconds(50))
+        XCTAssertNil(lock)
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(2))
+    }
+
     func testLockIsExclusiveUntilReleased() throws {
         let file = HostedSessionsFile(url: dir.appendingPathComponent("hosted-sessions.json"))
         let first = try XCTUnwrap(HostedSessionsLock.acquire(for: file))
@@ -87,9 +122,80 @@ final class SessionRestorePlanTests: XCTestCase {
 
     private func plan(_ records: [HostedSessionRecord], limit: Bool = false, ask: Bool = true, hosted: Set<String> = [],
                       exists: @escaping (String) -> Bool = { _ in true },
-                      duplicate: @escaping (String) -> Int32? = { _ in nil }) -> [SessionRestore.Decision] {
+                      duplicate: @escaping (String) -> Int32? = { _ in nil },
+                      previous: @escaping (HostedSessionRecord) -> Int32? = { _ in nil }) -> [SessionRestore.Decision] {
         SessionRestore.plan(records: records, limitReached: limit, askToContinue: ask, hostedSessionIds: hosted,
-                            directoryExists: exists, liveDuplicate: duplicate).map(\.decision)
+                            directoryExists: exists, liveDuplicate: duplicate, previousProcess: previous).map(\.decision)
+    }
+
+    func testPreviousOwnClaudeStillExitingIsAwaitedInsteadOfDeferred() {
+        // 前回の自分の claude は監視の在庫にも同じ会話として見えている。
+        XCTAssertEqual(plan([record(a, .working)], duplicate: { _ in 700 }, previous: { _ in 700 }), [.awaitingExit(700)])
+        XCTAssertEqual(plan([record(a, .working)], previous: { _ in 700 }), [.awaitingExit(700)])
+    }
+
+    func testOtherClaudeOnSameSessionIsStillDeferred() {
+        XCTAssertEqual(plan([record(a, .working)], duplicate: { _ in 800 }, previous: { _ in 700 }), [.runningElsewhere(800)])
+        XCTAssertEqual(plan([record(a, .working)], duplicate: { _ in 800 }), [.runningElsewhere(800)])
+    }
+
+    /// 引き継ぎの途中に前の claude が終わっても、終了待ち側は起動せず（引き継ぎ側が起動する）、引き継ぎ後は二重に起動しない。
+    func testHandoverInProgressIsNotLaunchedTwice() {
+        func decide(handingOver: Set<String>, hosted: Set<String>) -> SessionRestore.Decision? {
+            SessionRestore.plan(records: [record(a, .working)], limitReached: false, askToContinue: true, hostedSessionIds: hosted,
+                                directoryExists: { _ in true }, liveDuplicate: { _ in nil }, previousProcess: { _ in nil },
+                                handingOver: handingOver).first?.decision
+        }
+        XCTAssertEqual(decide(handingOver: [a], hosted: []), .handingOver)
+        guard case .skipped = decide(handingOver: [], hosted: [a]) else { return XCTFail("引き継ぎ後に二重に起動する") }
+        XCTAssertEqual(decide(handingOver: [], hosted: []), .launch(nudge: true))
+    }
+
+    /// ホストを始める直前の最終確認: 同じ会話が動いていればそれを選び、終わったものは数えない。
+    func testRunningHostIndexFindsOnlyRunningSameSession() {
+        XCTAssertEqual(SessionRestore.runningHostIndex(sessionId: a, hosted: [(b, true), (a, false), (a, true)]), 2)
+        XCTAssertNil(SessionRestore.runningHostIndex(sessionId: a, hosted: [(a, false), (nil, true), (b, true)]))
+    }
+
+    func testLimitStillDefersWhilePreviousIsExiting() {
+        XCTAssertEqual(plan([record(a, .working)], limit: true, duplicate: { _ in 700 }, previous: { _ in 700 }), [.deferredByLimit])
+    }
+
+    func testPreviousProcessNeedsMatchingPidStartAndOwner() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let facts = ProcessFacts(uid: 501, startedAt: start, executablePath: nil, argv0: nil, isZombie: false)
+        var record = HostedSessionRecord(name: "p", cwd: "/p", sessionId: a, status: .idle, pid: 700,
+                                         procStart: start.timeIntervalSince1970)
+        XCTAssertTrue(SessionRestore.isPreviousProcess(record, facts: facts, ownUid: 501))
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: nil, ownUid: 501))
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: facts, ownUid: 502))
+        var zombie = facts
+        zombie.isZombie = true
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: zombie, ownUid: 501))
+        // pid が再利用された別のプロセス（起動時刻が違う）は待たない。
+        var reused = facts
+        reused.startedAt = start + 5
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: reused, ownUid: 501))
+        // pid・起動時刻を持たない古い記録は待たない。
+        record.procStart = nil
+        XCTAssertFalse(SessionRestore.isPreviousProcess(record, facts: facts, ownUid: 501))
+    }
+
+    func testPreviousExitWaitResumesOnExitAndGivesUpAfterTimeout() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let wait = PreviousExitWait(startedAt: start)
+        XCTAssertEqual(wait.step(alive: true, now: start + 1), .wait)
+        XCTAssertEqual(wait.step(alive: false, now: start + 1), .exited)
+        XCTAssertEqual(wait.step(alive: true, now: start + PreviousExitWait.timeout - 0.1), .wait)
+        XCTAssertEqual(wait.step(alive: true, now: start + PreviousExitWait.timeout), .giveUp)
+        // 上限を過ぎていても、終わっていれば再開する。
+        XCTAssertEqual(wait.step(alive: false, now: start + PreviousExitWait.timeout + 5), .exited)
+    }
+
+    func testWaitingSummary() {
+        XCTAssertNil(SessionRestore.waitingSummary(0))
+        XCTAssertEqual(SessionRestore.waitingSummary(2), "前回アプリでホストしていた claude 2 件が終わるのを待っています（終わったら再開します）")
+        XCTAssertEqual(SessionRestore.gaveUpSummary(1), "前回の claude 1 件が 15 秒待っても終わらないため、再開を見送りました")
     }
 
     func testOnlyWorkingSessionsAreAskedToContinue() {
@@ -240,6 +346,10 @@ final class QuitConfirmationTests: XCTestCase {
                        + "「作業が終わったら終了」は稼働中の作業が終わるのを待ちます（権限待ち・入力待ちのルームは待たずに中断します）。")
         XCTAssertTrue(QuitConfirmation.message(busy: [room("x", .permission)], resumesOnLaunch: false)
             .hasPrefix("権限待ち 1 件（x）。終了すると中断します。"))
+        XCTAssertEqual(QuitConfirmation.message(busy: [], terminals: ["web", "api"], resumesOnLaunch: true),
+                       "ターミナルで動いているもの 2 件（web、api）は、終了すると止めます（次の起動で再開しません）。")
+        XCTAssertTrue(QuitConfirmation.message(busy: [room("x", .working)], terminals: ["web"], resumesOnLaunch: true)
+            .hasSuffix("\nターミナルで動いているもの 1 件（web）は、終了すると止めます（次の起動で再開しません）。"))
     }
 
     func testSystemQuitReasons() {

@@ -1,9 +1,12 @@
 import Foundation
 
-/// SIGTERM / SIGINT の既定動作（即終了）だけを外す。
+/// SIGTERM / SIGINT / SIGHUP の既定動作（即終了）だけを外す。
 public enum TerminationSignals {
+    /// 通常の終了経路に乗せるシグナル。
+    public static let handled: [Int32] = [SIGTERM, SIGINT, SIGHUP]
+
     /// SIG_IGN は exec を越えて子（PTY でホストする claude 等）に残るが、登録したハンドラは exec で既定に戻るので漏れない。
-    public static func installNoopHandlers(for signals: [Int32] = [SIGTERM, SIGINT]) {
+    public static func installNoopHandlers(for signals: [Int32] = handled) {
         for sig in signals {
             var action = sigaction()
             action.__sigaction_u.__sa_handler = noopSignalHandler
