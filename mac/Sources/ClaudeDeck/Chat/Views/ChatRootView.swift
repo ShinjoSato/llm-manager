@@ -40,7 +40,7 @@ struct ChatRootView<Trailing: View>: View {
         .onChange(of: model.firstVisibleRoom?.id) { selectFirstIfNeeded() }
         .alert("claude-deck", isPresented: Binding(get: { model.showsAlertInMain },
                                                    set: { if !$0 { model.alerts.message = nil } })) {
-            Button("OK") { model.alerts.message = nil }
+            ChatAlertButtons(alerts: model.alerts)
         } message: {
             Text(model.alerts.message ?? "")
         }
@@ -74,3 +74,14 @@ struct ChatRootView<Trailing: View>: View {
     }
 }
 
+/// 警告のボタン（`show` で添えたものと「OK」）。メインと別ウィンドウで同じものを出す。
+struct ChatAlertButtons: View {
+    let alerts: ChatAlerts
+
+    var body: some View {
+        ForEach(alerts.actions) { action in
+            Button(action.title, role: action.destructive ? .destructive : nil) { alerts.perform(action) }
+        }
+        Button(alerts.actions.isEmpty ? "OK" : "閉じる", role: alerts.actions.isEmpty ? nil : .cancel) { alerts.message = nil }
+    }
+}

@@ -28,7 +28,7 @@ struct TerminalScreenSheet: View {
     static let refreshInterval: Duration = .milliseconds(300)
 
     var body: some View {
-        TerminalScreenPanel(roomName: roomName, lines: lines, running: session.isRunning, notice: notice,
+        TerminalScreenPanel(roomName: roomName, lines: lines, running: session.isRunning, notice: shownNotice,
                             keyboardActive: focused, onKey: press, onFocus: { focused = true },
                             onCopy: { SystemActions.copy(lines.joined(separator: "\n")) }, onClose: { dismiss() })
             .focusable(interactions: .edit)
@@ -53,6 +53,14 @@ struct TerminalScreenSheet: View {
                 }
             }
             .exitConfirmation(presenting: $exitKey) { deliver($0) }
+    }
+
+    /// 「入力欄を消す」を押した後に消し終えたら、その結末を出す。
+    private var shownNotice: TerminalKeyNotice? {
+        guard let notice, notice.key == .clearInput, notice.result.ok, let last = session.lastClear, last.at >= notice.at,
+              let text = ChatOutbox.clearMessage(last.outcome) else { return notice }
+        let result: RemoteActionResult = last.outcome == .cleared ? .success("cleared") : .failure("clear", text)
+        return TerminalKeyNotice(key: .clearInput, result: result, at: last.at, detail: text)
     }
 
     /// Esc で claude が終わるメニューでは、カードと同じく確かめてから送る。
@@ -85,9 +93,13 @@ struct TerminalKeyNotice: Equatable {
     let key: TerminalKey
     let result: RemoteActionResult
     let at: Date
+    /// 送った後の結末（入力欄を消し終えた等）。あればこちらを出す。
+    var detail: String? = nil
 
     var text: String {
-        result.ok ? "\(key.label) を送りました（\(ChatTime.seconds(at))）" : (result.message ?? "送れませんでした。")
+        if let detail { return detail }
+        guard result.ok else { return result.message ?? "送れませんでした。" }
+        return key == .clearInput ? "入力欄を消すキーを送っています（\(ChatTime.seconds(at))）" : "\(key.label) を送りました（\(ChatTime.seconds(at))）"
     }
 }
 
@@ -112,7 +124,7 @@ struct TerminalScreenPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            Text("今の端末の表示です（0.3 秒ごとに更新）。カードで答えられない時に、下のボタンかキーボード（矢印・Return・Esc・Tab・Space・1〜9）で 1 回ずつキーを送れます。文字の入力はできません。")
+            Text("今の端末の表示です（0.3 秒ごとに更新）。カードで答えられない時に、下のボタンかキーボード（矢印・Return・Esc・Tab・Space・1〜9）で 1 回ずつキーを送れます。文字の入力はできません。「入力欄を消す」は端末の入力欄を空にします（作業は止めません）。")
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -179,6 +191,8 @@ struct TerminalScreenPanel: View {
             }
             HStack(spacing: 6) {
                 ForEach(Array(TerminalKey.all.dropFirst(8)), id: \.self) { key in TerminalKeyButton(key: key, enabled: running, action: onKey) }
+                Divider().frame(height: 22).padding(.horizontal, 4)
+                TerminalKeyButton(key: .clearInput, enabled: running, action: onKey)
             }
         }
     }
@@ -189,7 +203,7 @@ struct TerminalScreenPanel: View {
                 Text(notice.text)
                     .font(ChatTheme.caption)
                     .foregroundStyle(notice.result.ok ? ChatTheme.secondary : ChatTheme.error)
-                    .lineLimit(2)
+                    .lineLimit(3)
             }
             Spacer(minLength: 8)
             Text(keyboardActive ? "キーボードからも送れます" : "端末の表示をクリックするとキーボードからも送れます")
@@ -219,7 +233,7 @@ private struct TerminalKeyButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .help("\(key.label) を端末に 1 回送る")
+        .help(key == .clearInput ? "端末の入力欄を空にする（Ctrl-E・Ctrl-K・Ctrl-U を空になるまで送る。作業は中断しない）" : "\(key.label) を端末に 1 回送る")
         .onHover { hovering = $0 }
     }
 }

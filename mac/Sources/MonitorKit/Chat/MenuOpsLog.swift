@@ -1,6 +1,6 @@
 import Foundation
 
-/// カードの操作の各段階を直近の数百行だけ残す（固まった時に辿るため。本文は入れず 0600 で置く）。
+/// カードの操作・入力欄からの送信の各段階を直近の数百行だけ残す（固まった時に辿るため。本文は入れず 0600 で置く）。
 public final class MenuOpsLog: @unchecked Sendable {
     /// 残す行数。
     public static let maxLines = 500
@@ -10,6 +10,8 @@ public final class MenuOpsLog: @unchecked Sendable {
     static let maxValueLength = 48
 
     public static let shared = MenuOpsLog(url: DeckPaths.logs.appendingPathComponent("menu-ops.log"))
+    /// 入力欄からの送信の各段階（貼り付け・入力欄の読み取り・Enter・取りやめ・残りの判定と抜け道）。
+    public static let send = MenuOpsLog(url: DeckPaths.logs.appendingPathComponent("send-ops.log"))
 
     public let url: URL
     private let keep: Int

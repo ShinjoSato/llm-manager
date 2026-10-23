@@ -28,6 +28,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
         var unreadableMenu: UnreadableMenu?
         /// セッションファイルの claude の版（読めなければ nil）。
         var claudeVersion: String?
+        /// 入らなかった本文の残りを確かめられるまで送らずにいる間の抜け道（送れるなら nil）。
+        var leftover: LeftoverEscape?
     }
 
     /// `screenState` が変わったときに呼ばれる（メインスレッド）。
@@ -62,7 +64,27 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     var sessionWaitingCache: (at: Date, value: SessionWaiting?, version: String?)?
 
     /// 送信を途中で取りやめ、端末の入力欄に本文や画像を残したかもしれない時の、次の送信の扱い。
-    var leftoverCheck: LeftoverCheck = .none
+    var leftoverCheck: LeftoverCheck = .none {
+        didSet {
+            guard leftoverCheck != oldValue else { return }
+            if case .untilClear = leftoverCheck {} else { leftoverUnreadable.reset() }
+            sendLog?("leftover", [("from", oldValue.logName), ("to", leftoverCheck.logName)])
+        }
+    }
+    /// 残りを確かめている間に入力欄を読めない状態がいつから続いているか。
+    var leftoverUnreadable = UnreadableSpan()
+    /// 入らなかった本文を端末の入力欄からそのまま送った（アプリの入力欄に戻した同じ本文を消させるため）。
+    /// `id` は入らなかった送信の印、`confirmed` は送った入力欄の文字が本文と同じと確かめられたか。
+    var onLeftoverSubmitted: ((_ id: String, _ confirmed: Bool) -> Void)?
+    /// 端末の入力欄を消し終えた（どこから始めても呼ぶ）。
+    var onClearFinished: ((ClearOutcome) -> Void)?
+    /// 端末の入力欄を消している最中。
+    var isClearingInput = false {
+        didSet { if isClearingInput != oldValue { onClearingChanged?(isClearingInput) } }
+    }
+    var onClearingChanged: ((Bool) -> Void)?
+    /// 送信の各段階を残す先（本文は渡さない）。
+    var sendLog: ((String, [(String, String)]) -> Void)?
 
     /// 送信の途中（画像の取り込み待ち〜Enter）。終わるまで次の送信を受けない。
     var isSending = false {

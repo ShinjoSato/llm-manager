@@ -291,8 +291,12 @@ final class InputBoxTests: XCTestCase {
         XCTAssertEqual(InputBox.text(screen: ["⏺ done", rule, "❯ ", rule, "  ⏵⏵ auto mode on"]), "")
     }
 
-    func testPlaceholderCountsAsEmpty() {
-        XCTAssertEqual(InputBox.text(screen: ["⏺ done", rule, "❯ Try \"fix lint errors\"", rule, "  ? for shortcuts"]), "")
+    /// 例文は薄字と読めた時だけ空。描き方を読めない時は本文として返す（本文を空と読み違えないため）。
+    func testPlaceholderCountsAsEmptyOnlyWhenFaint() {
+        let screen = ["⏺ done", rule, "❯ Try \"fix lint errors\"", rule, "  ? for shortcuts"]
+        XCTAssertEqual(InputBox.text(screen: screen, tones: ScreenTones.faintBox(screen)), "")
+        XCTAssertEqual(InputBox.text(screen: screen), "Try \"fix lint errors\"")
+        XCTAssertTrue(InputBox.isPlainEmpty(screen: screen), "古い返事待ちを信じるかの目安では従来どおり空とみなす")
     }
 
     func testLeftoverTextIsReturned() {
