@@ -55,9 +55,10 @@ private final class QuietDelegate: LocalProcessDelegate, @unchecked Sendable {
     func getWindowSize() -> winsize { winsize(ws_row: 40, ws_col: 160, ws_xpixel: 0, ws_ypixel: 0) }
 }
 
-/// ホスト中の claude の代わり。TUI のように端末へ書き続け、SIGHUP を受けたら印を残し、後片付けに時間をかけて終わる。
+/// ホスト中の claude の代わり。TUI のように端末へ書き続け、SIGHUP を受けたら印を残し、後片付けに時間をかけて終わる。trap を張り終えたら ready の印を残す。
 private let dummyScript = """
 trap 'touch "$MARK_DIR/hup.$INDEX"; sleep "$CLEANUP"; exit 129' HUP
+touch "$MARK_DIR/ready.$INDEX"
 line=$(printf '%0.s=' $(seq 1 150))
 while :; do printf '%s\\r\\n' "$line"; sleep 0.05; done
 """
@@ -95,20 +96,21 @@ final class ChildProcessControlTests: XCTestCase {
             let pid = process.shellPid
             XCTAssertGreaterThan(pid, 0)
             if cloexec { XCTAssertTrue(ChildProcessControl.setCloseOnExec(process.childfd)) }
-            try waitForExec(pid)
+            waitForReady(pid, index: index)
             pids.append(pid)
         }
         return pids
     }
 
-    /// fork の直後は親の fd を全部持っているので、exec で bash に替わるまで待つ。
-    private func waitForExec(_ pid: pid_t) throws {
+    /// fork の直後は親の fd を全部持ち、exec の後も trap を張るまでは SIGHUP で印を残さずに終わるので、ready の印まで待つ。
+    private func waitForReady(_ pid: pid_t, index: Int) {
+        let ready = dir.appendingPathComponent("ready.\(index)").path
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
-            if ProcessFacts.inspect(pid: pid)?.executablePath == "/bin/bash" { return }
+            if FileManager.default.fileExists(atPath: ready) { return }
             usleep(10_000)
         }
-        XCTFail("pid \(pid) が exec しない")
+        XCTFail("pid \(pid) が SIGHUP の受け口を用意し終えない")
     }
 
     private func targets(_ pids: [pid_t]) -> [ChildProcessControl.Target] {
