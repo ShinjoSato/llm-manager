@@ -77,6 +77,12 @@ final class AppModel {
     private var terminalTask: Task<Void, Never>?
     /// 端末の表示を取り直す間隔（試験で縮める）。
     var terminalRefreshInterval: Duration = .milliseconds(700)
+    /// つながっていない間は取りに行かず、この倍の間隔で待つ。
+    static let terminalIdleFactor = 4
+    /// 重なった取り直しの遅れた応答で新しい表示を上書きしないための番号。
+    @ObservationIgnored private var terminalOrder = RemoteResponseOrder()
+    /// 端末の画面を開いている間に閉じられた会話の画面（シートを閉じた時に閉じる）。
+    @ObservationIgnored private var deferredCloseViewer: UUID?
 
     /// ペアリングの失敗。設定へ導くかを決めるため、接続の失敗なら理由も持つ。
     struct PairingError: Equatable {
@@ -405,6 +411,7 @@ final class AppModel {
         terminalTask?.cancel()
         terminalTask = nil
         terminalWatch = nil
+        finishDeferredClose()
         state = nil
         stateUpdatedAt = nil
         transcripts = [:]
@@ -424,6 +431,7 @@ final class AppModel {
 
     /// `viewer` は会話の画面ごとの印。幅が変わって画面が作り直されると新旧の開く・閉じるが前後するので、最後に開いた画面だけが閉じられる。
     func open(sessionId: String?, viewer: UUID) {
+        deferredCloseViewer = nil
         let reopened = sessionId != nil && openSessionId == sessionId
         openSessionId = sessionId
         openViewer = viewer
@@ -440,6 +448,11 @@ final class AppModel {
 
     func close(viewer: UUID) {
         guard openViewer == viewer else { return }
+        // 端末の画面を重ねている間は下の会話を見ているのと同じなので、閉じるのはシートを閉じた時まで待つ。
+        if let watched = terminalWatch?.roomId, let sid = openSessionId, room(watched)?.sessionId == sid {
+            deferredCloseViewer = viewer
+            return
+        }
         openViewer = nil
         openSessionId = nil
     }
@@ -654,12 +667,13 @@ final class AppModel {
     func watchTerminal(roomId: String, viewer: UUID) {
         terminalTask?.cancel()
         terminalWatch = TerminalWatch(roomId: roomId, viewer: viewer)
+        terminalOrder = RemoteResponseOrder()
         let interval = terminalRefreshInterval
         terminalTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                await self.refreshTerminal(viewer: viewer)
-                try? await Task.sleep(for: interval)
+                let fetched = await self.refreshTerminal(viewer: viewer)
+                try? await Task.sleep(for: fetched ? interval : interval * Self.terminalIdleFactor)
             }
         }
     }
@@ -670,28 +684,45 @@ final class AppModel {
         terminalTask?.cancel()
         terminalTask = nil
         terminalWatch = nil
+        finishDeferredClose()
+    }
+
+    private func finishDeferredClose() {
+        guard let deferred = deferredCloseViewer else { return }
+        deferredCloseViewer = nil
+        close(viewer: deferred)
     }
 
     var isWatchingTerminal: Bool { terminalTask != nil }
 
-    private func refreshTerminal(viewer: UUID) async {
-        guard let roomId = terminalWatch?.roomId, terminalWatch?.viewer == viewer else { return }
+    static let terminalDisconnectedProblem = "Mac につながっていないので、端末の画面を取れません。"
+
+    /// 表示を 1 回取り直す。つながっていなくて取りに行かなかった時は false。値が変わった時だけ書く（見ている画面を毎回描き直さない）。
+    @discardableResult
+    private func refreshTerminal(viewer: UUID) async -> Bool {
+        guard let roomId = terminalWatch?.roomId, terminalWatch?.viewer == viewer else { return false }
         #if DEBUG
         terminalFetchCount += 1
         #endif
         guard let client, connection == .connected else {
-            terminalWatch?.problem = "Mac につながっていないので、端末の画面を取れません。"
-            return
+            setTerminalProblem(Self.terminalDisconnectedProblem)
+            return false
         }
+        let number = terminalOrder.issue()
         do {
             let screen = try await client.terminalScreen(roomId: roomId)
-            guard terminalWatch?.viewer == viewer else { return }
-            terminalWatch?.screen = screen
-            terminalWatch?.problem = nil
+            guard terminalWatch?.viewer == viewer, terminalOrder.accept(number) else { return true }
+            if terminalWatch?.screen.map({ $0.sameContent(as: screen) }) != true { terminalWatch?.screen = screen }
+            setTerminalProblem(nil)
         } catch {
-            guard terminalWatch?.viewer == viewer, !(error is CancellationError) else { return }
-            terminalWatch?.problem = RemoteResultText.terminalScreenProblem(error)
+            guard terminalWatch?.viewer == viewer, !(error is CancellationError), terminalOrder.accept(number) else { return true }
+            setTerminalProblem(RemoteResultText.terminalScreenProblem(error))
         }
+        return true
+    }
+
+    private func setTerminalProblem(_ problem: String?) {
+        if terminalWatch != nil, terminalWatch?.problem != problem { terminalWatch?.problem = problem }
     }
 
     /// キーを 1 回送り、すぐ表示を取り直す。送っている間は重ねて送らない。
@@ -711,9 +742,11 @@ final class AppModel {
                     ? Notice(text: "\(key.label) を送りました。", isError: false)
                     : Notice(text: RemoteResultText.text(for: result, operation: .terminalKey) ?? "送れませんでした。", isError: true)
             } catch {
-                notice = Notice(text: "\(RemoteIssue.from(error).title)。届いたかどうか分からないので、画面の様子を確かめてください。", isError: true)
+                notice = Notice(text: RemoteResultText.terminalKeyProblem(error), isError: true)
             }
             guard terminalWatch?.viewer == watch.viewer else { return }
+            // 送る前に出した取り直しの応答は古い画面なので使わない。
+            terminalOrder.invalidateIssued()
             terminalWatch?.sending = false
             terminalWatch?.notice = notice
             await refreshTerminal(viewer: watch.viewer)

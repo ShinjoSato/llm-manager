@@ -35,7 +35,7 @@ public enum RemoteTerminalKey: String, Codable, Sendable, CaseIterable {
     }
 }
 
-/// 端末のカーソルの位置（0 始まり。`row` は `lines` の位置、`column` は桁）。
+/// 端末のカーソルの位置（0 始まり。`row` は `lines` の位置（範囲内の時だけ送る）、`column` は桁）。
 public struct RemoteTerminalCursor: Codable, Sendable, Equatable {
     public var row: Int
     public var column: Int
@@ -73,14 +73,19 @@ public struct RemoteTerminalScreen: Codable, Sendable, Equatable {
     /// 1 行の文字数の上限（端末の幅より十分に大きい）。
     public static let maxLineLength = 1024
 
-    /// 上限に収めて作る。上を切った分だけカーソルの行をずらし、外れたら落とす。
+    /// 読み取った時刻を除いた中身が同じか（取り直しのたびに描き直さないため）。
+    public func sameContent(as other: RemoteTerminalScreen) -> Bool {
+        lines == other.lines && cursor == other.cursor && columns == other.columns && rows == other.rows && escapeExits == other.escapeExits
+    }
+
+    /// 上限に収めて作る。上を切った分だけカーソルの行をずらし、`lines` の外になったら落とす。
     public static func limited(lines: [String], cursor: RemoteTerminalCursor?, columns: Int, rows: Int, capturedAt: Double,
                                escapeExits: Bool) -> RemoteTerminalScreen {
         let dropped = max(0, lines.count - maxLines)
         let kept = lines.suffix(maxLines).map { $0.count > maxLineLength ? String($0.prefix(maxLineLength)) : $0 }
         let moved = cursor.flatMap { c -> RemoteTerminalCursor? in
             let row = c.row - dropped
-            guard row >= 0, c.column >= 0 else { return nil }
+            guard row >= 0, row < min(lines.count, maxLines), c.column >= 0 else { return nil }
             return RemoteTerminalCursor(row: row, column: c.column)
         }
         return RemoteTerminalScreen(lines: Array(kept), cursor: moved, columns: max(0, columns), rows: max(0, rows),
@@ -102,5 +107,33 @@ public struct RemoteTerminalKeyRequest: Codable, Sendable, Equatable {
     public init(rawKey: String, confirmExit: Bool? = nil) {
         key = rawKey
         self.confirmExit = confirmExit
+    }
+}
+
+/// 定期の取り直しと操作の後の取り直しが重なった時に、先に出した要求の遅れた応答で新しい表示を上書きしないための通し番号。
+public struct RemoteResponseOrder: Sendable, Equatable {
+    private var issued = 0
+    private var applied = 0
+    /// これより前に出した要求の応答は捨てる。
+    private var floor = 0
+
+    public init() {}
+
+    /// 要求を出す時に番号を取る。
+    public mutating func issue() -> Int {
+        issued += 1
+        return issued
+    }
+
+    /// 今までに出した要求の応答を古いものとして捨てる（キーを送った後など）。
+    public mutating func invalidateIssued() {
+        floor = issued + 1
+    }
+
+    /// 応答を使ってよいか。使うならそれより前の要求の応答は以後捨てる。
+    public mutating func accept(_ number: Int) -> Bool {
+        guard number >= floor, number > applied else { return false }
+        applied = number
+        return true
     }
 }

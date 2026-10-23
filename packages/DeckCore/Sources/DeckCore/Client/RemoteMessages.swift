@@ -101,8 +101,23 @@ public enum RemoteResultText {
 }
 
 extension RemoteResultText {
+    public static let outdatedMac = "この Mac の claude-deck は「端末の画面」に対応していません。Mac の claude-deck を更新してください。"
+
+    /// 口の無い古い mac の応答か（GET は既知のパスとして 405、POST はルームの下の知らない口として 404 になる）。
+    public static func isMissingTerminalRoute(_ error: Error) -> Bool {
+        guard case .http(let status, let code, _)? = error as? RemoteClientError else { return false }
+        return (status == 405 && code == "method_not_allowed") || (status == 404 && code == "not_found")
+    }
+
+    /// 端末にキーを送れなかった理由（本文が `RemoteActionResult` で返らなかった時）。
+    public static func terminalKeyProblem(_ error: Error) -> String {
+        if isMissingTerminalRoute(error) { return outdatedMac }
+        return "\(RemoteIssue.from(error).title)。届いたかどうか分からないので、画面の様子を確かめてください。"
+    }
+
     /// 端末の画面を取れなかった理由（`GET /v1/rooms/{roomId}/terminal` の失敗）。
     public static func terminalScreenProblem(_ error: Error) -> String {
+        if case .http(405, "method_not_allowed"?, _)? = error as? RemoteClientError { return outdatedMac }
         if case .http(_, let code?, let message)? = error as? RemoteClientError {
             switch code {
             case "ended": return "claude が動いていないため、端末の画面は出せません。"

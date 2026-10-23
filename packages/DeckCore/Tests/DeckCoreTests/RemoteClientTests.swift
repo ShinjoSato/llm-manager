@@ -320,6 +320,18 @@ final class RemoteMessagesTests: XCTestCase {
                        RemoteIssue.from(RemoteClientError.http(status: 401, error: "unauthorized", message: "")).title)
     }
 
+    func testOldMacWithoutTheTerminalRouteAsksForAnUpdate() {
+        let getOnOldMac = RemoteClientError.http(status: 405, error: "method_not_allowed", message: "method not allowed")
+        let postOnOldMac = RemoteClientError.http(status: 404, error: "not_found", message: "not found")
+        XCTAssertEqual(RemoteResultText.terminalScreenProblem(getOnOldMac), RemoteResultText.outdatedMac)
+        XCTAssertEqual(RemoteResultText.terminalKeyProblem(getOnOldMac), RemoteResultText.outdatedMac)
+        XCTAssertEqual(RemoteResultText.terminalKeyProblem(postOnOldMac), RemoteResultText.outdatedMac)
+        XCTAssertFalse(RemoteResultText.outdatedMac.contains("method"), "英語のまま出さない")
+        XCTAssertEqual(RemoteResultText.terminalScreenProblem(RemoteClientError.http(status: 404, error: "not_found", message: "ルームが見つかりません")),
+                       "このルームはもうありません。", "新しい mac の 404 はルームが無いこと")
+        XCTAssertTrue(RemoteResultText.terminalKeyProblem(RemoteClientError.transport(.timedOut)).contains("届いたかどうか"))
+    }
+
     func testSuccessIsMostlySilent() {
         XCTAssertNil(RemoteResultText.text(for: .success("decided"), operation: .permission))
         XCTAssertNil(RemoteResultText.text(for: .success("submitted"), operation: .message))
@@ -444,5 +456,37 @@ final class RemoteTerminalTests: XCTestCase {
                                                 columns: 80, rows: 24, capturedAt: 1, escapeExits: true)
         XCTAssertEqual(long.lines[0].count, RemoteTerminalScreen.maxLineLength)
         XCTAssertTrue(long.escapeExits)
+        let below = RemoteTerminalScreen.limited(lines: ["a", "b"], cursor: RemoteTerminalCursor(row: 5, column: 0), columns: 80, rows: 24,
+                                                 capturedAt: 1, escapeExits: false)
+        XCTAssertNil(below.cursor, "末尾の空行を落として lines の外になったカーソルは送らない")
+        XCTAssertEqual(RemoteTerminalScreen.limited(lines: ["a", "b"], cursor: RemoteTerminalCursor(row: 1, column: 3), columns: 80, rows: 24,
+                                                    capturedAt: 1, escapeExits: false).cursor, RemoteTerminalCursor(row: 1, column: 3))
+    }
+
+    func testSameContentIgnoresTheCaptureTime() {
+        let a = RemoteTerminalScreen(lines: ["x"], cursor: nil, columns: 80, rows: 24, capturedAt: 1, escapeExits: false)
+        var b = a
+        b.capturedAt = 2
+        XCTAssertTrue(a.sameContent(as: b))
+        b.lines = ["y"]
+        XCTAssertFalse(a.sameContent(as: b))
+        var c = a
+        c.escapeExits = true
+        XCTAssertFalse(a.sameContent(as: c))
+    }
+
+    func testStaleResponsesAreDropped() {
+        var order = RemoteResponseOrder()
+        let poll = order.issue()
+        let later = order.issue()
+        XCTAssertTrue(order.accept(later))
+        XCTAssertFalse(order.accept(poll), "後に出した要求の応答を使った後は、先の要求の遅れた応答を捨てる")
+
+        let beforeKey = order.issue()
+        order.invalidateIssued()
+        let afterKey = order.issue()
+        XCTAssertFalse(order.accept(beforeKey), "キーを送る前に出した取り直しの応答は捨てる")
+        XCTAssertTrue(order.accept(afterKey))
+        XCTAssertFalse(order.accept(afterKey), "同じ応答は二度使わない")
     }
 }

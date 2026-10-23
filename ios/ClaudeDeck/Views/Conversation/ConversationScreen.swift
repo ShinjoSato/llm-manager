@@ -12,7 +12,6 @@ struct ConversationScreen: View {
     @State private var viewer = UUID()
     /// 「端末の画面」を開いているルーム。
     @State private var terminalRoom: TerminalSheetTarget?
-    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         Group {
@@ -53,11 +52,8 @@ struct ConversationScreen: View {
                 }
             }
         }
-        // iPad では端末の 1 行が収まるよう広く出す。
-        .sheet(item: sizeClass == .regular ? .constant(nil) : $terminalRoom) { target in
-            TerminalScreenSheet(model: model, roomId: target.id, roomName: target.name)
-        }
-        .fullScreenCover(item: sizeClass == .regular ? $terminalRoom : .constant(nil)) { target in
+        // 全画面のカバーと違い、シートは下の会話を閉じた扱いにしない（未読を数えない）。
+        .sheet(item: $terminalRoom) { target in
             TerminalScreenSheet(model: model, roomId: target.id, roomName: target.name)
         }
         .onAppear { model.open(sessionId: room.sessionId, viewer: viewer) }

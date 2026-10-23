@@ -275,7 +275,7 @@ final class TerminalWatchTests: XCTestCase {
         XCTAssertTrue(model.isWatchingTerminal)
         XCTAssertEqual(model.terminalWatch?.roomId, "h:room")
         try await waitUntil { model.terminalFetchCount >= 3 }
-        XCTAssertNotNil(model.terminalWatch?.problem, "つながっていない間は理由を出す")
+        XCTAssertEqual(model.terminalWatch?.problem, AppModel.terminalDisconnectedProblem, "つながっていない間は理由を出す")
         XCTAssertNil(model.terminalWatch?.screen)
 
         model.stopWatchingTerminal(viewer: viewer)
@@ -309,6 +309,33 @@ final class TerminalWatchTests: XCTestCase {
         XCTAssertEqual(model.terminalWatch?.notice?.isError, true)
         XCTAssertEqual(model.terminalWatch?.sending, false)
         model.stopWatchingTerminal(viewer: viewer)
+    }
+
+    func testConversationUnderTheSheetStaysOpenUntilTheSheetCloses() {
+        let model = makeModel()
+        let room = RemoteRoom(id: "h:room", kind: .hosted, phase: .attention, name: "mirio", branch: nil, status: .waiting, line: "",
+                              activityAt: nil, sessionId: "s1", cwd: "/tmp", ended: nil, session: nil, permissions: [],
+                              terminalPermission: nil, menu: nil, unreadableMenu: nil, busy: false,
+                              send: RemoteSendState(mode: .input, disabledReason: nil))
+        model.simulateReceived(RemoteState(rooms: [room], usage: nil, monitoring: true))
+        let conversation = UUID()
+        let sheet = UUID()
+        model.open(sessionId: "s1", viewer: conversation)
+        model.watchTerminal(roomId: room.id, viewer: sheet)
+        model.close(viewer: conversation)
+        XCTAssertEqual(model.openRoomId, room.id, "シートを重ねている間は会話を閉じた扱いにしない（未読を数えない）")
+        model.simulateReceived(TranscriptEvent(sessionId: "s1", items: [TranscriptItem(id: "a1", kind: .assistant, at: 1, text: "はい",
+                                                                                        tool: nil, parentId: nil, images: [])]))
+        XCTAssertNil(model.unread["s1"])
+        model.stopWatchingTerminal(viewer: sheet)
+        XCTAssertNil(model.openRoomId, "シートを閉じた時に、待っていた閉じるを済ませる")
+
+        model.open(sessionId: "s1", viewer: conversation)
+        model.watchTerminal(roomId: room.id, viewer: sheet)
+        model.close(viewer: conversation)
+        model.open(sessionId: "s1", viewer: conversation)
+        model.stopWatchingTerminal(viewer: sheet)
+        XCTAssertEqual(model.openRoomId, room.id, "開き直された会話はシートを閉じても閉じない")
     }
 
     func testForgettingThePairingStopsIt() {

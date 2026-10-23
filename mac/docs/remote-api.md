@@ -166,7 +166,7 @@ mac の「端末の画面」のシート（`mac/README.md`「端末の画面」�
   ```jsonc
   {
     "lines": ["╭────╮", "│ >  │"],     // 端末の今の表示（上の行から。mac のシートと同じく右の別の欄も含めて見えているまま・末尾の空行と右端の空白は除く）
-    "cursor": { "row": 1, "column": 4 },  // カーソルの位置（0 始まり・lines の位置）。取れなければ null
+    "cursor": { "row": 1, "column": 4 },  // カーソルの位置（0 始まり・lines の位置）。lines の外（末尾の空行を落とした所・切った行）なら null
     "columns": 120, "rows": 40,           // 端末の幅（桁）と高さ（行）
     "capturedAt": 0,                      // 読み取った時刻（epoch ミリ秒）
     "escapeExits": false                  // Esc で claude が終わるメニューが出ている（Esc には confirmExit が要る）
@@ -175,8 +175,13 @@ mac の「端末の画面」のシート（`mac/README.md`「端末の画面」�
 
   - ホスト中で claude が動いているルームだけ。外部セッションは `unavailable`（409）、claude が終わったルームは `ended`（409）、
     ルームが無いか形の違う `roomId` は `not_found`（404）、mac の画面の準備ができていなければ `app_unavailable`（503）。失敗の本文は `RemoteErrorBody`。
-  - 端末の本文を含むので、他の口と同じく認証済みの端末だけ・`Cache-Control: no-store`。大きさは 300 行・1 行 1024 文字で切る（下を残す。端末の高さ・幅より十分に大きい）。
-  - mac は頼まれた時に端末の画面を読むだけで、取り直しの間隔は iPhone が決める（iPhone アプリはシートを開いている間だけ 0.7 秒ごと）。
+  - **会話の記録（transcript）に無いもの（差分パネル・打ちかけの入力・ダイアログ等、端末に見えているもの全部）も TLS で iPhone に渡す**。
+    端末の本文を含むので、他の口と同じく認証済みの端末だけ・`Cache-Control: no-store`。大きさは 300 行・1 行 1024 文字で切る（下を残す。端末の高さ・幅より十分に大きい）。
+  - mac は頼まれた時に端末の画面を読むだけで、取り直しの間隔は iPhone が決める（iPhone アプリはシートを開いている間だけ 0.7 秒ごと。
+    つながっていない間は取りに行かずに 4 倍の間隔で待ち、`capturedAt` 以外が同じなら描き直さない。重なった取り直しは通し番号（`RemoteResponseOrder`）で
+    古い応答を捨て、キーを送る前に出した取り直しの応答も捨てる）。
+  - この口の無い古い mac では GET が 405 `method_not_allowed`、キーの POST が 404 `not_found` になる。iPhone は「Mac の claude-deck を更新してください」と出す
+    （`RemoteResultText.outdatedMac`）。
 - `POST /v1/rooms/{roomId}/terminal/key` `{"key": "<値>", "confirmExit": true?}` → `RemoteActionResult`:
   - `key` は `left` / `up` / `down` / `right` / `enter` / `escape` / `tab` / `space` / `1`〜`9` だけ（`RemoteTerminalKey`。mac のシートの `TerminalKey` と同じ表・同じ並び）。
     それ以外は mac の画面に渡す前に `unsupported_key`（400）で断る。

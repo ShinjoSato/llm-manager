@@ -20,7 +20,7 @@ struct TerminalScreenSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Mac の端末の今の表示です（1 秒弱ごとに更新）。カードで答えられない時に、下のボタンでキーを 1 回ずつ送れます。文字の入力はできません。")
+                Text("Mac の端末の今の表示です（1 秒弱ごとに取り直し、変わった時だけ描き直します）。カードで答えられない時に、下のボタンでキーを 1 回ずつ送れます。文字の入力はできません。")
                     .font(DeckTheme.caption)
                     .foregroundStyle(DeckTheme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -55,6 +55,8 @@ struct TerminalScreenSheet: View {
         }
         // Esc は端末に送るキーなので、下へのスワイプでもうっかり閉じない（「閉じる」で閉じる）。
         .interactiveDismissDisabled()
+        .presentationDetents([.large])
+        .modifier(WideSheetSizing())
         .onAppear { model.watchTerminal(roomId: roomId, viewer: viewer) }
         .onDisappear { model.stopWatchingTerminal(viewer: viewer) }
         .confirmationDialog("claude を終了しますか？", isPresented: $confirmingExit, titleVisibility: .visible) {
@@ -92,7 +94,7 @@ struct TerminalScreenSheet: View {
             }
             Spacer(minLength: 8)
             if let captured = watch?.screen?.capturedAt {
-                Text("取得 \(Self.timeFormatter.string(from: Date(timeIntervalSince1970: captured / 1000)))")
+                Text("表示が変わった時刻 \(Self.timeFormatter.string(from: Date(timeIntervalSince1970: captured / 1000)))")
                     .foregroundStyle(DeckTheme.tertiary)
                     .monospacedDigit()
             }
@@ -107,6 +109,17 @@ struct TerminalScreenSheet: View {
         f.dateFormat = "HH:mm:ss"
         return f
     }()
+}
+
+/// iPad では端末の 1 行がなるべく収まるよう、ページの大きさのシートにする（iOS 18 から。iOS 17 は標準のシート）。
+private struct WideSheetSizing: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.presentationSizing(.page)
+        } else {
+            content
+        }
+    }
 }
 
 /// 端末の表示（等幅・折り返さない）。iPad では大きめの文字で広く、iPhone では横にスクロールして読む。
