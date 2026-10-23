@@ -4,7 +4,7 @@ import Observation
 import SwiftUI
 
 enum SettingsTab: Hashable {
-    case projects, github, remote, characters, transfer, appearance, launch
+    case projects, remote, characters, transfer, appearance, launch
 }
 
 /// 開いている設定画面のタブ（メニューから別のタブを指して開き直せるよう、ビューの外に持つ）。
@@ -12,8 +12,8 @@ enum SettingsTab: Hashable {
 @Observable
 final class SettingsNavigation {
     var tab: SettingsTab = .projects
-    /// プロジェクトタブで選ばせたいプロジェクト。タブが受け取ったら nil に戻す。
-    var focusProject: UUID?
+    /// プロジェクトタブの一覧で選ばせたいもの。タブが受け取ったら nil に戻す。
+    var focus: ProjectListItem?
 }
 
 /// 設定画面（⌘,）。1 つだけ持つ。
@@ -31,7 +31,7 @@ enum SettingsWindow {
     /// `tab` が nil なら前に開いていたタブのまま。`project` を渡すとプロジェクトタブでそれを選ぶ。
     static func show(tab: SettingsTab?, project: UUID? = nil) {
         if let tab { navigation.tab = tab }
-        if let project { navigation.focusProject = project }
+        if let project { navigation.focus = .project(project) }
         SettingsStore.shared.reloadIfChanged()
         if let window {
             window.makeKeyAndOrderFront(nil)
@@ -82,9 +82,6 @@ struct SettingsView: View {
                 ProjectSettingsTab(store: store, navigation: navigation)
                     .tabItem { Label("プロジェクト", systemImage: "folder") }
                     .tag(SettingsTab.projects)
-                GitHubSettingsTab(store: store)
-                    .tabItem { Label("GitHub", systemImage: "point.3.connected.trianglepath.dotted") }
-                    .tag(SettingsTab.github)
                 RemoteAccessView(controller: .shared)
                     .tabItem { Label("iPhone 連携", systemImage: "iphone") }
                     .tag(SettingsTab.remote)
@@ -149,7 +146,7 @@ private struct SettingsProblemBanner: View {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 4) {
                 Text(problem).font(.callout.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-                Text("元のファイルは書き換えずに残しています。直してから「読み直す」を押してください。それまでプロジェクトと GitHub の設定は変えられません。")
+                Text("元のファイルは書き換えずに残しています。直してから「読み直す」を押してください。それまでプロジェクトと横断ボードの設定は変えられません。")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer()

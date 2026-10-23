@@ -2,14 +2,11 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// プロジェクトの GitHub の紐づけの欄（GitHub タブとプロジェクトの画面で共通）。欄が正しい間だけ保存する。
+/// プロジェクトの GitHub の紐づけの欄。欄が正しい間だけ保存する。
 /// そのフォルダの git の remote にある github.com のリポジトリを候補に出し、押すと owner とリポジトリに入れる。
 struct GitHubLinkEditor: View {
     let store: SettingsStore
     let project: ManagedProject
-    var showsName = true
-    /// 欄が消える時に溜めた変更を書き切るか（行を閉じるたびにストア全体を書かないよう、行の側で持つ時は切る）。
-    var flushesOnDisappear = true
     /// 保存できない理由が変わった時に知らせる。
     var onProblems: (([String]) -> Void)?
     @State private var owner = ""
@@ -23,7 +20,6 @@ struct GitHubLinkEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if showsName { Text(project.name).font(.body.weight(.semibold)) }
             HStack(spacing: 8) {
                 field("owner", text: $owner).focused($focused, equals: 0)
                 Text("/").foregroundStyle(.secondary)
@@ -46,7 +42,6 @@ struct GitHubLinkEditor: View {
         .onChange(of: number) { commit() }
         .onChange(of: focused) { store.flushPending() }
         .onChange(of: problems) { _, value in onProblems?(value) }
-        .onDisappear { if flushesOnDisappear { store.flushPending(force: true) } }
         .task(id: project.path) {
             let path = project.path
             let found = await Task.detached(priority: .utility) { GitRemotes.githubCandidates(projectPath: path) }.value
@@ -134,10 +129,10 @@ struct ProjectGitHubRow: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: Binding(get: { expanded }, set: setExpanded)) {
-            GitHubLinkEditor(store: store, project: project, showsName: false, flushesOnDisappear: false) { draftProblems = $0 }
+            GitHubLinkEditor(store: store, project: project) { draftProblems = $0 }
         } label: {
             SettingsItemLabel(title: "GitHub",
-                              info: "見出しの「GitHub」ボタンが開く先。owner はユーザーか Organization、リポジトリは名前だけ、Project 番号はボードの URL の末尾の数字。全部空にすると外れます。「GitHub」タブと同じ値です。",
+                              info: "見出しの「GitHub」ボタンが開く先。owner はユーザーか Organization、リポジトリは名前だけ、Project 番号はボードの URL の末尾の数字。全部空にすると外れます。リポジトリに紐づかないボードは左の一覧の「横断ボード」で設定します。",
                               summary: LinkageSummary.github(project.github), isEmpty: project.github == nil,
                               notes: expanded ? [] : savedProblems) {
                 Button(expanded ? "閉じる" : "編集") { setExpanded(!expanded) }

@@ -117,8 +117,9 @@ mac/
       BranchGraphModel.swift      ブランチの図の状態（読み込み・ref の変化の見張りとまとめての読み直し・もっと見る・詳細の読み込み）
       StageActivityViews.swift    いまの動き・随伴するサブエージェント・ライブフィード
       StageSceneView.swift        ステージの 3D を描く SCNView（表示中だけ回す・動きを減らす設定で止める）とウィンドウ幅の監視
-    Settings/                   設定画面（⌘,）。タブ: プロジェクト・GitHub・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift（1 行の項目・ⓘ）。
-                                プロジェクトの紐づけの節の行は GitHubLinkEditor（GitHub タブと共通）・ProjectXcodeEditor・ProjectSiteEditor・ProjectAppStoreEditor・ProjectLinksEditor、実行コマンドは ProjectCommandsEditor）
+    Settings/                   設定画面（⌘,）。タブ: プロジェクト・iPhone 連携・キャラクター・書き出し / 読み込み・外観・起動と終了（共通の部品は SettingsParts.swift（1 行の項目・ⓘ）。
+                                プロジェクトの紐づけの節の行は GitHubLinkEditor・ProjectXcodeEditor・ProjectSiteEditor・ProjectAppStoreEditor・ProjectLinksEditor、実行コマンドは ProjectCommandsEditor、
+                                一覧の一番下の「横断ボード」は BoardSettingsPane）
     Remote/                     iPhone 連携（設定画面のタブの中身・QR・端末一覧・iPhone からの操作を ChatModel の部品（PromptResponder・ChatOutbox・ChatRelay）へ繋ぐ ChatModel+Remote）
     Notify/                     要対応を iCloud（CloudKit）に書いて解消したら消す AttentionNotifier と、設定画面に出す通知の設定・状態
   Sources/MonitorKit/           セッション監視・会話・フックの受け口（アプリ内）。UI 無し・テスト可能な library
@@ -1342,7 +1343,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   `command` に claude の headless 起動（`claude -p` / `--print` / `claude … -p`・まとめ書きの `-cp`、`command claude`・`exec`・パス付き・`npx @anthropic-ai/claude-code` も。`ProjectCommands.launchesHeadlessClaude`）は書けない（API 課金の経路になるため）。`icon` は SF Symbol の名前で省略できる（無ければ `play`。この OS に無い名前は `play` で出す。空は警告）。
   正しくないものは警告として読み込み、ボタンには出さず、押しても送らない（設定画面は開いた時から行ごとに理由を出す）。`commands` の形が崩れている（配列でない・要素に `name` か `command` の文字列が無い）時は、その `commands` だけを無視して警告を出す（ファイル全体は読める。次に保存すると `commands` は書かれない）。
   **実行コマンドを使い始めたら、`commands` を知らない前のビルドで設定を保存しない**（`commands` を落として書くため）。
-  `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。
+  `boards` はリポジトリに紐づかないボード（複数リポジトリを横断するもの等）。設定画面ではプロジェクトタブの一覧の一番下の「横断ボード」で編集する。
 - 書き込みは置き換え（一時ファイル → rename）で、ファイルは 0600。ディレクトリを 0700 に締めるのは既定の場所（`~/Library/Application Support/claude-deck/`）の時だけで、
   `CLAUDE_DECK_SETTINGS` で向けた先のディレクトリの権限は変えない。
 - **読めないファイル（JSON でない・形が違う・知らない `version`・同じ `id` や同じ `path` のプロジェクトがある・`path` が絶対パスでない）は上書きしない**。
@@ -1357,7 +1358,7 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 - **書きかけのファイル**（その場の書き換えの途中で空・途中までの JSON）を読んだ時は、読めない旨を出しつつ 0.2 秒・1 秒後に読み直す。溜めていた入力は捨てずに残し
   （欄にも残る。画面に「まだ保存していない入力があります」と出す）、読めるようになったら保存する。
 - 案内（青の帯）と書き込みの失敗は、「読み直す」・次の読み直しや保存の成功で消える。案内は × で閉じられる。
-- 文字欄（名前・メモ・GitHub の欄・リンクの名前と URL）は 0.5 秒まとめて保存する。⏎・フォーカスが外れた時・設定画面を閉じた時・アプリの終了時はすぐ書く。
+- 文字欄（名前・メモ・GitHub の欄・横断ボードの欄・リンクの名前と URL）は 0.5 秒まとめて保存する。⏎・フォーカスが外れた時・設定画面を閉じた時・アプリの終了時はすぐ書く。
   日本語の変換中（設定画面がキーウィンドウで、その入力欄に未確定の文字がある間）は書かずに待つ。変換中に状態の切り替え・並べ替え・削除をした時は、
   その操作だけを書き、溜めていた文字欄の変更は変換が終わってから書く。
 - **settings.json を外で消した時**: 一度読めた・書けた後に消された場合は、空の一覧として扱い「外で消されました」と出す（`projects.json` から移行し直さない）。
@@ -1374,6 +1375,10 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
 
 **設定画面**（メニュー「claude-deck → 設定…」⌘,。ウィンドウは 1 つ）のタブ:
 - **プロジェクト**: 一覧（ドラッグ・「上へ / 下へ」で並べ替え）、「+」でフォルダを追加、「−」/右クリックで削除（確認あり）、名前・状態・メモの編集。
+  一覧の各行は名前と、状態・GitHub の紐づけの要約（`owner/repo #N`。紐づけが無ければ出さない）。
+  一覧の一番下に固定の行「**横断ボード**」（アイコン付き・プロジェクトとは区切って出す・並べ替え / 削除 / 「−」の対象外）があり、選ぶと右にリポジトリに紐づかないボード（`boards`）の一覧を出す。
+  1 ボード 1 行（名前・`owner #N`・削除）で、行を開くと名前・owner・Project 番号を 1 行 1 項目で編集し（説明は ⓘ）、「ボードを追加」で新しいボードの欄を出す。
+  名前は空でなく、owner は下の「GitHub」の行と同じ決まり、番号は 1 以上、同じボード（owner の大文字小文字を問わず owner と番号が同じ）は重ねない。正しい間だけ保存し（文字欄と同じくまとめて書き、外の変更とかけ合わせる）、開いただけでは書かない。
   アイコンと色の下に**紐づけ**（ディレクトリの詳細の見出しに出るものを決めるもの）を 1 つの節にまとめ、GitHub・Xcode・サイト・App Store・リンクを **1 行 1 項目**（名前と ⓘ・今の値の要約・操作）で並べる。
   閉じている時は 1 行で、行を開く（左の ›）と編集欄を出す。要約は `Sources/MonitorKit/Settings/LinkageSummary.swift`（テストあり）: GitHub は `owner/repo #N`、Xcode は「自動（ios/App.xcodeproj）」「指定（…）」「使わない」、
   サイトは「自動（site）」「指定（…）」「見つかりません」（書き出しが無ければ「· 書き出しなし」）、App Store・リンクは「N 件」か「なし」。値が無い項目は要約を控えめに出す。
@@ -1381,7 +1386,9 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   自動・使わないの間でも、開いて場所を選ぶとその場で「指定」として保存する。「指定」を選んで候補が無く場所が未選択の間は要約を「指定（未選択）」にする）・サイト「フォルダを選ぶ…」・App Store「一覧を取得」か「追加」のメニュー・リンク「追加」。
   説明（何が見出しに出るか・書き方の決まり）は項目名の横の ⓘ（ホバーか押すと出る）に置き、節の下の説明文は持たない。検証の問題は行の中に出す: 閉じている時は一言（保存できない行の数・指定した先が使えない理由・一覧の取得の失敗・`.claude/appstore.json` の appId の不一致）、開くと行ごとの理由。
   サイトの書き出しの有無は行を開いた時にも確かめ直す。
-  「GitHub」の行は「GitHub」タブと同じ部品（`GitHubLinkEditor`。同じ値・同じ検証・同じ保存）。そのフォルダの git の remote にある github.com のリポジトリを候補のボタンに出し、
+  「GitHub」の行（`GitHubLinkEditor`）が、プロジェクトごとの owner / リポジトリ / Project 番号を編集する唯一の場所。
+  owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
+  そのフォルダの git の remote にある github.com のリポジトリを候補のボタンに出し、
   押すと owner / リポジトリに入れる（Project 番号はそのまま）。remote は `.git/config` を読むだけ（`git` / `gh` は実行しない）で、`.git` がファイル（作業ツリー・サブモジュール）なら `gitdir:` を辿り、
   その中の `commondir` があれば共通の `config` を読む。フォルダの外へ出る `.git` のリンク・リンクの `config`・256KB を超える `config` は読まない。origin を先に、残りは設定の順で、
   https / http / `git://` / `ssh://` / `git@github.com:owner/repo`（`.git` の有無を問わない）の github.com のものだけ候補にする（`Sources/MonitorKit/Projects/GitRemotes.swift`・テストあり）。
@@ -1403,8 +1410,6 @@ SceneKit への起こしは `StageSceneRig.swift`（いずれも MonitorKit・�
   同じプロジェクトの pbxproj と `.xcconfig`（条件付きの `NAME[sdk=…][config=…] = v` も）の値で解決し（値の重複は除き、変数ごとの解決は覚えて使い回す。互いに参照し合う変数は解決できないとする。組み合わせは 8 通りまで）、
   解決できない時は「`com.example.`」のように区切り 2 つ以上の決まった頭がある書き方で（隣り合う変数は 1 つにまとめ、変数は 3 つまで）、合うアプリが 1 件だけの時だけ候補にする（誤って当てるより出さない）。
   走査はアプリの一覧が取れてから始め、欄を離れると取りやめる。浅く（深さ 4・フォルダ 3,000 個・隠しフォルダと「画像」と同じ依存 / 成果物のフォルダ・`.xcworkspace` 等の中は見ない・リンクは辿らない）。候補の照合は走査の結果か一覧が替わった時だけ。紐づけた行は名前（本番・検証用など）を変えられ、∧ / ∨ で並べ替え・ゴミ箱で外す（名前が空の間は保存しない）。
-- **GitHub**: プロジェクトごとの owner / リポジトリ / Project 番号（プロジェクトタブの「GitHub」と同じ部品・git の remote の候補も同じ）と、リポジトリに紐づかないボードの追加・編集・削除。
-  owner は英数字と途中のハイフン（39 文字まで）、リポジトリは英数字と `. _ -`、番号は 1 以上。正しい間だけ保存する。GitHub 上に実在するかは確かめない。
 - **iPhone 連携**: 上の「iPhone 連携」の設定（メニュー「claude-deck → iPhone 連携…」はこのタブを開く）と、「iPhone への通知」の入り切り・状態。
 - **キャラクター**: 2D のドット絵を全状態ぶんルーム一覧と同じ動きで並べ、3D はステージと同じ組み立てで見本のセッションを、状態・サブエージェントの職業の組・持ち物を選んで描く。
   見るだけで、タブが見えている間だけ動き、「動きを減らす」設定では止まる。見本は `Sources/MonitorKit/Stage/CharacterGallery.swift`（テストあり）。
