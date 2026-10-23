@@ -11,6 +11,7 @@ struct ComposerTextView: NSViewRepresentable {
     var placeholder = ""
     let onSubmit: () -> Void
     var onAttach: ([AttachmentSource]) -> Void = { _ in }
+    var recaller: ComposerRecaller?
 
     static let maxHeight: CGFloat = 160
 
@@ -49,24 +50,38 @@ struct ComposerTextView: NSViewRepresentable {
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.onSubmit = { context.coordinator.parent.onSubmit() }
         textView.onAttach = { context.coordinator.parent.onAttach($0) }
+        textView.onRecall = { [weak coordinator = context.coordinator] direction, current in
+            coordinator?.parent.recaller?.move(direction, current) ?? .pass
+        }
         scroll.documentView = textView
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let previous = context.coordinator.parent.recaller
         context.coordinator.parent = self
+        // 同じ入力欄のまま別のルームに替わることがあるので、離れたルームの呼び出しの位置は初めに戻す。
+        let scopeChanged = previous?.scope != recaller?.scope
+        if scopeChanged { previous?.rewind() }
         guard let textView = scroll.documentView as? SubmitTextView else { return }
         // 変換中の文字は下書きに入っていないので、再描画のたびに書き戻すと消える。本当の外部変更（送信後の空など）だけ反映する。
         if context.coordinator.sync.shouldApply(external: text, shown: textView.string) {
             if textView.hasMarkedText() { textView.inputContext?.discardMarkedText() }
             textView.string = text
             context.coordinator.recalculateHeight(textView)
+            // 送信で空になった・外から本文が変わった時は呼び出しをやめる（ルームの切り替えでは移った先の呼び出しを残す）。
+            if !scopeChanged { recaller?.reset() }
         }
         textView.placeholder = placeholder
         textView.isEditable = isEnabled
         textView.isSelectable = isEnabled
         // 空でも欄全体をクリックで拾えるよう、高さを表示域に合わせておく。
         textView.minSize = NSSize(width: 0, height: scroll.contentSize.height)
+    }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        // タブを替えて入力欄が消えた。戻った時は初めから辿る（退避した下書きは残す）。
+        coordinator.parent.recaller?.rewind()
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -107,6 +122,8 @@ final class FocusingScrollView: NSScrollView {
 
 final class SubmitTextView: AttachmentPasteTextView {
     var onSubmit: (() -> Void)?
+    /// 先頭での ↑ / ↓ をどう扱うか（履歴の呼び出し）。
+    var onRecall: ((ComposerRecall.Direction, String) -> ComposerRecall.Outcome)?
     /// 空欄の案内。下書きではなく表示内容で判定して自前で描くので、変換中（marked text）も重ならない。
     var placeholder = "" {
         didSet {
@@ -170,5 +187,28 @@ final class SubmitTextView: AttachmentPasteTextView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func moveUp(_ sender: Any?) {
+        if recall(.older) { return }
+        super.moveUp(sender)
+    }
+
+    override func moveDown(_ sender: Any?) {
+        if recall(.newer) { return }
+        super.moveDown(sender)
+    }
+
+    /// 先頭でだけ履歴に回し、受けたら true。それ以外は既定の行の移動にする。
+    private func recall(_ direction: ComposerRecall.Direction) -> Bool {
+        guard isEditable, let onRecall,
+              ComposerRecall.isAtStart(selection: selectedRange(), hasMarkedText: hasMarkedText()) else { return false }
+        switch onRecall(direction, string) {
+        case .pass: return false
+        case .stay: return true
+        case .show(let text):
+            replaceAllForRecall(with: text)
+            return true
+        }
     }
 }
