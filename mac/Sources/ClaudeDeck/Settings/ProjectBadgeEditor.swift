@@ -50,10 +50,7 @@ struct ProjectBadgeEditor: View {
                     .font(.caption).foregroundStyle(.orange)
             }
         } header: {
-            Text("アイコンと色")
-        } footer: {
-            Text("ディレクトリ一覧・詳細の見出し・「+」の一覧に出る印です。「自動」は名前から色を決めます。")
-                .font(.caption).foregroundStyle(.secondary)
+            SettingsSectionHeader(title: "アイコンと色", info: "ディレクトリ一覧・詳細の見出し・「+」の一覧に出る印です。「自動」は名前から色を決めます。")
         }
     }
 

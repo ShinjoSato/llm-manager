@@ -10,16 +10,19 @@ struct ProjectCommandsEditor: View {
     @State private var problems: [[String]] = []
     /// 最後に設定から欄へ入れた値。利用者が触るまでは空白を落としただけの差を書き直さないために持つ。
     @State private var loaded: [ProjectCommand] = []
+    /// 開いている行（行の印）。
+    @State private var expanded: Set<UUID> = []
     @FocusState private var focused: Field?
 
     /// 画面で行を見分けるためだけの印（ファイルには書かない）。
     private struct Row: Identifiable, Equatable {
-        let id = UUID()
+        let id: UUID
         var name: String
         var command: String
         var icon: String?
 
-        init(_ command: ProjectCommand) {
+        init(_ command: ProjectCommand, id: UUID = UUID()) {
+            self.id = id
             name = command.name
             self.command = command.command
             icon = command.icon
@@ -43,10 +46,10 @@ struct ProjectCommandsEditor: View {
     var body: some View {
         Section {
             if rows.isEmpty {
-                Text("実行コマンドはありません").foregroundStyle(.secondary)
+                Text("実行コマンドはありません").foregroundStyle(.tertiary)
             }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                VStack(alignment: .leading, spacing: 4) {
+                DisclosureGroup(isExpanded: expandedBinding(row.id)) {
                     HStack(spacing: 8) {
                         TextField("名前", text: binding(index, \.name, fallback: ""), prompt: Text("名前"))
                             .settingsField { store.flushPending() }
@@ -61,36 +64,22 @@ struct ProjectCommandsEditor: View {
                         .labelsHidden()
                         .frame(width: 150)
                         .help("見出しのボタンのアイコン")
-                        Spacer()
-                        Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }
-                            .disabled(index == 0).help("上へ")
-                        Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }
-                            .disabled(index == rows.count - 1).help("下へ")
-                        Button(role: .destructive) { remove(index) } label: { Image(systemName: "trash") }
-                            .help("このコマンドを削除")
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.borderless)
                     TextField("コマンド", text: binding(index, \.command, fallback: ""), prompt: Text("npm run dev"), axis: .vertical)
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
                         .lineLimit(1...6)
                         .focused($focused, equals: .command(row.id))
-                    if problems.indices.contains(index) {
-                        SettingsProblems(problems: problems[index])
-                    }
+                } label: {
+                    label(index, row)
                 }
             }
-            Button {
-                let row = Row(ProjectCommand(name: "", command: ""))
-                rows.append(row)
-                focused = .name(row.id)
-            } label: { Label("コマンドを追加", systemImage: "plus") }
+            Button { addRow() } label: { Label("コマンドを追加", systemImage: "plus") }
         } header: {
-            Text("実行コマンド")
-        } footer: {
-            Text("このプロジェクトのルームの見出しにボタンで出し、押すとルームの「ターミナル」のタブ（ルームのフォルダのログインシェル）で実行します。複数行も 1 回の貼り付けとして入れて Enter を送ります。何かが動いている最中・打ちかけの入力がある時・ここ以外で書き換わった本文を初めて送る時は確認を出します。claude の headless 起動（-p / --print）は登録できません。名前はプロジェクトの中で重ねられません（\(ProjectCommands.nameLimit) 文字まで）。")
-                .font(.caption).foregroundStyle(.secondary)
+            SettingsSectionHeader(title: "実行コマンド",
+                                  info: "ルームの見出しにボタンで出し、押すとルームの「ターミナル」のタブ（ログインシェル）で実行します。複数行も 1 回の貼り付けとして送ります。何かが動いている最中・打ちかけの入力がある時・ここ以外で書き換わった本文を初めて送る時は確認を出します。claude の headless 起動（-p / --print）は登録できません。名前は重ねられません（\(ProjectCommands.nameLimit) 文字まで）。")
         }
         .onAppear { load(project.commands) }
         // 外で変わった時は欄を外の値に合わせる（溜めていた入力はストアが捨てて案内を出す。自分の保存では値が一致するので何もしない）。
@@ -102,6 +91,53 @@ struct ProjectCommandsEditor: View {
         .onChange(of: rows) { commit() }
         .onChange(of: focused) { store.flushPending() }
         .onDisappear { store.flushPending(force: true) }
+    }
+
+    /// 閉じている時の 1 行: アイコン・名前・本文の先頭 1 行と、並べ替え・削除。行の問題はこの下に出す。
+    private func label(_ index: Int, _ row: Row) -> some View {
+        let name = row.name.trimmingCharacters(in: .whitespaces)
+        let firstLine = LinkageSummary.firstLine(row.command)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Image(systemName: ProjectCommands.symbol(for: row.trimmed))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                Text(name.isEmpty ? "名前なし" : name)
+                    .foregroundStyle(name.isEmpty ? .tertiary : .primary)
+                    .lineLimit(1)
+                Text(firstLine)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(row.command)
+                Spacer(minLength: 8)
+                Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }
+                    .disabled(index == 0).help("上へ")
+                Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }
+                    .disabled(index == rows.count - 1).help("下へ")
+                Button(role: .destructive) { remove(index) } label: { Image(systemName: "trash") }
+                    .help("このコマンドを削除")
+            }
+            .buttonStyle(.borderless)
+            if problems.indices.contains(index) {
+                SettingsProblems(problems: problems[index])
+                    .padding(.leading, 26)
+            }
+        }
+    }
+
+    private func expandedBinding(_ id: UUID) -> Binding<Bool> {
+        Binding(get: { expanded.contains(id) },
+                set: { if $0 { expanded.insert(id) } else { expanded.remove(id) } })
+    }
+
+    private func addRow() {
+        let row = Row(ProjectCommand(name: "", command: ""))
+        rows.append(row)
+        expanded.insert(row.id)
+        // 開いた欄が描かれてから移す。
+        DispatchQueue.main.async { focused = .name(row.id) }
     }
 
     /// 選べるアイコン（設定に手で書いた一覧に無い名前も、その行では選べるように残す）。
@@ -126,6 +162,7 @@ struct ProjectCommandsEditor: View {
 
     private func remove(_ index: Int) {
         guard rows.indices.contains(index) else { return }
+        expanded.remove(rows[index].id)
         rows.remove(at: index)
         store.flushPending()
     }
@@ -155,7 +192,14 @@ struct ProjectCommandsEditor: View {
     }
 
     private func load(_ commands: [ProjectCommand]) {
-        rows = commands.map(Row.init)
+        // 同じ名前の行は印を引き継ぐ（外で書き換わっても開いていた行を閉じない）。
+        var previous = rows
+        rows = commands.map { command in
+            let name = command.name.trimmingCharacters(in: .whitespaces)
+            guard let index = previous.firstIndex(where: { $0.name.trimmingCharacters(in: .whitespaces) == name }) else { return Row(command) }
+            return Row(command, id: previous.remove(at: index).id)
+        }
+        expanded.formIntersection(rows.map(\.id))
         loaded = rows.map(\.raw)
         // 手で書いた不正な行も、開いた時から理由を出す。
         problems = rowProblems

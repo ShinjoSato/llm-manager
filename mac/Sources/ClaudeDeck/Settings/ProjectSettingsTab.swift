@@ -142,23 +142,28 @@ private struct ProjectDetailForm: View {
                     }
             }
             ProjectBadgeEditor(store: store, project: project)
-            // 紐づけ（ディレクトリの詳細の見出しに出るものを決める）。
-            ProjectGitHubSection(store: store, project: project)
-            ProjectXcodeEditor(store: store, project: project)
-            ProjectSiteEditor(store: store, project: project)
-            ProjectAppStoreEditor(store: store, project: project)
-            ProjectLinksEditor(store: store, project: project)
+            Section {
+                ProjectGitHubRow(store: store, project: project)
+                ProjectXcodeEditor(store: store, project: project)
+                ProjectSiteEditor(store: store, project: project)
+                ProjectAppStoreEditor(store: store, project: project)
+                ProjectLinksEditor(store: store, project: project)
+            } header: {
+                SettingsSectionHeader(title: "紐づけ", info: "ディレクトリの詳細とルームの見出しのボタン・タブに出るものを決めます。各項目の ⓘ に何が出るかを書いています。")
+            }
             ProjectCommandsEditor(store: store, project: project)
             Section {
-                LabeledContent("並び順") {
+                LabeledContent {
                     HStack {
                         Button("上へ") { moveBy(-1) }.disabled(index == 0)
                         Button("下へ") { moveBy(1) }.disabled(index == store.projects.count - 1)
                     }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("並び順")
+                        InfoButton(text: "「+」の一覧はこの順に並びます。左の一覧はドラッグでも並べ替えられます。")
+                    }
                 }
-            } footer: {
-                Text("「+」の一覧はこの順に並びます。左の一覧はドラッグでも並べ替えられます。")
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
