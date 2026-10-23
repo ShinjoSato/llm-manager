@@ -1,18 +1,21 @@
 import SwiftUI
 import MonitorKit
 
-/// 外部ルームの見出し下に出す制約の説明と「アプリに引き継ぐ」。
+/// 外部ルームの見出し下に出す制約の説明と「アプリに引き継ぐ」（VS Code の会話は「タブを閉じたら」と「今すぐ止めて」）。
 struct ExternalBanner: View {
     let model: ChatModel
     let room: Room
 
     var body: some View {
         let busy = room.sessionId.map { model.handover.inProgress.contains($0) } ?? false
+        let closeWait = room.sessionId.flatMap { model.handover.closeWaitPhase(sessionId: $0) }
         let disabledReason = model.handover.disabledReason(for: room)
-        let sourceReason = model.handover.sourceReason(for: room)
+        let source = model.handover.source(for: room)
+        let sourceReason: String? = if case .unsupported(let reason) = source { reason } else { nil }
+        let isEditor = source == .supported(.editorExtension)
         let pending = room.sessionId.flatMap { model.restorer.pending(sessionId: $0) }
         let showsHandover: Bool = {
-            guard !busy, sourceReason == nil else { return false }
+            guard !busy, closeWait == nil, sourceReason == nil else { return false }
             switch pending {
             case nil: return true
             // 見送り中は、前の claude が終わらない時の逃げ道として使える時だけ出す。
@@ -21,11 +24,12 @@ struct ExternalBanner: View {
             }
         }()
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: pending != nil ? "arrow.clockwise.circle"
+            Image(systemName: pending != nil || closeWait != nil ? "arrow.clockwise.circle"
                   : room.snapshot?.entrypoint == "cli" ? "terminal" : "macwindow")
                 .font(.system(size: 14))
                 .foregroundStyle(ChatTheme.waiting)
-            Text(description(pending: pending, sourceReason: sourceReason, showsHandover: showsHandover))
+            Text(description(pending: pending, closeWait: closeWait, sourceReason: sourceReason, isEditor: isEditor,
+                             showsHandover: showsHandover))
                 .font(ChatTheme.caption)
                 .foregroundStyle(ChatTheme.text)
                 .fixedSize(horizontal: false, vertical: true)
@@ -33,6 +37,14 @@ struct ExternalBanner: View {
             if busy {
                 ProgressView().controlSize(.small)
                 Text("引き継ぎ中…").font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
+            } else if let closeWait, let sessionId = room.sessionId {
+                ProgressView().controlSize(.small)
+                Text(closeWait == .settling ? "再開しています…" : "閉じるのを待っています…")
+                    .font(ChatTheme.caption).foregroundStyle(ChatTheme.secondary)
+                actionButton("やめる", systemImage: "xmark", prominent: false, enabled: true,
+                             help: "引き継ぎの待ちをやめます（VS Code の claude はそのまま）") {
+                    model.handover.cancelCloseWait(sessionId: sessionId)
+                }
             } else if pending == .waiting || pending == .judging {
                 ProgressView().controlSize(.small)
                 Text(pending == .waiting ? "終了を待っています…" : "確かめています…")
@@ -45,9 +57,21 @@ struct ExternalBanner: View {
                     }
                 }
                 if showsHandover {
-                    actionButton("アプリに引き継ぐ", systemImage: "arrow.down.app", enabled: disabledReason == nil,
-                                 help: disabledReason ?? "元のターミナルの claude を終了し、このアプリで同じ会話を再開します") {
-                        model.handover.request(room)
+                    if isEditor {
+                        actionButton("VS Code のタブを閉じたら引き継ぐ", systemImage: "rectangle.portrait.and.arrow.right",
+                                     enabled: disabledReason == nil,
+                                     help: disabledReason ?? "VS Code でこの会話のタブを閉じたら、このアプリで同じ会話を再開します（VS Code の claude は止めません）") {
+                            model.handover.requestOnClose(room)
+                        }
+                        actionButton("今すぐ止めて引き継ぐ", systemImage: "stop.circle", prominent: false, enabled: disabledReason == nil,
+                                     help: disabledReason ?? "VS Code の claude を止めて、このアプリで同じ会話を再開します") {
+                            model.handover.request(room)
+                        }
+                    } else {
+                        actionButton("アプリに引き継ぐ", systemImage: "arrow.down.app", enabled: disabledReason == nil,
+                                     help: disabledReason ?? "元のターミナルの claude を終了し、このアプリで同じ会話を再開します") {
+                            model.handover.request(room)
+                        }
                     }
                 }
             }
@@ -58,7 +82,7 @@ struct ExternalBanner: View {
         .overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
     }
 
-    private func actionButton(_ title: String, systemImage: String, enabled: Bool, help: String,
+    private func actionButton(_ title: String, systemImage: String, prominent: Bool = true, enabled: Bool, help: String,
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 5) {
@@ -66,10 +90,10 @@ struct ExternalBanner: View {
                 Text(title)
             }
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(enabled ? ChatTheme.onAccent : ChatTheme.tertiary)
+            .foregroundStyle(!enabled ? ChatTheme.tertiary : prominent ? ChatTheme.onAccent : ChatTheme.text)
             .padding(.horizontal, 12)
             .frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 8).fill(enabled ? ChatTheme.accent : ChatTheme.inputSurface))
+            .background(RoundedRectangle(cornerRadius: 8).fill(enabled && prominent ? ChatTheme.accent : ChatTheme.inputSurface))
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -77,8 +101,20 @@ struct ExternalBanner: View {
         .fixedSize()
     }
 
-    private func description(pending: SessionRestorer.Pending?, sourceReason: String?, showsHandover: Bool) -> String {
+    private func description(pending: SessionRestorer.Pending?, closeWait: HandoverCloseWait.Phase?, sourceReason: String?,
+                             isEditor: Bool, showsHandover: Bool) -> String {
         let limits = "ここから送れるのは『伝言』と権限の許可・拒否だけです。"
+        let stopButton = isEditor ? "［今すぐ止めて引き継ぐ］" : "［アプリに引き継ぐ］"
+        switch closeWait {
+        case .waitingForClose:
+            return "VS Code でこの会話のタブを閉じてください（閉じたら自動でアプリに引き継ぎます）。"
+        case .waitingForOther(let pid):
+            return "VS Code の claude は終わりましたが、同じ会話が別の claude（pid \(pid)）で動いています。そちらも終わったらアプリに引き継ぎます。"
+        case .settling:
+            return "VS Code の claude が終わりました。このアプリで同じ会話を再開します。"
+        case nil:
+            break
+        }
         switch pending {
         case .judging:
             return "前回アプリでホストしていた会話です。このアプリで再開できるか確かめています。" + limits
@@ -87,11 +123,39 @@ struct ExternalBanner: View {
         case .deferred:
             return "前回アプリでホストしていた会話です（再開を見送っています）。" + limits
                 + "［再開する］で、このアプリで同じ会話を再開します。"
-                + (showsHandover ? "前の claude が終わらない時は［アプリに引き継ぐ］で止めてから再開できます。" : "")
+                + (showsHandover ? "前の claude が終わらない時は\(stopButton)で止めてから再開できます。" : "")
         case nil:
+            if let sourceReason { return SessionHandover.sourceDescription(entrypoint: room.snapshot?.entrypoint) + limits + "\(sourceReason)。" }
+            if isEditor {
+                return SessionHandover.sourceDescription(entrypoint: room.snapshot?.entrypoint) + limits
+                    + "［VS Code のタブを閉じたら引き継ぐ］は、タブを閉じた後にこのアプリで会話を再開します。"
+                    + "［今すぐ止めて引き継ぐ］は VS Code の claude を止めてすぐ再開します（VS Code のタブは残るので、そこでは打たないでください）。"
+            }
             return SessionHandover.sourceDescription(entrypoint: room.snapshot?.entrypoint) + limits
-                + (sourceReason.map { "\($0)。" } ?? "引き継ぐと、元のターミナルの claude を終了してこのアプリで会話を再開します。")
+                + "引き継ぐと、元のターミナルの claude を終了してこのアプリで会話を再開します。"
         }
+    }
+}
+
+/// ホスト中の会話と同じ会話がアプリの外で動き出した時の警告（その間は送信を止めている）。
+struct ExternalDuplicateBanner: View {
+    let duplicate: ExternalDuplicate
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(ChatTheme.error)
+            Text(duplicate.warning)
+                .font(ChatTheme.caption)
+                .foregroundStyle(ChatTheme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(ChatTheme.error.opacity(0.12))
+        .overlay(alignment: .bottom) { Rectangle().fill(ChatTheme.border).frame(height: 1) }
     }
 }
 

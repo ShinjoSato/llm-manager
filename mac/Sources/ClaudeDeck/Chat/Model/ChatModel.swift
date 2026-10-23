@@ -133,8 +133,13 @@ final class ChatModel {
         // 部品から ChatModel へは弱い参照のクロージャだけで戻る（循環参照を作らない）。引き継ぎは部品同士の一方向の参照。
         outbox.hostedRoomExists = { [weak self] roomId in self?.hosted.contains { RoomID.hosted($0.id) == roomId } ?? false }
         outbox.roomIds = { [weak self] sessionId in self?.rooms.filter { $0.sessionId == sessionId }.map(\.id) ?? [] }
-        outbox.isHandingOver = { handover.inProgress.contains($0) }
+        outbox.isHandingOver = { handover.isHandingOver($0) }
         handover.onResume = { [weak self] project, sessionId, roomId in self?.resume(project: project, sessionId: sessionId, from: roomId) }
+        handover.hostedSessions = { [weak self] in
+            guard let self else { return [] }
+            return hosted.map { ($0, $0.resolveSessionId(store)) }
+        }
+        handover.startWatching()
         transcripts.pinned = { [weak self] in Set(self?.shownSessionIds(includingHiddenMain: true) ?? []) }
         refreshRooms()
         restorer.model = self
@@ -167,7 +172,7 @@ final class ChatModel {
     private func discardVanishedExternalRooms(_ all: [Room]) {
         guard store.connection.isConnected else { return }
         outbox.discardVanishedExternalRooms(alive: Set(all.map(\.id)))
-        shells.reconcile(rooms: all) { [handover] in handover.inProgress.contains($0) }
+        shells.reconcile(rooms: all) { [handover] in handover.isHandingOver($0) }
     }
 
     private func buildRooms() -> [Room] {
