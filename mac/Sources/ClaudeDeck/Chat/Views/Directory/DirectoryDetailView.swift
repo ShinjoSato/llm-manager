@@ -41,9 +41,9 @@ private struct DirectoryDetailTabs: View {
     private static let padding: CGFloat = 20
 
     var body: some View {
-        let xcodeProject = model.editors.xcodeProject(for: project.editorTarget)
+        let xcode = model.editors.xcodeResolution(for: project.editorTarget)
         let rooms = threadRooms
-        let available = DirectoryTabs.available(hasSite: hasSite, hasXcodeProject: xcodeProject != nil,
+        let available = DirectoryTabs.available(hasSite: hasSite, hasXcodeProject: DirectoryTabs.hasXcodeProject(xcode),
                                                 hasAppStoreApps: !project.appStoreApps.isEmpty)
         let selection = DirectoryTabs.resolve(remembered: remembered, available: available)
         VStack(spacing: 0) {
@@ -54,7 +54,7 @@ private struct DirectoryDetailTabs: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    section(selection, xcodeProject: xcodeProject, rooms: rooms)
+                    section(selection, xcode: xcode, rooms: rooms)
                 }
                 .padding(Self.padding)
                 // 中身が広くてもスクロール欄の幅に収め、はみ出して中央寄せにさせない。
@@ -75,15 +75,25 @@ private struct DirectoryDetailTabs: View {
     }
 
     @ViewBuilder
-    private func section(_ tab: DirectoryTab, xcodeProject: URL?, rooms: [Room]) -> some View {
+    private func section(_ tab: DirectoryTab, xcode: XcodeResolution, rooms: [Room]) -> some View {
         switch tab {
         case .site:
             SitePreviewSection(project: project, availableHeight: visibleHeight.map { $0 - Double(Self.padding) * 2 }, selection: $siteSource)
         case .images:
             ProjectImagesSection(project: project, store: images)
         case .iosPreviews:
-            if let xcodeProject {
+            if let xcodeProject = xcode.url {
                 IOSPreviewsSection(project: project, xcodeProject: xcodeProject, list: iosPreviews)
+            } else if let problem = xcode.problem {
+                DetailSection(title: "iPhone のプレビュー") {
+                    Text(problem + "。設定画面のプロジェクトの「Xcode」で選び直してください。")
+                        .font(ChatTheme.caption)
+                        .foregroundStyle(ChatTheme.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("設定で編集") { SettingsWindow.show(tab: .projects, project: project.id) }
+                        .controlSize(.small)
+                }
+                .frame(maxWidth: Self.readableWidth, alignment: .leading)
             }
         case .appStore:
             AppStoreSection(project: project).frame(maxWidth: Self.readableWidth, alignment: .leading)

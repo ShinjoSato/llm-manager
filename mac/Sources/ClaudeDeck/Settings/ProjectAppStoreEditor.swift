@@ -48,7 +48,7 @@ struct ProjectAppStoreEditor: View {
             }
             addRow
         } header: {
-            Text("App Store")
+            LinkageHeader(title: "App Store", shows: "タブの「App Store」")
         } footer: {
             Text("ディレクトリの詳細の「App Store」のタブで、版の状態・審査・メタデータの文面を App Store Connect から読んで出します（読むだけ）。鍵は appstore-plugin と同じ書式で環境変数か \(AppStoreEnvFile.displayPath) から読み（プロジェクトの .env は読みません）、この設定には書きません。候補は .claude/appstore.json の appId と、Xcode のプロジェクトのバンドル ID が一致するアプリです。")
                 .font(.caption).foregroundStyle(.secondary)

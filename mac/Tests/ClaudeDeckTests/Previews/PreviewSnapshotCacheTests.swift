@@ -22,6 +22,9 @@ final class PreviewSnapshotCacheTests: XCTestCase {
         let other = PreviewRenderRequest(relativePath: "A/V.swift", index: 2)
         XCTAssertNotEqual(PreviewCacheKey(projectId: project, request: other, sourceModified: date).slot,
                           PreviewCacheKey(projectId: project, request: PreviewRenderRequest(relativePath: "A/V.swift", index: 1), sourceModified: date).slot)
+        XCTAssertNotEqual(PreviewCacheKey(projectId: project, request: a, sourceModified: date, xcodeProject: "/p/A.xcodeproj").slot,
+                          PreviewCacheKey(projectId: project, request: a, sourceModified: date, xcodeProject: "/p/B.xcodeproj").slot,
+                          "Xcode の先が違えば別の絵")
         XCTAssertNotEqual(PreviewCacheKey(projectId: project, request: PreviewRenderRequest(relativePath: "A/V.swift", index: 1, locale: "ja"), sourceModified: date).slot,
                           PreviewCacheKey(projectId: project, request: PreviewRenderRequest(relativePath: "A/V.swift", index: 1), sourceModified: date).slot)
     }

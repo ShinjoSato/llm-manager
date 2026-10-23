@@ -102,7 +102,7 @@ struct ProjectLinksEditor: View {
                 focused = .name(row.id)
             } label: { Label("リンクを追加", systemImage: "plus") }
         } header: {
-            Text("リンク")
+            LinkageHeader(title: "リンク", shows: "タブの「リンク」・ボタンの「リンク」とピン")
         } footer: {
             Text("LP やデザインなど、このプロジェクトの会話の見出しの「リンク」から既定のブラウザで開くアドレス（http / https）。名前はプロジェクトの中で重ねられません。「毎月 N 日に確認」は、その日を過ぎてアプリから開いていなければ印を出します（最終確認日は link-visits.json に持ち、この設定には書きません）。")
                 .font(.caption).foregroundStyle(.secondary)

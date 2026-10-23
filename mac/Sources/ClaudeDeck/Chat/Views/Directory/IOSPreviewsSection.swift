@@ -38,7 +38,7 @@ struct IOSPreviewsSection: View {
             service.sectionClosed(project.id)
         }
         .sheet(item: $opened) { target in
-            IOSPreviewSheet(target: target)
+            IOSPreviewSheet(target: target.relinked(xcodeProject: xcodeProject.path, xcodeLink: project.xcode))
         }
     }
 
@@ -47,7 +47,7 @@ struct IOSPreviewsSection: View {
     private var targets: [IOSPreviewTarget] {
         (list.value?.files ?? []).flatMap { file in
             file.previews.map { IOSPreviewTarget(projectId: project.id, projectName: project.name,
-                                                 xcodeProject: xcodeProject.path, file: file, preview: $0) }
+                                                 xcodeProject: xcodeProject.path, xcodeLink: project.xcode, file: file, preview: $0) }
         }
     }
 

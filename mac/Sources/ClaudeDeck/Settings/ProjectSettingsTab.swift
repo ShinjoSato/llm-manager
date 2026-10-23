@@ -2,7 +2,7 @@ import AppKit
 import MonitorKit
 import SwiftUI
 
-/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・アイコンと色・リンク・サイト・App Store。
+/// プロジェクト: 一覧（並べ替え・追加・削除）と、選んだものの名前・状態・メモ・アイコンと色・紐づけ（GitHub・Xcode・サイト・App Store・リンク）。
 struct ProjectSettingsTab: View {
     let store: SettingsStore
     let navigation: SettingsNavigation
@@ -142,9 +142,12 @@ private struct ProjectDetailForm: View {
                     }
             }
             ProjectBadgeEditor(store: store, project: project)
-            ProjectLinksEditor(store: store, project: project)
+            // 紐づけ（ディレクトリの詳細の見出しに出るものを決める）。
+            ProjectGitHubSection(store: store, project: project)
+            ProjectXcodeEditor(store: store, project: project)
             ProjectSiteEditor(store: store, project: project)
             ProjectAppStoreEditor(store: store, project: project)
+            ProjectLinksEditor(store: store, project: project)
             Section {
                 LabeledContent("並び順") {
                     HStack {
