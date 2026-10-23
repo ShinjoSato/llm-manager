@@ -199,8 +199,9 @@ final class XcodeBridgeClientTests: XCTestCase {
         }
         let isRunning = await client.isRunning
         XCTAssertFalse(isRunning)
-        XCTAssertEqual(launched.all.first?.stops, 1)
+        // 時間切れの停止は失敗を返した後に裏で進むので、それを待つ start の後で数える。
         try await client.start()
+        XCTAssertEqual(launched.all.first?.stops, 1)
         XCTAssertEqual(launched.all.count, 2)
         await client.stop()
     }
