@@ -26,6 +26,10 @@ final class ChatOutbox {
     static let maxAttachments = 20
     /// ルーム → 画像を添えて送り、まだ transcript に載っていない発話（載るまで送った画像を吹き出しに出す）。
     private(set) var sentImages: [RoomID: [PendingImageMessage]] = [:]
+    /// ルーム → 送り始めてまだ transcript に載っていないかもしれない発話（入力欄の履歴に含める）。
+    @ObservationIgnored private var sentTexts: [RoomID: [ComposerHistory.Sent]] = [:]
+    /// ルーム → 入力欄の ↑ / ↓ の呼び出しの状態（退避した下書きを含む。ルームやタブを替えても ↓ で戻せるように）。
+    @ObservationIgnored private var recalls: [RoomID: ComposerRecall] = [:]
 
     // MARK: ChatModel・引き継ぎへの問い合わせ（循環参照を避けてクロージャで受け、設定し忘れは assert で止める）
     /// ホスト中のルームがまだあるか（閉じた後に届いた送信の結末で下書きを戻さないため）。
@@ -62,6 +66,7 @@ final class ChatOutbox {
         case .started(let pastedImages, let body):
             // サムネイルは結末が出るまで残す（本文を貼る前にやめたら入力欄へ戻すため）。
             attachments[roomId] = nil
+            rememberSent(text, id: outgoingId, at: sentAt, in: roomId)
             if let outgoing = PendingImageMessages.outgoing(id: outgoingId, text: text, sentBody: body,
                                                             pastedImagePaths: pastedImages, sentAt: sentAt) {
                 sentImages[roomId, default: []].append(outgoing)
@@ -91,6 +96,7 @@ final class ChatOutbox {
             completion(outcome)
         }
         if case .started(let pastedImages, let body) = result {
+            rememberSent(text, id: outgoingId, at: sentAt, in: roomId)
             if let outgoing = PendingImageMessages.outgoing(id: outgoingId, text: text, sentBody: body,
                                                             pastedImagePaths: pastedImages, sentAt: sentAt) {
                 sentImages[roomId, default: []].append(outgoing)
@@ -104,6 +110,7 @@ final class ChatOutbox {
 
     private func finishRemoteSend(_ completion: SendCompletion, images: [Attachment], outgoingId: String, in roomId: RoomID) {
         if completion != .submitted {
+            forgetSent(outgoingId, in: roomId)
             sentImages[roomId]?.removeAll { $0.id == outgoingId }
             if sentImages[roomId]?.isEmpty == true { sentImages[roomId] = nil }
         }
@@ -120,6 +127,7 @@ final class ChatOutbox {
         let roomExists = hostedRoomExists(roomId)
         // Enter まで届かなかった送信は記録されないので、仮の吹き出しを下げる。
         if completion != .submitted {
+            forgetSent(outgoingId, in: roomId)
             sentImages[roomId]?.removeAll { $0.id == outgoingId }
             if sentImages[roomId]?.isEmpty == true { sentImages[roomId] = nil }
         }
@@ -164,6 +172,53 @@ final class ChatOutbox {
         case .menu: return "上の選択肢に答えると送れます"
         case nil: return nil
         }
+    }
+
+    // MARK: - 入力欄の履歴
+
+    /// 入力欄の先頭での ↑ / ↓。履歴は辿り始めと transcript などが変わった時だけ組み立てる。
+    func recall(_ direction: ComposerRecall.Direction, current: String, in roomId: RoomID,
+                items: [TranscriptItem], notes: [RelayNote]) -> ComposerRecall.Outcome {
+        var state = recalls[roomId] ?? ComposerRecall()
+        let sent = sentTexts[roomId] ?? []
+        let outcome = state.move(direction, current: current, stamp: {
+            "\(items.count)|\(items.last?.id ?? "")|\(notes.count)|\(sent.count)|\(sent.last?.id ?? "")"
+        }, history: {
+            ComposerHistory.entries(items: items, notes: notes, sent: sent, now: Date().timeIntervalSince1970 * 1000)
+        })
+        recalls[roomId] = state.isIdle ? nil : state
+        return outcome
+    }
+
+    /// 入力欄がルームやタブを離れた。位置だけ初めに戻す。
+    func rewindRecall(in roomId: RoomID) {
+        recalls[roomId]?.rewind()
+    }
+
+    /// 送信や外からの変更で入力欄の文が入れ替わった。
+    func resetRecall(in roomId: RoomID) {
+        recalls[roomId] = nil
+    }
+
+    /// transcript に載った分と期限切れの送信中の発話を片付ける。
+    func pruneSentTexts(sessionId: String, items: [TranscriptItem]) {
+        guard !sentTexts.isEmpty else { return }
+        let now = Date().timeIntervalSince1970 * 1000
+        for roomId in roomIds(sessionId) {
+            guard let sent = sentTexts[roomId] else { continue }
+            let rest = ComposerHistory.pending(sent, in: items, now: now)
+            if rest.count != sent.count { sentTexts[roomId] = rest.isEmpty ? nil : rest }
+        }
+    }
+
+    private func rememberSent(_ text: String, id: String, at sentAt: Double, in roomId: RoomID) {
+        sentTexts[roomId] = ComposerHistory.appending(ComposerHistory.Sent(id: id, text: text, sentAt: sentAt),
+                                                      to: sentTexts[roomId] ?? [])
+    }
+
+    private func forgetSent(_ id: String, in roomId: RoomID) {
+        sentTexts[roomId]?.removeAll { $0.id == id }
+        if sentTexts[roomId]?.isEmpty == true { sentTexts[roomId] = nil }
     }
 
     // MARK: - 送った画像の仮の吹き出し
@@ -288,12 +343,16 @@ final class ChatOutbox {
     func forgetRoom(_ roomId: RoomID) {
         drafts[roomId] = nil
         sentImages[roomId] = nil
+        sentTexts[roomId] = nil
+        recalls[roomId] = nil
         discardPendingAttachments(of: roomId)
     }
 
     /// 引き継ぎで外部ルームからホスト中のルームへ移った。書きかけと添付（取り込み中のものも）を移し先へ渡す。
     func move(from roomId: RoomID, to newRoomId: RoomID) {
         if let draft = drafts.removeValue(forKey: roomId) { drafts[newRoomId] = draft }
+        if let sent = sentTexts.removeValue(forKey: roomId) { sentTexts[newRoomId, default: []].append(contentsOf: sent) }
+        if let recall = recalls.removeValue(forKey: roomId) { recalls[newRoomId] = recall }
         if let pending = attachments.removeValue(forKey: roomId) { attachments[newRoomId, default: []].append(contentsOf: pending) }
         if let pending = importing.removeValue(forKey: roomId) {
             importing[newRoomId, default: [:]].merge(pending) { _, moved in moved }
