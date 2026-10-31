@@ -133,8 +133,8 @@ final class PerfProbeTests: XCTestCase {
     }
 
     /// 見張りを始めるとメインへの印の遅れが溜まる。
-    func testStallWatcherSamplesMain() {
-        let (collector, _) = collector()
+    func testStallWatcherSamplesMain() throws {
+        let (collector, url) = collector()
         collector.start()
         defer { collector.stop() }
         let waited = expectation(description: "samples")
@@ -142,11 +142,13 @@ final class PerfProbeTests: XCTestCase {
         wait(for: [waited], timeout: 3)
         collector.stop()
         XCTAssertGreaterThan(collector.drain().lags.count, 0)
+        collector.log.flush()
+        XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains(" start\n"))
     }
 
     func testDefaultLocations() {
         XCTAssertEqual(PerfProbe.logURL, DeckPaths.logs.appendingPathComponent("perf.log"))
         XCTAssertEqual(PerfProbe.markerURL, DeckPaths.logs.appendingPathComponent("perf.on"))
-        XCTAssertEqual(PerfCollector.maxLines, 3000)
+        XCTAssertEqual(PerfCollector.maxLines, 20000)
     }
 }

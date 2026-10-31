@@ -5,16 +5,20 @@ set -eu
 
 usage() {
   cat <<'EOF'
-使い方: perf-summary.sh [-t 件数] [perf.log]
+使い方: perf-summary.sh [-a] [-t 件数] [perf.log]
   perf.log を省くと ~/Library/Logs/claude-deck/perf.log を読む。
+  既定は最後の起動の分だけを読む（perf.log は起動をまたいで足されるため）。
+  -a        前の起動の分も含めて全部読む
   -t 件数   各表に出す行数（既定 20）
 EOF
 }
 
 top=20
+all=0
 while [ $# -gt 0 ]; do
   case $1 in
     -h | --help) usage; exit 0 ;;
+    -a) all=1; shift ;;
     -t) [ $# -ge 2 ] || { usage >&2; exit 2; }; top=$2; shift 2 ;;
     --) shift; break ;;
     -*) usage >&2; exit 2 ;;
@@ -26,7 +30,7 @@ case $top in '' | *[!0-9]*) echo "-t には数を渡してください" >&2; exi
 log=${1:-"$HOME/Library/Logs/claude-deck/perf.log"}
 [ -r "$log" ] || { echo "読めません: $log" >&2; exit 1; }
 
-LC_ALL=C awk -v top="$top" '
+LC_ALL=C awk -v top="$top" -v all="$all" '
 function field(name,   i, eq) {
   for (i = 3; i <= NF; i++) {
     eq = index($i, "=")
@@ -46,6 +50,9 @@ function rank(count, score, order,   i, j, best, used, picked) {
   }
   return picked
 }
+# 1 回目は最後の起動の印の行を探すだけ、2 回目でその後ろを集計する。
+NR == FNR { if ($2 == "start" && !all) from = FNR; next }
+FNR < from { next }
 $2 == "ctx" {
   windows++
   seconds += field("sec")
@@ -89,11 +96,11 @@ $2 == "span" || $2 == "count" {
   rowValue[r] += field("value")
   if (field("max_ms") + 0 > rowMax[r]) rowMax[r] = field("max_ms") + 0
 }
-function spans(thread, title,   i, count, score, order, picked, k, r, sum) {
+function spans(thread, title,   i, count, score, order, picked, k, r) {
   count = 0
-  sum = 0
-  for (i = 1; i <= rows; i++) if (rowKind[i] == "span" && rowThread[i] == thread) { map[++count] = i; score[count] = rowTotal[i]; sum += rowTotal[i] }
-  printf "\n== %s（合計時間の多い順・期間のうち %.2f%%）\n", title, (seconds > 0 ? sum / (seconds * 10) : 0)
+  for (i = 1; i <= rows; i++) if (rowKind[i] == "span" && rowThread[i] == thread) { map[++count] = i; score[count] = rowTotal[i] }
+  # 区間は入れ子になりうる（子の時間は親にも入る）ので、割合を足し合わせない。
+  printf "\n== %s（合計時間の多い順・子の区間の時間は親にも含まれる）\n", title
   if (count == 0) { print "  （無し）"; return }
   printf "  %10s %7s %9s %9s %9s %12s  %s\n", "total_ms", "share%", "n", "n/s", "avg_ms", "max_ms", "name(value)"
   picked = rank(count, score, order)
@@ -108,7 +115,7 @@ function spans(thread, title,   i, count, score, order, picked, k, r, sum) {
 END {
   if (windows == 0) { print "ctx の行がありません（計測を有効にして 10 秒以上動かしてください）"; exit 1 }
   if (seconds <= 0) seconds = windows * 10
-  printf "期間: %s 〜 %s（%d 回・%.0f 秒）\n", first, last, windows, seconds
+  printf "期間: %s 〜 %s（%d 回・%.0f 秒・%s）\n", first, last, windows, seconds, (all ? "全部の起動" : "最後の起動から")
 
   print "\n== 文脈（10 秒ごとの値の平均 / 最大）"
   for (i = 1; i <= ctxCount; i++) {
@@ -140,4 +147,4 @@ END {
     printf "\n"
   }
 }
-' "$log"
+' "$log" "$log"

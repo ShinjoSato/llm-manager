@@ -71,8 +71,8 @@ public struct PerfSpan: Sendable {
 
 /// 区間の集計と、メインの詰まりの見張りと、10 秒ごとの書き出し。
 public final class PerfCollector: @unchecked Sendable {
-    /// 残す行数。
-    public static let maxLines = 3000
+    /// 残す行数（10 秒で 50 行ほどなので 1 時間あまり）。
+    public static let maxLines = 20000
     /// 書き出しの間隔。
     static let flushInterval: TimeInterval = 10
     /// メインへ印を投げる間隔。
@@ -114,6 +114,7 @@ public final class PerfCollector: @unchecked Sendable {
     private let queue = DispatchQueue(label: "claude-deck.perf")
     private var timers: [DispatchSourceTimer] = []
     private var pingInFlight = false
+    private var lastFlush: UInt64 = 0
 
     init(log: MenuOpsLog, signposter: OSSignposter = OSSignposter(subsystem: Bundle.main.bundleIdentifier ?? "local.claude-deck",
                                                                       category: "perf")) {
@@ -235,9 +236,18 @@ public final class PerfCollector: @unchecked Sendable {
     }
 
     func start() {
+        // 起動をまたいで足すので、集計が最後の起動の分だけを読めるよう区切る。
+        log.record("start")
+        queue.async { self.lastFlush = Self.now() }
         let flushTimer = DispatchSource.makeTimerSource(queue: queue)
         flushTimer.schedule(deadline: .now() + Self.flushInterval, repeating: Self.flushInterval)
-        flushTimer.setEventHandler { [weak self] in self?.flush(seconds: Self.flushInterval) }
+        // App Nap 等で遅れると 10 秒より長くなるので、実際の経過を書く。
+        flushTimer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let now = Self.now()
+            self.flush(seconds: Double(now &- self.lastFlush) / 1_000_000_000)
+            self.lastFlush = now
+        }
         // 1 つずつ投げる（詰まった間に溜めると 1 回の詰まりを何度も数える）。
         let pingTimer = DispatchSource.makeTimerSource(queue: queue)
         pingTimer.schedule(deadline: .now() + Self.stallInterval, repeating: Self.stallInterval)
