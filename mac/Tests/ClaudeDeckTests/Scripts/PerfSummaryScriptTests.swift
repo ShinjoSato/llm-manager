@@ -63,6 +63,26 @@ final class PerfSummaryScriptTests: XCTestCase {
         XCTAssertTrue(output.contains("test.body"), output)
     }
 
+    /// 既定は最後の起動の分だけ、`-a` で全部を読む。
+    func testReadsLastLaunchUnlessAll() throws {
+        let url = dir.appendingPathComponent("perf.log")
+        let log = MenuOpsLog(url: url, keep: PerfCollector.maxLines)
+        for (launch, label) in [(0, "old"), (1, "new")] {
+            log.record("start")
+            log.record("ctx", [("sec", "10.0"), ("hosted", String(launch))])
+            log.record("span", [("name", "test.\(label)"), ("thread", "main"), ("n", "1"), ("total_ms", "5.00"), ("max_ms", "5.00")])
+        }
+        log.flush()
+        let last = try run([url.path])
+        XCTAssertEqual(last.status, 0, last.output)
+        XCTAssertTrue(last.output.contains("1 回・10 秒・最後の起動から"), last.output)
+        XCTAssertTrue(last.output.contains("test.new"), last.output)
+        XCTAssertFalse(last.output.contains("test.old"), last.output)
+        let all = try run(["-a", url.path])
+        XCTAssertTrue(all.output.contains("2 回・20 秒・全部の起動"), all.output)
+        XCTAssertTrue(all.output.contains("test.old"), all.output)
+    }
+
     func testFailsWithoutLog() throws {
         XCTAssertEqual(try run([dir.appendingPathComponent("missing.log").path]).status, 1)
         XCTAssertEqual(try run(["-t", "x"]).status, 2)

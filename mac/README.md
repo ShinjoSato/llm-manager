@@ -1578,13 +1578,13 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
   CLAUDE_DECK_PERF=1 swift run                                                      # 端末から起動する時だけ
   ```
 - **無効に戻す**: `rm ~/Library/Logs/claude-deck/perf.on`（環境変数なら外す）してアプリを起動し直す。perf.log は残るので要らなければ消す。
-- **書き出し**: 10 秒ごとに `~/Library/Logs/claude-deck/perf.log`（0600・直近 3000 行・`MenuOpsLog` と同じ書き方）へ 1 回分の行をまとめて足す。
+- **書き出し**: 10 秒ごとに `~/Library/Logs/claude-deck/perf.log`（0600・直近 20000 行（1 時間あまり）・`MenuOpsLog` と同じ書き方）へ 1 回分の行をまとめて足す。起動ごとに `start` の行で区切る。
   **本文・パス・sessionId は書かない**（ラベルは `StaticString` の固定の名前だけを受け、値は件数・時間・バイト数・状態の数だけ）。
-  - `ctx sec=10.0 hosted= external= working= windows= shown= feed= items=`: ホスト中のセッション数・外部ルーム数・作業中の数・別ウィンドウの数・出している会話の数・feed の件数・出している会話の項目数の合計。
+  - `ctx sec=10.0 hosted= external= working= windows= shown= feed= items=`: sec は前回からの実際の経過秒。ホスト中のセッション数・外部ルーム数・作業中の数・別ウィンドウの数・出している会話の数・feed の件数・出している会話の項目数の合計。
   - `stall samples= p50_ms= p95_ms= max_ms= over250=`: 別スレッドから 100ms ごとにメインへ印を 1 つずつ投げ、届くまでの遅れ（全体の重さの指標。詰まった間は次を投げないので 1 回の詰まりは 1 件）。
   - `span name= thread=main|bg n= total_ms= max_ms= value=`: 区間の回数・合計・最大と、値（バイト数・件数など）の合計。`count` は時間を取らない回数（body の評価・変わらなかった判定など）。
 - **Instruments**: 同じ区間を `OSSignposter`（subsystem はバンドル ID・category `perf`）にも出すので、Instruments の「Points of Interest」/ os_signpost で時系列に見られる。
-- **読む**: `mac/scripts/perf-summary.sh [-t 件数] [perf.log]` で、区間ごとのメインの合計時間の多い順（期間に占める割合・回数/秒・平均・最大）・メイン以外の区間・回数・詰まりの分布・文脈の平均を出す（依存は macOS 標準の awk だけ）。
+- **読む**: `mac/scripts/perf-summary.sh [-a] [-t 件数] [perf.log]` で、区間ごとのメインの合計時間の多い順（期間に占める割合・回数/秒・平均・最大）・メイン以外の区間・回数・詰まりの分布・文脈の平均を出す（依存は macOS 標準の awk だけ）。既定は最後の起動の分だけ（`-a` で全部）。区間は入れ子になりうる（`terminal.dataReceived.parse` は `terminal.dataReceived` の中、`store.resolveHostedSessions` は `store.apply.sessions` の中など）ので、割合は足し合わせない。全体の重さはメインの詰まりで見る。
 
 | 区間 | 場所 |
 |---|---|
