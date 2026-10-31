@@ -23,6 +23,7 @@ struct Composer: View {
     @State private var dropTargeted = false
 
     var body: some View {
+        let _ = PerfProbe.count("body.Composer")
         let enabled = disabledReason == nil
         VStack(alignment: .leading, spacing: 6) {
             if relay {

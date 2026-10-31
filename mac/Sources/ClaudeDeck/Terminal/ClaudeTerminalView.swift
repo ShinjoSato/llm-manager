@@ -49,6 +49,8 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     // MARK: - ステータス検知（ハイブリッド: 活動量 + プロンプト文言）
     var statusTimer: Timer?
     var lastDataTime = Date()
+    /// 計測が有効な時だけ使う、前回の画面判定に渡した画面と受信時刻（変わらないのにやり直した回数を数えるため）。
+    var perfLastEvaluated: (screen: [String], dataTime: Date)?
 
     /// 起動した claude の pid。`exec claude` で zsh を置き換えるので PTY の子 pid がそのまま claude になる。
     var claudePid: pid_t? {
@@ -74,7 +76,9 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
 
     /// PTY からの受信バイトを傍受。描画は super に委ね、こちらは上限文言の検査だけ行う。
     override func dataReceived(slice: ArraySlice<UInt8>) {
-        super.dataReceived(slice: slice)
+        let span = PerfProbe.begin("terminal.dataReceived")
+        defer { PerfProbe.end(span, value: slice.count) }
+        PerfProbe.measure("terminal.dataReceived.parse") { super.dataReceived(slice: slice) }
         lastDataTime = Date()   // 活動量ベースの作業中判定に使う
         guard !limitHandled else { return }
         scan()

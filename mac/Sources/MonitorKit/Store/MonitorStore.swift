@@ -250,6 +250,8 @@ public final class MonitorStore {
 
     /// レジストリを読み直す。claude の起動直後はまだファイルが無く、`/clear` で sessionId が替わるので繰り返し呼ぶ。
     public func resolveHostedSessions() {
+        let span = PerfProbe.begin("store.resolveHostedSessions")
+        defer { PerfProbe.end(span, value: hostedPids.count) }
         var resolved: [Int32: String] = [:]
         for pid in hostedPids {
             if let id = registry.sessionId(forPid: pid) {
@@ -288,20 +290,30 @@ public final class MonitorStore {
     func apply(_ event: MonitorEvent) {
         switch event {
         case .sessions(let list):
+            let span = PerfProbe.begin("store.apply.sessions")
+            defer { PerfProbe.end(span, value: list.count) }
             if list != sessions { sessions = list }
             resolveHostedSessions()
             logSessionsIfChanged()
         case .feed(let item):
+            let span = PerfProbe.begin("store.apply.feed")
+            defer { PerfProbe.end(span) }
             guard !feed.contains(where: { $0.id == item.id }) else { return }
             feed.append(item)
             if feed.count > feedLimit { feed.removeFirst(feed.count - feedLimit) }
         case .usage(let snapshot):
+            let span = PerfProbe.begin("store.apply.usage")
+            defer { PerfProbe.end(span) }
             usage = snapshot
             log("残量: \(Self.describe(snapshot))")
         case .permissions(let list):
+            let span = PerfProbe.begin("store.apply.permissions")
+            defer { PerfProbe.end(span, value: list.count) }
             permissions = list
             log("権限確認 \(list.count) 件: \(list.map { "\($0.toolName)@\($0.project ?? "?")" }.joined(separator: ", "))")
         case .transcript(let transcript):
+            let span = PerfProbe.begin("store.apply.transcript")
+            defer { PerfProbe.end(span, value: transcript.items.count) }
             onTranscript?(transcript)
         }
     }

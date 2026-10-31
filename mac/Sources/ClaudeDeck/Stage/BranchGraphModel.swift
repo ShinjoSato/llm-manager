@@ -145,6 +145,8 @@ final class BranchGraphModel {
     }
 
     private func apply(_ result: GitGraphLoad) {
+        let span = PerfProbe.begin("branch.apply")
+        defer { PerfProbe.end(span) }
         refreshing = false
         switch result {
         case .loaded(let snapshot):

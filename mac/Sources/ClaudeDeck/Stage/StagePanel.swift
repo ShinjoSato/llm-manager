@@ -30,6 +30,7 @@ struct StagePanel: View {
     private var view: StagePanelView { StagePanelView(rawValue: viewRaw) ?? .stage }
 
     var body: some View {
+        let _ = PerfProbe.count("body.StagePanel")
         HStack(spacing: 0) {
             Rectangle().fill(ChatTheme.border).frame(width: 1)
             if expanded {
@@ -126,7 +127,7 @@ struct StagePanel: View {
                     AgentsSection(agents: snapshot.map { StageLogic.sortedAgents($0.agents) } ?? [], now: context.date)
                 }
             }
-            FeedSection(items: StageLogic.feed(store.feed, sessionId: sessionId))
+            FeedSection(items: PerfProbe.measure("stage.feedFilter") { StageLogic.feed(store.feed, sessionId: sessionId) })
         }
     }
 

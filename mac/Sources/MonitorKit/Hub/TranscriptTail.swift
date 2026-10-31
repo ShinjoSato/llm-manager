@@ -134,6 +134,8 @@ public enum TranscriptTail {
     public static func primeMeta(path: String) -> (title: String?, lastPrompt: String?) {
         guard let size = Bytes.size(path) else { return (nil, nil) }
         let start = max(0, size - maxScanBytes)
+        let span = PerfProbe.begin("transcript.primeMeta")
+        defer { PerfProbe.end(span, value: size - start) }
         guard size > start, let bytes = Bytes.read(path, offset: start, length: size - start) else { return (nil, nil) }
         var title: String?
         var lastPrompt: String?
@@ -197,7 +199,12 @@ public final class TranscriptReader {
             primed = true
             return []
         }
-        guard let chunk = Bytes.read(path, offset: start, length: size - start) else { return [] }
+        let span = PerfProbe.begin("transcript.readerRead")
+        guard let chunk = Bytes.read(path, offset: start, length: size - start) else {
+            PerfProbe.end(span)
+            return []
+        }
+        defer { PerfProbe.end(span, value: chunk.count) }
         offset = start + chunk.count
         primed = true
 
@@ -211,6 +218,7 @@ public final class TranscriptReader {
         }
         carry = Array(buffer[lineStart...]) // 最後は書き込み途中の可能性があるので持ち越す
         if dropFirstLine, !lines.isEmpty { lines.removeFirst() }
+        PerfProbe.count("transcript.readerRead.lines", value: lines.count)
 
         var events: [ParsedEvent] = []
         for line in lines {

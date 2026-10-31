@@ -32,7 +32,15 @@ extension ClaudeTerminalView {
     /// 実画面から状態を読み、変わった時だけ通知する（履歴ではなく今の画面を読むので、答え終えた確認を引きずらない）。
     /// dataReceived も Timer も main で動くので、端末バッファをそのまま読める。
     func evaluateStatus() {
+        let span = PerfProbe.begin("terminal.evaluateStatus")
+        defer { PerfProbe.end(span) }
         let screen = screenLines()
+        if PerfProbe.isEnabled {
+            if let last = perfLastEvaluated, last.screen == screen, last.dataTime == lastDataTime {
+                PerfProbe.count("terminal.evaluateStatus.unchanged")
+            }
+            perfLastEvaluated = (screen, lastDataTime)
+        }
         let tail = Self.tailText(screen, lines: 8)
         let quiet = Date().timeIntervalSince(lastDataTime)
         // 権限プロンプト・選択メニュー表示中も点滅表示で出力が流れ続けるので、活動量より先に見る。

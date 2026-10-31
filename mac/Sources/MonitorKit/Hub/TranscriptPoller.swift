@@ -149,8 +149,13 @@ struct TranscriptPoller {
     /// 稼働中のサブエージェント一覧と、サブエージェント側の最終更新時刻を返す。
     private mutating func scanAgents(_ state: SessionState, now: Double) -> ([AgentInfo], Double) {
         guard let path = state.transcriptPath else { return ([], 0) }
+        let span = PerfProbe.begin("hub.scanAgents")
         let dir = ClaudeHome.subagentDirectory(forTranscript: path)
-        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return ([], 0) }
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else {
+            PerfProbe.end(span)
+            return ([], 0)
+        }
+        defer { PerfProbe.end(span, value: files.count) }
         var agents: [AgentInfo] = []
         var newest: Double = 0
         for file in files where file.hasSuffix(".jsonl") {

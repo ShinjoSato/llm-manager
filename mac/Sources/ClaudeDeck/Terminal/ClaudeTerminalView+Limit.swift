@@ -10,7 +10,10 @@ extension ClaudeTerminalView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self else { return }
             self.limitCheckPending = false
-            if LimitGuard.screenLimitLine(self.limitScreenLines()) != nil { self.reachLimit() }
+            let span = PerfProbe.begin("terminal.limitScan")
+            let found = LimitGuard.screenLimitLine(self.limitScreenLines()) != nil
+            PerfProbe.end(span)
+            if found { self.reachLimit() }
         }
     }
 

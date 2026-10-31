@@ -113,6 +113,8 @@ public final class StageSceneRig: NSObject, SCNSceneRendererDelegate, @unchecked
     }
 
     private func rebuild(_ next: StageSceneModel?) {
+        let span = PerfProbe.begin("stage.sceneRebuild")
+        defer { PerfProbe.end(span) }
         var built = Moving(model: next)
         let node = next.map { buildZiggurat($0, into: &built) }
         let old = ziggurat

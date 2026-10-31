@@ -234,6 +234,8 @@ final class RoomShell {
     }
 
     private func recordGroups() {
+        let span = PerfProbe.begin("shell.recordGroups")
+        defer { PerfProbe.end(span) }
         guard isRunning, let groups = ShellSessionStop.currentGroups(leader: pid, master: masterFD) else { return }
         knownGroups.formUnion(groups)
     }
