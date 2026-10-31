@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var bubbleWindows: BubbleWindows!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 監視や画面より先に有効にする（起動直後の重さも数えるため）。既定は無効。
+        PerfProbe.startIfRequested()
         buildMenu()
         AppearanceSettings.shared.apply()
         MonitorBridge.start()

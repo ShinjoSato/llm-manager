@@ -203,6 +203,8 @@ final class ChatHandover {
 
     /// 読み取りはメインの外で行い、結果だけをメインで反映する。
     private func tick() {
+        let span = PerfProbe.begin("handover.tick")
+        defer { PerfProbe.end(span) }
         ticks += 1
         guard !scanning else { return }
         let waits = closeWaits.mapValues(\.target)
@@ -218,11 +220,13 @@ final class ChatHandover {
         guard !waits.isEmpty || !duplicateTargets.isEmpty else { return }
         scanning = true
         Task.detached(priority: .utility) { [weak self] in
+            let scan = PerfProbe.begin("handover.scan")
             let records = ClaudeSessionRegistry().allRecords()
             let observations = waits.mapValues { HandoverCloseWait.observe($0, records: records, inspect: ProcessFacts.inspect) }
             let duplicates = duplicateTargets.mapValues {
                 ExternalDuplicate.find(sessionId: $0, hostedPids: hostedPids, records: records, inspect: ProcessFacts.inspect)
             }
+            PerfProbe.end(scan, value: records.count)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 scanning = false

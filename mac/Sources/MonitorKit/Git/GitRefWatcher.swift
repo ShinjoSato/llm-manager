@@ -86,11 +86,16 @@ public final class GitRefWatcher {
     }
 
     fileprivate func received(_ paths: [String], flags: [FSEventStreamEventFlags]) {
+        let span = PerfProbe.begin("git.refEvents")
+        defer { PerfProbe.end(span, value: paths.count) }
         let rescan = FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagRootChanged)
         let relevant = zip(paths, flags).contains { path, flag in
             (flag & rescan) != 0 || GitWatchFilter.isRelevant(path, location: location)
         }
-        if relevant { onChange() }
+        if relevant {
+            PerfProbe.count("git.refEvents.relevant")
+            onChange()
+        }
     }
 
     private static let callback: FSEventStreamCallback = { _, info, count, rawPaths, rawFlags, _ in

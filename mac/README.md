@@ -261,6 +261,7 @@ mac/
       DeckPaths.swift             Application Support / Caches / Logs の claude-deck と、環境変数で差し替える設定ファイルの場所
       Paths.swift                 realpath・フォルダか・ファイルの種類・URL の 1 区間のエンコード
       Concurrency.swift           一度だけ通す印（OnceFlag）と、持ち主が消えたら止まる繰り返し（repeatingTask）
+      PerfProbe.swift             重さの計測の印（既定は無効）。区間の回数・時間とメインの詰まりを perf.log と OSSignposter に出す（下の「計測（perf.log）」）
   Sources/ClaudeDeckChannel/    Claude Code が子プロセスで起動するチャネル（stdio の MCP サーバー・実行ファイル claude-deck-channel）
   Tests/ClaudeDeckTests/        MonitorKit のテスト（swift test）。Sources と同じ区分のサブディレクトリ（Hub / Store / Limit / Projects / Chat / Channel /
                                 Server / Remote / Settings / Sites / Previews / AppStore / Notify / Stage / Git / Shell / Terminal / Theme / Support / Scripts）。共通の補助は Support/TestSupport.swift・Hub/FakeClaudeHome.swift・Shell/ShellPTYTestSupport.swift（ダミーのシェルを PTY で起動）
@@ -270,6 +271,7 @@ mac/
   scripts/bundle.sh             claude-deck.app を組み立てて署名する（プロファイルがあれば Apple Development + iCloud、無ければ ad-hoc。チャネルの実行ファイルも同梱）
   scripts/install.sh            develop を最新にして組み立て、動いている claude-deck を普通に終了させてから /Applications のものと入れ替えて起動し直す
   scripts/statusline.sh         Claude Code の statusLine。表示に加えて使用量を Application Support に残す
+  scripts/perf-summary.sh       perf.log（計測を有効にした時だけ書かれる）を区間ごとのメインの合計時間の多い順にまとめる
 ```
 
 ## セッション監視とフックの受け口（MonitorKit・アプリ内）
@@ -1564,6 +1566,49 @@ open dist/claude-deck.app      # Finder からのダブルクリックでも可
 
 > 端末から起動すると PATH（`~/.local/bin` の `claude` など）を確実に継承できる。
 > アプリ内でも各セッションをログインシェル経由で起動するため、GUI 起動でも `claude` は解決される想定。
+
+## 計測（perf.log）
+
+複数のセッションで重くなった時に、どこにどれだけ時間を使っているかを数える印（`Sources/MonitorKit/Support/PerfProbe.swift`）。**既定は無効**で、
+無効の間は真偽値 1 つを見て返すだけ（時間も取らず、値も評価しない・見張りのスレッドも立てない）。
+
+- **有効にする**（どちらか。起動時にだけ見るので、変えたらアプリを起動し直す）:
+  ```sh
+  mkdir -p ~/Library/Logs/claude-deck && touch ~/Library/Logs/claude-deck/perf.on   # 印のファイル（Finder・Dock からの起動でも効く）
+  CLAUDE_DECK_PERF=1 swift run                                                      # 端末から起動する時だけ
+  ```
+- **無効に戻す**: `rm ~/Library/Logs/claude-deck/perf.on`（環境変数なら外す）してアプリを起動し直す。perf.log は残るので要らなければ消す。
+- **書き出し**: 10 秒ごとに `~/Library/Logs/claude-deck/perf.log`（0600・直近 3000 行・`MenuOpsLog` と同じ書き方）へ 1 回分の行をまとめて足す。
+  **本文・パス・sessionId は書かない**（ラベルは `StaticString` の固定の名前だけを受け、値は件数・時間・バイト数・状態の数だけ）。
+  - `ctx sec=10.0 hosted= external= working= windows= shown= feed= items=`: ホスト中のセッション数・外部ルーム数・作業中の数・別ウィンドウの数・出している会話の数・feed の件数・出している会話の項目数の合計。
+  - `stall samples= p50_ms= p95_ms= max_ms= over250=`: 別スレッドから 100ms ごとにメインへ印を 1 つずつ投げ、届くまでの遅れ（全体の重さの指標。詰まった間は次を投げないので 1 回の詰まりは 1 件）。
+  - `span name= thread=main|bg n= total_ms= max_ms= value=`: 区間の回数・合計・最大と、値（バイト数・件数など）の合計。`count` は時間を取らない回数（body の評価・変わらなかった判定など）。
+- **Instruments**: 同じ区間を `OSSignposter`（subsystem はバンドル ID・category `perf`）にも出すので、Instruments の「Points of Interest」/ os_signpost で時系列に見られる。
+- **読む**: `mac/scripts/perf-summary.sh [-t 件数] [perf.log]` で、区間ごとのメインの合計時間の多い順（期間に占める割合・回数/秒・平均・最大）・メイン以外の区間・回数・詰まりの分布・文脈の平均を出す（依存は macOS 標準の awk だけ）。
+
+| 区間 | 場所 |
+|---|---|
+| `chat.refreshRooms`（値はルーム数）・`chat.markShownSeen`（値は書いた数） | `ChatModel` |
+| `store.apply.sessions` / `.feed` / `.usage` / `.permissions` / `.transcript`・`store.resolveHostedSessions`（`sessions/<pid>.json` の読み） | `MonitorStore` |
+| `terminal.evaluateStatus`（うち `terminal.evaluateStatus.unchanged` は画面も最後の受信時刻も前回と同じだった回数）・`terminal.limitScan`・`terminal.dataReceived`（値はバイト数）と `terminal.dataReceived.parse`（SwiftTerm の解釈） | `ClaudeTerminalView` |
+| `chat.timelineEntries`（値は項目数） | `MessageList`（`ChatTimeline.entries` の呼び出し側） |
+| `stage.sceneShow`・`stage.sceneRebuild`（3D の作り直し）・`stage.feedFilter` | `StageSCNView`・`StageSceneRig`・`StagePanel` |
+| `branch.apply`（ブランチの図の受信）・`git.refEvents` / `git.refEvents.relevant` | `BranchGraphModel`・`GitRefWatcher` |
+| `shell.recordGroups`（プロセスの総当たり）・`handover.tick` / `handover.scan`・`xcode.find` | `RoomShell`・`ChatHandover`・`XcodeFinder` |
+| `transcript.readerRead`（+ `.lines`）・`transcript.logRead`（+ `.lines`）・`transcript.get`（ルームを開いた時の全件読み）・`transcript.storePoll`・`transcript.primeMeta` | `TranscriptReader`・`TranscriptLog`・`TranscriptStore` |
+| `hub.pollTranscripts`・`hub.scanAgents` | `SessionHub`・`TranscriptPoller` |
+| `body.ChatRootView` / `RoomWindowView` / `RoomListView` / `ConversationView` / `ChatPane` / `MessageList` / `StagePanel` / `Composer` | 各 View の body の先頭 |
+
+1 回あたりの重さは、claude を動かさないベンチで測る（普段の `swift test` では飛ばす。合成データは一時ディレクトリに作って消す）:
+
+```sh
+CLAUDE_DECK_BENCH=1 swift test --build-system native --filter PerfBench                               # Debug ビルド
+CLAUDE_DECK_BENCH=1 swift test -c release -Xswiftc -enable-testing --build-system native --filter PerfBench   # アプリに近い Release
+```
+
+対象は一覧の作り直し相当（`ChatModel` を使わず同じ走査で代用・ルーム 1 / 5 / 10・feed 500 件）・`ChatTimeline.entries`（500 / 2000 / 5000 件）・
+画面判定一式（40 行 × 160 桁でメニューの写しと作業中の画面）・`TranscriptReader.read`（1MB の tool_result 行を含む追記）・`TranscriptLog` の全件読みと `primeMeta`（合成した 50MB）。
+結果は `PerfBench <名前>: median=…ms p95=…ms` の行で出る（`Tests/ClaudeDeckTests/Support/PerfBenchTests.swift`）。
 
 ## 現状の制約 / TODO
 

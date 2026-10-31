@@ -10,6 +10,7 @@ struct ConversationView: View {
     @State private var terminalSession: HostedSession?
 
     var body: some View {
+        let _ = PerfProbe.count("body.ConversationView")
         let shells = model.shells
         let tab = shells.tab(for: room.id, window: window)
         VStack(spacing: 0) {
@@ -80,6 +81,7 @@ struct ChatPane: View {
     let room: Room
 
     var body: some View {
+        let _ = PerfProbe.count("body.ChatPane")
         let items = model.transcripts.items(for: room.sessionId)
         let outbox = model.outbox
         VStack(spacing: 0) {

@@ -57,6 +57,8 @@ final class StageSCNView: SCNView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show(_ model: StageSceneModel, backdrop: StageBackdrop) {
+        let span = PerfProbe.begin("stage.sceneShow")
+        defer { PerfProbe.end(span) }
         rig.setBackdrop(backdrop)
         rig.show(model)
         refreshPlayback()

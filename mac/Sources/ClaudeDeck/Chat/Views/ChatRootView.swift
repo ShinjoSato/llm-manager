@@ -13,6 +13,7 @@ struct ChatRootView<Trailing: View>: View {
     }
 
     var body: some View {
+        let _ = PerfProbe.count("body.ChatRootView")
         HStack(spacing: 0) {
             // 吹き出しを右の一覧の上に重ねるため手前に置く。
             ListModeBar(model: model).zIndex(1)

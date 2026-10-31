@@ -9,6 +9,7 @@ struct RoomListView: View {
     @State private var closing: HostedSession?
 
     var body: some View {
+        let _ = PerfProbe.count("body.RoomListView")
         VStack(spacing: 0) {
             header
             search

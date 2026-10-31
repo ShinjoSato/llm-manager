@@ -180,12 +180,24 @@ final class ChatModel {
         refreshRooms()
         restorer.model = self
         restorer.start()
+        PerfProbe.setContext { [weak self] in self?.perfContext ?? [] }
+    }
+
+    /// 計測の行に添える数（名前・パス・本文は含めない）。
+    private var perfContext: [(String, Int)] {
+        let shown = shownSessionIds(includingHiddenMain: true)
+        return [("hosted", hosted.count), ("external", rooms.filter(\.isExternal).count),
+                ("working", rooms.filter { $0.status == .working }.count), ("windows", detached.entries.count),
+                ("shown", shown.count), ("feed", store.feed.count),
+                ("items", shown.reduce(0) { $0 + transcripts.items(for: $1).count })]
     }
 
     // MARK: - ルーム
 
     /// 一覧を作り直し、読んだ値（feed・sessions・ホスト中のセッション・検索語・既読）が変わったら次の周回でもう一度作る。
     private func refreshRooms() {
+        let span = PerfProbe.begin("chat.refreshRooms")
+        defer { PerfProbe.end(span, value: rooms.count) }
         let (all, items, dirs) = withObservationTracking {
             let all = buildRooms()
             let keys = Self.keys(all)
@@ -324,7 +336,10 @@ final class ChatModel {
     /// 出している会話を既読にする（新着を受けるたびにも呼ぶ）。メインで会話を出していない間、そのルームは読んでいないので数えない。
     func markShownSeen() {
         let now = Date().timeIntervalSince1970 * 1000
-        for sessionId in shownSessionIds(includingHiddenMain: false) { lastSeen[sessionId] = now }
+        let span = PerfProbe.begin("chat.markShownSeen")
+        let shown = shownSessionIds(includingHiddenMain: false)
+        for sessionId in shown { lastSeen[sessionId] = now }
+        PerfProbe.end(span, value: shown.count)
     }
 
     /// 監視を始め直した時に、メインと別ウィンドウで出している会話を取り直す。
