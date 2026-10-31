@@ -9,6 +9,7 @@ struct RoomWindowView: View {
     let setTitle: (String) -> Void
 
     var body: some View {
+        let _ = PerfProbe.count("body.RoomWindowView")
         let room = model.detached.room(for: token).flatMap(model.room(id:))
         content(room)
             .frame(minWidth: ListPaneWidth.centerMinimum, maxWidth: .infinity, maxHeight: .infinity)

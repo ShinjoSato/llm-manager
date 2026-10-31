@@ -41,7 +41,9 @@ public enum XcodeFinder {
 
     /// 見つけるたびに `visit` を呼ぶ。`visit` が false を返したら、その深さの周回を終えた所で打ち切る。
     private static func walk(_ dir: String, visit: (Candidate) -> Bool) {
+        let span = PerfProbe.begin("xcode.find")
         var queue: [(String, Int)] = [(dir, 0)]
+        defer { PerfProbe.end(span, value: queue.count) }
         var i = 0
         var keepGoing = true
         while i < queue.count && i < maxDirs {

@@ -231,6 +231,12 @@ final class TranscriptLog {
         guard let size = Bytes.size(path) else { return [] }
         if size < offset { reset() } // 切り詰められたら読み直す
         if size == offset { return [] }
+        let span = PerfProbe.begin("transcript.logRead")
+        let (startOffset, startLine) = (offset, lineNo)
+        defer {
+            PerfProbe.end(span, value: offset - startOffset)
+            PerfProbe.count("transcript.logRead.lines", value: lineNo - startLine)
+        }
         let fd = open(path, O_RDONLY | O_CLOEXEC)
         guard fd >= 0 else { return [] }
         defer { close(fd) }

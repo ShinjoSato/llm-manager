@@ -9,8 +9,11 @@ struct MessageList: View {
     @Environment(\.openTerminalScreen) private var openTerminal
 
     var body: some View {
+        let _ = PerfProbe.count("body.MessageList")
+        let timeline = PerfProbe.begin("chat.timelineEntries")
         let entries = ChatTimeline.entries(from: items, notes: model.relay.notes(for: room.sessionId),
                                            pending: model.outbox.pendingImages(for: room.id))
+        let _ = PerfProbe.end(timeline, value: items.count)
         let imageSource = ChatImageSource(loader: model.transcripts.imageLoader, sessionId: room.sessionId)
         let runningId = ChatTimeline.runningToolId(items: items, status: room.status)
         let prompts = model.prompts

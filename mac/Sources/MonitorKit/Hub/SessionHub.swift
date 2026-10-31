@@ -205,6 +205,8 @@ public actor SessionHub {
     // MARK: - 実況層
 
     func pollTranscripts() {
+        let span = PerfProbe.begin("hub.pollTranscripts")
+        defer { PerfProbe.end(span, value: sessions.count) }
         let now = now()
         var changed = false
 

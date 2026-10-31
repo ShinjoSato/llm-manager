@@ -89,8 +89,13 @@ public actor TranscriptStore {
 
     /// 履歴を返す。ログが見つからなければ nil。
     public func get(_ sessionId: String, after: String? = nil) -> TranscriptResponse? {
-        guard TranscriptFormat.isValidSessionId(sessionId), let log = refresh(sessionId) else { return nil }
+        let span = PerfProbe.begin("transcript.get")
+        guard TranscriptFormat.isValidSessionId(sessionId), let log = refresh(sessionId) else {
+            PerfProbe.end(span)
+            return nil
+        }
         let (items, reset) = log.since(after)
+        PerfProbe.end(span, value: items.count)
         return TranscriptResponse(sessionId: sessionId, items: items, reset: reset)
     }
 
@@ -152,7 +157,10 @@ public actor TranscriptStore {
 
     /// 購読されているセッションの追記を読む。
     public func poll() {
-        for id in watchedIds() { refresh(id) }
+        let ids = watchedIds()
+        let span = PerfProbe.begin("transcript.storePoll")
+        defer { PerfProbe.end(span, value: ids.count) }
+        for id in ids { refresh(id) }
     }
 
     private func startPolling() {
