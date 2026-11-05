@@ -144,6 +144,8 @@ final class ChatModel {
     /// sessionId → 最後に開いた時刻（epoch ミリ秒）。未読数の起点。
     private var lastSeen: [String: Double] = [:]
     @ObservationIgnored private let launchedAt = Date().timeIntervalSince1970 * 1000
+    /// 閉じたルームの会話（監視の墓標を外部ルームとして出さないため）。
+    @ObservationIgnored private var closedConversations = ClosedConversations()
     @ObservationIgnored private var pendingLimitNames: [String] = []
     @ObservationIgnored private var limitAlertScheduled = false
 
@@ -209,6 +211,10 @@ final class ChatModel {
         rooms = all
         listItems = items
         directories = dirs
+        // 未接続の間は一覧が古いので、消えたとはみなさない。
+        if store.connection.isConnected {
+            closedConversations.prune(sessions: store.sessions, now: Date().timeIntervalSince1970 * 1000)
+        }
         discardVanishedExternalRooms(all)
         // 読めない間の設定は古いままなので、消えたとはみなさない。
         if SettingsStore.shared.problem == nil {
@@ -244,7 +250,9 @@ final class ChatModel {
 
         let hostedIds = Set(result.compactMap(\.sessionId))
         let hostedPids = Set(hosted.compactMap(\.pid))
-        for snapshot in store.sessions where !hostedIds.contains(snapshot.sessionId) && !hostedPids.contains(snapshot.pid) {
+        let now = Date().timeIntervalSince1970 * 1000
+        for snapshot in store.sessions where !hostedIds.contains(snapshot.sessionId) && !hostedPids.contains(snapshot.pid)
+            && !closedConversations.hides(snapshot, now: now) {
             result.append(Room(id: .external(snapshot.sessionId), name: snapshot.name, branch: snapshot.branch,
                                status: snapshot.status,
                                line: latestLine[snapshot.sessionId] ?? Self.line(of: snapshot) ?? "",
@@ -427,6 +435,9 @@ final class ChatModel {
 
     func close(_ session: HostedSession) {
         session.terminate()
+        closedConversations.remember(sessionId: session.resolveSessionId(store), pid: session.pid,
+                                     closedAt: Date().timeIntervalSince1970 * 1000,
+                                     endedAt: session.endedAt.map { $0.timeIntervalSince1970 * 1000 })
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         outbox.forgetRoom(.hosted(session.id))

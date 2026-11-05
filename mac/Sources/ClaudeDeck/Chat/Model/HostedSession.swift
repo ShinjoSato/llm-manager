@@ -53,7 +53,11 @@ final class HostedSession: Identifiable {
     private(set) var isSending = false
     /// 同じ会話をアプリの外の claude も動かしている（`ChatHandover` の見張りが付ける）。その間は送らない。
     var externalDuplicate: ExternalDuplicate?
-    private(set) var end: End?
+    private(set) var end: End? {
+        didSet { if oldValue == nil, end != nil { endedAt = Date() } }
+    }
+    /// claude が終わった（終わらせた）時刻。
+    @ObservationIgnored private(set) var endedAt: Date?
     /// 最後に解決できた sessionId。終了して監視の対応表から消えた後も会話を出すために持ち続ける。
     @ObservationIgnored var lastSessionId: String?
     /// 最後にローカル判定が変わった時刻（監視の開始前の並び順に使う）。
