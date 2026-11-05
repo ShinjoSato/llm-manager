@@ -10,46 +10,66 @@ final class ClosedConversationsTests: XCTestCase {
                         canReceive: alive, xcodeProject: nil)
     }
 
-    private func closed(sessionId: String? = "a", pid: Int32? = 100, at closedAt: Double = 10_000) -> ClosedConversations {
+    private func closed(sessionId: String? = "a", pid: Int32? = 100, at closedAt: Double = 10_000,
+                        endedAt: Double? = nil) -> ClosedConversations {
         var closed = ClosedConversations()
-        closed.remember(sessionId: sessionId, pid: pid, closedAt: closedAt)
+        closed.remember(sessionId: sessionId, pid: pid, closedAt: closedAt, endedAt: endedAt)
         return closed
     }
 
+    private let soon: Double = 11_000
+
     func testHidesStoppedTombstoneOfClosedConversation() {
-        XCTAssertTrue(closed().hides(snapshot("a", pid: 100, alive: false)))
+        XCTAssertTrue(closed().hides(snapshot("a", pid: 100, alive: false), now: soon))
     }
 
     func testHidesClosedProcessWhileItIsStillExiting() {
-        XCTAssertTrue(closed().hides(snapshot("a", pid: 100, alive: true)))
+        XCTAssertTrue(closed().hides(snapshot("a", pid: 100, alive: true), now: soon))
     }
 
     func testHidesConversationBeforeClearByPid() {
-        XCTAssertTrue(closed().hides(snapshot("before-clear", pid: 100, alive: false)))
+        XCTAssertTrue(closed().hides(snapshot("before-clear", pid: 100, alive: false), now: soon))
     }
 
     func testShowsConversationResumedElsewhere() {
-        XCTAssertFalse(closed().hides(snapshot("a", pid: 200, alive: true, startedAt: 20_000)))
+        XCTAssertFalse(closed().hides(snapshot("a", pid: 200, alive: true, startedAt: 20_000), now: soon))
     }
 
-    func testHidesConversationResumedElsewhereAfterItEnds() {
-        XCTAssertTrue(closed().hides(snapshot("a", pid: 200, alive: false, startedAt: 20_000)))
+    func testShowsTombstoneOfConversationResumedElsewhereAfterClosing() {
+        XCTAssertFalse(closed().hides(snapshot("a", pid: 200, alive: false, startedAt: 20_000), now: soon))
+    }
+
+    func testPidReusedAfterEarlierExitIsAnotherProcess() {
+        let closed = closed(at: 10_000, endedAt: 5_000)
+        XCTAssertFalse(closed.hides(snapshot("other", pid: 100, alive: true, startedAt: 7_000), now: soon))
+        XCTAssertTrue(closed.hides(snapshot("a", pid: 100, alive: false, startedAt: 1_000), now: soon))
+    }
+
+    func testUnknownStartTimeIsNotMatchedByPid() {
+        XCTAssertFalse(closed().hides(snapshot("other", pid: 100, alive: true, startedAt: 0), now: soon))
+        XCTAssertTrue(closed().hides(snapshot("a", pid: 100, alive: false, startedAt: 0), now: soon))
+    }
+
+    func testShowsClosedProcessThatOutlivesGrace() {
+        let later = 10_000 + ClosedConversations.grace + 1
+        XCTAssertFalse(closed().hides(snapshot("a", pid: 100, alive: true), now: later))
+        XCTAssertTrue(closed().hides(snapshot("a", pid: 100, alive: false), now: later))
     }
 
     func testReusedPidAfterClosingIsAnotherProcess() {
-        XCTAssertFalse(closed().hides(snapshot("other", pid: 100, alive: true, startedAt: 20_000)))
-        XCTAssertFalse(closed().hides(snapshot("other", pid: 100, alive: false, startedAt: 20_000)))
+        XCTAssertFalse(closed().hides(snapshot("other", pid: 100, alive: true, startedAt: 20_000), now: soon))
+        XCTAssertFalse(closed().hides(snapshot("other", pid: 100, alive: false, startedAt: 20_000), now: soon))
     }
 
     func testUnrelatedSessionsAreShown() {
-        XCTAssertFalse(closed().hides(snapshot("b", pid: 300, alive: false)))
-        XCTAssertFalse(ClosedConversations().hides(snapshot("a", pid: 100, alive: false)))
+        XCTAssertFalse(closed().hides(snapshot("b", pid: 300, alive: false), now: soon))
+        XCTAssertFalse(ClosedConversations().hides(snapshot("a", pid: 100, alive: false), now: soon))
     }
 
     func testSessionIdOnlyStillHidesTombstone() {
         let closed = closed(pid: nil)
-        XCTAssertTrue(closed.hides(snapshot("a", pid: 100, alive: false)))
-        XCTAssertFalse(closed.hides(snapshot("a", pid: 100, alive: true)))
+        XCTAssertTrue(closed.hides(snapshot("a", pid: 100, alive: false), now: soon))
+        XCTAssertFalse(closed.hides(snapshot("a", pid: 100, alive: true), now: soon))
     }
 
     func testNothingToRememberWithoutSessionIdOrPid() {

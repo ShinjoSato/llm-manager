@@ -204,8 +204,9 @@ final class ChatModel {
 
         let hostedIds = Set(result.compactMap(\.sessionId))
         let hostedPids = Set(hosted.compactMap(\.pid))
+        let now = Date().timeIntervalSince1970 * 1000
         for snapshot in store.sessions where !hostedIds.contains(snapshot.sessionId) && !hostedPids.contains(snapshot.pid)
-            && !closedConversations.hides(snapshot) {
+            && !closedConversations.hides(snapshot, now: now) {
             result.append(Room(id: .external(snapshot.sessionId), name: snapshot.name, branch: snapshot.branch,
                                status: snapshot.status,
                                line: latestLine[snapshot.sessionId] ?? Self.line(of: snapshot) ?? "",
@@ -386,7 +387,8 @@ final class ChatModel {
     func close(_ session: HostedSession) {
         session.terminate()
         closedConversations.remember(sessionId: session.resolveSessionId(store), pid: session.pid,
-                                     closedAt: Date().timeIntervalSince1970 * 1000)
+                                     closedAt: Date().timeIntervalSince1970 * 1000,
+                                     endedAt: session.endedAt.map { $0.timeIntervalSince1970 * 1000 })
         hosted.removeAll { $0.id == session.id }
         if selection == .hosted(session.id) { selection = nil }
         outbox.forgetRoom(.hosted(session.id))

@@ -7,9 +7,14 @@ public struct ClosedConversations: Sendable, Equatable {
         public var pid: Int32?
         /// 閉じた時刻（epoch ミリ秒）。
         public var closedAt: Double
+        /// claude が閉じる前に終わっていればその時刻（epoch ミリ秒）。pid の使い回しを見分ける境目に使う。
+        public var endedAt: Double?
+
+        /// これより後に起動したプロセスは閉じた claude ではない。
+        var boundary: Double { min(endedAt ?? closedAt, closedAt) }
     }
 
-    /// 墓標が現れる前に忘れないための猶予（claude の起動直後はまだ監視に載っていないことがある）。
+    /// 墓標が現れる前に忘れないための猶予で、閉じた claude が終わり切るのを待つ長さも兼ねる。
     public static let grace: Double = 30_000
 
     public private(set) var entries: [Entry] = []
@@ -19,17 +24,20 @@ public struct ClosedConversations: Sendable, Equatable {
     public var isEmpty: Bool { entries.isEmpty }
 
     /// 閉じた会話を覚える。sessionId も pid も分からなければ見分けようが無いので覚えない。
-    public mutating func remember(sessionId: String?, pid: Int32?, closedAt: Double) {
+    public mutating func remember(sessionId: String?, pid: Int32?, closedAt: Double, endedAt: Double? = nil) {
         guard sessionId != nil || pid != nil else { return }
-        entries.append(Entry(sessionId: sessionId, pid: pid, closedAt: closedAt))
+        entries.append(Entry(sessionId: sessionId, pid: pid, closedAt: closedAt, endedAt: endedAt))
     }
 
-    /// 外部ルームとして出さないか。閉じた claude 自身（終わる途中を含む・`/clear` 前の会話も pid で拾う）と、終了済みの閉じた会話を隠す。
-    /// 同じ会話が別の claude で再開されて動いていれば出す。
-    public func hides(_ snapshot: SessionSnapshot) -> Bool {
+    /// 外部ルームとして出さないか。閉じた claude 自身（終わる途中・`/clear` 前の会話を含む）と、閉じた会話の墓標を隠す。
+    /// 同じ会話を後から別の claude で再開したものと、猶予を過ぎても終わらない claude は出す。
+    public func hides(_ snapshot: SessionSnapshot, now: Double) -> Bool {
         entries.contains { entry in
-            if Self.isClosedProcess(entry, snapshot) { return true }
-            return !snapshot.alive && entry.sessionId == snapshot.sessionId
+            if Self.isClosedProcess(entry, snapshot) {
+                return !snapshot.alive || now - entry.closedAt <= Self.grace
+            }
+            guard !snapshot.alive, entry.sessionId == snapshot.sessionId else { return false }
+            return snapshot.startedAt <= 0 || snapshot.startedAt <= entry.boundary
         }
     }
 
@@ -41,9 +49,9 @@ public struct ClosedConversations: Sendable, Equatable {
         }
     }
 
-    /// pid は使い回されるので、閉じた後に起動したプロセスは別物とみなす。
+    /// pid は使い回されるので、境目より後に起動したもの・起動時刻が読めないものは別物とみなす。
     private static func isClosedProcess(_ entry: Entry, _ snapshot: SessionSnapshot) -> Bool {
-        guard let pid = entry.pid else { return false }
-        return snapshot.pid == pid && snapshot.startedAt <= entry.closedAt
+        guard let pid = entry.pid, snapshot.pid == pid, snapshot.startedAt > 0 else { return false }
+        return snapshot.startedAt <= entry.boundary
     }
 }
